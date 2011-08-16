@@ -28257,5 +28257,12 @@ rs6000_address_for_altivec (rtx x)
   return x;
 }
 
+#ifdef POWERPC_CELL64LV2
+
+static bool rs6000_cell64lv2_valid_pointer_mode(enum machine_mode mode)
+{
+     return (mode == SImode || (TARGET_64BIT && mode == DImode) || mode == ptr_mode || mode == Pmode);
+}
+#endif
 
 #include "gt-rs6000.h"
