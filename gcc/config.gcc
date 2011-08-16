@@ -2049,7 +2049,7 @@ picochip-*)
 #	extra_headers=
 #	;;
 powerpc64-ps3-elf)
-	tm_file="${tm_file} dbxelf.h elfos.h usegas.h svr4.h freebsd-spec.h rs6000/sysv4.h rs6000/default64.h"
+	tm_file="${tm_file} dbxelf.h elfos.h usegas.h freebsd-spec.h rs6000/sysv4.h rs6000/default64.h"
 	tm_file="rs6000/biarch64.h ${tm_file} rs6000/cell64lv2.h"
 	if test x${enable_secureplt} = xyes; then
 		tm_file="rs6000/secureplt.h ${tm_file}"

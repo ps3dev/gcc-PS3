@@ -78,8 +78,8 @@ extern int dot_symbols;
 #define INVALID_64BIT "-m%s not supported in this configuration"
 #define INVALID_32BIT INVALID_64BIT
 
-#undef	SUBSUBTARGET_OVERRIDE_OPTIONS
-#define	SUBSUBTARGET_OVERRIDE_OPTIONS				\
+#undef	SUBSUBTARGET_TARGET_OPTION_OVERRIDE
+#define	SUBSUBTARGET_TARGET_OPTION_OVERRIDE				\
   do								\
     {								\
       if (!rs6000_explicit_options.alignment)			\
@@ -123,8 +123,8 @@ extern int dot_symbols;
 
 #ifdef	RS6000_BI_ARCH
 
-#undef	OVERRIDE_OPTIONS
-#define	OVERRIDE_OPTIONS \
+#undef	TARGET_OPTION_OVERRIDE
+#define	TARGET_OPTION_OVERRIDE \
   rs6000_override_options (((TARGET_DEFAULT ^ target_flags) & MASK_64BIT) \
 			   ? (char *) 0 : TARGET_CPU_DEFAULT)
 
@@ -422,7 +422,9 @@ extern int dot_symbols;
 		   && SCALAR_FLOAT_MODE_P (GET_MODE (X))		\
 		   && BITS_PER_WORD == HOST_BITS_PER_INT)))))
 
+/* FIXME: TOTALLY UNSURE ABOUT WHY THIS REDEFINE WAS HERE
 #define TARGET_ASM_FILE_END rs6000_elf_end_indicate_exec_stack
+*/
 
 #define POWERPC_LINUX
 
