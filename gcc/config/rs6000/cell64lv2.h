@@ -351,9 +351,10 @@ extern int dot_symbols;
     }									\
   while (0)
 
+/*
 #undef  TARGET_VERSION
 #define TARGET_VERSION fprintf (stderr, " (PowerPC64 Cell-lv2)");
-
+*/
 
 /* Must be at least as big as our pointer type.  */
 #undef	SIZE_TYPE
