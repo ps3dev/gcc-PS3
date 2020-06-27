@@ -1,4 +1,3 @@
-;; -*- Mode: Scheme -*-
 ;;   Machine description for GNU compiler,
 ;;   for ATMEL AVR micro controllers.
 ;;   Copyright (C) 1998, 1999, 2000, 2001, 2002, 2004, 2005, 2006, 2007, 2008,
@@ -170,7 +169,7 @@
   emit_clobber (gen_rtx_MEM (BLKmode, hard_frame_pointer_rtx));
 
   emit_move_insn (hard_frame_pointer_rtx, r_fp);
-  emit_stack_restore (SAVE_NONLOCAL, r_sp, NULL_RTX);
+  emit_stack_restore (SAVE_NONLOCAL, r_sp);
 
   emit_use (hard_frame_pointer_rtx);
   emit_use (stack_pointer_rtx);
@@ -182,7 +181,7 @@
 
 
 (define_insn "*pushqi"
-  [(set (mem:QI (post_dec (reg:HI REG_SP)))
+  [(set (mem:QI (post_dec:HI (reg:HI REG_SP)))
         (match_operand:QI 0 "reg_or_0_operand" "r,L"))]
   ""
   "@
@@ -190,9 +189,8 @@
 	push __zero_reg__"
   [(set_attr "length" "1,1")])
 
-
 (define_insn "*pushhi"
-  [(set (mem:HI (post_dec (reg:HI REG_SP)))
+  [(set (mem:HI (post_dec:HI (reg:HI REG_SP)))
         (match_operand:HI 0 "reg_or_0_operand" "r,L"))]
   ""
   "@
@@ -201,7 +199,7 @@
   [(set_attr "length" "2,2")])
 
 (define_insn "*pushsi"
-  [(set (mem:SI (post_dec (reg:HI REG_SP)))
+  [(set (mem:SI (post_dec:HI (reg:HI REG_SP)))
         (match_operand:SI 0 "reg_or_0_operand" "r,L"))]
   ""
   "@
@@ -210,7 +208,7 @@
   [(set_attr "length" "4,4")])
 
 (define_insn "*pushsf"
-  [(set (mem:SF (post_dec (reg:HI REG_SP)))
+  [(set (mem:SF (post_dec:HI (reg:HI REG_SP)))
         (match_operand:SF 0 "register_operand" "r"))]
   ""
   "push %D0
@@ -2077,12 +2075,13 @@
   "reload_completed"
   [(set (match_dup 2) (match_dup 1))
    (set (match_dup 3) (const_int 0))]
-  "unsigned int low_off = subreg_lowpart_offset (QImode, HImode);
-   unsigned int high_off = subreg_highpart_offset (QImode, HImode);
-   
-   operands[2] = simplify_gen_subreg (QImode, operands[0], HImode, low_off);
-   operands[3] = simplify_gen_subreg (QImode, operands[0], HImode, high_off);
-  ")
+{
+  unsigned int low_off = subreg_lowpart_offset (QImode, HImode);
+  unsigned int high_off = subreg_highpart_offset (QImode, HImode);
+
+  operands[2] = simplify_gen_subreg (QImode, operands[0], HImode, low_off);
+  operands[3] = simplify_gen_subreg (QImode, operands[0], HImode, high_off);
+})
 
 (define_insn_and_split "zero_extendqisi2"
   [(set (match_operand:SI 0 "register_operand" "=r")
@@ -2092,12 +2091,13 @@
   "reload_completed"
   [(set (match_dup 2) (zero_extend:HI (match_dup 1)))
    (set (match_dup 3) (const_int 0))]
-  "unsigned int low_off = subreg_lowpart_offset (HImode, SImode);
-   unsigned int high_off = subreg_highpart_offset (HImode, SImode);
-   
-   operands[2] = simplify_gen_subreg (HImode, operands[0], SImode, low_off);
-   operands[3] = simplify_gen_subreg (HImode, operands[0], SImode, high_off);
-  ")
+{
+  unsigned int low_off = subreg_lowpart_offset (HImode, SImode);
+  unsigned int high_off = subreg_highpart_offset (HImode, SImode);
+
+  operands[2] = simplify_gen_subreg (HImode, operands[0], SImode, low_off);
+  operands[3] = simplify_gen_subreg (HImode, operands[0], SImode, high_off);
+})
 
 (define_insn_and_split "zero_extendhisi2"
   [(set (match_operand:SI 0 "register_operand" "=r")
@@ -2107,12 +2107,13 @@
   "reload_completed"
   [(set (match_dup 2) (match_dup 1))
    (set (match_dup 3) (const_int 0))]
-  "unsigned int low_off = subreg_lowpart_offset (HImode, SImode);
-   unsigned int high_off = subreg_highpart_offset (HImode, SImode);
-   
-   operands[2] = simplify_gen_subreg (HImode, operands[0], SImode, low_off);
-   operands[3] = simplify_gen_subreg (HImode, operands[0], SImode, high_off);
-  ")
+{
+  unsigned int low_off = subreg_lowpart_offset (HImode, SImode);
+  unsigned int high_off = subreg_highpart_offset (HImode, SImode);
+
+  operands[2] = simplify_gen_subreg (HImode, operands[0], SImode, low_off);
+  operands[3] = simplify_gen_subreg (HImode, operands[0], SImode, high_off);
+})
 
 (define_insn_and_split "zero_extendqidi2"
   [(set (match_operand:DI 0 "register_operand" "=r")
@@ -2122,12 +2123,13 @@
   "reload_completed"
   [(set (match_dup 2) (zero_extend:SI (match_dup 1)))
    (set (match_dup 3) (const_int 0))]
-  "unsigned int low_off = subreg_lowpart_offset (SImode, DImode);
-   unsigned int high_off = subreg_highpart_offset (SImode, DImode);
-   
-   operands[2] = simplify_gen_subreg (SImode, operands[0], DImode, low_off);
-   operands[3] = simplify_gen_subreg (SImode, operands[0], DImode, high_off);
-  ")
+{
+  unsigned int low_off = subreg_lowpart_offset (SImode, DImode);
+  unsigned int high_off = subreg_highpart_offset (SImode, DImode);
+
+  operands[2] = simplify_gen_subreg (SImode, operands[0], DImode, low_off);
+  operands[3] = simplify_gen_subreg (SImode, operands[0], DImode, high_off);
+})
 
 (define_insn_and_split "zero_extendhidi2"
   [(set (match_operand:DI 0 "register_operand" "=r")
@@ -2137,12 +2139,13 @@
   "reload_completed"
   [(set (match_dup 2) (zero_extend:SI (match_dup 1)))
    (set (match_dup 3) (const_int 0))]
-  "unsigned int low_off = subreg_lowpart_offset (SImode, DImode);
-   unsigned int high_off = subreg_highpart_offset (SImode, DImode);
-   
-   operands[2] = simplify_gen_subreg (SImode, operands[0], DImode, low_off);
-   operands[3] = simplify_gen_subreg (SImode, operands[0], DImode, high_off);
-  ")
+{
+  unsigned int low_off = subreg_lowpart_offset (SImode, DImode);
+  unsigned int high_off = subreg_highpart_offset (SImode, DImode);
+
+  operands[2] = simplify_gen_subreg (SImode, operands[0], DImode, low_off);
+  operands[3] = simplify_gen_subreg (SImode, operands[0], DImode, high_off);
+})
 
 (define_insn_and_split "zero_extendsidi2"
   [(set (match_operand:DI 0 "register_operand" "=r")
@@ -2152,12 +2155,13 @@
   "reload_completed"
   [(set (match_dup 2) (match_dup 1))
    (set (match_dup 3) (const_int 0))]
-  "unsigned int low_off = subreg_lowpart_offset (SImode, DImode);
-   unsigned int high_off = subreg_highpart_offset (SImode, DImode);
-   
-   operands[2] = simplify_gen_subreg (SImode, operands[0], DImode, low_off);
-   operands[3] = simplify_gen_subreg (SImode, operands[0], DImode, high_off);
-  ")
+{
+  unsigned int low_off = subreg_lowpart_offset (SImode, DImode);
+  unsigned int high_off = subreg_highpart_offset (SImode, DImode);
+
+  operands[2] = simplify_gen_subreg (SImode, operands[0], DImode, low_off);
+  operands[3] = simplify_gen_subreg (SImode, operands[0], DImode, high_off);
+})
 
 ;;<=><=><=><=><=><=><=><=><=><=><=><=><=><=><=><=><=><=><=><=><=><=><=><=><=>
 ;; compare
@@ -3121,19 +3125,11 @@
 
 (define_insn "popqi"
   [(set (match_operand:QI 0 "register_operand" "=r")
-        (mem:QI (post_inc (reg:HI REG_SP))))]
+        (mem:QI (pre_inc:HI (reg:HI REG_SP))))]
   ""
   "pop %0"
   [(set_attr "cc" "none")
    (set_attr "length" "1")])
-
-(define_insn "pophi"
-  [(set (match_operand:HI 0 "register_operand" "=r")
-        (mem:HI (post_inc (reg:HI REG_SP))))]
-  ""
-  "pop %A0\;pop %B0"
-  [(set_attr "cc" "none")
-   (set_attr "length" "2")])
 
 ;; Enable Interrupts
 (define_insn "enable_interrupt"
