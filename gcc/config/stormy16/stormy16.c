@@ -1,6 +1,5 @@
 /* Xstormy16 target functions.
-   Copyright (C) 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005,
-   2006, 2007, 2008, 2009, 2010, 2011  Free Software Foundation, Inc.
+   Copyright (C) 1997-2017 Free Software Foundation, Inc.
    Contributed by Red Hat, Inc.
 
    This file is part of GCC.
@@ -22,32 +21,34 @@
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
-#include "rtl.h"
-#include "regs.h"
-#include "hard-reg-set.h"
-#include "insn-config.h"
-#include "conditions.h"
-#include "insn-flags.h"
-#include "output.h"
-#include "insn-attr.h"
-#include "flags.h"
-#include "recog.h"
-#include "diagnostic-core.h"
-#include "obstack.h"
-#include "tree.h"
-#include "expr.h"
-#include "optabs.h"
-#include "except.h"
-#include "function.h"
+#include "backend.h"
 #include "target.h"
-#include "target-def.h"
-#include "tm_p.h"
-#include "langhooks.h"
+#include "rtl.h"
+#include "tree.h"
 #include "gimple.h"
 #include "df.h"
+#include "memmodel.h"
+#include "tm_p.h"
+#include "stringpool.h"
+#include "optabs.h"
+#include "emit-rtl.h"
+#include "recog.h"
+#include "diagnostic-core.h"
+#include "output.h"
+#include "fold-const.h"
+#include "stor-layout.h"
+#include "varasm.h"
+#include "calls.h"
+#include "explow.h"
+#include "expr.h"
+#include "langhooks.h"
+#include "cfgrtl.h"
+#include "gimplify.h"
 #include "reload.h"
-#include "ggc.h"
+#include "builtins.h"
+
+/* This file should be included last.  */
+#include "target-def.h"
 
 static rtx emit_addhi3_postreload (rtx, rtx, rtx);
 static void xstormy16_asm_out_constructor (rtx, int);
@@ -56,9 +57,8 @@ static void xstormy16_asm_output_mi_thunk (FILE *, tree, HOST_WIDE_INT,
 					   HOST_WIDE_INT, tree);
 
 static void xstormy16_init_builtins (void);
-static rtx xstormy16_expand_builtin (tree, rtx, rtx, enum machine_mode, int);
-static bool xstormy16_rtx_costs (rtx, int, int, int, int *, bool);
-static int xstormy16_address_cost (rtx, bool);
+static rtx xstormy16_expand_builtin (tree, rtx, rtx, machine_mode, int);
+static int xstormy16_address_cost (rtx, machine_mode, addr_space_t, bool);
 static bool xstormy16_return_in_memory (const_tree, const_tree);
 
 static GTY(()) section *bss100_section;
@@ -68,10 +68,13 @@ static GTY(()) section *bss100_section;
    scanned.  In either case, *TOTAL contains the cost result.  */
 
 static bool
-xstormy16_rtx_costs (rtx x, int code, int outer_code ATTRIBUTE_UNUSED,
+xstormy16_rtx_costs (rtx x, machine_mode mode ATTRIBUTE_UNUSED,
+		     int outer_code ATTRIBUTE_UNUSED,
 		     int opno ATTRIBUTE_UNUSED, int *total,
 		     bool speed ATTRIBUTE_UNUSED)
 {
+  int code = GET_CODE (x);
+
   switch (code)
     {
     case CONST_INT:
@@ -103,7 +106,9 @@ xstormy16_rtx_costs (rtx x, int code, int outer_code ATTRIBUTE_UNUSED,
 }
 
 static int
-xstormy16_address_cost (rtx x, bool speed ATTRIBUTE_UNUSED)
+xstormy16_address_cost (rtx x, machine_mode mode ATTRIBUTE_UNUSED,
+			addr_space_t as ATTRIBUTE_UNUSED,
+			bool speed ATTRIBUTE_UNUSED)
 {
   return (CONST_INT_P (x) ? 2
 	  : GET_CODE (x) == PLUS ? 7
@@ -113,7 +118,7 @@ xstormy16_address_cost (rtx x, bool speed ATTRIBUTE_UNUSED)
 /* Worker function for TARGET_MEMORY_MOVE_COST.  */
 
 static int
-xstormy16_memory_move_cost (enum machine_mode mode, reg_class_t rclass,
+xstormy16_memory_move_cost (machine_mode mode, reg_class_t rclass,
 			    bool in)
 {
   return (5 + memory_move_secondary_cost (mode, rclass, in));
@@ -148,7 +153,7 @@ xstormy16_emit_cbranch (enum rtx_code code, rtx op0, rtx op1, rtx loc)
 {
   rtx condition_rtx, loc_ref, branch, cy_clobber;
   rtvec vec;
-  enum machine_mode mode;
+  machine_mode mode;
 
   mode = GET_MODE (op0);
   gcc_assert (mode == HImode || mode == SImode);
@@ -213,7 +218,7 @@ xstormy16_emit_cbranch (enum rtx_code code, rtx op0, rtx op1, rtx loc)
 
   condition_rtx = gen_rtx_fmt_ee (code, mode, op0, op1);
   loc_ref = gen_rtx_LABEL_REF (VOIDmode, loc);
-  branch = gen_rtx_SET (VOIDmode, pc_rtx,
+  branch = gen_rtx_SET (pc_rtx,
 			gen_rtx_IF_THEN_ELSE (VOIDmode, condition_rtx,
 					      loc_ref, pc_rtx));
 
@@ -227,7 +232,7 @@ xstormy16_emit_cbranch (enum rtx_code code, rtx op0, rtx op1, rtx loc)
     {
       rtx sub;
 #if 0
-      sub = gen_rtx_SET (VOIDmode, op0, gen_rtx_MINUS (SImode, op0, op1));
+      sub = gen_rtx_SET (op0, gen_rtx_MINUS (SImode, op0, op1));
 #else
       sub = gen_rtx_CLOBBER (SImode, op0);
 #endif
@@ -242,12 +247,12 @@ xstormy16_emit_cbranch (enum rtx_code code, rtx op0, rtx op1, rtx loc)
    xstormy16_expand_arith.  */
 
 void
-xstormy16_split_cbranch (enum machine_mode mode, rtx label, rtx comparison,
+xstormy16_split_cbranch (machine_mode mode, rtx label, rtx comparison,
 			 rtx dest)
 {
   rtx op0 = XEXP (comparison, 0);
   rtx op1 = XEXP (comparison, 1);
-  rtx seq, last_insn;
+  rtx_insn *seq, *last_insn;
   rtx compare;
 
   start_sequence ();
@@ -278,7 +283,8 @@ xstormy16_split_cbranch (enum machine_mode mode, rtx label, rtx comparison,
    INSN is the insn.  */
 
 char *
-xstormy16_output_cbranch_hi (rtx op, const char *label, int reversed, rtx insn)
+xstormy16_output_cbranch_hi (rtx op, const char *label, int reversed,
+			     rtx_insn *insn)
 {
   static char string[64];
   int need_longbranch = (op != NULL_RTX
@@ -351,7 +357,8 @@ xstormy16_output_cbranch_hi (rtx op, const char *label, int reversed, rtx insn)
    INSN is the insn.  */
 
 char *
-xstormy16_output_cbranch_si (rtx op, const char *label, int reversed, rtx insn)
+xstormy16_output_cbranch_si (rtx op, const char *label, int reversed,
+			     rtx_insn *insn)
 {
   static char string[64];
   int need_longbranch = get_attr_length (insn) >= 8;
@@ -465,7 +472,7 @@ xstormy16_output_cbranch_si (rtx op, const char *label, int reversed, rtx insn)
 
 enum reg_class
 xstormy16_secondary_reload_class (enum reg_class rclass,
-				  enum machine_mode mode ATTRIBUTE_UNUSED,
+				  machine_mode mode ATTRIBUTE_UNUSED,
 				  rtx x)
 {
   /* This chip has the interesting property that only the first eight
@@ -497,7 +504,7 @@ xstormy16_preferred_reload_class (rtx x, reg_class_t rclass)
 
 int
 xstormy16_below100_symbol (rtx x,
-			   enum machine_mode mode ATTRIBUTE_UNUSED)
+			   machine_mode mode ATTRIBUTE_UNUSED)
 {
   if (GET_CODE (x) == CONST)
     x = XEXP (x, 0);
@@ -522,7 +529,7 @@ xstormy16_below100_symbol (rtx x,
    MEM will get split into smaller sized accesses.  */
 
 int
-xstormy16_splittable_below100_operand (rtx x, enum machine_mode mode)
+xstormy16_splittable_below100_operand (rtx x, machine_mode mode)
 {
   if (MEM_P (x) && MEM_VOLATILE_P (x))
     return 0;
@@ -630,7 +637,7 @@ xstormy16_expand_andqi3 (rtx *operands)
   && (INTVAL (X) + (OFFSET) < 0x100 || INTVAL (X) + (OFFSET) >= 0x7F00))
 
 bool
-xstormy16_legitimate_address_p (enum machine_mode mode ATTRIBUTE_UNUSED,
+xstormy16_legitimate_address_p (machine_mode mode ATTRIBUTE_UNUSED,
 				rtx x, bool strict)
 {
   if (LEGITIMATE_ADDRESS_CONST_INT_P (x, 0))
@@ -669,7 +676,8 @@ xstormy16_legitimate_address_p (enum machine_mode mode ATTRIBUTE_UNUSED,
    or pre-decrement address.  */
 
 static bool
-xstormy16_mode_dependent_address_p (const_rtx x)
+xstormy16_mode_dependent_address_p (const_rtx x,
+				    addr_space_t as ATTRIBUTE_UNUSED)
 {
   if (LEGITIMATE_ADDRESS_CONST_INT_P (x, 0)
       && ! LEGITIMATE_ADDRESS_CONST_INT_P (x, 6))
@@ -685,7 +693,7 @@ xstormy16_mode_dependent_address_p (const_rtx x)
 }
 
 int
-short_memory_operand (rtx x, enum machine_mode mode)
+short_memory_operand (rtx x, machine_mode mode)
 {
   if (! memory_operand (x, mode))
     return 0;
@@ -699,7 +707,7 @@ short_memory_operand (rtx x, enum machine_mode mode)
    This function is only called when reload_completed.  */
 
 void
-xstormy16_split_move (enum machine_mode mode, rtx dest, rtx src)
+xstormy16_split_move (machine_mode mode, rtx dest, rtx src)
 {
   int num_words = GET_MODE_BITSIZE (mode) / BITS_PER_WORD;
   int direction, end, i;
@@ -783,7 +791,7 @@ xstormy16_split_move (enum machine_mode mode, rtx dest, rtx src)
       gcc_assert (refers_to_regno_p (regno, regno + num_words,
 				     mem_operand, 0));
 
-      if (refers_to_regno_p (regno, regno + 1, mem_operand, 0))
+      if (refers_to_regno_p (regno, mem_operand))
 	direction = -1;
       else if (refers_to_regno_p (regno + num_words - 1, regno + num_words,
 				  mem_operand, 0))
@@ -819,7 +827,7 @@ xstormy16_split_move (enum machine_mode mode, rtx dest, rtx src)
       gcc_assert (GET_CODE (w_src) != SUBREG
 		  && GET_CODE (w_dest) != SUBREG);
 
-      insn = emit_insn (gen_rtx_SET (VOIDmode, w_dest, w_src));
+      insn = emit_insn (gen_rtx_SET (w_dest, w_src));
       if (auto_inc_reg_rtx)
         REG_NOTES (insn) = alloc_EXPR_LIST (REG_INC,
                                             auto_inc_reg_rtx,
@@ -831,14 +839,14 @@ xstormy16_split_move (enum machine_mode mode, rtx dest, rtx src)
    mode MODE from SRC to DEST.  */
 
 void
-xstormy16_expand_move (enum machine_mode mode, rtx dest, rtx src)
+xstormy16_expand_move (machine_mode mode, rtx dest, rtx src)
 {
   if (MEM_P (dest) && (GET_CODE (XEXP (dest, 0)) == PRE_MODIFY))
     {
       rtx pmv      = XEXP (dest, 0);
       rtx dest_reg = XEXP (pmv, 0);
       rtx dest_mod = XEXP (pmv, 1);
-      rtx set      = gen_rtx_SET (Pmode, dest_reg, dest_mod);
+      rtx set      = gen_rtx_SET (dest_reg, dest_mod);
       rtx clobber  = gen_rtx_CLOBBER (VOIDmode, gen_rtx_REG (BImode, CARRY_REGNUM));
 
       dest = gen_rtx_MEM (mode, dest_reg);
@@ -849,7 +857,7 @@ xstormy16_expand_move (enum machine_mode mode, rtx dest, rtx src)
       rtx pmv     = XEXP (src, 0);
       rtx src_reg = XEXP (pmv, 0);
       rtx src_mod = XEXP (pmv, 1);
-      rtx set     = gen_rtx_SET (Pmode, src_reg, src_mod);
+      rtx set     = gen_rtx_SET (src_reg, src_mod);
       rtx clobber = gen_rtx_CLOBBER (VOIDmode, gen_rtx_REG (BImode, CARRY_REGNUM));
 
       src = gen_rtx_MEM (mode, src_reg);
@@ -875,7 +883,7 @@ xstormy16_expand_move (enum machine_mode mode, rtx dest, rtx src)
       return;
     }
 
-  emit_insn (gen_rtx_SET (VOIDmode, dest, src));
+  emit_insn (gen_rtx_SET (dest, src));
 }
 
 /* Stack Layout:
@@ -917,7 +925,7 @@ struct xstormy16_stack_layout
   ((df_regs_ever_live_p (REGNUM) && ! call_used_regs[REGNUM])		\
    || (IFUN && ! fixed_regs[REGNUM] && call_used_regs[REGNUM]		\
        && (REGNUM != CARRY_REGNUM)					\
-       && (df_regs_ever_live_p (REGNUM) || ! current_function_is_leaf)))
+       && (df_regs_ever_live_p (REGNUM) || ! crtl->is_leaf)))
 
 /* Compute the stack layout.  */
 
@@ -1001,7 +1009,7 @@ emit_addhi3_postreload (rtx dest, rtx src0, rtx src1)
 {
   rtx set, clobber, insn;
 
-  set = gen_rtx_SET (VOIDmode, dest, gen_rtx_PLUS (HImode, src0, src1));
+  set = gen_rtx_SET (dest, gen_rtx_PLUS (HImode, src0, src1));
   clobber = gen_rtx_CLOBBER (VOIDmode, gen_rtx_REG (BImode, CARRY_REGNUM));
   insn = emit_insn (gen_rtx_PARALLEL (VOIDmode, gen_rtvec (2, set, clobber)));
   return insn;
@@ -1035,6 +1043,9 @@ xstormy16_expand_prologue (void)
   if (layout.locals_size >= 32768)
     error ("local variable memory requirements exceed capacity");
 
+  if (flag_stack_usage_info)
+    current_function_static_stack_size = layout.frame_size;
+
   /* Save the argument registers if necessary.  */
   if (layout.stdarg_save_size)
     for (regno = FIRST_ARGUMENT_REGISTER;
@@ -1049,11 +1060,11 @@ xstormy16_expand_prologue (void)
 
 	dwarf = gen_rtx_SEQUENCE (VOIDmode, rtvec_alloc (2));
 
-	XVECEXP (dwarf, 0, 0) = gen_rtx_SET (VOIDmode,
-					     gen_rtx_MEM (Pmode, stack_pointer_rtx),
+	XVECEXP (dwarf, 0, 0) = gen_rtx_SET (gen_rtx_MEM (Pmode, stack_pointer_rtx),
 					     reg);
-	XVECEXP (dwarf, 0, 1) = gen_rtx_SET (Pmode, stack_pointer_rtx,
-					     plus_constant (stack_pointer_rtx,
+	XVECEXP (dwarf, 0, 1) = gen_rtx_SET (stack_pointer_rtx,
+					     plus_constant (Pmode,
+							    stack_pointer_rtx,
 							    GET_MODE_SIZE (Pmode)));
 	add_reg_note (insn, REG_FRAME_RELATED_EXPR, dwarf);
 	RTX_FRAME_RELATED_P (XVECEXP (dwarf, 0, 0)) = 1;
@@ -1072,11 +1083,11 @@ xstormy16_expand_prologue (void)
 
 	dwarf = gen_rtx_SEQUENCE (VOIDmode, rtvec_alloc (2));
 
-	XVECEXP (dwarf, 0, 0) = gen_rtx_SET (VOIDmode,
-					     gen_rtx_MEM (Pmode, stack_pointer_rtx),
+	XVECEXP (dwarf, 0, 0) = gen_rtx_SET (gen_rtx_MEM (Pmode, stack_pointer_rtx),
 					     reg);
-	XVECEXP (dwarf, 0, 1) = gen_rtx_SET (Pmode, stack_pointer_rtx,
-					     plus_constant (stack_pointer_rtx,
+	XVECEXP (dwarf, 0, 1) = gen_rtx_SET (stack_pointer_rtx,
+					     plus_constant (Pmode,
+							    stack_pointer_rtx,
 							    GET_MODE_SIZE (Pmode)));
 	add_reg_note (insn, REG_FRAME_RELATED_EXPR, dwarf);
 	RTX_FRAME_RELATED_P (XVECEXP (dwarf, 0, 0)) = 1;
@@ -1202,7 +1213,7 @@ xstormy16_function_profiler (void)
    the word count.  */
 
 static void
-xstormy16_function_arg_advance (cumulative_args_t cum_v, enum machine_mode mode,
+xstormy16_function_arg_advance (cumulative_args_t cum_v, machine_mode mode,
 				const_tree type, bool named ATTRIBUTE_UNUSED)
 {
   CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
@@ -1218,7 +1229,7 @@ xstormy16_function_arg_advance (cumulative_args_t cum_v, enum machine_mode mode,
 }
 
 static rtx
-xstormy16_function_arg (cumulative_args_t cum_v, enum machine_mode mode,
+xstormy16_function_arg (cumulative_args_t cum_v, machine_mode mode,
 			const_tree type, bool named ATTRIBUTE_UNUSED)
 {
   CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
@@ -1336,7 +1347,7 @@ xstormy16_gimplify_va_arg_expr (tree valist, tree type, gimple_seq *pre_p,
   count_tmp = get_initialized_tmp_var (count, pre_p, NULL);
   lab_gotaddr = create_artificial_label (UNKNOWN_LOCATION);
   lab_fromstack = create_artificial_label (UNKNOWN_LOCATION);
-  addr = create_tmp_var (ptr_type_node, NULL);
+  addr = create_tmp_var (ptr_type_node);
 
   if (!must_stack)
     {
@@ -1441,7 +1452,7 @@ xstormy16_function_value (const_tree valtype,
 			  const_tree func ATTRIBUTE_UNUSED,
 			  bool outgoing ATTRIBUTE_UNUSED)
 {
-  enum machine_mode mode;
+  machine_mode mode;
   mode = TYPE_MODE (valtype);
   PROMOTE_MODE (mode, 0, valtype);
   return gen_rtx_REG (mode, RETURN_VALUE_REGNUM);
@@ -1450,7 +1461,7 @@ xstormy16_function_value (const_tree valtype,
 /* Worker function for TARGET_LIBCALL_VALUE.  */
 
 static rtx
-xstormy16_libcall_value (enum machine_mode mode,
+xstormy16_libcall_value (machine_mode mode,
 			 const_rtx fun ATTRIBUTE_UNUSED)
 {
   return gen_rtx_REG (mode, RETURN_VALUE_REGNUM);
@@ -1607,7 +1618,7 @@ static void
 xstormy16_asm_out_destructor (rtx symbol, int priority)
 {
   const char *section = ".dtors";
-  char buf[16];
+  char buf[18];
 
   /* ??? This only works reliably with the GNU linker.  */
   if (priority != DEFAULT_INIT_PRIORITY)
@@ -1629,7 +1640,7 @@ static void
 xstormy16_asm_out_constructor (rtx symbol, int priority)
 {
   const char *section = ".ctors";
-  char buf[16];
+  char buf[18];
 
   /* ??? This only works reliably with the GNU linker.  */
   if (priority != DEFAULT_INIT_PRIORITY)
@@ -1652,7 +1663,8 @@ xstormy16_asm_out_constructor (rtx symbol, int priority)
    Print a memory address as an operand to reference that memory location.  */
 
 static void
-xstormy16_print_operand_address (FILE *file, rtx address)
+xstormy16_print_operand_address (FILE *file, machine_mode /*mode*/,
+				 rtx address)
 {
   HOST_WIDE_INT offset;
   int pre_dec, post_inc;
@@ -1759,7 +1771,7 @@ xstormy16_print_operand (FILE *file, rtx x, int code)
       else if (LABEL_P (x))
 	output_asm_label (x);
       else
-	xstormy16_print_operand_address (file, x);
+	xstormy16_print_operand_address (file, VOIDmode, x);
       return;
 
     case 'o':
@@ -1815,7 +1827,7 @@ xstormy16_print_operand (FILE *file, rtx x, int code)
       break;
 
     case MEM:
-      xstormy16_print_operand_address (file, XEXP (x, 0));
+      xstormy16_print_operand_address (file, GET_MODE (x), XEXP (x, 0));
       break;
 
     default:
@@ -1893,7 +1905,7 @@ void
 xstormy16_expand_call (rtx retval, rtx dest, rtx counter)
 {
   rtx call, temp;
-  enum machine_mode mode;
+  machine_mode mode;
 
   gcc_assert (MEM_P (dest));
   dest = XEXP (dest, 0);
@@ -1909,7 +1921,7 @@ xstormy16_expand_call (rtx retval, rtx dest, rtx counter)
   call = gen_rtx_CALL (mode, gen_rtx_MEM (FUNCTION_MODE, dest),
 		       counter);
   if (retval)
-    call = gen_rtx_SET (VOIDmode, retval, call);
+    call = gen_rtx_SET (retval, call);
 
   if (! CONSTANT_P (dest))
     {
@@ -1934,7 +1946,7 @@ xstormy16_expand_call (rtx retval, rtx dest, rtx counter)
    (this saves duplicating code in xstormy16_split_cbranch).  */
 
 void
-xstormy16_expand_arith (enum machine_mode mode, enum rtx_code code,
+xstormy16_expand_arith (machine_mode mode, enum rtx_code code,
 			rtx dest, rtx src0, rtx src1)
 {
   int num_words = GET_MODE_BITSIZE (mode) / BITS_PER_WORD;
@@ -1977,10 +1989,10 @@ xstormy16_expand_arith (enum machine_mode mode, enum rtx_code code,
 
 	      sub_1 = gen_rtx_MINUS (HImode, w_src0,
 				     gen_rtx_ZERO_EXTEND (HImode, gen_rtx_REG (BImode, CARRY_REGNUM)));
-	      sub = gen_rtx_SET (VOIDmode, w_dest,
+	      sub = gen_rtx_SET (w_dest,
 				 gen_rtx_MINUS (HImode, sub_1, w_src1));
 	      clobber = gen_rtx_CLOBBER (VOIDmode, gen_rtx_REG (BImode, CARRY_REGNUM));
-	      branch = gen_rtx_SET (VOIDmode, pc_rtx,
+	      branch = gen_rtx_SET (pc_rtx,
 				    gen_rtx_IF_THEN_ELSE (VOIDmode,
 							  gen_rtx_EQ (HImode,
 								      sub_1,
@@ -2008,12 +2020,12 @@ xstormy16_expand_arith (enum machine_mode mode, enum rtx_code code,
 	      && INTVAL (w_src1) == -(code == AND))
 	    continue;
 
-	  insn = gen_rtx_SET (VOIDmode, w_dest, gen_rtx_fmt_ee (code, mode,
-								w_src0, w_src1));
+	  insn = gen_rtx_SET (w_dest, gen_rtx_fmt_ee (code, mode,
+						      w_src0, w_src1));
 	  break;
 
 	case NOT:
-	  insn = gen_rtx_SET (VOIDmode, w_dest, gen_rtx_NOT (mode, w_src0));
+	  insn = gen_rtx_SET (w_dest, gen_rtx_NOT (mode, w_src0));
 	  break;
 
 	default:
@@ -2037,7 +2049,7 @@ xstormy16_expand_arith (enum machine_mode mode, enum rtx_code code,
    SIZE_R will be a CONST_INT, X will be a hard register.  */
 
 const char *
-xstormy16_output_shift (enum machine_mode mode, enum rtx_code code,
+xstormy16_output_shift (machine_mode mode, enum rtx_code code,
 			rtx x, rtx size_r, rtx temp)
 {
   HOST_WIDE_INT size;
@@ -2298,7 +2310,7 @@ xstormy16_init_builtins (void)
 static rtx
 xstormy16_expand_builtin (tree exp, rtx target,
 			  rtx subtarget ATTRIBUTE_UNUSED,
-			  enum machine_mode mode ATTRIBUTE_UNUSED,
+			  machine_mode mode ATTRIBUTE_UNUSED,
 			  int ignore ATTRIBUTE_UNUSED)
 {
   rtx op[10], args[10], pat, copyto[10], retval = 0;
@@ -2320,11 +2332,11 @@ xstormy16_expand_builtin (tree exp, rtx target,
     {
       char ao = s16builtins[i].arg_ops[o];
       char c = insn_data[code].operand[o].constraint[0];
-      enum machine_mode omode;
+      machine_mode omode;
 
       copyto[o] = 0;
 
-      omode = (enum machine_mode) insn_data[code].operand[o].mode;
+      omode = (machine_mode) insn_data[code].operand[o].mode;
       if (ao == 'r')
 	op[o] = target ? target : gen_reg_rtx (omode);
       else if (ao == 't')
@@ -2367,14 +2379,15 @@ xstormy16_expand_builtin (tree exp, rtx target,
    patterns.  */
 
 static void
-combine_bnp (rtx insn)
+combine_bnp (rtx_insn *insn)
 {
   int insn_code, regno, need_extend;
   unsigned int mask;
-  rtx cond, reg, and_insn, load, qireg, mem;
-  enum machine_mode load_mode = QImode;
-  enum machine_mode and_mode = QImode;
-  rtx shift = NULL_RTX;
+  rtx cond, reg, qireg, mem;
+  rtx_insn *and_insn, *load;
+  machine_mode load_mode = QImode;
+  machine_mode and_mode = QImode;
+  rtx_insn *shift = NULL;
 
   insn_code = recog_memoized (insn);
   if (insn_code != CODE_FOR_cbranchhi
@@ -2434,8 +2447,7 @@ combine_bnp (rtx insn)
 	  if (reg_mentioned_p (reg, and_insn))
 	    return;
 
-	  if (GET_CODE (and_insn) != NOTE
-	      && GET_CODE (and_insn) != INSN)
+	  if (! NOTE_P (and_insn) && ! NONJUMP_INSN_P (and_insn))
 	    return;
 	}
     }
@@ -2454,8 +2466,7 @@ combine_bnp (rtx insn)
 	  if (reg_mentioned_p (reg, and_insn))
 	    return;
 
-	  if (GET_CODE (and_insn) != NOTE
-	      && GET_CODE (and_insn) != INSN)
+	  if (! NOTE_P (and_insn) && ! NONJUMP_INSN_P (and_insn))
 	    return;
 	}
 
@@ -2479,10 +2490,9 @@ combine_bnp (rtx insn)
 		break;
 
 	      if (reg_mentioned_p (reg, shift)
-		  || (GET_CODE (shift) != NOTE
-		      && GET_CODE (shift) != INSN))
+		  || (! NOTE_P (shift) && ! NONJUMP_INSN_P (shift)))
 		{
-		  shift = NULL_RTX;
+		  shift = NULL;
 		  break;
 		}
 	    }
@@ -2527,8 +2537,7 @@ combine_bnp (rtx insn)
       if (reg_mentioned_p (reg, load))
 	return;
 
-      if (GET_CODE (load) != NOTE
-	  && GET_CODE (load) != INSN)
+      if (! NOTE_P (load) && ! NONJUMP_INSN_P (load))
 	return;
     }
   if (!load)
@@ -2564,7 +2573,7 @@ combine_bnp (rtx insn)
 
       if (! (mask & 0xff))
 	{
-	  addr = plus_constant (addr, 1);
+	  addr = plus_constant (Pmode, addr, 1);
 	  mask >>= 8;
 	}
       mem = gen_rtx_MEM (QImode, addr);
@@ -2588,7 +2597,7 @@ combine_bnp (rtx insn)
 static void
 xstormy16_reorg (void)
 {
-  rtx insn;
+  rtx_insn *insn;
 
   for (insn = get_insns (); insn; insn = NEXT_INSN (insn))
     {
@@ -2668,6 +2677,9 @@ xstormy16_return_in_memory (const_tree type, const_tree fntype ATTRIBUTE_UNUSED)
 #define TARGET_PREFERRED_RELOAD_CLASS xstormy16_preferred_reload_class
 #undef  TARGET_PREFERRED_OUTPUT_RELOAD_CLASS
 #define TARGET_PREFERRED_OUTPUT_RELOAD_CLASS xstormy16_preferred_reload_class
+
+#undef TARGET_LRA_P
+#define TARGET_LRA_P hook_bool_void_false
 
 #undef TARGET_LEGITIMATE_ADDRESS_P
 #define TARGET_LEGITIMATE_ADDRESS_P	xstormy16_legitimate_address_p

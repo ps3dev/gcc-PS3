@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -122,7 +122,7 @@
 --        xx : x := y * z;
 --      end record;
 
---      for x'small use 0.25
+--      for x'small use 0.25;
 
 --  The expander is in charge of dealing with fixed-point, and of course the
 --  small declaration, which is not too late, since the declaration of type q
@@ -177,7 +177,7 @@
 --  repeatedly (for instance in the above aggregate "new Thing (Function_Call)"
 --  needs to be called 100 times.)
 
---  The reason why this mechanism does not work is that, the expanded code for
+--  The reason why this mechanism does not work is that the expanded code for
 --  the children is typically inserted above the parent and thus when the
 --  father gets expanded no re-evaluation takes place. For instance in the case
 --  of aggregates if "new Thing (Function_Call)" is expanded before of the
@@ -208,10 +208,6 @@ with Table;
 with Types;  use Types;
 
 package Sem is
-
-   New_Nodes_OK : Int := 1;
-   --  Temporary flag for use in checking out HLO. Set non-zero if it is
-   --  OK to generate new nodes.
 
    -----------------------------
    -- Semantic Analysis Flags --
@@ -246,6 +242,26 @@ package Sem is
    --  is deleted after analysis. Itypes generated in deleted code must be
    --  frozen from start, because the tree on which they depend will not
    --  be available at the freeze point.
+
+   In_Assertion_Expr : Nat := 0;
+   --  This is set non-zero if we are within the expression of an assertion
+   --  pragma or aspect. It is a counter which is incremented at the start of
+   --  expanding such an expression, and decremented on completion of expanding
+   --  that expression. Probably a boolean would be good enough, since we think
+   --  that such expressions cannot nest, but that might not be true in the
+   --  future (e.g. if let expressions are added to Ada) so we prepare for that
+   --  future possibility by making it a counter. As with In_Spec_Expression,
+   --  it must be recursively saved and restored for a Semantics call.
+
+   In_Compile_Time_Warning_Or_Error : Boolean := False;
+   --  Switch to indicate that we are validating a pragma Compile_Time_Warning
+   --  or Compile_Time_Error after the back end has been called (to check these
+   --  pragmas for size and alignment appropriateness).
+
+   In_Default_Expr : Boolean := False;
+   --  Switch to indicate that we are analyzing a default component expression.
+   --  As with In_Spec_Expression, it must be recursively saved and restored
+   --  for a Semantics call.
 
    In_Inlined_Body : Boolean := False;
    --  Switch to indicate that we are analyzing and resolving an inlined body.
@@ -287,10 +303,10 @@ package Sem is
 
    --  Scope based suppress checks for the predefined checks (from initial
    --  command line arguments, or from Suppress pragmas not including an entity
-   --  entity name) are recorded in the Sem.Suppress variable, and all that is
-   --  necessary is to save the state of this variable on scope entry, and
-   --  restore it on scope exit. This mechanism allows for fast checking of
-   --  the scope suppress state without needing complex data structures.
+   --  name) are recorded in the Sem.Scope_Suppress variable, and all that
+   --  is necessary is to save the state of this variable on scope entry, and
+   --  restore it on scope exit. This mechanism allows for fast checking of the
+   --  scope suppress state without needing complex data structures.
 
    --  Entity based checks, from Suppress/Unsuppress pragmas giving an
    --  Entity_Id and scope based checks for non-predefined checks (introduced
@@ -314,15 +330,15 @@ package Sem is
    --  that are applicable to all entities. A similar search is needed for any
    --  non-predefined check even if no specific entity is involved.
 
-   Scope_Suppress : Suppress_Array := Suppress_Options;
-   --  This array contains the current scope based settings of the suppress
-   --  switches. It is initialized from the options as shown, and then modified
-   --  by pragma Suppress. On entry to each scope, the current setting is saved
-   --  the scope stack, and then restored on exit from the scope. This record
-   --  may be rapidly checked to determine the current status of a check if
-   --  no specific entity is involved or if the specific entity involved is
-   --  one for which no specific Suppress/Unsuppress pragma has been set (as
-   --  indicated by the Checks_May_Be_Suppressed flag being set).
+   Scope_Suppress : Suppress_Record;
+   --  This variable contains the current scope based settings of the suppress
+   --  switches. It is initialized from Suppress_Options in Gnat1drv, and then
+   --  modified by pragma Suppress. On entry to each scope, the current setting
+   --  is saved on the scope stack, and then restored on exit from the scope.
+   --  This record may be rapidly checked to determine the current status of
+   --  a check if no specific entity is involved or if the specific entity
+   --  involved is one for which no specific Suppress/Unsuppress pragma has
+   --  been set (as indicated by the Checks_May_Be_Suppressed flag being set).
 
    --  This scheme is a little complex, but serves the purpose of enabling
    --  a very rapid check in the common case where no entity specific pragma
@@ -425,11 +441,11 @@ package Sem is
    --  compilation unit. These sections are separated by distinct occurrences
    --  of package Standard. The currently active section of the scope stack
    --  goes from the current scope to the first (innermost) occurrence of
-   --  Standard, which is additionally marked with the flag
-   --  Is_Active_Stack_Base. The basic visibility routine (Find_Direct_Name, in
-   --  Sem_Ch8) uses this contiguous section of the scope stack to determine
-   --  whether a given entity is or is not visible at a point. In_Open_Scopes
-   --  only examines the currently active section of the scope stack.
+   --  Standard, which is additionally marked with flag Is_Active_Stack_Base.
+   --  The basic visibility routine (Find_Direct_Name, in Sem_Ch8) uses this
+   --  contiguous section of the scope stack to determine whether a given
+   --  entity is or is not visible at a point. In_Open_Scopes only examines
+   --  the currently active section of the scope stack.
 
    --  Similar complications arise when processing child instances. These
    --  must be compiled in the context of parent instances, and therefore the
@@ -445,6 +461,16 @@ package Sem is
    --  units and their instantiations, have led to a hybrid model that carries
    --  more state than one would wish.
 
+   type Scope_Action_Kind is (Before, After, Cleanup);
+   type Scope_Actions is array (Scope_Action_Kind) of List_Id;
+   --  Transient blocks have three associated actions list, to be inserted
+   --  before and after the block's statements, and as cleanup actions.
+
+   Configuration_Component_Alignment : Component_Alignment_Kind :=
+                                         Calign_Default;
+   --  Used for handling the pragma Component_Alignment in the context of a
+   --  configuration file.
+
    type Scope_Stack_Entry is record
       Entity : Entity_Id;
       --  Entity representing the scope
@@ -453,17 +479,37 @@ package Sem is
       --  Pointer to name of last subprogram body in this scope. Used for
       --  testing proper alpha ordering of subprogram bodies in scope.
 
-      Save_Scope_Suppress  : Suppress_Array;
+      Save_Scope_Suppress : Suppress_Record;
       --  Save contents of Scope_Suppress on entry
 
       Save_Local_Suppress_Stack_Top : Suppress_Stack_Entry_Ptr;
       --  Save contents of Local_Suppress_Stack on entry to restore on exit
 
       Save_Check_Policy_List : Node_Id;
-      --  Save contents of Check_Policy_List on entry to restore on exit
+      --  Save contents of Check_Policy_List on entry to restore on exit. The
+      --  Check_Policy pragmas are chained with Check_Policy_List pointing to
+      --  the most recent entry. This list is searched starting here, so that
+      --  the search finds the most recent appicable entry. When we restore
+      --  Check_Policy_List on exit from the scope, the effect is to remove
+      --  all entries set in the scope being exited.
 
       Save_Default_Storage_Pool : Node_Id;
       --  Save contents of Default_Storage_Pool on entry to restore on exit
+
+      Save_SPARK_Mode : SPARK_Mode_Type;
+      --  Setting of SPARK_Mode on entry to restore on exit
+
+      Save_SPARK_Mode_Pragma : Node_Id;
+      --  Setting of SPARK_Mode_Pragma on entry to restore on exit
+
+      Save_No_Tagged_Streams : Node_Id;
+      --  Setting of No_Tagged_Streams to restore on exit
+
+      Save_Default_SSO : Character;
+      --  Setting of Default_SSO on entry to restore on exit
+
+      Save_Uneval_Old : Character;
+      --  Setting of Uneval_Old on entry to restore on exit
 
       Is_Transient : Boolean;
       --  Marks transient scopes (see Exp_Ch7 body for details)
@@ -477,14 +523,14 @@ package Sem is
       --  See Sem_Ch10 (Install_Parents, Remove_Parents).
 
       Node_To_Be_Wrapped : Node_Id;
-      --  Only used in transient scopes. Records the node which will
-      --  be wrapped by the transient block.
+      --  Only used in transient scopes. Records the node which will be wrapped
+      --  by the transient block.
 
-      Actions_To_Be_Wrapped_Before : List_Id;
-      Actions_To_Be_Wrapped_After  : List_Id;
-      --  Actions that have to be inserted at the start or at the end of a
-      --  transient block. Used to temporarily hold these actions until the
-      --  block is created, at which time the actions are moved to the block.
+      Actions_To_Be_Wrapped : Scope_Actions;
+      --  Actions that have to be inserted at the start, at the end, or as
+      --  cleanup actions of a transient block. Used to temporarily hold these
+      --  actions until the block is created, at which time the actions are
+      --  moved to the block.
 
       Pending_Freeze_Actions : List_Id;
       --  Used to collect freeze entity nodes and associated actions that are
@@ -511,6 +557,9 @@ package Sem is
       --  Standard_Standard can be pushed anew on the scope stack to start a
       --  new active section (see comment above).
 
+      Locked_Shared_Objects : Elist_Id;
+      --  List of shared passive protected objects that have been locked in
+      --  this transient scope (always No_Elist for non-transient scopes).
    end record;
 
    package Scope_Stack is new Table.Table (
@@ -530,6 +579,9 @@ package Sem is
 
    procedure Lock;
    --  Lock internal tables before calling back end
+
+   procedure Unlock;
+   --  Unlock internal tables
 
    procedure Semantics (Comp_Unit : Node_Id);
    --  This procedure is called to perform semantic analysis on the specified
@@ -553,7 +605,7 @@ package Sem is
    --  Note: for integer and real literals, the analyzer sets the flag to
    --  indicate that the result is a static expression. If the expander
    --  generates a literal that does NOT correspond to a static expression,
-   --  e.g. by folding an expression whose value is known at compile-time,
+   --  e.g. by folding an expression whose value is known at compile time,
    --  but is not technically static, then the caller should reset the
    --  Is_Static_Expression flag after analyzing but before resolving.
    --
@@ -621,46 +673,49 @@ package Sem is
    --  external (more global) to it.
 
    procedure Enter_Generic_Scope (S : Entity_Id);
-   --  Shall be called each time a Generic subprogram or package scope is
-   --  entered. S is the entity of the scope.
+   --  Called each time a Generic subprogram or package scope is entered. S is
+   --  the entity of the scope.
+   --
    --  ??? At the moment, only called for package specs because this mechanism
    --  is only used for avoiding freezing of external references in generics
    --  and this can only be an issue if the outer generic scope is a package
    --  spec (otherwise all external entities are already frozen)
 
    procedure Exit_Generic_Scope  (S : Entity_Id);
-   --  Shall be called each time a Generic subprogram or package scope is
-   --  exited. S is the entity of the scope.
+   --  Called each time a Generic subprogram or package scope is exited. S is
+   --  the entity of the scope.
+   --
    --  ??? At the moment, only called for package specs exit.
 
    function Explicit_Suppress (E : Entity_Id; C : Check_Id) return Boolean;
    --  This function returns True if an explicit pragma Suppress for check C
    --  is present in the package defining E.
 
-   function Is_Check_Suppressed (E : Entity_Id; C : Check_Id) return Boolean;
-   --  This function is called if Checks_May_Be_Suppressed (E) is True to
-   --  determine whether check C is suppressed either on the entity E or
-   --  as the result of a scope suppress pragma. If Checks_May_Be_Suppressed
-   --  is False, then the status of the check can be determined simply by
-   --  examining Scope_Checks (C), so this routine is not called in that case.
+   procedure Preanalyze (N : Node_Id);
+   --  Performs a pre-analysis of node N. During pre-analysis no expansion is
+   --  carried out for N or its children. For more info on pre-analysis read
+   --  the spec of Sem.
 
    generic
       with procedure Action (Item : Node_Id);
    procedure Walk_Library_Items;
-   --  Primarily for use by SofCheck Inspector. Must be called after semantic
-   --  analysis (and expansion) are complete. Walks each relevant library item,
-   --  calling Action for each, in an order such that one will not run across
-   --  forward references. Each Item passed to Action is the declaration or
-   --  body of a library unit, including generics and renamings. The first item
-   --  is the N_Package_Declaration node for package Standard. Bodies are not
-   --  included, except for the main unit itself, which always comes last.
+   --  Primarily for use by CodePeer and GNATprove. Must be called after
+   --  semantic analysis (and expansion in the case of CodePeer) are complete.
+   --  Walks each relevant library item, calling Action for each, in an order
+   --  such that one will not run across forward references. Each Item passed
+   --  to Action is the declaration or body of a library unit, including
+   --  generics and renamings. The first item is the N_Package_Declaration node
+   --  for package Standard. Bodies are not included, except for the main unit
+   --  itself, which always comes last.
    --
    --  Item is never a subunit
    --
    --  Item is never an instantiation. Instead, the instance declaration is
    --  passed, and (if the instantiation is the main unit), the instance body.
 
-   --  Debugging:
+   ------------------------
+   -- Debugging Routines --
+   ------------------------
 
    function ss (Index : Int) return Scope_Stack_Entry;
    pragma Export (Ada, ss);

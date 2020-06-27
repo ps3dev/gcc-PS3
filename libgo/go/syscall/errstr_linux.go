@@ -1,15 +1,18 @@
-// errstr_rtems.go -- RTEMS specific error strings.
+// errstr_linux.go -- GNU/Linux specific error strings.
 
 // Copyright 2010 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
+
+// We use this rather than errstr.go because on GNU/Linux sterror_r
+// returns a pointer to the error message, and may not use buf at all.
 
 package syscall
 
 import "unsafe"
 
 //sysnb	strerror_r(errnum int, b []byte) (errstr *byte)
-//strerror_r(errnum int, b *byte, len Size_t) *byte
+//strerror_r(errnum _C_int, b *byte, len Size_t) *byte
 
 func Errstr(errnum int) string {
 	a := make([]byte, 128)
@@ -18,6 +21,11 @@ func Errstr(errnum int) string {
 	i := 0
 	for b[i] != 0 {
 		i++
+	}
+	// Lowercase first letter: Bad -> bad, but STREAM -> STREAM.
+	if i > 1 && 'A' <= b[0] && b[0] <= 'Z' && 'a' <= b[1] && b[1] <= 'z' {
+		c := b[0] + 'a' - 'A'
+		return string(c) + string(b[1:i])
 	}
 	return string(b[:i])
 }

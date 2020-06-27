@@ -1,8 +1,6 @@
 // Iostreams base classes -*- C++ -*-
 
-// Copyright (C) 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005,
-// 2006, 2007, 2008, 2009, 2010, 2011
-// Free Software Foundation, Inc.
+// Copyright (C) 1997-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -38,6 +36,7 @@
 #include <bits/locale_classes.h>
 #include <bits/locale_facets.h>
 #include <bits/streambuf_iterator.h>
+#include <bits/move.h>
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
@@ -52,10 +51,14 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       return *__f;
     }
 
-  // 27.4.5  Template class basic_ios
   /**
-   *  @brief  Virtual base class for all stream classes.
+   *  @brief Template class basic_ios, virtual base class for all
+   *  stream classes. 
    *  @ingroup io
+   *
+   *  @tparam _CharT  Type of character stream.
+   *  @tparam _Traits  Traits for character type, defaults to
+   *                   char_traits<_CharT>.
    *
    *  Most of the member functions called dispatched on stream objects
    *  (e.g., @c std::cout.foo(bar);) are consolidated in this class.
@@ -67,7 +70,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       //@{
       /**
        *  These are standard types.  They permit a standardized way of
-       *  referring to names of (or names dependant on) the template
+       *  referring to names of (or names dependent on) the template
        *  parameters, which are specific to the implementation.
       */
       typedef _CharT                                 char_type;
@@ -110,8 +113,13 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
        *  This allows you to write constructs such as
        *  <code>if (!a_stream) ...</code> and <code>while (a_stream) ...</code>
       */
+#if __cplusplus >= 201103L
+      explicit operator bool() const
+      { return !this->fail(); }
+#else
       operator void*() const
       { return this->fail() ? 0 : const_cast<basic_ios*>(this); }
+#endif
 
       bool
       operator!() const
@@ -462,6 +470,41 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       */
       void
       init(basic_streambuf<_CharT, _Traits>* __sb);
+
+#if __cplusplus >= 201103L
+      basic_ios(const basic_ios&) = delete;
+      basic_ios& operator=(const basic_ios&) = delete;
+
+      void
+      move(basic_ios& __rhs)
+      {
+	ios_base::_M_move(__rhs);
+	_M_cache_locale(_M_ios_locale);
+	this->tie(__rhs.tie(nullptr));
+	_M_fill = __rhs._M_fill;
+	_M_fill_init = __rhs._M_fill_init;
+	_M_streambuf = nullptr;
+      }
+
+      void
+      move(basic_ios&& __rhs)
+      { this->move(__rhs); }
+
+      void
+      swap(basic_ios& __rhs) noexcept
+      {
+	ios_base::_M_swap(__rhs);
+	_M_cache_locale(_M_ios_locale);
+	__rhs._M_cache_locale(__rhs._M_ios_locale);
+	std::swap(_M_tie, __rhs._M_tie);
+	std::swap(_M_fill, __rhs._M_fill);
+	std::swap(_M_fill_init, __rhs._M_fill_init);
+      }
+
+      void
+      set_rdbuf(basic_streambuf<_CharT, _Traits>* __sb)
+      { _M_streambuf = __sb; }
+#endif
 
       void
       _M_cache_locale(const locale& __loc);

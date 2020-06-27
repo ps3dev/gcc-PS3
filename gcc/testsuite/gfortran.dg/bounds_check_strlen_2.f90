@@ -11,8 +11,8 @@ CONTAINS
 
   SUBROUTINE test (str, n)
     IMPLICIT NONE
-    CHARACTER(len=n) :: str
     INTEGER :: n
+    CHARACTER(len=n) :: str
   END SUBROUTINE test
 
   SUBROUTINE test2 (str)
@@ -30,4 +30,3 @@ PROGRAM main
 END PROGRAM main
 
 ! { dg-output "shorter than the declared one for dummy argument 'str' \\(3/5\\)" }
-! { dg-final { cleanup-modules "m" } }

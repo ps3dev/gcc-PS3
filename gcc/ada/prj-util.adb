@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2001-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 2001-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -23,11 +23,16 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
+with Ada.Containers.Indefinite_Ordered_Sets;
+with Ada.Directories;
+with Ada.Strings.Fixed;          use Ada.Strings.Fixed;
+with Ada.Strings.Maps;           use Ada.Strings.Maps;
 with Ada.Unchecked_Deallocation;
 
 with GNAT.Case_Util; use GNAT.Case_Util;
 with GNAT.Regexp;    use GNAT.Regexp;
 
+with ALI;      use ALI;
 with Osint;    use Osint;
 with Output;   use Output;
 with Opt;
@@ -390,6 +395,165 @@ package body Prj.Util is
       return Add_Suffix (Name_Find);
    end Executable_Of;
 
+   ---------------------------
+   -- For_Interface_Sources --
+   ---------------------------
+
+   procedure For_Interface_Sources
+     (Tree    : Project_Tree_Ref;
+      Project : Project_Id)
+   is
+      use Ada;
+      use type Ada.Containers.Count_Type;
+
+      package Dep_Names is new Containers.Indefinite_Ordered_Sets (String);
+
+      function Load_ALI (Filename : String) return ALI_Id;
+      --  Load an ALI file and return its id
+
+      --------------
+      -- Load_ALI --
+      --------------
+
+      function Load_ALI (Filename : String) return ALI_Id is
+         Result   : ALI_Id := No_ALI_Id;
+         Text     : Text_Buffer_Ptr;
+         Lib_File : File_Name_Type;
+
+      begin
+         if Directories.Exists (Filename) then
+            Name_Len := 0;
+            Add_Str_To_Name_Buffer (Filename);
+            Lib_File := Name_Find;
+            Text := Osint.Read_Library_Info (Lib_File);
+            Result :=
+              ALI.Scan_ALI
+                (Lib_File,
+                 Text,
+                 Ignore_ED  => False,
+                 Err        => True,
+                 Read_Lines => "UD");
+            Free (Text);
+         end if;
+
+         return Result;
+      end Load_ALI;
+
+      --  Local declarations
+
+      Iter : Source_Iterator;
+      Sid  : Source_Id;
+      ALI  : ALI_Id;
+
+      First_Unit  : Unit_Id;
+      Second_Unit : Unit_Id;
+      Body_Needed : Boolean;
+      Deps        : Dep_Names.Set;
+
+   --  Start of processing for For_Interface_Sources
+
+   begin
+      if Project.Qualifier = Aggregate_Library then
+         Iter := For_Each_Source (Tree);
+      else
+         Iter := For_Each_Source (Tree, Project);
+      end if;
+
+      --  First look at each spec, check if the body is needed
+
+      loop
+         Sid := Element (Iter);
+         exit when Sid = No_Source;
+
+         --  Skip sources that are removed/excluded and sources not part of
+         --  the interface for standalone libraries.
+
+         if Sid.Kind = Spec
+           and then (not Sid.Project.Externally_Built
+                      or else Sid.Project = Project)
+           and then not Sid.Locally_Removed
+           and then (Project.Standalone_Library = No
+                      or else Sid.Declared_In_Interfaces)
+
+           --  Handle case of non-compilable languages
+
+           and then Sid.Dep_Name /= No_File
+         then
+            Action (Sid);
+
+            --  Check ALI for dependencies on body and sep
+
+            ALI :=
+              Load_ALI
+                (Get_Name_String (Get_Object_Directory (Sid.Project, True))
+                 & Get_Name_String (Sid.Dep_Name));
+
+            if ALI /= No_ALI_Id then
+               First_Unit := ALIs.Table (ALI).First_Unit;
+               Second_Unit := No_Unit_Id;
+               Body_Needed := True;
+
+               --  If there is both a spec and a body, check if both needed
+
+               if Units.Table (First_Unit).Utype = Is_Body then
+                  Second_Unit := ALIs.Table (ALI).Last_Unit;
+
+                  --  If the body is not needed, then reset First_Unit
+
+                  if not Units.Table (Second_Unit).Body_Needed_For_SAL then
+                     Body_Needed := False;
+                  end if;
+
+               elsif Units.Table (First_Unit).Utype = Is_Spec_Only then
+                  Body_Needed := False;
+               end if;
+
+               --  Handle all the separates, if any
+
+               if Body_Needed then
+                  if Other_Part (Sid) /= null then
+                     Deps.Include (Get_Name_String (Other_Part (Sid).File));
+                  end if;
+
+                  for Dep in ALIs.Table (ALI).First_Sdep ..
+                    ALIs.Table (ALI).Last_Sdep
+                  loop
+                     if Sdep.Table (Dep).Subunit_Name /= No_Name then
+                        Deps.Include
+                          (Get_Name_String (Sdep.Table (Dep).Sfile));
+                     end if;
+                  end loop;
+               end if;
+            end if;
+         end if;
+
+         Next (Iter);
+      end loop;
+
+      --  Now handle the bodies and separates if needed
+
+      if Deps.Length /= 0 then
+         if Project.Qualifier = Aggregate_Library then
+            Iter := For_Each_Source (Tree);
+         else
+            Iter := For_Each_Source (Tree, Project);
+         end if;
+
+         loop
+            Sid := Element (Iter);
+            exit when Sid = No_Source;
+
+            if Sid.Kind /= Spec
+              and then Deps.Contains (Get_Name_String (Sid.File))
+            then
+               Action (Sid);
+            end if;
+
+            Next (Iter);
+         end loop;
+      end if;
+   end For_Interface_Sources;
+
    --------------
    -- Get_Line --
    --------------
@@ -635,6 +799,76 @@ package body Prj.Util is
       L (L'Last) := ASCII.LF;
       Put (File, L);
    end Put_Line;
+
+   -------------------
+   -- Relative_Path --
+   -------------------
+
+   function Relative_Path (Pathname : String; To : String) return String is
+      function Ensure_Directory (Path : String) return String;
+      --  Returns Path with an added directory separator if needed
+
+      ----------------------
+      -- Ensure_Directory --
+      ----------------------
+
+      function Ensure_Directory (Path : String) return String is
+      begin
+         if Path'Length = 0
+           or else Path (Path'Last) = Directory_Separator
+           or else Path (Path'Last) = '/' -- on Windows check also for /
+         then
+            return Path;
+         else
+            return Path & Directory_Separator;
+         end if;
+      end Ensure_Directory;
+
+      --  Local variables
+
+      Dir_Sep_Map : constant Character_Mapping := To_Mapping ("\", "/");
+
+      P  : String (1 .. Pathname'Length) := Pathname;
+      T  : String (1 .. To'Length) := To;
+
+      Pi : Natural; -- common prefix ending
+      N  : Natural := 0;
+
+   --  Start of processing for Relative_Path
+
+   begin
+      pragma Assert (Is_Absolute_Path (Pathname));
+      pragma Assert (Is_Absolute_Path (To));
+
+      --  Use canonical directory separator
+
+      Translate (Source => P, Mapping => Dir_Sep_Map);
+      Translate (Source => T, Mapping => Dir_Sep_Map);
+
+      --  First check for common prefix
+
+      Pi := 1;
+      while Pi < P'Last and then Pi < T'Last and then P (Pi) = T (Pi) loop
+         Pi := Pi + 1;
+      end loop;
+
+      --  Cut common prefix at a directory separator
+
+      while Pi > P'First and then P (Pi) /= '/' loop
+         Pi := Pi - 1;
+      end loop;
+
+      --  Count directory under prefix in P, these will be replaced by the
+      --  corresponding number of "..".
+
+      N := Count (T (Pi + 1 .. T'Last), "/");
+
+      if T (T'Last) /= '/' then
+         N := N + 1;
+      end if;
+
+      return N * "../" & Ensure_Directory (P (Pi + 1 .. P'Last));
+   end Relative_Path;
 
    ---------------------------
    -- Read_Source_Info_File --
@@ -1176,8 +1410,7 @@ package body Prj.Util is
                Last := Last - 1;
             end loop;
 
-            --  If we do not find a separator, we output the maximum length
-            --  possible.
+            --  If we do not find a separator, output maximum length possible
 
             if Last < First then
                Last := First + Max_Length - Positive (Column);
@@ -1195,4 +1428,5 @@ package body Prj.Util is
          Write_Str (S (First .. S'Last));
       end if;
    end Write_Str;
+
 end Prj.Util;

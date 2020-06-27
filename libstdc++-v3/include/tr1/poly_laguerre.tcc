@@ -1,7 +1,6 @@
 // Special functions -*- C++ -*-
 
-// Copyright (C) 2006, 2007, 2008, 2009, 2010
-// Free Software Foundation, Inc.
+// Copyright (C) 2006-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -44,8 +43,15 @@
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
+#if _GLIBCXX_USE_STD_SPEC_FUNCS
+# define _GLIBCXX_MATH_NS ::std
+#elif defined(_GLIBCXX_TR1_CMATH)
 namespace tr1
 {
+# define _GLIBCXX_MATH_NS ::std::tr1
+#else
+# error do not include this header directly, use <cmath> or <tr1/cmath>
+#endif
   // [5.2] Special functions
 
   // Implementation-space details.
@@ -68,8 +74,7 @@ namespace tr1
      */
     template<typename _Tpa, typename _Tp>
     _Tp
-    __poly_laguerre_large_n(const unsigned __n, const _Tpa __alpha1,
-                            const _Tp __x)
+    __poly_laguerre_large_n(unsigned __n, _Tpa __alpha1, _Tp __x)
     {
       const _Tp __a = -_Tp(__n);
       const _Tp __b = _Tp(__alpha1) + _Tp(1);
@@ -82,8 +87,8 @@ namespace tr1
                         * __eta * __eta * __cos2th * __sin2th;
 
 #if _GLIBCXX_USE_C99_MATH_TR1
-      const _Tp __lg_b = std::tr1::lgamma(_Tp(__n) + __b);
-      const _Tp __lnfact = std::tr1::lgamma(_Tp(__n + 1));
+      const _Tp __lg_b = _GLIBCXX_MATH_NS::lgamma(_Tp(__n) + __b);
+      const _Tp __lnfact = _GLIBCXX_MATH_NS::lgamma(_Tp(__n + 1));
 #else
       const _Tp __lg_b = __log_gamma(_Tp(__n) + __b);
       const _Tp __lnfact = __log_gamma(_Tp(__n + 1));
@@ -123,8 +128,7 @@ namespace tr1
      */
     template<typename _Tpa, typename _Tp>
     _Tp
-    __poly_laguerre_hyperg(const unsigned int __n, const _Tpa __alpha1,
-			   const _Tp __x)
+    __poly_laguerre_hyperg(unsigned int __n, _Tpa __alpha1, _Tp __x)
     {
       const _Tp __b = _Tp(__alpha1) + _Tp(1);
       const _Tp __mx = -__x;
@@ -180,8 +184,7 @@ namespace tr1
      */
     template<typename _Tpa, typename _Tp>
     _Tp
-    __poly_laguerre_recursion(const unsigned int __n,
-                              const _Tpa __alpha1, const _Tp __x)
+    __poly_laguerre_recursion(unsigned int __n, _Tpa __alpha1, _Tp __x)
     {
       //   Compute l_0.
       _Tp __l_0 = _Tp(1);
@@ -239,9 +242,8 @@ namespace tr1
      *           degree @f$ \alpha @f$, and argument x.
      */
     template<typename _Tpa, typename _Tp>
-    inline _Tp
-    __poly_laguerre(const unsigned int __n, const _Tpa __alpha1,
-                    const _Tp __x)
+    _Tp
+    __poly_laguerre(unsigned int __n, _Tpa __alpha1, _Tp __x)
     {
       if (__x < _Tp(0))
         std::__throw_domain_error(__N("Negative argument "
@@ -293,11 +295,8 @@ namespace tr1
      */
     template<typename _Tp>
     inline _Tp
-    __assoc_laguerre(const unsigned int __n, const unsigned int __m,
-                     const _Tp __x)
-    {
-      return __poly_laguerre<unsigned int, _Tp>(__n, __m, __x);
-    }
+    __assoc_laguerre(unsigned int __n, unsigned int __m, _Tp __x)
+    { return __poly_laguerre<unsigned int, _Tp>(__n, __m, __x); }
 
 
     /**
@@ -316,14 +315,15 @@ namespace tr1
      */
     template<typename _Tp>
     inline _Tp
-    __laguerre(const unsigned int __n, const _Tp __x)
-    {
-      return __poly_laguerre<unsigned int, _Tp>(__n, 0, __x);
-    }
+    __laguerre(unsigned int __n, _Tp __x)
+    { return __poly_laguerre<unsigned int, _Tp>(__n, 0, __x); }
 
   _GLIBCXX_END_NAMESPACE_VERSION
-  } // namespace std::tr1::__detail
-}
+  } // namespace __detail
+#undef _GLIBCXX_MATH_NS
+#if ! _GLIBCXX_USE_STD_SPEC_FUNCS && defined(_GLIBCXX_TR1_CMATH)
+} // namespace tr1
+#endif
 }
 
 #endif // _GLIBCXX_TR1_POLY_LAGUERRE_TCC

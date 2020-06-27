@@ -1,6 +1,5 @@
 /* Definitions of target machine for GNU compiler.  Vxworks PowerPC version.
-   Copyright (C) 1996, 2000, 2002, 2003, 2004, 2005, 2007, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 1996-2017 Free Software Foundation, Inc.
    Contributed by CodeSourcery, LLC.
 
 This file is part of GCC.
@@ -61,6 +60,12 @@ along with GCC; see the file COPYING3.  If not see
 
 #define SUBTARGET_EXTRA_SPECS /* none needed */
 
+/* VxWorks and VxWorksAE (aka 653) expect different CPU values to designate
+   SPE on 8548.  We define a dedicated macro for the base VxWorks here, which
+   the AE configuration will override.  */
+
+#define VXCPU_FOR_8548 "PPC85XX"
+
 /* FIXME: The only reason we allow no -mcpu switch at all is because
    config-ml.in insists on a "." multilib. */
 #define CPP_SPEC \
@@ -74,6 +79,7 @@ along with GCC; see the file COPYING3.  If not see
      mcpu=604 : -DCPU=PPC604  ; \
      mcpu=860 : -DCPU=PPC860  ; \
      mcpu=8540: -DCPU=PPC85XX ; \
+     mcpu=8548: -DCPU=" VXCPU_FOR_8548 "; \
               : -DCPU=PPC604  }}" \
 VXWORKS_ADDITIONAL_CPP_SPEC
 
@@ -84,7 +90,7 @@ VXWORKS_ADDITIONAL_CPP_SPEC
 #define ASM_SPEC \
 "%(asm_cpu) \
  %{,assembler|,assembler-with-cpp: %{mregnames} %{mno-regnames}} \
- %{mrelocatable} %{mrelocatable-lib} %{fpic:-K PIC} %{fPIC:-K PIC} -mbig"
+ %{mrelocatable} %{mrelocatable-lib} %{" FPIC_SPEC ":-K PIC} -mbig"
 
 #undef  LIB_SPEC
 #define LIB_SPEC VXWORKS_LIB_SPEC
@@ -99,8 +105,7 @@ VXWORKS_ADDITIONAL_CPP_SPEC
 #undef MULTILIB_DEFAULTS
 
 #undef TARGET_DEFAULT
-#define TARGET_DEFAULT \
-  (MASK_POWERPC | MASK_NEW_MNEMONICS | MASK_EABI | MASK_STRICT_ALIGN)
+#define TARGET_DEFAULT (MASK_EABI | MASK_STRICT_ALIGN)
 
 #undef PROCESSOR_DEFAULT
 #define PROCESSOR_DEFAULT PROCESSOR_PPC604
@@ -122,19 +127,9 @@ VXWORKS_ADDITIONAL_CPP_SPEC
 
 #undef  ABI_STACK_BOUNDARY
 
-/* Make -mcpu=8540 imply SPE.  ISEL is automatically enabled, the
-   others must be done by hand.  Handle -mrtp.  Disable -fPIC
-   for -mrtp - the VxWorks PIC model is not compatible with it.  */
 #undef SUBSUBTARGET_OVERRIDE_OPTIONS
 #define SUBSUBTARGET_OVERRIDE_OPTIONS		\
   do {						\
-    if (TARGET_E500)				\
-      {						\
-	rs6000_spe = 1;				\
-	rs6000_spe_abi = 1;			\
-	rs6000_float_gprs = 1;			\
-      }						\
-						\
   if (!global_options_set.x_g_switch_value)	\
     g_switch_value = SDATA_DEFAULT_SIZE;	\
   VXWORKS_OVERRIDE_OPTIONS;			\
@@ -143,3 +138,10 @@ VXWORKS_ADDITIONAL_CPP_SPEC
 /* No _mcount profiling on VxWorks.  */
 #undef FUNCTION_PROFILER
 #define FUNCTION_PROFILER(FILE,LABELNO) VXWORKS_FUNCTION_PROFILER(FILE,LABELNO)
+
+/* Define this to be nonzero if static stack checking is supported.  */
+#define STACK_CHECK_STATIC_BUILTIN 1
+
+/* This platform supports the probing method of stack checking (RTP mode).
+   8K is reserved in the stack to propagate exceptions in case of overflow.  */
+#define STACK_CHECK_PROTECT 8192

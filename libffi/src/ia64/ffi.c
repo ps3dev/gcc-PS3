@@ -1,6 +1,7 @@
 /* -----------------------------------------------------------------------
    ffi.c - Copyright (c) 1998, 2007, 2008, 2012 Red Hat, Inc.
 	   Copyright (c) 2000 Hewlett Packard Company
+	   Copyright (c) 2011 Anthony Green
    
    IA64 Foreign Function Interface 
 
@@ -400,7 +401,7 @@ ffi_call(ffi_cif *cif, void (*fn)(void), void *rvalue, void **avalue)
    the closure (in the "trampoline" area), but we replace the gp
    pointer with a pointer to the closure itself.  We also add the real
    gp pointer to the closure.  This allows the function entry code to
-   both retrieve the user data, and to restire the correct gp pointer.  */
+   both retrieve the user data, and to restore the correct gp pointer.  */
 
 extern void ffi_closure_unix ();
 
@@ -429,7 +430,8 @@ ffi_prep_closure_loc (ffi_closure* closure,
   struct ffi_ia64_trampoline_struct *tramp;
   struct ia64_fd *fd;
 
-  FFI_ASSERT (cif->abi == FFI_UNIX);
+  if (cif->abi != FFI_UNIX)
+    return FFI_BAD_ABI;
 
   tramp = (struct ffi_ia64_trampoline_struct *)closure->tramp;
   fd = (struct ia64_fd *)(void *)ffi_closure_unix;

@@ -1,5 +1,5 @@
 /* This is a software fixed-point library.
-   Copyright (C) 2007, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2007-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -45,19 +45,16 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
    Ex: If we define FROM_QQ and TO_SI, the conversion from QQ to SI is
    generated.  */
 
-#ifndef LIBGCC2_LONG_DOUBLE_TYPE_SIZE
-#define LIBGCC2_LONG_DOUBLE_TYPE_SIZE LONG_DOUBLE_TYPE_SIZE
+#ifdef __LIBGCC_HAS_SF_MODE__
+#define LIBGCC2_HAS_SF_MODE 1
+#else
+#define LIBGCC2_HAS_SF_MODE 0
 #endif
 
-#ifndef LIBGCC2_HAS_SF_MODE
-#define LIBGCC2_HAS_SF_MODE (BITS_PER_UNIT == 8)
-#endif
-
-#ifndef LIBGCC2_HAS_DF_MODE
-#define LIBGCC2_HAS_DF_MODE \
-  (BITS_PER_UNIT == 8 \
-   && (__SIZEOF_DOUBLE__ * __CHAR_BIT__ == 64 \
-       || LIBGCC2_LONG_DOUBLE_TYPE_SIZE == 64))
+#ifdef __LIBGCC_HAS_DF_MODE__
+#define LIBGCC2_HAS_DF_MODE 1
+#else
+#define LIBGCC2_HAS_DF_MODE 0
 #endif
 
 typedef          int QItype     __attribute__ ((mode (QI)));
@@ -437,7 +434,7 @@ typedef union
 } INTunion;
 #endif
 
-#define FIXED_WIDTH	(FIXED_SIZE * BITS_PER_UNIT) /* in bits.  */
+#define FIXED_WIDTH	(FIXED_SIZE * __CHAR_BIT__) /* in bits.  */
 #define FIXED_C_TYPE1(NAME)	NAME ## type
 #define FIXED_C_TYPE2(NAME)	FIXED_C_TYPE1(NAME)
 #define FIXED_C_TYPE	FIXED_C_TYPE2(MODE_NAME)
@@ -1111,17 +1108,17 @@ extern FIXED_C_TYPE FIXED_USASHL (FIXED_C_TYPE, word_type);
 #if defined (FROM_MODE_NAME_S) && defined (TO_MODE_NAME_S)
 
 #if FROM_TYPE == 1	/* Signed integer.  */
-#define FROM_INT_WIDTH		(FROM_INT_SIZE * BITS_PER_UNIT)
+#define FROM_INT_WIDTH		(FROM_INT_SIZE * __CHAR_BIT__)
 #endif
 
 #if FROM_TYPE == 2	/* Unsigned integer.  */
-#define FROM_INT_WIDTH		(FROM_INT_SIZE * BITS_PER_UNIT)
+#define FROM_INT_WIDTH		(FROM_INT_SIZE * __CHAR_BIT__)
 #endif
 
 #if FROM_TYPE == 4	/* Fixed-point.  */
 #define FROM_FIXED_C_TYPE	FIXED_C_TYPE2(FROM_MODE_NAME)
 #define FROM_FBITS		FBITS2(FROM_MODE_NAME)
-#define FROM_FIXED_WIDTH	(FROM_FIXED_SIZE * BITS_PER_UNIT)
+#define FROM_FIXED_WIDTH	(FROM_FIXED_SIZE * __CHAR_BIT__)
 #define FROM_FBITS		FBITS2(FROM_MODE_NAME)
 #define FROM_IBITS		IBITS2(FROM_MODE_NAME)
 #define FROM_I_F_BITS		(FROM_FBITS + FROM_IBITS)
@@ -1139,7 +1136,7 @@ extern FIXED_C_TYPE FIXED_USASHL (FIXED_C_TYPE, word_type);
 #if TO_TYPE == 4	/* Fixed-point.  */
 #define TO_FIXED_C_TYPE		FIXED_C_TYPE2(TO_MODE_NAME)
 #define TO_FBITS		FBITS2(TO_MODE_NAME)
-#define TO_FIXED_WIDTH		(TO_FIXED_SIZE * BITS_PER_UNIT)
+#define TO_FIXED_WIDTH		(TO_FIXED_SIZE * __CHAR_BIT__)
 #define TO_FBITS		FBITS2(TO_MODE_NAME)
 #define TO_IBITS		IBITS2(TO_MODE_NAME)
 #define TO_I_F_BITS		(TO_FBITS + TO_IBITS)

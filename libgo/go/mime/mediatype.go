@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"unicode"
 )
@@ -18,20 +19,30 @@ import (
 // When any of the arguments result in a standard violation then
 // FormatMediaType returns the empty string.
 func FormatMediaType(t string, param map[string]string) string {
-	slash := strings.Index(t, "/")
-	if slash == -1 {
-		return ""
-	}
-	major, sub := t[:slash], t[slash+1:]
-	if !isToken(major) || !isToken(sub) {
-		return ""
-	}
 	var b bytes.Buffer
-	b.WriteString(strings.ToLower(major))
-	b.WriteByte('/')
-	b.WriteString(strings.ToLower(sub))
+	if slash := strings.Index(t, "/"); slash == -1 {
+		if !isToken(t) {
+			return ""
+		}
+		b.WriteString(strings.ToLower(t))
+	} else {
+		major, sub := t[:slash], t[slash+1:]
+		if !isToken(major) || !isToken(sub) {
+			return ""
+		}
+		b.WriteString(strings.ToLower(major))
+		b.WriteByte('/')
+		b.WriteString(strings.ToLower(sub))
+	}
 
-	for attribute, value := range param {
+	attrs := make([]string, 0, len(param))
+	for a := range param {
+		attrs = append(attrs, a)
+	}
+	sort.Strings(attrs)
+
+	for _, attribute := range attrs {
+		value := param[attribute]
 		b.WriteByte(';')
 		b.WriteByte(' ')
 		if !isToken(attribute) {
@@ -47,7 +58,7 @@ func FormatMediaType(t string, param map[string]string) string {
 		b.WriteByte('"')
 		offset := 0
 		for index, character := range value {
-			if character == '"' || character == '\r' {
+			if character == '"' || character == '\\' {
 				b.WriteString(value[offset:index])
 				offset = index
 				b.WriteByte('\\')
@@ -99,7 +110,7 @@ func ParseMediaType(v string) (mediatype string, params map[string]string, err e
 
 	err = checkMediaTypeDisposition(mediatype)
 	if err != nil {
-		return
+		return "", nil, err
 	}
 
 	params = make(map[string]string)
@@ -210,7 +221,7 @@ func isNotTokenChar(r rune) bool {
 
 // consumeToken consumes a token from the beginning of provided
 // string, per RFC 2045 section 5.1 (referenced from 2183), and return
-// the token consumed and the rest of the string.  Returns ("", v) on
+// the token consumed and the rest of the string. Returns ("", v) on
 // failure to consume at least one character.
 func consumeToken(v string) (token, rest string) {
 	notPos := strings.IndexFunc(v, isNotTokenChar)
@@ -226,36 +237,44 @@ func consumeToken(v string) (token, rest string) {
 // consumeValue consumes a "value" per RFC 2045, where a value is
 // either a 'token' or a 'quoted-string'.  On success, consumeValue
 // returns the value consumed (and de-quoted/escaped, if a
-// quoted-string) and the rest of the string.  On failure, returns
+// quoted-string) and the rest of the string. On failure, returns
 // ("", v).
 func consumeValue(v string) (value, rest string) {
-	if !strings.HasPrefix(v, `"`) && !strings.HasPrefix(v, `'`) {
+	if v == "" {
+		return
+	}
+	if v[0] != '"' {
 		return consumeToken(v)
 	}
 
-	leadQuote := rune(v[0])
-
 	// parse a quoted-string
-	rest = v[1:] // consume the leading quote
 	buffer := new(bytes.Buffer)
-	var idx int
-	var r rune
-	var nextIsLiteral bool
-	for idx, r = range rest {
-		switch {
-		case nextIsLiteral:
-			buffer.WriteRune(r)
-			nextIsLiteral = false
-		case r == leadQuote:
-			return buffer.String(), rest[idx+1:]
-		case r == '\\':
-			nextIsLiteral = true
-		case r != '\r' && r != '\n':
-			buffer.WriteRune(r)
-		default:
+	for i := 1; i < len(v); i++ {
+		r := v[i]
+		if r == '"' {
+			return buffer.String(), v[i+1:]
+		}
+		// When MSIE sends a full file path (in "intranet mode"), it does not
+		// escape backslashes: "C:\dev\go\foo.txt", not "C:\\dev\\go\\foo.txt".
+		//
+		// No known MIME generators emit unnecessary backslash escapes
+		// for simple token characters like numbers and letters.
+		//
+		// If we see an unnecessary backslash escape, assume it is from MSIE
+		// and intended as a literal backslash. This makes Go servers deal better
+		// with MSIE without affecting the way they handle conforming MIME
+		// generators.
+		if r == '\\' && i+1 < len(v) && !isTokenChar(rune(v[i+1])) {
+			buffer.WriteByte(v[i+1])
+			i++
+			continue
+		}
+		if r == '\r' || r == '\n' {
 			return "", v
 		}
+		buffer.WriteByte(v[i])
 	}
+	// Did not find end quote.
 	return "", v
 }
 
@@ -279,10 +298,11 @@ func consumeMediaParam(v string) (param, value, rest string) {
 	}
 	rest = rest[1:] // consume equals sign
 	rest = strings.TrimLeftFunc(rest, unicode.IsSpace)
-	value, rest = consumeValue(rest)
-	if value == "" {
+	value, rest2 := consumeValue(rest)
+	if value == "" && rest2 == rest {
 		return "", "", v
 	}
+	rest = rest2
 	return param, value, rest
 }
 

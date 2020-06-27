@@ -1,6 +1,8 @@
 /* { dg-do compile } */
 /* { dg-options "-O2 -fdump-tree-optimized" } */
 
+void link_error (void);
+
 typedef struct  {
   int x;
   int z;
@@ -21,4 +23,3 @@ void foo(void)
     link_error ();
 }
 /* { dg-final { scan-tree-dump-times "link_error" 1 "optimized"} } */
-/* { dg-final { cleanup-tree-dump "optimized" } } */

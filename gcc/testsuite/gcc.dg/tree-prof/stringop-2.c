@@ -6,6 +6,8 @@ int max=10000;
 #ifdef __mips
 /* We allow short memcpy()s for MIPS16.  */
 int __attribute__((nomips16))
+#else
+int
 #endif
 main()
 {
@@ -17,8 +19,7 @@ main()
     }
    return 0;
 }
-/* { dg-final-use { scan-ipa-dump "Single value 4 stringop" "profile"} } */
+/* autofdo doesn't support value profiling for now: */
+/* { dg-final-use-not-autofdo { scan-ipa-dump "Single value 4 stringop" "profile"} } */
 /* The versioned memset of size 4 should be optimized to an assignment.  */
-/* { dg-final-use { scan-tree-dump "a\\\[0\\\] = 168430090" "optimized"} } */
-/* { dg-final-use { cleanup-tree-dump "optimized" } } */
-/* { dg-final-use { cleanup-ipa-dump "profile" } } */
+/* { dg-final-use-not-autofdo { scan-tree-dump "MEM\\\[\\(void .\\)&a\\\] = 168430090" "optimized"} } */

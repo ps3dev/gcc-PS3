@@ -1,6 +1,5 @@
 // PR c++/38698
-// { dg-options "-std=c++0x" }
-// { dg-prune-output "note" }
+// { dg-do compile { target c++11 } }
 
 struct A
 {

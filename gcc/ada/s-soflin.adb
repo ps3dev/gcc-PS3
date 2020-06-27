@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -29,7 +29,7 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-pragma Compiler_Unit;
+pragma Compiler_Unit_Warning;
 
 pragma Polling (Off);
 --  We must turn polling off for this unit, because otherwise we get an
@@ -48,6 +48,12 @@ package body System.Soft_Links is
 
    NT_TSD : TSD;
    --  Note: we rely on the default initialization of NT_TSD
+
+   --  Needed for Vx6Cert (Vx653mc) GOS cert and ravenscar-cert runtimes,
+   --  VxMILS cert, ravenscar-cert and full runtimes, Vx 5 default runtime
+   Stack_Limit : aliased System.Address := System.Null_Address;
+
+   pragma Export (C, Stack_Limit, "__gnat_stack_limit");
 
    --------------------
    -- Abort_Defer_NT --
@@ -92,7 +98,7 @@ package body System.Soft_Links is
 
       --  Finalize all library-level controlled objects if needed
 
-      if Finalize_Library_Objects /=  null then
+      if Finalize_Library_Objects /= null then
          Finalize_Library_Objects.all;
       end if;
    end Adafinal_NT;
@@ -223,13 +229,14 @@ package body System.Soft_Links is
    -- Save_Library_Occurrence --
    -----------------------------
 
-   procedure Save_Library_Occurrence
-     (E : Ada.Exceptions.Exception_Occurrence)
-   is
+   procedure Save_Library_Occurrence (E : EOA) is
+      use Ada.Exceptions;
    begin
       if not Library_Exception_Set then
          Library_Exception_Set := True;
-         Ada.Exceptions.Save_Occurrence (Library_Exception, E);
+         if E /= null then
+            Ada.Exceptions.Save_Occurrence (Library_Exception, E.all);
+         end if;
       end if;
    end Save_Library_Occurrence;
 
@@ -301,14 +308,5 @@ package body System.Soft_Links is
    begin
       null;
    end Task_Unlock_NT;
-
-   -------------------------
-   -- Update_Exception_NT --
-   -------------------------
-
-   procedure Update_Exception_NT (X : EO := Current_Target_Exception) is
-   begin
-      Ada.Exceptions.Save_Occurrence (NT_TSD.Current_Excep, X);
-   end Update_Exception_NT;
 
 end System.Soft_Links;

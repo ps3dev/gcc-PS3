@@ -1,5 +1,4 @@
-// { dg-do compile }
-// { dg-options "--std=c++0x" }
+// { dg-do compile { target c++11 } }
 struct B1 {};
 
 struct B2 final {};
@@ -18,7 +17,7 @@ template <class T> struct B4 final {};
 
 template <class T> struct B5 final {};
 
-struct undeclared<int> final { }; // { dg-error "not a template" }
+struct undeclared<int> final { }; // { dg-error "not a class template" }
 
 struct D5 : B3<D5> {};
 
@@ -39,16 +38,16 @@ int main()
 {
   D3<B1> d;
   D4<B2> d2;
-  struct B2 final{}; // { dg-error "previous definition" }
+  struct B2 final{}; // { dg-message "previous definition" }
   B2 final; // { dg-error "has a previous declaration|previously declared here" }
   B2 final2 = final;
   struct B2 {}; // { dg-error "redefinition" }
   struct B2 final; // { dg-error "redeclaration" }
-  struct B2 override; // { dg-error "previously declared here" }
+  struct B2 override; // { dg-message "previously declared here" }
   struct B2 final {}; // { dg-error "redefinition" }
   struct B2 override {}; // { dg-error "cannot specify 'override' for a class" }
   B2 override{}; // { dg-error "redeclaration" }
-  struct foo final {}; // { dg-error "previous definition" }
+  struct foo final {}; // { dg-message "previous definition" }
   struct foo final {}; // { dg-error "redefinition" }
   foo final; // { dg-error "conflicting declaration" }
 }

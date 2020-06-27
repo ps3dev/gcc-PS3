@@ -4,6 +4,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+// +build irix
+
 package syscall
 
 const SizeofSockaddrInet4 = 16
@@ -62,6 +64,10 @@ func (sa *RawSockaddrUnix) getLen() (int, error) {
 	}
 
 	return n, nil
+}
+
+func (sa *RawSockaddrUnix) adjustAbstract(sl Socklen_t) Socklen_t {
+	return sl
 }
 
 type RawSockaddr struct {

@@ -1,6 +1,7 @@
 /* { dg-do compile } */ 
 /* { dg-options "-O2 -fdump-tree-optimized" } */
 extern __SIZE_TYPE__ strlen (const char *) __attribute__ ((__pure__));
+extern void link_error (void);
 
 void
 foo (const char *str)
@@ -11,4 +12,3 @@ foo (const char *str)
     link_error ();
 }
 /* { dg-final { scan-tree-dump-times "link_error" 0 "optimized"} } */
-/* { dg-final { cleanup-tree-dump "optimized" } } */

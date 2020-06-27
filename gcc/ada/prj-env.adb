@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2001-2012, Free Software Foundation, Inc.         --
+--          Copyright (C) 2001-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -24,7 +24,6 @@
 ------------------------------------------------------------------------------
 
 with Fmap;
-with Hostparm;
 with Makeutl;  use Makeutl;
 with Opt;
 with Osint;    use Osint;
@@ -33,12 +32,14 @@ with Prj.Com;  use Prj.Com;
 with Sdefault;
 with Tempdir;
 
+with Ada.Text_IO; use Ada.Text_IO;
+
 with GNAT.Directory_Operations; use GNAT.Directory_Operations;
 
 package body Prj.Env is
 
    Buffer_Initial : constant := 1_000;
-   --  Initial size of Buffer
+   --  Initial arbitrary size of buffers
 
    Uninitialized_Prefix : constant String := '#' & Path_Separator;
    --  Prefix to indicate that the project path has not been initialized yet.
@@ -129,7 +130,6 @@ package body Prj.Env is
          In_Tree : Project_Tree_Ref;
          Dummy   : in out Boolean)
       is
-         pragma Unreferenced (Dummy);
       begin
          Add_To_Path
            (Project.Source_Dirs, In_Tree.Shared, Buffer, Buffer_Last);
@@ -145,11 +145,11 @@ package body Prj.Env is
    begin
       if Recursive then
 
-         --  If it is the first time we call this function for
-         --  this project, compute the source path
+         --  If it is the first time we call this function for this project,
+         --  compute the source path.
 
          if Project.Ada_Include_Path = null then
-            Buffer := new String (1 .. 4096);
+            Buffer := new String (1 .. Buffer_Initial);
             For_All_Projects
               (Project, In_Tree, Dummy, Include_Aggregated => True);
             Project.Ada_Include_Path := new String'(Buffer (1 .. Buffer_Last));
@@ -159,7 +159,7 @@ package body Prj.Env is
          return Project.Ada_Include_Path.all;
 
       else
-         Buffer := new String (1 .. 4096);
+         Buffer := new String (1 .. Buffer_Initial);
          Add_To_Path
            (Project.Source_Dirs, In_Tree.Shared, Buffer, Buffer_Last);
 
@@ -199,7 +199,7 @@ package body Prj.Env is
          In_Tree : Project_Tree_Ref;
          Dummy   : in out Boolean)
       is
-         pragma Unreferenced (Dummy, In_Tree);
+         pragma Unreferenced (In_Tree);
 
          Path : constant Path_Name_Type :=
                   Get_Object_Directory
@@ -217,21 +217,36 @@ package body Prj.Env is
 
       Dummy : Boolean := False;
 
+      Result : String_Access;
+
    --  Start of processing for Ada_Objects_Path
 
    begin
       --  If it is the first time we call this function for
       --  this project, compute the objects path
 
-      if Project.Ada_Objects_Path = null then
-         Buffer := new String (1 .. 4096);
+      if Including_Libraries and then Project.Ada_Objects_Path /= null then
+         return Project.Ada_Objects_Path;
+
+      elsif not Including_Libraries
+        and then Project.Ada_Objects_Path_No_Libs /= null
+      then
+         return Project.Ada_Objects_Path_No_Libs;
+
+      else
+         Buffer := new String (1 .. Buffer_Initial);
          For_All_Projects (Project, In_Tree, Dummy);
-
-         Project.Ada_Objects_Path := new String'(Buffer (1 .. Buffer_Last));
+         Result := new String'(Buffer (1 .. Buffer_Last));
          Free (Buffer);
-      end if;
 
-      return Project.Ada_Objects_Path;
+         if Including_Libraries then
+            Project.Ada_Objects_Path := Result;
+         else
+            Project.Ada_Objects_Path_No_Libs := Result;
+         end if;
+
+         return Result;
+      end if;
    end Ada_Objects_Path;
 
    -------------------
@@ -275,7 +290,6 @@ package body Prj.Env is
       for Index in
         Object_Path_Table.First .. Object_Path_Table.Last (Object_Paths)
       loop
-
          --  If it is, remove it, and add it as the last one
 
          if Object_Paths.Table (Index) = Object_Dir then
@@ -306,9 +320,10 @@ package body Prj.Env is
       Buffer      : in out String_Access;
       Buffer_Last : in out Natural)
    is
-      Current    : String_List_Id := Source_Dirs;
+      Current    : String_List_Id;
       Source_Dir : String_Element;
    begin
+      Current := Source_Dirs;
       while Current /= Nil_String loop
          Source_Dir := Shared.String_Elements.Table (Current);
          Add_To_Path (Get_Name_String (Source_Dir.Display_Value),
@@ -342,11 +357,10 @@ package body Prj.Env is
             --  Note: the order of the conditions below is important, since
             --  it ensures a minimal number of string comparisons.
 
-            if (J = Path'First
-                or else Path (J - 1) = Path_Separator)
+            if (J = Path'First or else Path (J - 1) = Path_Separator)
               and then
                 (J + Dir'Length > Path'Last
-                 or else Path (J + Dir'Length) = Path_Separator)
+                  or else Path (J + Dir'Length) = Path_Separator)
               and then Dir = Path (J .. J + Dir'Length - 1)
             then
                return True;
@@ -409,13 +423,14 @@ package body Prj.Env is
       Shared       : Shared_Project_Tree_Data_Access;
       Source_Paths : in out Source_Path_Table.Instance)
    is
-      Current    : String_List_Id := Source_Dirs;
+      Current    : String_List_Id;
       Source_Dir : String_Element;
       Add_It     : Boolean;
 
    begin
       --  Add each source directory
 
+      Current := Source_Dirs;
       while Current /= Nil_String loop
          Source_Dir := Shared.String_Elements.Table (Current);
          Add_It := True;
@@ -754,7 +769,7 @@ package body Prj.Env is
          exit when Data = No_Source;
 
          if Data.Unit /= No_Unit_Index then
-            if Data.Locally_Removed then
+            if Data.Locally_Removed and then not Data.Suppressed then
                Fmap.Add_Forbidden_File_Name (Data.File);
             else
                Fmap.Add_To_File_Map
@@ -829,7 +844,8 @@ package body Prj.Env is
             Source := Prj.Element (Iter);
             exit when Source = No_Source;
 
-            if Source.Replaced_By = No_Source
+            if not Source.Suppressed
+              and then Source.Replaced_By = No_Source
               and then Source.Path.Name /= No_Path
               and then (Source.Language.Config.Kind = File_Based
                          or else Source.Unit /= No_Unit_Index)
@@ -871,7 +887,10 @@ package body Prj.Env is
                         when Spec =>
                            Suffix :=
                              Source.Language.Config.Mapping_Spec_Suffix;
-                        when Impl | Sep =>
+
+                        when Impl
+                           | Sep
+                        =>
                            Suffix :=
                              Source.Language.Config.Mapping_Body_Suffix;
                      end case;
@@ -1070,15 +1089,17 @@ package body Prj.Env is
 
          Unit := Units_Htable.Get_First (In_Tree.Units_HT);
          while Unit /= null loop
+
             --  Check for body
 
             if not Main_Project_Only
               or else
                 (Unit.File_Names (Impl) /= null
-                 and then Unit.File_Names (Impl).Project = The_Project)
+                  and then Unit.File_Names (Impl).Project = The_Project)
             then
                declare
                   Current_Name : File_Name_Type;
+
                begin
                   --  Case of a body present
 
@@ -1239,7 +1260,7 @@ package body Prj.Env is
          Tree  : Project_Tree_Ref;
          Dummy : in out Integer)
       is
-         pragma Unreferenced (Dummy, Tree);
+         pragma Unreferenced (Tree);
 
       begin
          --  ??? Set_Ada_Paths has a different behavior for library project
@@ -1284,8 +1305,6 @@ package body Prj.Env is
          In_Tree : Project_Tree_Ref;
          Dummy   : in out Integer)
       is
-         pragma Unreferenced (Dummy);
-
          Current    : String_List_Id := Prj.Source_Dirs;
          The_String : String_Element;
 
@@ -1347,8 +1366,8 @@ package body Prj.Env is
                 (Namet.Get_Name_String
                    (Unit.File_Names (Spec).File) = Original_Name
                  or else (Unit.File_Names (Spec).Path /= No_Path_Information
-                          and then
-                            Namet.Get_Name_String
+                           and then
+                             Namet.Get_Name_String
                                (Unit.File_Names (Spec).Path.Name) =
                                                            Original_Name))
             then
@@ -1409,35 +1428,10 @@ package body Prj.Env is
      (Self : Project_Search_Path;
       Name : String) return String_Access
    is
-      function Is_Base_Name (Path : String) return Boolean;
-      --  Returns True if Path has no directory separator
-
-      ------------------
-      -- Is_Base_Name --
-      ------------------
-
-      function Is_Base_Name (Path : String) return Boolean is
-      begin
-         for J in Path'Range loop
-            if Path (J) = Directory_Separator or else Path (J) = '/' then
-               return False;
-            end if;
-         end loop;
-
-         return True;
-      end Is_Base_Name;
-
-      function Find_Rts_In_Path is new Prj.Env.Find_Name_In_Path
-        (Check_Filename => Is_Directory);
-
-      --  Start of processing for Get_Runtime_Path
-
+      function Find_Rts_In_Path is
+        new Prj.Env.Find_Name_In_Path (Check_Filename => Is_Directory);
    begin
-      if not Is_Base_Name (Name) then
-         return Find_Rts_In_Path (Self, Name);
-      else
-         return null;
-      end if;
+      return Find_Rts_In_Path (Self, Name);
    end Get_Runtime_Path;
 
    ----------------
@@ -1463,7 +1457,6 @@ package body Prj.Env is
       Write_Line ("List of Sources:");
 
       Unit := Units_Htable.Get_First (In_Tree.Units_HT);
-
       while Unit /= No_Unit_Index loop
          Write_Str  ("   ");
          Write_Line (Namet.Get_Name_String (Unit.Name));
@@ -1657,13 +1650,11 @@ package body Prj.Env is
          In_Tree : Project_Tree_Ref;
          Dummy   : in out Boolean)
       is
-         pragma Unreferenced (Dummy, In_Tree);
+         pragma Unreferenced (In_Tree);
 
          Path : Path_Name_Type;
 
       begin
-         --  ??? This is almost the equivalent of For_All_Source_Dirs
-
          if Process_Source_Dirs then
 
             --  Add to path all source directories of this project if there are
@@ -1835,8 +1826,9 @@ package body Prj.Env is
    ---------------------
 
    procedure Add_Directories
-     (Self : in out Project_Search_Path;
-      Path : String)
+     (Self    : in out Project_Search_Path;
+      Path    : String;
+      Prepend : Boolean := False)
    is
       Tmp : String_Access;
    begin
@@ -1844,7 +1836,11 @@ package body Prj.Env is
          Self.Path := new String'(Uninitialized_Prefix & Path);
       else
          Tmp := Self.Path;
-         Self.Path := new String'(Tmp.all & Path_Separator & Path);
+         if Prepend then
+            Self.Path := new String'(Path & Path_Separator & Tmp.all);
+         else
+            Self.Path := new String'(Tmp.all & Path_Separator & Path);
+         end if;
          Free (Tmp);
       end if;
 
@@ -1880,25 +1876,51 @@ package body Prj.Env is
    -------------------------------------
 
    procedure Initialize_Default_Project_Path
-     (Self        : in out Project_Search_Path;
-      Target_Name : String)
+     (Self         : in out Project_Search_Path;
+      Target_Name  : String;
+      Runtime_Name : String := "")
    is
-      Add_Default_Dir : Boolean := True;
+      Add_Default_Dir : Boolean := Target_Name /= "-";
       First           : Positive;
       Last            : Positive;
-      New_Len         : Positive;
-      New_Last        : Positive;
 
-      Ada_Project_Path : constant String := "ADA_PROJECT_PATH";
-      Gpr_Project_Path : constant String := "GPR_PROJECT_PATH";
-      --  Name of alternate env. variable that contain path name(s) of
-      --  directories where project files may reside. GPR_PROJECT_PATH has
-      --  precedence over ADA_PROJECT_PATH.
+      Ada_Project_Path      : constant String := "ADA_PROJECT_PATH";
+      Gpr_Project_Path      : constant String := "GPR_PROJECT_PATH";
+      Gpr_Project_Path_File : constant String := "GPR_PROJECT_PATH_FILE";
+      --  Names of alternate env. variable that contain path name(s) of
+      --  directories where project files may reside. They are taken into
+      --  account in this order: GPR_PROJECT_PATH_FILE, GPR_PROJECT_PATH,
+      --  ADA_PROJECT_PATH.
 
-      Gpr_Prj_Path : String_Access;
-      Ada_Prj_Path : String_Access;
+      Gpr_Prj_Path_File : String_Access;
+      Gpr_Prj_Path      : String_Access;
+      Ada_Prj_Path      : String_Access;
       --  The path name(s) of directories where project files may reside.
       --  May be empty.
+
+      Prefix  : String_Ptr;
+      Runtime : String_Ptr;
+
+      procedure Add_Target;
+      --  Add :<prefix>/<target> to the project path
+
+      ----------------
+      -- Add_Target --
+      ----------------
+
+      procedure Add_Target is
+      begin
+         Add_Str_To_Name_Buffer
+           (Path_Separator & Prefix.all & Target_Name);
+
+         --  Note: Target_Name has a trailing / when it comes from Sdefault
+
+         if Name_Buffer (Name_Len) /= '/' then
+            Add_Char_To_Name_Buffer (Directory_Separator);
+         end if;
+      end Add_Target;
+
+   --  Start of processing for Initialize_Default_Project_Path
 
    begin
       if Is_Initialized (Self) then
@@ -1920,8 +1942,50 @@ package body Prj.Env is
 
       --  If environment variables are defined and not empty, add their content
 
-      Gpr_Prj_Path := Getenv (Gpr_Project_Path);
-      Ada_Prj_Path := Getenv (Ada_Project_Path);
+      Gpr_Prj_Path_File := Getenv (Gpr_Project_Path_File);
+      Gpr_Prj_Path      := Getenv (Gpr_Project_Path);
+      Ada_Prj_Path      := Getenv (Ada_Project_Path);
+
+      if Gpr_Prj_Path_File.all /= "" then
+         declare
+            File : Ada.Text_IO.File_Type;
+            Line : String (1 .. 10_000);
+            Last : Natural;
+
+            Tmp : String_Access;
+
+         begin
+            Open (File, In_File, Gpr_Prj_Path_File.all);
+
+            while not End_Of_File (File) loop
+               Get_Line (File, Line, Last);
+
+               if Last /= 0
+                 and then (Last = 1 or else Line (1 .. 2) /= "--")
+               then
+                  Tmp := Self.Path;
+                  Self.Path :=
+                    new String'
+                      (Tmp.all & Path_Separator & Line (1 .. Last));
+                  Free (Tmp);
+               end if;
+
+               if Current_Verbosity = High then
+                  Debug_Output ("Adding directory to Project_Path: """
+                                & Line (1 .. Last) & '"');
+               end if;
+            end loop;
+
+            Close (File);
+
+         exception
+            when others =>
+               Write_Str ("warning: could not read project path file """);
+               Write_Str (Gpr_Prj_Path_File.all);
+               Write_Line ("""");
+         end;
+
+      end if;
 
       if Gpr_Prj_Path.all /= "" then
          Add_Directories (Self, Gpr_Prj_Path.all);
@@ -1980,17 +2044,14 @@ package body Prj.Env is
 
             Last := Last - 1;
 
-         elsif not Hostparm.OpenVMS
-           or else not Is_Absolute_Path (Name_Buffer (First .. Last))
-         then
-            --  On VMS, only expand relative path names, as absolute paths
-            --  may correspond to multi-valued VMS logical names.
-
+         else
             declare
                New_Dir : constant String :=
                            Normalize_Pathname
                              (Name_Buffer (First .. Last),
                               Resolve_Links => Opt.Follow_Links_For_Dirs);
+               New_Len  : Positive;
+               New_Last : Positive;
 
             begin
                --  If the absolute path was resolved and is different from
@@ -2018,59 +2079,81 @@ package body Prj.Env is
       --  Set the initial value of Current_Project_Path
 
       if Add_Default_Dir then
-         declare
-            Prefix : String_Ptr;
+         if Sdefault.Search_Dir_Prefix = null then
 
-         begin
-            if Sdefault.Search_Dir_Prefix = null then
+            --  gprbuild case
 
-               --  gprbuild case
+            Prefix := new String'(Executable_Prefix_Path);
 
-               Prefix := new String'(Executable_Prefix_Path);
+         else
+            Prefix := new String'(Sdefault.Search_Dir_Prefix.all
+                                  & ".." & Dir_Separator
+                                  & ".." & Dir_Separator
+                                  & ".." & Dir_Separator
+                                  & ".." & Dir_Separator);
+         end if;
 
-            else
-               Prefix := new String'(Sdefault.Search_Dir_Prefix.all
-                                     & ".." & Dir_Separator
-                                     & ".." & Dir_Separator
-                                     & ".." & Dir_Separator
-                                     & ".." & Dir_Separator);
-            end if;
+         if Prefix.all /= "" then
+            if Target_Name /= "" then
 
-            if Prefix.all /= "" then
-               if Target_Name /= "" then
+               if Runtime_Name /= "" then
+                  if Base_Name (Runtime_Name) = Runtime_Name then
 
-                  --  $prefix/$target/lib/gnat
+                     --  $prefix/$target/$runtime/lib/gnat
+                     Add_Target;
+                     Add_Str_To_Name_Buffer
+                       (Runtime_Name & Directory_Separator &
+                          "lib" & Directory_Separator & "gnat");
 
-                  Add_Str_To_Name_Buffer
-                    (Path_Separator & Prefix.all &
-                     Target_Name);
+                     --  $prefix/$target/$runtime/share/gpr
+                     Add_Target;
+                     Add_Str_To_Name_Buffer
+                       (Runtime_Name & Directory_Separator &
+                          "share" & Directory_Separator & "gpr");
 
-                  --  Note: Target_Name has a trailing / when it comes from
-                  --  Sdefault.
+                  else
+                     Runtime :=
+                       new String'(Normalize_Pathname (Runtime_Name));
 
-                  if Name_Buffer (Name_Len) /= '/' then
-                     Add_Char_To_Name_Buffer (Directory_Separator);
+                     --  $runtime_dir/lib/gnat
+                     Add_Str_To_Name_Buffer
+                       (Path_Separator & Runtime.all & Directory_Separator &
+                        "lib" & Directory_Separator & "gnat");
+
+                     --  $runtime_dir/share/gpr
+                     Add_Str_To_Name_Buffer
+                       (Path_Separator & Runtime.all & Directory_Separator &
+                        "share" & Directory_Separator & "gpr");
                   end if;
-
-                  Add_Str_To_Name_Buffer
-                    ("lib" & Directory_Separator & "gnat");
                end if;
 
-               --  $prefix/share/gpr
+               --  $prefix/$target/lib/gnat
 
+               Add_Target;
                Add_Str_To_Name_Buffer
-                 (Path_Separator & Prefix.all &
-                  "share" & Directory_Separator & "gpr");
+                 ("lib" & Directory_Separator & "gnat");
 
-               --  $prefix/lib/gnat
+               --  $prefix/$target/share/gpr
 
+               Add_Target;
                Add_Str_To_Name_Buffer
-                 (Path_Separator & Prefix.all &
-                  "lib" & Directory_Separator & "gnat");
+                 ("share" & Directory_Separator & "gpr");
             end if;
 
-            Free (Prefix);
-         end;
+            --  $prefix/share/gpr
+
+            Add_Str_To_Name_Buffer
+              (Path_Separator & Prefix.all & "share"
+               & Directory_Separator & "gpr");
+
+            --  $prefix/lib/gnat
+
+            Add_Str_To_Name_Buffer
+              (Path_Separator & Prefix.all & "lib"
+               & Directory_Separator & "gnat");
+         end if;
+
+         Free (Prefix);
       end if;
 
       Self.Path := new String'(Name_Buffer (1 .. Name_Len));
@@ -2105,8 +2188,8 @@ package body Prj.Env is
      (Self : Project_Search_Path;
       Path : String) return String_Access
    is
-      First  : Natural;
-      Last   : Natural;
+      First : Natural;
+      Last  : Natural;
 
    begin
       if Current_Verbosity = High then
@@ -2177,19 +2260,20 @@ package body Prj.Env is
       Directory          : String;
       Path               : out Namet.Path_Name_Type)
    is
-      File : constant String := Project_File_Name;
-      --  Have to do a copy, in case the parameter is Name_Buffer, which we
-      --  modify below
-
-      function Try_Path_Name is new Find_Name_In_Path
-        (Check_Filename => Is_Regular_File);
-      --  Find a file in the project search path.
-
-      --  Local Declarations
-
       Result  : String_Access;
       Has_Dot : Boolean := False;
       Key     : Name_Id;
+
+      File : constant String := Project_File_Name;
+      --  Have to do a copy, in case the parameter is Name_Buffer, which we
+      --  modify below.
+
+      Cached_Path : Namet.Path_Name_Type;
+      --  This should be commented rather than making us guess from the name???
+
+      function Try_Path_Name is new
+        Find_Name_In_Path (Check_Filename => Is_Regular_File);
+      --  Find a file in the project search path
 
    --  Start of processing for Find_Project
 
@@ -2207,12 +2291,7 @@ package body Prj.Env is
       Name_Len := File'Length;
       Name_Buffer (1 .. Name_Len) := File;
       Key := Name_Find;
-      Path := Projects_Paths.Get (Self.Cache, Key);
-
-      if Path /= No_Path then
-         Debug_Decrease_Indent;
-         return;
-      end if;
+      Cached_Path := Projects_Paths.Get (Self.Cache, Key);
 
       --  Check if File contains an extension (a dot before a
       --  directory separator). If it is the case we do not try project file
@@ -2225,27 +2304,63 @@ package body Prj.Env is
             exit Check_Dot;
          end if;
 
-         exit Check_Dot when File (K) = Directory_Separator
-           or else File (K) = '/';
+         exit Check_Dot when Is_Directory_Separator (File (K));
       end loop Check_Dot;
 
       if not Is_Absolute_Path (File) then
 
+         --  If we have found project in the cache, check if in the directory
+
+         if Cached_Path /= No_Path then
+            declare
+               Cached : constant String := Get_Name_String (Cached_Path);
+            begin
+               if (not Has_Dot
+                    and then Cached =
+                      GNAT.OS_Lib.Normalize_Pathname
+                        (File & Project_File_Extension,
+                         Directory      => Directory,
+                         Resolve_Links  => Opt.Follow_Links_For_Files,
+                         Case_Sensitive => True))
+                 or else
+                   Cached =
+                     GNAT.OS_Lib.Normalize_Pathname
+                       (File,
+                        Directory      => Directory,
+                        Resolve_Links  => Opt.Follow_Links_For_Files,
+                        Case_Sensitive => True)
+               then
+                  Path := Cached_Path;
+                  Debug_Decrease_Indent;
+                  return;
+               end if;
+            end;
+         end if;
+
          --  First we try <directory>/<file_name>.<extension>
 
          if not Has_Dot then
-            Result := Try_Path_Name
-              (Self,
-               Directory & Directory_Separator &
-               File & Project_File_Extension);
+            Result :=
+              Try_Path_Name
+                (Self,
+                 Directory & Directory_Separator
+                 & File & Project_File_Extension);
          end if;
 
          --  Then we try <directory>/<file_name>
 
          if Result = null then
-            Result := Try_Path_Name
-                       (Self, Directory & Directory_Separator & File);
+            Result :=
+              Try_Path_Name (Self, Directory & Directory_Separator & File);
          end if;
+      end if;
+
+      --  If we found the path in the cache, this is the one
+
+      if Result = null and then Cached_Path /= No_Path then
+         Path := Cached_Path;
+         Debug_Decrease_Indent;
+         return;
       end if;
 
       --  Then we try <file_name>.<extension>

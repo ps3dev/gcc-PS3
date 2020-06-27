@@ -1,10 +1,6 @@
-/* This test does not compile on mips-irix6 using the native assembler,
-   though it does work with gas.  See PR6200.  Since we cannot (???)
-   distinguish which assembler is being used, always pass -S for
-   irix.  */
-/* { dg-options "-w -S" { target mips*-*-irix* } } */
-
 /* Verify that we can narrow the storage associated with label diffs.  */
+/* { dg-require-effective-target indirect_jumps } */
+/* { dg-require-effective-target label_values } */
 
 int foo (int a)
 {

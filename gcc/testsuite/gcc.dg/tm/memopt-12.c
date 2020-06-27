@@ -2,6 +2,7 @@
 /* { dg-options "-fgnu-tm -O -fdump-tree-tmmark" } */
 
 extern int test(void) __attribute__((transaction_safe));
+extern int something (void);
 extern void *malloc (__SIZE_TYPE__) __attribute__((malloc,transaction_safe));
 
 struct large { int foo[500]; };
@@ -31,4 +32,3 @@ int f()
 }
 
 /* { dg-final { scan-tree-dump-times "ITM_WU" 0 "tmmark" } } */
-/* { dg-final { cleanup-tree-dump "tmmark" } } */

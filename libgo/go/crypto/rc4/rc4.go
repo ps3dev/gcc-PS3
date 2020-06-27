@@ -13,7 +13,7 @@ import "strconv"
 
 // A Cipher is an instance of RC4 using a particular key.
 type Cipher struct {
-	s    [256]byte
+	s    [256]uint32
 	i, j uint8
 }
 
@@ -23,7 +23,7 @@ func (k KeySizeError) Error() string {
 	return "crypto/rc4: invalid key size " + strconv.Itoa(int(k))
 }
 
-// NewCipher creates and returns a new Cipher.  The key argument should be the
+// NewCipher creates and returns a new Cipher. The key argument should be the
 // RC4 key, at least 1 byte and at most 256 bytes.
 func NewCipher(key []byte) (*Cipher, error) {
 	k := len(key)
@@ -32,25 +32,14 @@ func NewCipher(key []byte) (*Cipher, error) {
 	}
 	var c Cipher
 	for i := 0; i < 256; i++ {
-		c.s[i] = uint8(i)
+		c.s[i] = uint32(i)
 	}
 	var j uint8 = 0
 	for i := 0; i < 256; i++ {
-		j += c.s[i] + key[i%k]
+		j += uint8(c.s[i]) + key[i%k]
 		c.s[i], c.s[j] = c.s[j], c.s[i]
 	}
 	return &c, nil
-}
-
-// XORKeyStream sets dst to the result of XORing src with the key stream.
-// Dst and src may be the same slice but otherwise should not overlap.
-func (c *Cipher) XORKeyStream(dst, src []byte) {
-	for i := range src {
-		c.i += 1
-		c.j += c.s[c.i]
-		c.s[c.i], c.s[c.j] = c.s[c.j], c.s[c.i]
-		dst[i] = src[i] ^ c.s[c.s[c.i]+c.s[c.j]]
-	}
 }
 
 // Reset zeros the key data so that it will no longer appear in the
@@ -60,4 +49,21 @@ func (c *Cipher) Reset() {
 		c.s[i] = 0
 	}
 	c.i, c.j = 0, 0
+}
+
+// xorKeyStreamGeneric sets dst to the result of XORing src with the
+// key stream. Dst and src may be the same slice but otherwise should
+// not overlap.
+//
+// This is the pure Go version. rc4_{amd64,386,arm}* contain assembly
+// implementations. This is here for tests and to prevent bitrot.
+func (c *Cipher) xorKeyStreamGeneric(dst, src []byte) {
+	i, j := c.i, c.j
+	for k, v := range src {
+		i += 1
+		j += uint8(c.s[i])
+		c.s[i], c.s[j] = c.s[j], c.s[i]
+		dst[k] = v ^ uint8(c.s[uint8(c.s[i]+c.s[j])])
+	}
+	c.i, c.j = i, j
 }

@@ -8,68 +8,68 @@ import (
 	"bytes"
 	"fmt"
 	"html"
+	"io"
 	"text/template"
 	"text/template/parse"
 )
 
-// escapeTemplates rewrites the named templates, which must be
+// escapeTemplate rewrites the named template, which must be
 // associated with t, to guarantee that the output of any of the named
-// templates is properly escaped.  Names should include the names of
-// all templates that might be Executed but need not include helper
-// templates.  If no error is returned, then the named templates have
-// been modified.  Otherwise the named templates have been rendered
+// templates is properly escaped. If no error is returned, then the named templates have
+// been modified. Otherwise the named templates have been rendered
 // unusable.
-func escapeTemplates(tmpl *Template, names ...string) error {
+func escapeTemplate(tmpl *Template, node parse.Node, name string) error {
 	e := newEscaper(tmpl)
-	for _, name := range names {
-		c, _ := e.escapeTree(context{}, name, 0)
-		var err error
-		if c.err != nil {
-			err, c.err.Name = c.err, name
-		} else if c.state != stateText {
-			err = &Error{ErrEndContext, name, 0, fmt.Sprintf("ends in a non-text context: %v", c)}
+	c, _ := e.escapeTree(context{}, node, name, 0)
+	var err error
+	if c.err != nil {
+		err, c.err.Name = c.err, name
+	} else if c.state != stateText {
+		err = &Error{ErrEndContext, nil, name, 0, fmt.Sprintf("ends in a non-text context: %v", c)}
+	}
+	if err != nil {
+		// Prevent execution of unsafe templates.
+		if t := tmpl.set[name]; t != nil {
+			t.escapeErr = err
+			t.text.Tree = nil
+			t.Tree = nil
 		}
-		if err != nil {
-			// Prevent execution of unsafe templates.
-			for _, name := range names {
-				if t := tmpl.set[name]; t != nil {
-					t.text.Tree = nil
-				}
-			}
-			return err
-		}
-		tmpl.escaped = true
+		return err
 	}
 	e.commit()
+	if t := tmpl.set[name]; t != nil {
+		t.escapeErr = escapeOK
+		t.Tree = t.text.Tree
+	}
 	return nil
 }
 
 // funcMap maps command names to functions that render their inputs safe.
 var funcMap = template.FuncMap{
-	"html_template_attrescaper":     attrEscaper,
-	"html_template_commentescaper":  commentEscaper,
-	"html_template_cssescaper":      cssEscaper,
-	"html_template_cssvaluefilter":  cssValueFilter,
-	"html_template_htmlnamefilter":  htmlNameFilter,
-	"html_template_htmlescaper":     htmlEscaper,
-	"html_template_jsregexpescaper": jsRegexpEscaper,
-	"html_template_jsstrescaper":    jsStrEscaper,
-	"html_template_jsvalescaper":    jsValEscaper,
-	"html_template_nospaceescaper":  htmlNospaceEscaper,
-	"html_template_rcdataescaper":   rcdataEscaper,
-	"html_template_urlescaper":      urlEscaper,
-	"html_template_urlfilter":       urlFilter,
-	"html_template_urlnormalizer":   urlNormalizer,
+	"_html_template_attrescaper":     attrEscaper,
+	"_html_template_commentescaper":  commentEscaper,
+	"_html_template_cssescaper":      cssEscaper,
+	"_html_template_cssvaluefilter":  cssValueFilter,
+	"_html_template_htmlnamefilter":  htmlNameFilter,
+	"_html_template_htmlescaper":     htmlEscaper,
+	"_html_template_jsregexpescaper": jsRegexpEscaper,
+	"_html_template_jsstrescaper":    jsStrEscaper,
+	"_html_template_jsvalescaper":    jsValEscaper,
+	"_html_template_nospaceescaper":  htmlNospaceEscaper,
+	"_html_template_rcdataescaper":   rcdataEscaper,
+	"_html_template_urlescaper":      urlEscaper,
+	"_html_template_urlfilter":       urlFilter,
+	"_html_template_urlnormalizer":   urlNormalizer,
 }
 
 // equivEscapers matches contextual escapers to equivalent template builtins.
 var equivEscapers = map[string]string{
-	"html_template_attrescaper":    "html",
-	"html_template_htmlescaper":    "html",
-	"html_template_nospaceescaper": "html",
-	"html_template_rcdataescaper":  "html",
-	"html_template_urlescaper":     "urlquery",
-	"html_template_urlnormalizer":  "urlquery",
+	"_html_template_attrescaper":    "html",
+	"_html_template_htmlescaper":    "html",
+	"_html_template_nospaceescaper": "html",
+	"_html_template_rcdataescaper":  "html",
+	"_html_template_urlescaper":     "urlquery",
+	"_html_template_urlnormalizer":  "urlquery",
 }
 
 // escaper collects type inferences about templates and changes needed to make
@@ -147,47 +147,47 @@ func (e *escaper) escapeAction(c context, n *parse.ActionNode) context {
 	case stateURL, stateCSSDqStr, stateCSSSqStr, stateCSSDqURL, stateCSSSqURL, stateCSSURL:
 		switch c.urlPart {
 		case urlPartNone:
-			s = append(s, "html_template_urlfilter")
+			s = append(s, "_html_template_urlfilter")
 			fallthrough
 		case urlPartPreQuery:
 			switch c.state {
 			case stateCSSDqStr, stateCSSSqStr:
-				s = append(s, "html_template_cssescaper")
+				s = append(s, "_html_template_cssescaper")
 			default:
-				s = append(s, "html_template_urlnormalizer")
+				s = append(s, "_html_template_urlnormalizer")
 			}
 		case urlPartQueryOrFrag:
-			s = append(s, "html_template_urlescaper")
+			s = append(s, "_html_template_urlescaper")
 		case urlPartUnknown:
 			return context{
 				state: stateError,
-				err:   errorf(ErrAmbigContext, n.Line, "%s appears in an ambiguous URL context", n),
+				err:   errorf(ErrAmbigContext, n, n.Line, "%s appears in an ambiguous context within a URL", n),
 			}
 		default:
 			panic(c.urlPart.String())
 		}
 	case stateJS:
-		s = append(s, "html_template_jsvalescaper")
+		s = append(s, "_html_template_jsvalescaper")
 		// A slash after a value starts a div operator.
 		c.jsCtx = jsCtxDivOp
 	case stateJSDqStr, stateJSSqStr:
-		s = append(s, "html_template_jsstrescaper")
+		s = append(s, "_html_template_jsstrescaper")
 	case stateJSRegexp:
-		s = append(s, "html_template_jsregexpescaper")
+		s = append(s, "_html_template_jsregexpescaper")
 	case stateCSS:
-		s = append(s, "html_template_cssvaluefilter")
+		s = append(s, "_html_template_cssvaluefilter")
 	case stateText:
-		s = append(s, "html_template_htmlescaper")
+		s = append(s, "_html_template_htmlescaper")
 	case stateRCDATA:
-		s = append(s, "html_template_rcdataescaper")
+		s = append(s, "_html_template_rcdataescaper")
 	case stateAttr:
 		// Handled below in delim check.
 	case stateAttrName, stateTag:
 		c.state = stateAttrName
-		s = append(s, "html_template_htmlnamefilter")
+		s = append(s, "_html_template_htmlnamefilter")
 	default:
 		if isComment(c.state) {
-			s = append(s, "html_template_commentescaper")
+			s = append(s, "_html_template_commentescaper")
 		} else {
 			panic("unexpected state " + c.state.String())
 		}
@@ -196,12 +196,26 @@ func (e *escaper) escapeAction(c context, n *parse.ActionNode) context {
 	case delimNone:
 		// No extra-escaping needed for raw text content.
 	case delimSpaceOrTagEnd:
-		s = append(s, "html_template_nospaceescaper")
+		s = append(s, "_html_template_nospaceescaper")
 	default:
-		s = append(s, "html_template_attrescaper")
+		s = append(s, "_html_template_attrescaper")
 	}
 	e.editActionNode(n, s)
 	return c
+}
+
+// allIdents returns the names of the identifiers under the Ident field of the node,
+// which might be a singleton (Identifier) or a slice (Field or Chain).
+func allIdents(node parse.Node) []string {
+	switch node := node.(type) {
+	case *parse.IdentifierNode:
+		return []string{node.Ident}
+	case *parse.FieldNode:
+		return node.Ident
+	case *parse.ChainNode:
+		return node.Field
+	}
+	return nil
 }
 
 // ensurePipelineContains ensures that the pipeline has commands with
@@ -219,40 +233,42 @@ func ensurePipelineContains(p *parse.PipeNode, s []string) {
 	idents := p.Cmds
 	for i := n - 1; i >= 0; i-- {
 		if cmd := p.Cmds[i]; len(cmd.Args) != 0 {
-			if id, ok := cmd.Args[0].(*parse.IdentifierNode); ok {
-				if id.Ident == "noescape" {
-					return
-				}
+			if _, ok := cmd.Args[0].(*parse.IdentifierNode); ok {
 				continue
 			}
 		}
 		idents = p.Cmds[i+1:]
 	}
 	dups := 0
-	for _, id := range idents {
-		if escFnsEq(s[dups], (id.Args[0].(*parse.IdentifierNode)).Ident) {
-			dups++
-			if dups == len(s) {
-				return
+	for _, idNode := range idents {
+		for _, ident := range allIdents(idNode.Args[0]) {
+			if escFnsEq(s[dups], ident) {
+				dups++
+				if dups == len(s) {
+					return
+				}
 			}
 		}
 	}
 	newCmds := make([]*parse.CommandNode, n-len(idents), n+len(s)-dups)
 	copy(newCmds, p.Cmds)
 	// Merge existing identifier commands with the sanitizers needed.
-	for _, id := range idents {
-		i := indexOfStr((id.Args[0].(*parse.IdentifierNode)).Ident, s, escFnsEq)
-		if i != -1 {
-			for _, name := range s[:i] {
-				newCmds = appendCmd(newCmds, newIdentCmd(name))
+	for _, idNode := range idents {
+		pos := idNode.Args[0].Position()
+		for _, ident := range allIdents(idNode.Args[0]) {
+			i := indexOfStr(ident, s, escFnsEq)
+			if i != -1 {
+				for _, name := range s[:i] {
+					newCmds = appendCmd(newCmds, newIdentCmd(name, pos))
+				}
+				s = s[i+1:]
 			}
-			s = s[i+1:]
 		}
-		newCmds = appendCmd(newCmds, id)
+		newCmds = appendCmd(newCmds, idNode)
 	}
 	// Create any remaining sanitizers.
 	for _, name := range s {
-		newCmds = appendCmd(newCmds, newIdentCmd(name))
+		newCmds = appendCmd(newCmds, newIdentCmd(name, p.Position()))
 	}
 	p.Cmds = newCmds
 }
@@ -260,22 +276,22 @@ func ensurePipelineContains(p *parse.PipeNode, s []string) {
 // redundantFuncs[a][b] implies that funcMap[b](funcMap[a](x)) == funcMap[a](x)
 // for all x.
 var redundantFuncs = map[string]map[string]bool{
-	"html_template_commentescaper": {
-		"html_template_attrescaper":    true,
-		"html_template_nospaceescaper": true,
-		"html_template_htmlescaper":    true,
+	"_html_template_commentescaper": {
+		"_html_template_attrescaper":    true,
+		"_html_template_nospaceescaper": true,
+		"_html_template_htmlescaper":    true,
 	},
-	"html_template_cssescaper": {
-		"html_template_attrescaper": true,
+	"_html_template_cssescaper": {
+		"_html_template_attrescaper": true,
 	},
-	"html_template_jsregexpescaper": {
-		"html_template_attrescaper": true,
+	"_html_template_jsregexpescaper": {
+		"_html_template_attrescaper": true,
 	},
-	"html_template_jsstrescaper": {
-		"html_template_attrescaper": true,
+	"_html_template_jsstrescaper": {
+		"_html_template_attrescaper": true,
 	},
-	"html_template_urlescaper": {
-		"html_template_urlnormalizer": true,
+	"_html_template_urlescaper": {
+		"_html_template_urlnormalizer": true,
 	},
 }
 
@@ -283,9 +299,9 @@ var redundantFuncs = map[string]map[string]bool{
 // unless it is redundant with the last command.
 func appendCmd(cmds []*parse.CommandNode, cmd *parse.CommandNode) []*parse.CommandNode {
 	if n := len(cmds); n != 0 {
-		last, ok := cmds[n-1].Args[0].(*parse.IdentifierNode)
-		next, _ := cmd.Args[0].(*parse.IdentifierNode)
-		if ok && redundantFuncs[last.Ident][next.Ident] {
+		last, okLast := cmds[n-1].Args[0].(*parse.IdentifierNode)
+		next, okNext := cmd.Args[0].(*parse.IdentifierNode)
+		if okLast && okNext && redundantFuncs[last.Ident][next.Ident] {
 			return cmds
 		}
 	}
@@ -302,7 +318,7 @@ func indexOfStr(s string, strs []string, eq func(a, b string) bool) int {
 	return -1
 }
 
-// escFnsEq returns whether the two escaping functions are equivalent.
+// escFnsEq reports whether the two escaping functions are equivalent.
 func escFnsEq(a, b string) bool {
 	if e := equivEscapers[a]; e != "" {
 		a = e
@@ -314,10 +330,10 @@ func escFnsEq(a, b string) bool {
 }
 
 // newIdentCmd produces a command containing a single identifier node.
-func newIdentCmd(identifier string) *parse.CommandNode {
+func newIdentCmd(identifier string, pos parse.Pos) *parse.CommandNode {
 	return &parse.CommandNode{
 		NodeType: parse.NodeCommand,
-		Args:     []parse.Node{parse.NewIdentifier(identifier)},
+		Args:     []parse.Node{parse.NewIdentifier(identifier).SetTree(nil).SetPos(pos)}, // TODO: SetTree.
 	}
 }
 
@@ -351,7 +367,7 @@ func nudge(c context) context {
 // join joins the two contexts of a branch template node. The result is an
 // error context if either of the input contexts are error contexts, or if the
 // the input contexts differ.
-func join(a, b context, line int, nodeName string) context {
+func join(a, b context, node parse.Node, nodeName string) context {
 	if a.state == stateError {
 		return a
 	}
@@ -384,14 +400,14 @@ func join(a, b context, line int, nodeName string) context {
 	// ends in an unquoted value state even though the else branch
 	// ends in stateBeforeValue.
 	if c, d := nudge(a), nudge(b); !(c.eq(a) && d.eq(b)) {
-		if e := join(c, d, line, nodeName); e.state != stateError {
+		if e := join(c, d, node, nodeName); e.state != stateError {
 			return e
 		}
 	}
 
 	return context{
 		state: stateError,
-		err:   errorf(ErrBranchEnd, line, "{{%s}} branches end in different contexts: %v, %v", nodeName, a, b),
+		err:   errorf(ErrBranchEnd, node, 0, "{{%s}} branches end in different contexts: %v, %v", nodeName, a, b),
 	}
 }
 
@@ -403,7 +419,7 @@ func (e *escaper) escapeBranch(c context, n *parse.BranchNode, nodeName string) 
 		// We check that executing n.List once results in the same context
 		// as executing n.List twice.
 		c1, _ := e.escapeListConditionally(c0, n.List, nil)
-		c0 = join(c0, c1, n.Line, nodeName)
+		c0 = join(c0, c1, n, nodeName)
 		if c0.state == stateError {
 			// Make clear that this is a problem on loop re-entry
 			// since developers tend to overlook that branch when
@@ -414,7 +430,7 @@ func (e *escaper) escapeBranch(c context, n *parse.BranchNode, nodeName string) 
 		}
 	}
 	c1 := e.escapeList(c, n.ElseList)
-	return join(c0, c1, n.Line, nodeName)
+	return join(c0, c1, n, nodeName)
 }
 
 // escapeList escapes a list template node.
@@ -466,7 +482,7 @@ func (e *escaper) escapeListConditionally(c context, n *parse.ListNode, filter f
 
 // escapeTemplate escapes a {{template}} call node.
 func (e *escaper) escapeTemplate(c context, n *parse.TemplateNode) context {
-	c, name := e.escapeTree(c, n.Name, n.Line)
+	c, name := e.escapeTree(c, n, n.Name, n.Line)
 	if name != n.Name {
 		e.editTemplateNode(n, name)
 	}
@@ -475,7 +491,7 @@ func (e *escaper) escapeTemplate(c context, n *parse.TemplateNode) context {
 
 // escapeTree escapes the named template starting in the given context as
 // necessary and returns its output context.
-func (e *escaper) escapeTree(c context, name string, line int) (context, string) {
+func (e *escaper) escapeTree(c context, node parse.Node, name string, line int) (context, string) {
 	// Mangle the template name with the input context to produce a reliable
 	// identifier.
 	dname := c.mangle(name)
@@ -491,12 +507,12 @@ func (e *escaper) escapeTree(c context, name string, line int) (context, string)
 		if e.tmpl.set[name] != nil {
 			return context{
 				state: stateError,
-				err:   errorf(ErrNoSuchTemplate, line, "%q is an incomplete or empty template", name),
+				err:   errorf(ErrNoSuchTemplate, node, line, "%q is an incomplete or empty template", name),
 			}, dname
 		}
 		return context{
 			state: stateError,
-			err:   errorf(ErrNoSuchTemplate, line, "no such template %q", name),
+			err:   errorf(ErrNoSuchTemplate, node, line, "no such template %q", name),
 		}, dname
 	}
 	if dname != name {
@@ -528,8 +544,7 @@ func (e *escaper) computeOutCtx(c context, t *template.Template) context {
 	if !ok && c1.state != stateError {
 		return context{
 			state: stateError,
-			// TODO: Find the first node with a line in t.text.Tree.Root
-			err: errorf(ErrOutputContext, 0, "cannot compute output context for template %s", t.Name()),
+			err:   errorf(ErrOutputContext, t.Tree.Root, 0, "cannot compute output context for template %s", t.Name()),
 		}
 	}
 	return c1
@@ -658,12 +673,14 @@ func contextAfterText(c context, s []byte) (context, int) {
 		return transitionFunc[c.state](c, s[:i])
 	}
 
+	// We are at the beginning of an attribute value.
+
 	i := bytes.IndexAny(s, delimEnds[c.delim])
 	if i == -1 {
 		i = len(s)
 	}
 	if c.delim == delimSpaceOrTagEnd {
-		// http://www.w3.org/TR/html5/tokenization.html#attribute-value-unquoted-state
+		// http://www.w3.org/TR/html5/syntax.html#attribute-value-(unquoted)-state
 		// lists the runes below as error characters.
 		// Error out because HTML parsers may differ on whether
 		// "<a id= onclick=f("     ends inside id's or onclick's value,
@@ -673,7 +690,7 @@ func contextAfterText(c context, s []byte) (context, int) {
 		if j := bytes.IndexAny(s[:i], "\"'<=`"); j >= 0 {
 			return context{
 				state: stateError,
-				err:   errorf(ErrBadHTML, 0, "%q in unquoted attr: %q", s[j:j+1], s[:i]),
+				err:   errorf(ErrBadHTML, nil, 0, "%q in unquoted attr: %q", s[j:j+1], s[:i]),
 			}, len(s)
 		}
 	}
@@ -688,13 +705,21 @@ func contextAfterText(c context, s []byte) (context, int) {
 		}
 		return c, len(s)
 	}
+
+	element := c.element
+
+	// If this is a non-JS "type" attribute inside "script" tag, do not treat the contents as JS.
+	if c.state == stateAttr && c.element == elementScript && c.attr == attrScriptType && !isJSType(string(s[:i])) {
+		element = elementNone
+	}
+
 	if c.delim != delimSpaceOrTagEnd {
 		// Consume any quote.
 		i++
 	}
 	// On exiting an attribute, we discard all state information
 	// except the state and element.
-	return context{state: stateTag, element: c.element}, i
+	return context{state: stateTag, element: element}, i
 }
 
 // editActionNode records a change to an action pipeline for later commit.
@@ -750,4 +775,45 @@ func (e *escaper) template(name string) *template.Template {
 		t = e.derived[name]
 	}
 	return t
+}
+
+// Forwarding functions so that clients need only import this package
+// to reach the general escaping functions of text/template.
+
+// HTMLEscape writes to w the escaped HTML equivalent of the plain text data b.
+func HTMLEscape(w io.Writer, b []byte) {
+	template.HTMLEscape(w, b)
+}
+
+// HTMLEscapeString returns the escaped HTML equivalent of the plain text data s.
+func HTMLEscapeString(s string) string {
+	return template.HTMLEscapeString(s)
+}
+
+// HTMLEscaper returns the escaped HTML equivalent of the textual
+// representation of its arguments.
+func HTMLEscaper(args ...interface{}) string {
+	return template.HTMLEscaper(args...)
+}
+
+// JSEscape writes to w the escaped JavaScript equivalent of the plain text data b.
+func JSEscape(w io.Writer, b []byte) {
+	template.JSEscape(w, b)
+}
+
+// JSEscapeString returns the escaped JavaScript equivalent of the plain text data s.
+func JSEscapeString(s string) string {
+	return template.JSEscapeString(s)
+}
+
+// JSEscaper returns the escaped JavaScript equivalent of the textual
+// representation of its arguments.
+func JSEscaper(args ...interface{}) string {
+	return template.JSEscaper(args...)
+}
+
+// URLQueryEscaper returns the escaped value of the textual representation of
+// its arguments in a form suitable for embedding in a URL query.
+func URLQueryEscaper(args ...interface{}) string {
+	return template.URLQueryEscaper(args...)
 }

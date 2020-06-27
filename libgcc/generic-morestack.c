@@ -1,5 +1,5 @@
 /* Library support for -fsplit-stack.  */
-/* Copyright (C) 2009, 2010, 2011 Free Software Foundation, Inc.
+/* Copyright (C) 2009-2017 Free Software Foundation, Inc.
    Contributed by Ian Lance Taylor <iant@google.com>.
 
 This file is part of GCC.
@@ -22,6 +22,9 @@ You should have received a copy of the GNU General Public License and
 a copy of the GCC Runtime Library Exception along with this program;
 see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 <http://www.gnu.org/licenses/>.  */
+
+/* powerpc 32-bit not supported.  */
+#if !defined __powerpc__ || defined __powerpc64__
 
 #include "tconfig.h"
 #include "tsystem.h"
@@ -378,7 +381,7 @@ allocate_segment (size_t frame_size)
     {
       void *guard;
 
-#ifdef STACK_GROWS_DOWNWARD
+#ifdef __LIBGCC_STACK_GROWS_DOWNWARD__
       guard = space;
       space = (char *) space + pagesize;
 #else
@@ -496,7 +499,7 @@ __generic_morestack_set_initial_sp (void *sp, size_t len)
      to the nearest 512 byte boundary.  It's not essential that we be
      precise here; getting it wrong will just leave some stack space
      unused.  */
-#ifdef STACK_GROWS_DOWNWARD
+#ifdef __LIBGCC_STACK_GROWS_DOWNWARD__
   sp = (void *) ((((__UINTPTR_TYPE__) sp + 511U) / 512U) * 512U);
 #else
   sp = (void *) ((((__UINTPTR_TYPE__) sp - 511U) / 512U) * 512U);
@@ -549,6 +552,7 @@ __generic_morestack (size_t *pframe_size, void *old_stack, size_t param_size)
   char *to;
   void *ret;
   size_t i;
+  size_t aligned;
 
   current = __morestack_current_segment;
 
@@ -580,15 +584,19 @@ __generic_morestack (size_t *pframe_size, void *old_stack, size_t param_size)
 
   *pframe_size = current->size - param_size;
 
-#ifdef STACK_GROWS_DOWNWARD
+  /* Align the returned stack to a 32-byte boundary.  */
+  aligned = (param_size + 31) & ~ (size_t) 31;
+
+#ifdef __LIBGCC_STACK_GROWS_DOWNWARD__
   {
     char *bottom = (char *) (current + 1) + current->size;
-    to = bottom - param_size;
-    ret = bottom - param_size;
+    to = bottom - aligned;
+    ret = bottom - aligned;
   }
 #else
   to = current + 1;
-  ret = (char *) (current + 1) + param_size;
+  to += aligned - param_size;
+  ret = (char *) (current + 1) + aligned;
 #endif
 
   /* We don't call memcpy to avoid worrying about the dynamic linker
@@ -623,7 +631,7 @@ __generic_releasestack (size_t *pavailable)
 
   if (current != NULL)
     {
-#ifdef STACK_GROWS_DOWNWARD
+#ifdef __LIBGCC_STACK_GROWS_DOWNWARD__
       *pavailable = (char *) old_stack - (char *) (current + 1);
 #else
       *pavailable = (char *) (current + 1) + current->size - (char *) old_stack;
@@ -634,7 +642,7 @@ __generic_releasestack (size_t *pavailable)
       size_t used;
 
       /* We have popped back to the original stack.  */
-#ifdef STACK_GROWS_DOWNWARD
+#ifdef __LIBGCC_STACK_GROWS_DOWNWARD__
       if ((char *) old_stack >= (char *) __morestack_initial_sp.sp)
 	used = 0;
       else
@@ -773,7 +781,7 @@ __generic_findstack (void *stack)
 	  && (char *) pss + pss->size > (char *) stack)
 	{
 	  __morestack_current_segment = pss;
-#ifdef STACK_GROWS_DOWNWARD
+#ifdef __LIBGCC_STACK_GROWS_DOWNWARD__
 	  return (char *) stack - (char *) (pss + 1);
 #else
 	  return (char *) (pss + 1) + pss->size - (char *) stack;
@@ -786,7 +794,7 @@ __generic_findstack (void *stack)
   if (__morestack_initial_sp.sp == NULL)
     return 0;
 
-#ifdef STACK_GROWS_DOWNWARD
+#ifdef __LIBGCC_STACK_GROWS_DOWNWARD__
   if ((char *) stack >= (char *) __morestack_initial_sp.sp)
     used = 0;
   else
@@ -864,7 +872,7 @@ __splitstack_find (void *segment_arg, void *sp, size_t *len,
 
       *next_segment = (void *) (uintptr_type) 2;
       *next_sp = NULL;
-#ifdef STACK_GROWS_DOWNWARD
+#ifdef __LIBGCC_STACK_GROWS_DOWNWARD__
       if ((char *) sp >= isp)
 	return NULL;
       *len = (char *) isp - (char *) sp;
@@ -930,6 +938,11 @@ __splitstack_find (void *segment_arg, void *sp, size_t *len,
       nsp -= 12 * sizeof (void *);
 #elif defined (__i386__)
       nsp -= 6 * sizeof (void *);
+#elif defined __powerpc64__
+#elif defined __s390x__
+      nsp -= 2 * 160;
+#elif defined __s390__
+      nsp -= 2 * 96;
 #else
 #error "unrecognized target"
 #endif
@@ -937,7 +950,7 @@ __splitstack_find (void *segment_arg, void *sp, size_t *len,
       *next_sp = (void *) nsp;
     }
 
-#ifdef STACK_GROWS_DOWNWARD
+#ifdef __LIBGCC_STACK_GROWS_DOWNWARD__
   *len = (char *) (segment + 1) + segment->size - (char *) sp;
   ret = (void *) sp;
 #else
@@ -1041,7 +1054,7 @@ __splitstack_makecontext (size_t stack_size, void *context[NUMBER_OFFSETS],
   segment = allocate_segment (stack_size);
   context[MORESTACK_SEGMENTS] = segment;
   context[CURRENT_SEGMENT] = segment;
-#ifdef STACK_GROWS_DOWNWARD
+#ifdef __LIBGCC_STACK_GROWS_DOWNWARD__
   initial_sp = (void *) ((char *) (segment + 1) + segment->size);
 #else
   initial_sp = (void *) (segment + 1);
@@ -1077,13 +1090,13 @@ __splitstack_resetcontext (void *context[10], size_t *size)
       initial_sp = context[INITIAL_SP];
       initial_size = (uintptr_type) context[INITIAL_SP_LEN];
       ret = initial_sp;
-#ifdef STACK_GROWS_DOWNWARD
+#ifdef __LIBGCC_STACK_GROWS_DOWNWARD__
       ret = (void *) ((char *) ret - initial_size);
 #endif
     }
   else
     {
-#ifdef STACK_GROWS_DOWNWARD
+#ifdef __LIBGCC_STACK_GROWS_DOWNWARD__
       initial_sp = (void *) ((char *) (segment + 1) + segment->size);
 #else
       initial_sp = (void *) (segment + 1);
@@ -1165,3 +1178,4 @@ __splitstack_find_context (void *context[NUMBER_OFFSETS], size_t *stack_size,
 }
 
 #endif /* !defined (inhibit_libc) */
+#endif /* not powerpc 32-bit */

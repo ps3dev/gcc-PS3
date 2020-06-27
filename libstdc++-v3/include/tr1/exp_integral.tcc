@@ -1,7 +1,6 @@
 // Special functions -*- C++ -*-
 
-// Copyright (C) 2006, 2007, 2008, 2009, 2010
-// Free Software Foundation, Inc.
+// Copyright (C) 2006-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -50,8 +49,13 @@
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
+#if _GLIBCXX_USE_STD_SPEC_FUNCS
+#elif defined(_GLIBCXX_TR1_CMATH)
 namespace tr1
 {
+#else
+# error do not include this header directly, use <cmath> or <tr1/cmath>
+#endif
   // [5.2] Special functions
 
   // Implementation-space details.
@@ -59,7 +63,7 @@ namespace tr1
   {
   _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
-    template<typename _Tp> _Tp __expint_E1(const _Tp);
+    template<typename _Tp> _Tp __expint_E1(_Tp);
 
     /**
      *   @brief Return the exponential integral @f$ E_1(x) @f$
@@ -76,7 +80,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __expint_E1_series(const _Tp __x)
+    __expint_E1_series(_Tp __x)
     {
       const _Tp __eps = std::numeric_limits<_Tp>::epsilon();
       _Tp __term = _Tp(1);
@@ -113,7 +117,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __expint_E1_asymp(const _Tp __x)
+    __expint_E1_asymp(_Tp __x)
     {
       _Tp __term = _Tp(1);
       _Tp __esum = _Tp(1);
@@ -150,7 +154,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __expint_En_series(const unsigned int __n, const _Tp __x)
+    __expint_En_series(unsigned int __n, _Tp __x)
     {
       const unsigned int __max_iter = 100;
       const _Tp __eps = std::numeric_limits<_Tp>::epsilon();
@@ -196,7 +200,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __expint_En_cont_frac(const unsigned int __n, const _Tp __x)
+    __expint_En_cont_frac(unsigned int __n, _Tp __x)
     {
       const unsigned int __max_iter = 100;
       const _Tp __eps = std::numeric_limits<_Tp>::epsilon();
@@ -241,7 +245,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __expint_En_recursion(const unsigned int __n, const _Tp __x)
+    __expint_En_recursion(unsigned int __n, _Tp __x)
     {
       _Tp __En;
       _Tp __E1 = __expint_E1(__x);
@@ -285,7 +289,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __expint_Ei_series(const _Tp __x)
+    __expint_Ei_series(_Tp __x)
     {
       _Tp __term = _Tp(1);
       _Tp __sum = _Tp(0);
@@ -316,7 +320,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __expint_Ei_asymp(const _Tp __x)
+    __expint_Ei_asymp(_Tp __x)
     {
       _Tp __term = _Tp(1);
       _Tp __sum = _Tp(1);
@@ -349,7 +353,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __expint_Ei(const _Tp __x)
+    __expint_Ei(_Tp __x)
     {
       if (__x < _Tp(0))
         return -__expint_E1(-__x);
@@ -373,7 +377,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __expint_E1(const _Tp __x)
+    __expint_E1(_Tp __x)
     {
       if (__x < _Tp(0))
         return -__expint_Ei(-__x);
@@ -403,7 +407,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __expint_asymp(const unsigned int __n, const _Tp __x)
+    __expint_asymp(unsigned int __n, _Tp __x)
     {
       _Tp __term = _Tp(1);
       _Tp __sum = _Tp(1);
@@ -437,7 +441,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __expint_large_n(const unsigned int __n, const _Tp __x)
+    __expint_large_n(unsigned int __n, _Tp __x)
     {
       const _Tp __xpn = __x + __n;
       const _Tp __xpn2 = __xpn * __xpn;
@@ -471,7 +475,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __expint(const unsigned int __n, const _Tp __x)
+    __expint(unsigned int __n, _Tp __x)
     {
       //  Return NaN on NaN input.
       if (__isnan(__x))
@@ -511,7 +515,7 @@ namespace tr1
      */
     template<typename _Tp>
     inline _Tp
-    __expint(const _Tp __x)
+    __expint(_Tp __x)
     {
       if (__isnan(__x))
         return std::numeric_limits<_Tp>::quiet_NaN();
@@ -520,8 +524,10 @@ namespace tr1
     }
 
   _GLIBCXX_END_NAMESPACE_VERSION
-  } // namespace std::tr1::__detail
-}
+  } // namespace __detail
+#if ! _GLIBCXX_USE_STD_SPEC_FUNCS && defined(_GLIBCXX_TR1_CMATH)
+} // namespace tr1
+#endif
 }
 
 #endif // _GLIBCXX_TR1_EXP_INTEGRAL_TCC

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2006-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 2006-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -337,10 +337,11 @@ package body Ada.Numerics.Generic_Real_Arrays is
            Result_Matrix => Real_Matrix,
            Operation     => "abs");
 
-      function Solve is
-         new Matrix_Vector_Solution (Real'Base, Real_Vector, Real_Matrix);
+      function Solve is new
+        Matrix_Vector_Solution (Real'Base, 0.0, Real_Vector, Real_Matrix);
 
-      function Solve is new Matrix_Matrix_Solution (Real'Base, Real_Matrix);
+      function Solve is new
+        Matrix_Matrix_Solution (Real'Base, 0.0, Real_Matrix);
 
       function Unit_Matrix is new
         Generic_Array_Operations.Unit_Matrix
@@ -482,12 +483,15 @@ package body Ada.Numerics.Generic_Real_Arrays is
    -----------------
 
    function Eigenvalues (A : Real_Matrix) return Real_Vector is
-      Values  : Real_Vector (A'Range (1));
-      Vectors : Real_Matrix (1 .. 0, 1 .. 0);
    begin
-      Jacobi (A, Values, Vectors, Compute_Vectors => False);
-      Sort_Eigensystem (Values, Vectors);
-      return Values;
+      return Values : Real_Vector (A'Range (1)) do
+         declare
+            Vectors : Real_Matrix (1 .. 0, 1 .. 0);
+         begin
+            Jacobi (A, Values, Vectors, Compute_Vectors => False);
+            Sort_Eigensystem (Values, Vectors);
+         end;
+      end return;
    end Eigenvalues;
 
    -------------
@@ -742,10 +746,10 @@ package body Ada.Numerics.Generic_Real_Arrays is
    ---------------
 
    function Transpose (X : Real_Matrix) return Real_Matrix is
-      R : Real_Matrix (X'Range (2), X'Range (1));
    begin
-      Transpose (X, R);
-      return R;
+      return R : Real_Matrix (X'Range (2), X'Range (1)) do
+         Transpose (X, R);
+      end return;
    end Transpose;
 
    -----------------

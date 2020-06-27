@@ -8,6 +8,7 @@
 // The package is using the Elastic Tabstops algorithm described at
 // http://nickgravgaard.com/elastictabstops/index.html.
 //
+// The text/tabwriter package is frozen and is not accepting new features.
 package tabwriter
 
 import (
@@ -33,18 +34,32 @@ type cell struct {
 // A Writer is a filter that inserts padding around tab-delimited
 // columns in its input to align them in the output.
 //
-// The Writer treats incoming bytes as UTF-8 encoded text consisting
-// of cells terminated by (horizontal or vertical) tabs or line
-// breaks (newline or formfeed characters). Cells in adjacent lines
-// constitute a column. The Writer inserts padding as needed to
-// make all cells in a column have the same width, effectively
-// aligning the columns. It assumes that all characters have the
-// same width except for tabs for which a tabwidth must be specified.
-// Note that cells are tab-terminated, not tab-separated: trailing
-// non-tab text at the end of a line does not form a column cell.
+// The Writer treats incoming bytes as UTF-8-encoded text consisting
+// of cells terminated by horizontal ('\t') or vertical ('\v') tabs,
+// and newline ('\n') or formfeed ('\f') characters; both newline and
+// formfeed act as line breaks.
+//
+// Tab-terminated cells in contiguous lines constitute a column. The
+// Writer inserts padding as needed to make all cells in a column have
+// the same width, effectively aligning the columns. It assumes that
+// all characters have the same width, except for tabs for which a
+// tabwidth must be specified. Column cells must be tab-terminated, not
+// tab-separated: non-tab terminated trailing text at the end of a line
+// forms a cell but that cell is not part of an aligned column.
+// For instance, in this example (where | stands for a horizontal tab):
+//
+//	aaaa|bbb|d
+//	aa  |b  |dd
+//	a   |
+//	aa  |cccc|eee
+//
+// the b and c are in distinct columns (the b column is not contiguous
+// all the way). The d and e are not in a column at all (there's no
+// terminating tab, nor would the column be contiguous).
 //
 // The Writer assumes that all Unicode code points have the same width;
-// this may not be true in some fonts.
+// this may not be true in some fonts or if the string contains combining
+// characters.
 //
 // If DiscardEmptyColumns is set, empty columns that are terminated
 // entirely by vertical (or "soft") tabs are discarded. Columns
@@ -64,9 +79,9 @@ type cell struct {
 // width of the escaped text is always computed excluding the Escape
 // characters.
 //
-// The formfeed character ('\f') acts like a newline but it also
-// terminates all columns in the current line (effectively calling
-// Flush). Cells in the next line start new columns. Unless found
+// The formfeed character acts like a newline but it also terminates
+// all columns in the current line (effectively calling Flush). Tab-
+// terminated cells in the next line start new columns. Unless found
 // inside an HTML tag or inside an escaped text segment, formfeed
 // characters appear as newlines in the output.
 //
@@ -434,9 +449,13 @@ func (b *Writer) terminateCell(htab bool) int {
 	return len(*line)
 }
 
-func handlePanic(err *error) {
+func handlePanic(err *error, op string) {
 	if e := recover(); e != nil {
-		*err = e.(osError).err // re-panics if it's not a local osError
+		if nerr, ok := e.(osError); ok {
+			*err = nerr.err
+			return
+		}
+		panic("tabwriter: panic during " + op)
 	}
 }
 
@@ -444,10 +463,13 @@ func handlePanic(err *error) {
 // that any data buffered in the Writer is written to output. Any
 // incomplete escape sequence at the end is considered
 // complete for formatting purposes.
-//
-func (b *Writer) Flush() (err error) {
+func (b *Writer) Flush() error {
+	return b.flush()
+}
+
+func (b *Writer) flush() (err error) {
 	defer b.reset() // even in the presence of errors
-	defer handlePanic(&err)
+	defer handlePanic(&err, "Flush")
 
 	// add current cell if not empty
 	if b.cell.size > 0 {
@@ -460,8 +482,7 @@ func (b *Writer) Flush() (err error) {
 
 	// format contents of buffer
 	b.format(0, 0, len(b.lines))
-
-	return
+	return nil
 }
 
 var hbar = []byte("---\n")
@@ -471,7 +492,7 @@ var hbar = []byte("---\n")
 // while writing to the underlying output stream.
 //
 func (b *Writer) Write(buf []byte) (n int, err error) {
-	defer handlePanic(&err)
+	defer handlePanic(&err, "Write")
 
 	// split text into cells
 	n = 0
@@ -547,7 +568,7 @@ func (b *Writer) Write(buf []byte) (n int, err error) {
 }
 
 // NewWriter allocates and initializes a new tabwriter.Writer.
-// The parameters are the same as for the the Init function.
+// The parameters are the same as for the Init function.
 //
 func NewWriter(output io.Writer, minwidth, tabwidth, padding int, padchar byte, flags uint) *Writer {
 	return new(Writer).Init(output, minwidth, tabwidth, padding, padchar, flags)

@@ -16,7 +16,8 @@ package math
 func libc_ldexp(float64, int) float64
 
 func Ldexp(frac float64, exp int) float64 {
-	return libc_ldexp(frac, exp)
+	r := libc_ldexp(frac, exp)
+	return r
 }
 
 func ldexp(frac float64, exp int) float64 {

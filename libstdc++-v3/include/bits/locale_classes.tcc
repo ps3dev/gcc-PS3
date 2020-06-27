@@ -1,6 +1,6 @@
 // Locale support -*- C++ -*-
 
-// Copyright (C) 2007, 2008, 2009, 2010, 2011 Free Software Foundation, Inc.
+// Copyright (C) 2007-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -89,6 +89,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   /**
    *  @brief  Test for the presence of a facet.
+   *  @ingroup locales
    *
    *  has_facet tests the locale argument for the presence of the facet type
    *  provided as the template parameter.  Facets derived from the facet
@@ -105,7 +106,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       const size_t __i = _Facet::id._M_id();
       const locale::facet** __facets = __loc._M_impl->_M_facets;
       return (__i < __loc._M_impl->_M_facets_size
-#ifdef __GXX_RTTI
+#if __cpp_rtti
 	      && dynamic_cast<const _Facet*>(__facets[__i]));
 #else
               && static_cast<const _Facet*>(__facets[__i]));
@@ -114,6 +115,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   /**
    *  @brief  Return a facet.
+   *  @ingroup locales
    *
    *  use_facet looks for and returns a reference to a facet of type Facet
    *  where Facet is the template parameter.  If has_facet(locale) is true,
@@ -133,7 +135,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       const locale::facet** __facets = __loc._M_impl->_M_facets;
       if (__i >= __loc._M_impl->_M_facets_size || !__facets[__i])
         __throw_bad_cast();
-#ifdef __GXX_RTTI
+#if __cpp_rtti
       return dynamic_cast<const _Facet&>(*__facets[__i]);
 #else
       return static_cast<const _Facet&>(*__facets[__i]);

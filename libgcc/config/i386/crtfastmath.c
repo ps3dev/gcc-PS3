@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005, 2007, 2009, 2011 Free Software Foundation, Inc.
+ * Copyright (C) 2005-2017 Free Software Foundation, Inc.
  *
  * This file is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -21,6 +21,7 @@
  * <http://www.gnu.org/licenses/>.
  */
 
+#ifndef _SOFT_FLOAT
 #define MXCSR_DAZ (1 << 6)	/* Enable denormals are zero mode */
 #define MXCSR_FTZ (1 << 15)	/* Enable flush to zero mode */
 
@@ -28,35 +29,57 @@
 /* All 64-bit targets have SSE and DAZ;
    only check them explicitly for 32-bit ones. */
 #include "cpuid.h"
-#endif
 
-#if !defined __x86_64__ && defined __sun__ && defined __svr4__
-#include <signal.h>
-#include <ucontext.h>
-
-static volatile sig_atomic_t sigill_caught;
-
+__attribute__ ((target("fxsr,sse")))
 static void
-sigill_hdlr (int sig __attribute((unused)),
-	     siginfo_t *sip __attribute__((unused)),
-	     ucontext_t *ucp)
-{
-  sigill_caught = 1;
-  /* Set PC to the instruction after the faulting one to skip over it,
-     otherwise we enter an infinite loop.  3 is the size of the movaps
-     instruction.  */
-  ucp->uc_mcontext.gregs[EIP] += 3;
-  setcontext (ucp);
-}
-#endif
-
-static void __attribute__((constructor))
-#ifndef __x86_64__
 /* The i386 ABI only requires 4-byte stack alignment, so this is necessary
    to make sure the fxsave struct gets correct alignment.
    See PR27537 and PR28621.  */
 __attribute__ ((force_align_arg_pointer))
+set_fast_math_sse (unsigned int edx)
+{
+  unsigned int mxcsr;
+  
+  if (edx & bit_FXSAVE)
+    {
+      /* Check if DAZ is available.  */
+      struct
+      {
+	unsigned short cwd;
+	unsigned short swd;
+	unsigned short twd;
+	unsigned short fop;
+	unsigned int fip;
+	unsigned int fcs;
+	unsigned int foo;
+	unsigned int fos;
+	unsigned int mxcsr;
+	unsigned int mxcsr_mask;
+	unsigned int st_space[32];
+	unsigned int xmm_space[32];
+	unsigned int padding[56];
+      } __attribute__ ((aligned (16))) fxsave;
+
+      /* This is necessary since some implementations of FXSAVE
+	 do not modify reserved areas within the image.  */
+      fxsave.mxcsr_mask = 0;
+
+      __builtin_ia32_fxsave (&fxsave);
+
+      mxcsr = fxsave.mxcsr;
+
+      if (fxsave.mxcsr_mask & MXCSR_DAZ)
+	mxcsr |= MXCSR_DAZ;
+    }
+  else
+    mxcsr = __builtin_ia32_stmxcsr ();
+
+  mxcsr |= MXCSR_FTZ;
+  __builtin_ia32_ldmxcsr (mxcsr);
+}
 #endif
+
+static void __attribute__((constructor))
 set_fast_math (void)
 {
 #ifndef __x86_64__
@@ -66,66 +89,11 @@ set_fast_math (void)
     return;
 
   if (edx & bit_SSE)
-    {
-      unsigned int mxcsr;
-  
-#if defined __sun__ && defined __svr4__
-      /* Solaris 2 before Solaris 9 4/04 cannot execute SSE instructions even
-	 if the CPU supports them.  Programs receive SIGILL instead, so check
-	 for that at runtime.  */
-      struct sigaction act, oact;
-
-      act.sa_handler = sigill_hdlr;
-      sigemptyset (&act.sa_mask);
-      /* Need to set SA_SIGINFO so a ucontext_t * is passed to the handler.  */
-      act.sa_flags = SA_SIGINFO;
-      sigaction (SIGILL, &act, &oact);
-
-      /* We need a single SSE instruction here so the handler can safely skip
-	 over it.  */
-      __asm__ volatile ("movaps %xmm0,%xmm0");
-
-      sigaction (SIGILL, &oact, NULL);
-
-      if (sigill_caught)
-	return;
-#endif /* __sun__ && __svr4__ */
-
-      mxcsr = __builtin_ia32_stmxcsr () | MXCSR_FTZ;
-
-      if (edx & bit_FXSAVE)
-	{
-	  /* Check if DAZ is available.  */
-	  struct
-	    {
-	      unsigned short int cwd;
-	      unsigned short int swd;
-	      unsigned short int twd;
-	      unsigned short int fop;
-	      long int fip;
-	      long int fcs;
-	      long int foo;
-	      long int fos;
-	      long int mxcsr;
-	      long int mxcsr_mask;
-	      long int st_space[32];
-	      long int xmm_space[32];
-	      long int padding[56];
-	    } __attribute__ ((aligned (16))) fxsave;
-
-	  __builtin_memset (&fxsave, 0, sizeof (fxsave));
-
-	  asm volatile ("fxsave %0" : "=m" (fxsave) : "m" (fxsave));
-
-	  if (fxsave.mxcsr_mask & MXCSR_DAZ)
-	    mxcsr |= MXCSR_DAZ;
-	}
-
-      __builtin_ia32_ldmxcsr (mxcsr);
-    }
+    set_fast_math_sse (edx);
 #else
   unsigned int mxcsr = __builtin_ia32_stmxcsr ();
   mxcsr |= MXCSR_DAZ | MXCSR_FTZ;
   __builtin_ia32_ldmxcsr (mxcsr);
 #endif
 }
+#endif

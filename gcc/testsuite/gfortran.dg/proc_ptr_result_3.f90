@@ -1,4 +1,5 @@
-!{ dg-do run }
+! { dg-do run }
+! { dg-require-visibility "" }
 !
 ! PR 36704: Procedure pointer as function result
 !
@@ -51,6 +52,3 @@ recursive subroutine my_sub(j)
    j = j*3
    call set_sub(my_sub)
 end subroutine my_sub
-
-! { dg-final { cleanup-modules "store_subroutine" } }
-

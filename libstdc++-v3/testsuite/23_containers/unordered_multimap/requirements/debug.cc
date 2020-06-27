@@ -1,7 +1,6 @@
-// { dg-options "-std=gnu++0x" }
-// { dg-do compile }
+// { dg-do compile { target c++11 } }
 
-// Copyright (C) 2007, 2009 Free Software Foundation, Inc.
+// Copyright (C) 2007-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -21,8 +20,6 @@
 #include <string>
 #include <debug/unordered_map>
 
-using namespace __gnu_debug;
-
 using std::string;
 
-template class unordered_multimap<string, float>;
+template class __gnu_debug::unordered_multimap<string, float>;

@@ -1,6 +1,5 @@
 /* Generate the machine mode enumeration and associated tables.
-   Copyright (C) 2003, 2004, 2005, 2006, 2007, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2003-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -21,7 +20,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "bconfig.h"
 #include "system.h"
 #include "errors.h"
-#include "hashtab.h"
 
 /* enum mode_class is normally defined by machmode.h but we can't
    include that header here.  */
@@ -68,11 +66,15 @@ struct mode_data
 				   this mode as a component.  */
   struct mode_data *next_cont;  /* Next mode in that list.  */
 
+  struct mode_data *complex;	/* complex type with mode as component.  */
   const char *file;		/* file and line of definition, */
   unsigned int line;		/* for error reporting */
   unsigned int counter;		/* Rank ordering of modes */
   unsigned int ibit;		/* the number of integral bits */
   unsigned int fbit;		/* the number of fractional bits */
+  bool need_bytesize_adj;	/* true if this mode need dynamic size
+				   adjustment */
+  unsigned int int_n;		/* If nonzero, then __int<INT_N> will be defined */
 };
 
 static struct mode_data *modes[MAX_MODE_CLASS];
@@ -82,8 +84,8 @@ static struct mode_data *void_mode;
 static const struct mode_data blank_mode = {
   0, "<unknown>", MAX_MODE_CLASS,
   -1U, -1U, -1U, -1U,
-  0, 0, 0, 0, 0,
-  "<unknown>", 0, 0, 0, 0
+  0, 0, 0, 0, 0, 0,
+  "<unknown>", 0, 0, 0, 0, false, 0
 };
 
 static htab_t modes_by_name;
@@ -334,6 +336,7 @@ complete_mode (struct mode_data *m)
       break;
 
     case MODE_INT:
+    case MODE_POINTER_BOUNDS:
     case MODE_FLOAT:
     case MODE_DECIMAL_FLOAT:
     case MODE_FRACT:
@@ -360,7 +363,6 @@ complete_mode (struct mode_data *m)
       m->bytesize = m->component->bytesize;
 
       m->ncomponents = 1;
-      m->component = 0;  /* ??? preserve this */
       break;
 
     case MODE_COMPLEX_INT:
@@ -420,14 +422,13 @@ complete_all_modes (void)
 }
 
 /* For each mode in class CLASS, construct a corresponding complex mode.  */
-#define COMPLEX_MODES(C) make_complex_modes(MODE_##C, __FILE__, __LINE__)
+#define COMPLEX_MODES(C) make_complex_modes (MODE_##C, __FILE__, __LINE__)
 static void
 make_complex_modes (enum mode_class cl,
 		    const char *file, unsigned int line)
 {
   struct mode_data *m;
   struct mode_data *c;
-  char buf[8];
   enum mode_class cclass = complex_class (cl);
 
   if (cclass == MODE_RANDOM)
@@ -435,57 +436,58 @@ make_complex_modes (enum mode_class cl,
 
   for (m = modes[cl]; m; m = m->next)
     {
+      char *p, *buf;
+      size_t m_len;
+
       /* Skip BImode.  FIXME: BImode probably shouldn't be MODE_INT.  */
       if (m->precision == 1)
 	continue;
 
-      if (strlen (m->name) >= sizeof buf)
-	{
-	  error ("%s:%d:mode name \"%s\" is too long",
-		 m->file, m->line, m->name);
-	  continue;
-	}
+      m_len = strlen (m->name);
+      /* The leading "1 +" is in case we prepend a "C" below.  */
+      buf = (char *) xmalloc (1 + m_len + 1);
 
       /* Float complex modes are named SCmode, etc.
 	 Int complex modes are named CSImode, etc.
          This inconsistency should be eliminated.  */
+      p = 0;
       if (cl == MODE_FLOAT)
 	{
-	  char *p, *q = 0;
-	  strncpy (buf, m->name, sizeof buf);
+	  memcpy (buf, m->name, m_len + 1);
 	  p = strchr (buf, 'F');
-	  if (p == 0)
-	    q = strchr (buf, 'D');
-	  if (p == 0 && q == 0)
+	  if (p == 0 && strchr (buf, 'D') == 0)
 	    {
 	      error ("%s:%d: float mode \"%s\" has no 'F' or 'D'",
 		     m->file, m->line, m->name);
+	      free (buf);
 	      continue;
 	    }
-
-	  if (p != 0)
-	    *p = 'C';
-	  else
-	    snprintf (buf, sizeof buf, "C%s", m->name);
 	}
+      if (p != 0)
+	*p = 'C';
       else
-	snprintf (buf, sizeof buf, "C%s", m->name);
+	{
+	  buf[0] = 'C';
+	  memcpy (buf + 1, m->name, m_len + 1);
+	}
 
-      c = new_mode (cclass, xstrdup (buf), file, line);
+      c = new_mode (cclass, buf, file, line);
       c->component = m;
+      m->complex = c;
     }
 }
 
 /* For all modes in class CL, construct vector modes of width
    WIDTH, having as many components as necessary.  */
-#define VECTOR_MODES(C, W) make_vector_modes(MODE_##C, W, __FILE__, __LINE__)
+#define VECTOR_MODES(C, W) make_vector_modes (MODE_##C, W, __FILE__, __LINE__)
 static void ATTRIBUTE_UNUSED
 make_vector_modes (enum mode_class cl, unsigned int width,
 		   const char *file, unsigned int line)
 {
   struct mode_data *m;
   struct mode_data *v;
-  char buf[8];
+  /* Big enough for a 32-bit UINT_MAX plus the text.  */
+  char buf[12];
   unsigned int ncomponents;
   enum mode_class vclass = vector_class (cl);
 
@@ -526,7 +528,8 @@ make_vector_modes (enum mode_class cl, unsigned int width,
 
 /* Input.  */
 
-#define _SPECIAL_MODE(C, N) make_special_mode(MODE_##C, #N, __FILE__, __LINE__)
+#define _SPECIAL_MODE(C, N) \
+  make_special_mode (MODE_##C, #N, __FILE__, __LINE__)
 #define RANDOM_MODE(N) _SPECIAL_MODE (RANDOM, N)
 #define CC_MODE(N) _SPECIAL_MODE (CC, N)
 
@@ -536,6 +539,19 @@ make_special_mode (enum mode_class cl, const char *name,
 {
   new_mode (cl, name, file, line);
 }
+
+#define POINTER_BOUNDS_MODE(N, Y) \
+  make_pointer_bounds_mode (#N, Y, __FILE__, __LINE__)
+
+static void ATTRIBUTE_UNUSED
+make_pointer_bounds_mode (const char *name,
+			  unsigned int bytesize,
+			  const char *file, unsigned int line)
+{
+  struct mode_data *m = new_mode (MODE_POINTER_BOUNDS, name, file, line);
+  m->bytesize = bytesize;
+}
+
 
 #define INT_MODE(N, Y) FRACTIONAL_INT_MODE (N, -1U, Y)
 #define FRACTIONAL_INT_MODE(N, B, Y) \
@@ -633,10 +649,38 @@ reset_float_format (const char *name, const char *format,
   m->format = format;
 }
 
-/* Partial integer modes are specified by relation to a full integer mode.
-   For now, we do not attempt to narrow down their bit sizes.  */
-#define PARTIAL_INT_MODE(M) \
-  make_partial_integer_mode (#M, "P" #M, -1U, __FILE__, __LINE__)
+/* __intN support.  */
+#define INT_N(M,PREC)				\
+  make_int_n (#M, PREC, __FILE__, __LINE__)
+static void ATTRIBUTE_UNUSED
+make_int_n (const char *m, int bitsize,
+            const char *file, unsigned int line)
+{
+  struct mode_data *component = find_mode (m);
+  if (!component)
+    {
+      error ("%s:%d: no mode \"%s\"", file, line, m);
+      return;
+    }
+  if (component->cl != MODE_INT
+      && component->cl != MODE_PARTIAL_INT)
+    {
+      error ("%s:%d: mode \"%s\" is not class INT or PARTIAL_INT", file, line, m);
+      return;
+    }
+  if (component->int_n != 0)
+    {
+      error ("%s:%d: mode \"%s\" already has an intN", file, line, m);
+      return;
+    }
+
+  component->int_n = bitsize;
+}
+
+/* Partial integer modes are specified by relation to a full integer
+   mode.  */
+#define PARTIAL_INT_MODE(M,PREC,NAME)				\
+  make_partial_integer_mode (#M, #NAME, PREC, __FILE__, __LINE__)
 static void ATTRIBUTE_UNUSED
 make_partial_integer_mode (const char *base, const char *name,
 			   unsigned int precision,
@@ -673,7 +717,7 @@ make_vector_mode (enum mode_class bclass,
   struct mode_data *v;
   enum mode_class vclass = vector_class (bclass);
   struct mode_data *component = find_mode (base);
-  char namebuf[8];
+  char namebuf[16];
 
   if (vclass == MODE_RANDOM)
     return;
@@ -708,16 +752,33 @@ make_vector_mode (enum mode_class bclass,
 #define _ADD_ADJUST(A, M, X, C1, C2) \
   new_adjust (#M, &adj_##A, #A, #X, MODE_##C1, MODE_##C2, __FILE__, __LINE__)
 
-#define ADJUST_BYTESIZE(M, X)  _ADD_ADJUST(bytesize, M, X, RANDOM, RANDOM)
-#define ADJUST_ALIGNMENT(M, X) _ADD_ADJUST(alignment, M, X, RANDOM, RANDOM)
-#define ADJUST_FLOAT_FORMAT(M, X)    _ADD_ADJUST(format, M, X, FLOAT, FLOAT)
-#define ADJUST_IBIT(M, X)  _ADD_ADJUST(ibit, M, X, ACCUM, UACCUM)
-#define ADJUST_FBIT(M, X)  _ADD_ADJUST(fbit, M, X, FRACT, UACCUM)
+#define ADJUST_BYTESIZE(M, X)  _ADD_ADJUST (bytesize, M, X, RANDOM, RANDOM)
+#define ADJUST_ALIGNMENT(M, X) _ADD_ADJUST (alignment, M, X, RANDOM, RANDOM)
+#define ADJUST_FLOAT_FORMAT(M, X)    _ADD_ADJUST (format, M, X, FLOAT, FLOAT)
+#define ADJUST_IBIT(M, X)  _ADD_ADJUST (ibit, M, X, ACCUM, UACCUM)
+#define ADJUST_FBIT(M, X)  _ADD_ADJUST (fbit, M, X, FRACT, UACCUM)
+
+static int bits_per_unit;
+static int max_bitsize_mode_any_int;
 
 static void
 create_modes (void)
 {
 #include "machmode.def"
+
+  /* So put the default value unless the target needs a non standard
+     value. */
+#ifdef BITS_PER_UNIT
+  bits_per_unit = BITS_PER_UNIT;
+#else
+  bits_per_unit = 8;
+#endif
+
+#ifdef MAX_BITSIZE_MODE_ANY_INT
+  max_bitsize_mode_any_int = MAX_BITSIZE_MODE_ANY_INT;
+#else
+  max_bitsize_mode_any_int = 0;
+#endif
 }
 
 /* Processing.  */
@@ -823,7 +884,13 @@ calc_wider_mode (void)
 
 	  sortbuf[i] = 0;
 	  for (j = 0; j < i; j++)
-	    sortbuf[j]->next = sortbuf[j]->wider = sortbuf[j + 1];
+	    {
+	      sortbuf[j]->next = sortbuf[j + 1];
+	      if (c == MODE_PARTIAL_INT)
+		sortbuf[j]->wider = sortbuf[j]->component;
+	      else
+		sortbuf[j]->wider = sortbuf[j]->next;
+	    }
 
 	  modes[c] = sortbuf[0];
 	}
@@ -846,11 +913,228 @@ calc_wider_mode (void)
 
 #define print_closer() puts ("};")
 
+/* Compute the max bitsize of some of the classes of integers.  It may
+   be that there are needs for the other integer classes, and this
+   code is easy to extend.  */
+static void
+emit_max_int (void)
+{
+  unsigned int max, mmax;
+  struct mode_data *i;
+  int j;
+
+  puts ("");
+
+  printf ("#define BITS_PER_UNIT (%d)\n", bits_per_unit); 
+ 
+  if (max_bitsize_mode_any_int == 0)
+    {
+      for (max = 1, i = modes[MODE_INT]; i; i = i->next)
+	if (max < i->bytesize)
+	  max = i->bytesize;
+      mmax = max;
+      for (max = 1, i = modes[MODE_PARTIAL_INT]; i; i = i->next)
+	if (max < i->bytesize)
+	  max = i->bytesize;
+      if (max > mmax)
+	mmax = max;
+      printf ("#define MAX_BITSIZE_MODE_ANY_INT (%d*BITS_PER_UNIT)\n", mmax);
+    }
+  else
+    printf ("#define MAX_BITSIZE_MODE_ANY_INT %d\n", max_bitsize_mode_any_int);
+
+  mmax = 0;
+  for (j = 0; j < MAX_MODE_CLASS; j++)
+    for (i = modes[j]; i; i = i->next)
+      if (mmax < i->bytesize)
+	mmax = i->bytesize;
+  printf ("#define MAX_BITSIZE_MODE_ANY_MODE (%d*BITS_PER_UNIT)\n", mmax);
+}
+
+/* Emit mode_size_inline routine into insn-modes.h header.  */
+static void
+emit_mode_size_inline (void)
+{
+  int c;
+  struct mode_adjust *a;
+  struct mode_data *m;
+
+  /* Size adjustments must be propagated to all containing modes.  */
+  for (a = adj_bytesize; a; a = a->next)
+    {
+      a->mode->need_bytesize_adj = true;
+      for (m = a->mode->contained; m; m = m->next_cont)
+	m->need_bytesize_adj = true;
+    }
+
+  printf ("\
+#ifdef __cplusplus\n\
+inline __attribute__((__always_inline__))\n\
+#else\n\
+extern __inline__ __attribute__((__always_inline__, __gnu_inline__))\n\
+#endif\n\
+unsigned short\n\
+mode_size_inline (machine_mode mode)\n\
+{\n\
+  extern %sunsigned short mode_size[NUM_MACHINE_MODES];\n\
+  gcc_assert (mode >= 0 && mode < NUM_MACHINE_MODES);\n\
+  switch (mode)\n\
+    {\n", adj_bytesize ? "" : "const ");
+
+  for_all_modes (c, m)
+    if (!m->need_bytesize_adj)
+      printf ("    case %smode: return %u;\n", m->name, m->bytesize);
+
+  puts ("\
+    default: return mode_size[mode];\n\
+    }\n\
+}\n");
+}
+
+/* Emit mode_nunits_inline routine into insn-modes.h header.  */
+static void
+emit_mode_nunits_inline (void)
+{
+  int c;
+  struct mode_data *m;
+
+  puts ("\
+#ifdef __cplusplus\n\
+inline __attribute__((__always_inline__))\n\
+#else\n\
+extern __inline__ __attribute__((__always_inline__, __gnu_inline__))\n\
+#endif\n\
+unsigned char\n\
+mode_nunits_inline (machine_mode mode)\n\
+{\n\
+  extern const unsigned char mode_nunits[NUM_MACHINE_MODES];\n\
+  gcc_assert (mode >= 0 && mode < NUM_MACHINE_MODES);\n\
+  switch (mode)\n\
+    {");
+
+  for_all_modes (c, m)
+    printf ("    case %smode: return %u;\n", m->name, m->ncomponents);
+
+  puts ("\
+    default: return mode_nunits[mode];\n\
+    }\n\
+}\n");
+}
+
+/* Emit mode_inner_inline routine into insn-modes.h header.  */
+static void
+emit_mode_inner_inline (void)
+{
+  int c;
+  struct mode_data *m;
+
+  puts ("\
+#ifdef __cplusplus\n\
+inline __attribute__((__always_inline__))\n\
+#else\n\
+extern __inline__ __attribute__((__always_inline__, __gnu_inline__))\n\
+#endif\n\
+unsigned char\n\
+mode_inner_inline (machine_mode mode)\n\
+{\n\
+  extern const unsigned char mode_inner[NUM_MACHINE_MODES];\n\
+  gcc_assert (mode >= 0 && mode < NUM_MACHINE_MODES);\n\
+  switch (mode)\n\
+    {");
+
+  for_all_modes (c, m)
+    printf ("    case %smode: return %smode;\n", m->name,
+	    c != MODE_PARTIAL_INT && m->component
+	    ? m->component->name : m->name);
+
+  puts ("\
+    default: return mode_inner[mode];\n\
+    }\n\
+}\n");
+}
+
+/* Emit mode_unit_size_inline routine into insn-modes.h header.  */
+static void
+emit_mode_unit_size_inline (void)
+{
+  int c;
+  struct mode_data *m;
+
+  puts ("\
+#ifdef __cplusplus\n\
+inline __attribute__((__always_inline__))\n\
+#else\n\
+extern __inline__ __attribute__((__always_inline__, __gnu_inline__))\n\
+#endif\n\
+unsigned char\n\
+mode_unit_size_inline (machine_mode mode)\n\
+{\n\
+  extern CONST_MODE_UNIT_SIZE unsigned char mode_unit_size[NUM_MACHINE_MODES];\
+\n\
+  gcc_assert (mode >= 0 && mode < NUM_MACHINE_MODES);\n\
+  switch (mode)\n\
+    {");
+
+  for_all_modes (c, m)
+    {
+      const char *name = m->name;
+      struct mode_data *m2 = m;
+      if (c != MODE_PARTIAL_INT && m2->component)
+	m2 = m2->component;
+      if (!m2->need_bytesize_adj)
+	printf ("    case %smode: return %u;\n", name, m2->bytesize);
+    }
+
+  puts ("\
+    default: return mode_unit_size[mode];\n\
+    }\n\
+}\n");
+}
+
+/* Emit mode_unit_precision_inline routine into insn-modes.h header.  */
+static void
+emit_mode_unit_precision_inline (void)
+{
+  int c;
+  struct mode_data *m;
+
+  puts ("\
+#ifdef __cplusplus\n\
+inline __attribute__((__always_inline__))\n\
+#else\n\
+extern __inline__ __attribute__((__always_inline__, __gnu_inline__))\n\
+#endif\n\
+unsigned short\n\
+mode_unit_precision_inline (machine_mode mode)\n\
+{\n\
+  extern const unsigned short mode_unit_precision[NUM_MACHINE_MODES];\n\
+  gcc_assert (mode >= 0 && mode < NUM_MACHINE_MODES);\n\
+  switch (mode)\n\
+    {");
+
+  for_all_modes (c, m)
+    {
+      struct mode_data *m2
+	= (c != MODE_PARTIAL_INT && m->component) ? m->component : m;
+      if (m2->precision != (unsigned int)-1)
+	printf ("    case %smode: return %u;\n", m->name, m2->precision);
+      else
+	printf ("    case %smode: return %u*BITS_PER_UNIT;\n",
+		m->name, m2->bytesize);
+    }
+
+  puts ("\
+    default: return mode_unit_precision[mode];\n\
+    }\n\
+}\n");
+}
+
 static void
 emit_insn_modes_h (void)
 {
   int c;
   struct mode_data *m, *first, *last;
+  int n_int_n_ents = 0;
 
   printf ("/* Generated automatically from machmode.def%s%s\n",
 	   HAVE_EXTRA_MODES ? " and " : "",
@@ -870,6 +1154,7 @@ enum machine_mode\n{");
 	int count_ = printf ("  %smode,", m->name);
 	printf ("%*s/* %s:%d */\n", 27 - count_, "",
 		 trim_filename (m->file), m->line);
+	printf ("#define HAVE_%smode\n", m->name);
       }
 
   puts ("  MAX_MACHINE_MODE,\n");
@@ -885,7 +1170,7 @@ enum machine_mode\n{");
 	 end will try to use it for bitfields in structures and the
 	 like, which we do not want.  Only the target md file should
 	 generate BImode widgets.  */
-      if (first && first->precision == 1)
+      if (first && first->precision == 1 && c == MODE_INT)
 	first = first->next;
 
       if (first && last)
@@ -904,12 +1189,29 @@ enum machine_mode\n{");
 
   /* I can't think of a better idea, can you?  */
   printf ("#define CONST_MODE_SIZE%s\n", adj_bytesize ? "" : " const");
+  printf ("#define CONST_MODE_UNIT_SIZE%s\n", adj_bytesize ? "" : " const");
   printf ("#define CONST_MODE_BASE_ALIGN%s\n", adj_alignment ? "" : " const");
 #if 0 /* disabled for backward compatibility, temporary */
   printf ("#define CONST_REAL_FORMAT_FOR_MODE%s\n", adj_format ? "" :" const");
 #endif
   printf ("#define CONST_MODE_IBIT%s\n", adj_ibit ? "" : " const");
   printf ("#define CONST_MODE_FBIT%s\n", adj_fbit ? "" : " const");
+  emit_max_int ();
+
+  for_all_modes (c, m)
+    if (m->int_n)
+      n_int_n_ents ++;
+
+  printf ("#define NUM_INT_N_ENTS %d\n", n_int_n_ents);
+
+  puts ("\n#if !defined (USED_FOR_TARGET) && GCC_VERSION >= 4001\n");
+  emit_mode_size_inline ();
+  emit_mode_nunits_inline ();
+  emit_mode_inner_inline ();
+  emit_mode_unit_size_inline ();
+  emit_mode_unit_precision_inline ();
+  puts ("#endif /* GCC_VERSION >= 4001 */");
+
   puts ("\
 \n\
 #endif /* insn-modes.h */");
@@ -999,7 +1301,7 @@ emit_mode_size (void)
   int c;
   struct mode_data *m;
 
-  print_maybe_const_decl ("%sunsigned char", "mode_size",
+  print_maybe_const_decl ("%sunsigned short", "mode_size",
 			  "NUM_MACHINE_MODES", bytesize);
 
   for_all_modes (c, m)
@@ -1087,6 +1389,22 @@ emit_mode_wider (void)
 }
 
 static void
+emit_mode_complex (void)
+{
+  int c;
+  struct mode_data *m;
+
+  print_decl ("unsigned char", "mode_complex", "NUM_MACHINE_MODES");
+
+  for_all_modes (c, m)
+    tagged_printf ("%smode",
+		   m->complex ? m->complex->name : void_mode->name,
+		   m->name);
+
+  print_closer ();
+}
+
+static void
 emit_mode_mask (void)
 {
   int c;
@@ -1097,8 +1415,8 @@ emit_mode_mask (void)
   puts ("\
 #define MODE_MASK(m)                          \\\n\
   ((m) >= HOST_BITS_PER_WIDE_INT)             \\\n\
-   ? ~(unsigned HOST_WIDE_INT) 0              \\\n\
-   : ((unsigned HOST_WIDE_INT) 1 << (m)) - 1\n");
+   ? HOST_WIDE_INT_M1U                        \\\n\
+   : (HOST_WIDE_INT_1U << (m)) - 1\n");
 
   for_all_modes (c, m)
     if (m->precision != (unsigned int)-1)
@@ -1120,11 +1438,53 @@ emit_mode_inner (void)
 
   for_all_modes (c, m)
     tagged_printf ("%smode",
-		   m->component ? m->component->name : void_mode->name,
+		   c != MODE_PARTIAL_INT && m->component
+		   ? m->component->name : m->name,
 		   m->name);
 
   print_closer ();
 }
+
+/* Emit mode_unit_size array into insn-modes.c file.  */
+static void
+emit_mode_unit_size (void)
+{
+  int c;
+  struct mode_data *m;
+
+  print_maybe_const_decl ("%sunsigned char", "mode_unit_size",
+			  "NUM_MACHINE_MODES", bytesize);
+
+  for_all_modes (c, m)
+    tagged_printf ("%u",
+		   c != MODE_PARTIAL_INT && m->component
+		   ? m->component->bytesize : m->bytesize, m->name);
+
+  print_closer ();
+}
+
+/* Emit mode_unit_precision array into insn-modes.c file.  */
+static void
+emit_mode_unit_precision (void)
+{
+  int c;
+  struct mode_data *m;
+
+  print_decl ("unsigned short", "mode_unit_precision", "NUM_MACHINE_MODES");
+
+  for_all_modes (c, m)
+    {
+      struct mode_data *m2 = (c != MODE_PARTIAL_INT && m->component) ?
+			     m->component : m;
+      if (m2->precision != (unsigned int)-1)
+	tagged_printf ("%u", m2->precision, m->name);
+      else
+	tagged_printf ("%u*BITS_PER_UNIT", m2->bytesize, m->name);
+    }
+
+  print_closer ();
+}
+
 
 static void
 emit_mode_base_align (void)
@@ -1132,7 +1492,7 @@ emit_mode_base_align (void)
   int c;
   struct mode_data *m;
 
-  print_maybe_const_decl ("%sunsigned char",
+  print_maybe_const_decl ("%sunsigned short",
 			  "mode_base_align", "NUM_MACHINE_MODES",
 			  alignment);
 
@@ -1153,7 +1513,7 @@ emit_class_narrowest_mode (void)
     /* Bleah, all this to get the comment right for MIN_MODE_INT.  */
     tagged_printf ("MIN_%s", mode_class_names[c],
 		   modes[c]
-		   ? (modes[c]->precision != 1
+		   ? ((c != MODE_INT || modes[c]->precision != 1)
 		      ? modes[c]->name
 		      : (modes[c]->next
 			 ? modes[c]->next->name
@@ -1221,6 +1581,7 @@ emit_mode_adjustments (void)
       printf ("\n  /* %s:%d */\n  s = %s;\n",
 	      a->file, a->line, a->adjustment);
       printf ("  mode_size[%smode] = s;\n", a->mode->name);
+      printf ("  mode_unit_size[%smode] = s;\n", a->mode->name);
       printf ("  mode_base_align[%smode] = s & (~s + 1);\n",
 	      a->mode->name);
 
@@ -1231,6 +1592,7 @@ emit_mode_adjustments (void)
 	    case MODE_COMPLEX_INT:
 	    case MODE_COMPLEX_FLOAT:
 	      printf ("  mode_size[%smode] = 2*s;\n", m->name);
+	      printf ("  mode_unit_size[%smode] = s;\n", m->name);
 	      printf ("  mode_base_align[%smode] = s & (~s + 1);\n",
 		      m->name);
 	      break;
@@ -1243,6 +1605,7 @@ emit_mode_adjustments (void)
 	    case MODE_VECTOR_UACCUM:
 	      printf ("  mode_size[%smode] = %d*s;\n",
 		      m->name, m->ncomponents);
+	      printf ("  mode_unit_size[%smode] = s;\n", m->name);
 	      printf ("  mode_base_align[%smode] = (%d*s) & (~(%d*s)+1);\n",
 		      m->name, m->ncomponents, m->ncomponents);
 	      break;
@@ -1352,6 +1715,49 @@ emit_mode_fbit (void)
   print_closer ();
 }
 
+/* Emit __intN for all modes.  */
+
+static void
+emit_mode_int_n (void)
+{
+  int c;
+  struct mode_data *m;
+  struct mode_data **mode_sort;
+  int n_modes = 0;
+  int i, j;
+
+  print_decl ("int_n_data_t", "int_n_data", "");
+
+  n_modes = 0;
+  for_all_modes (c, m)
+    if (m->int_n)
+      n_modes ++;
+  mode_sort = XALLOCAVEC (struct mode_data *, n_modes);
+
+  n_modes = 0;
+  for_all_modes (c, m)
+    if (m->int_n)
+      mode_sort[n_modes++] = m;
+
+  /* Yes, this is a bubblesort, but there are at most four (and
+     usually only 1-2) entries to sort.  */
+  for (i = 0; i<n_modes - 1; i++)
+    for (j = i + 1; j < n_modes; j++)
+      if (mode_sort[i]->int_n > mode_sort[j]->int_n)
+	std::swap (mode_sort[i], mode_sort[j]);
+
+  for (i = 0; i < n_modes; i ++)
+    {
+      m = mode_sort[i];
+      printf(" {\n");
+      tagged_printf ("%u", m->int_n, m->name);
+      printf ("%smode,", m->name);
+      printf(" },\n");
+    }
+
+  print_closer ();
+}
+
 
 static void
 emit_insn_modes_c (void)
@@ -1363,14 +1769,18 @@ emit_insn_modes_c (void)
   emit_mode_size ();
   emit_mode_nunits ();
   emit_mode_wider ();
+  emit_mode_complex ();
   emit_mode_mask ();
   emit_mode_inner ();
+  emit_mode_unit_size ();
+  emit_mode_unit_precision ();
   emit_mode_base_align ();
   emit_class_narrowest_mode ();
   emit_real_format_for_mode ();
   emit_mode_adjustments ();
   emit_mode_ibit ();
   emit_mode_fbit ();
+  emit_mode_int_n ();
 }
 
 static void
@@ -1379,7 +1789,9 @@ emit_min_insn_modes_c (void)
   emit_min_insn_modes_c_header ();
   emit_mode_name ();
   emit_mode_class ();
+  emit_mode_nunits ();
   emit_mode_wider ();
+  emit_mode_inner ();
   emit_class_narrowest_mode ();
 }
 

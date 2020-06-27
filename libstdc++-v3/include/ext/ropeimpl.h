@@ -1,7 +1,6 @@
 // SGI's rope class implementation -*- C++ -*-
 
-// Copyright (C) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010
-// Free Software Foundation, Inc.
+// Copyright (C) 2001-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -58,7 +57,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   using std::basic_ostream;
   using std::__throw_length_error;
   using std::_Destroy;
-  using std::uninitialized_fill_n;
+  using std::__uninitialized_fill_n_a;
 
   // Set buf_start, buf_end, and buf_ptr appropriately, filling tmp_buf
   // if necessary.  Assumes _M_path_end[leaf_index] and leaf_pos are correct.
@@ -1118,7 +1117,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  printf("NULL\n");
 	  return;
 	}
-      if (_S_concat == __r->_M_tag)
+      if (__detail::_S_concat == __r->_M_tag)
 	{
 	  _RopeConcatenation* __c = (_RopeConcatenation*)__r;
 	  _RopeRep* __left = __c->_M_left;
@@ -1224,7 +1223,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 #endif
 		__result = _S_concat(__forest[__i], __result);
 		__forest[__i]->_M_unref_nonnil();
-#if !defined(__GC) && defined(__EXCEPTIONS)
+#if !defined(__GC) && __cpp_exceptions
 		__forest[__i] = 0;
 #endif
 	      }

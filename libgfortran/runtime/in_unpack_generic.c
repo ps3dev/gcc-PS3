@@ -1,9 +1,8 @@
 /* Generic helper function for repacking arrays.
-   Copyright 2003, 2004, 2005, 2007, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2003-2017 Free Software Foundation, Inc.
    Contributed by Paul Brook <paul@nowt.org>
 
-This file is part of the GNU Fortran 95 runtime library (libgfortran).
+This file is part of the GNU Fortran runtime library (libgfortran).
 
 Libgfortran is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public
@@ -25,8 +24,6 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 <http://www.gnu.org/licenses/>.  */
 
 #include "libgfortran.h"
-#include <stdlib.h>
-#include <assert.h>
 #include <string.h>
 
 extern void internal_unpack (gfc_array_char *, const void *);
@@ -47,7 +44,7 @@ internal_unpack (gfc_array_char * d, const void * s)
   int size;
   int type_size;
 
-  dest = d->data;
+  dest = d->base_addr;
   /* This check may be redundant, but do it anyway.  */
   if (s == dest || !s)
     return;
@@ -140,7 +137,7 @@ internal_unpack (gfc_array_char * d, const void * s)
 #endif
 
     case GFC_DTYPE_DERIVED_2:
-      if (GFC_UNALIGNED_2(d->data) || GFC_UNALIGNED_2(s))
+      if (GFC_UNALIGNED_2(d->base_addr) || GFC_UNALIGNED_2(s))
 	break;
       else
 	{
@@ -148,7 +145,7 @@ internal_unpack (gfc_array_char * d, const void * s)
 	  return;
 	}
     case GFC_DTYPE_DERIVED_4:
-      if (GFC_UNALIGNED_4(d->data) || GFC_UNALIGNED_4(s))
+      if (GFC_UNALIGNED_4(d->base_addr) || GFC_UNALIGNED_4(s))
 	break;
       else
 	{
@@ -157,7 +154,7 @@ internal_unpack (gfc_array_char * d, const void * s)
 	}
 
     case GFC_DTYPE_DERIVED_8:
-      if (GFC_UNALIGNED_8(d->data) || GFC_UNALIGNED_8(s))
+      if (GFC_UNALIGNED_8(d->base_addr) || GFC_UNALIGNED_8(s))
 	break;
       else
 	{
@@ -167,7 +164,7 @@ internal_unpack (gfc_array_char * d, const void * s)
 
 #ifdef HAVE_GFC_INTEGER_16
     case GFC_DTYPE_DERIVED_16:
-      if (GFC_UNALIGNED_16(d->data) || GFC_UNALIGNED_16(s))
+      if (GFC_UNALIGNED_16(d->base_addr) || GFC_UNALIGNED_16(s))
 	break;
       else
 	{

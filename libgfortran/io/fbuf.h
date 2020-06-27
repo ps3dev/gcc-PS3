@@ -1,5 +1,4 @@
-/* Copyright (C) 2009
-   Free Software Foundation, Inc.
+/* Copyright (C) 2009-2017 Free Software Foundation, Inc.
    Contributed by Janne Blomqvist
 
 This file is part of the GNU Fortran runtime library (libgfortran).
@@ -54,16 +53,19 @@ internal_proto(fbuf_destroy);
 extern int fbuf_reset (gfc_unit *);
 internal_proto(fbuf_reset);
 
-extern char * fbuf_alloc (gfc_unit *, int);
+extern char *fbuf_alloc (gfc_unit *, int);
 internal_proto(fbuf_alloc);
 
 extern int fbuf_flush (gfc_unit *, unit_mode);
 internal_proto(fbuf_flush);
 
+extern int fbuf_flush_list (gfc_unit *, unit_mode);
+internal_proto(fbuf_flush_list);
+
 extern int fbuf_seek (gfc_unit *, int, int);
 internal_proto(fbuf_seek);
 
-extern char * fbuf_read (gfc_unit *, int *);
+extern char *fbuf_read (gfc_unit *, int *);
 internal_proto(fbuf_read);
 
 /* Never call this function, only use fbuf_getc().  */
@@ -71,7 +73,7 @@ extern int fbuf_getc_refill (gfc_unit *);
 internal_proto(fbuf_getc_refill);
 
 static inline int
-fbuf_getc (gfc_unit * u)
+fbuf_getc (gfc_unit *u)
 {
   if (u->fbuf->pos < u->fbuf->act)
     return (unsigned char) u->fbuf->buf[u->fbuf->pos++];
@@ -79,7 +81,7 @@ fbuf_getc (gfc_unit * u)
 }
 
 static inline char *
-fbuf_getptr (gfc_unit * u)
+fbuf_getptr (gfc_unit *u)
 {
   return (char*) (u->fbuf->buf + u->fbuf->pos);
 }

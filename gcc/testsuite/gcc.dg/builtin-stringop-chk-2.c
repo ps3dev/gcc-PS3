@@ -3,10 +3,10 @@
    incorrectly determined to be 0 while it should be (size_t) -1
    (== unknown).  */
 /* { dg-do compile } */
-/* { dg-options "-O2" } */
+/* { dg-options "-O2 -ftrack-macro-expansion=0" } */
 
 #include "../gcc.c-torture/execute/builtins/chk.h"
-   
+
 void *bar (int);
 extern void *malloc (__SIZE_TYPE__);
 
@@ -115,7 +115,7 @@ baz (const struct A *x, const unsigned char *z)
 	  else
 	    do
 	      {
-		memcpy (e, d, 513); /* { dg-warning "will always overflow" "memcpy" } */
+		memcpy (e, d, 513); /* { dg-warning "writing" "memcpy" } */
 		e += 4;
 	      }
 	    while (--h);

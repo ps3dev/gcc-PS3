@@ -14,15 +14,33 @@ import (
 	"strconv"
 )
 
+// Encoder configures encoding PNG images.
+type Encoder struct {
+	CompressionLevel CompressionLevel
+}
+
 type encoder struct {
+	enc    *Encoder
 	w      io.Writer
 	m      image.Image
 	cb     int
 	err    error
 	header [8]byte
 	footer [4]byte
-	tmp    [3 * 256]byte
+	tmp    [4 * 256]byte
 }
+
+type CompressionLevel int
+
+const (
+	DefaultCompression CompressionLevel = 0
+	NoCompression      CompressionLevel = -1
+	BestSpeed          CompressionLevel = -2
+	BestCompression    CompressionLevel = -3
+
+	// Positive CompressionLevel values are reserved to mean a numeric zlib
+	// compression level, although that is not implemented yet.
+)
 
 // Big-endian.
 func writeUint32(b []uint8, u uint32) {
@@ -70,7 +88,7 @@ func (e *encoder) writeChunk(b []byte, name string) {
 		e.err = UnsupportedError(name + " chunk is too large: " + strconv.Itoa(len(b)))
 		return
 	}
-	writeUint32(e.header[0:4], n)
+	writeUint32(e.header[:4], n)
 	e.header[4] = name[0]
 	e.header[5] = name[1]
 	e.header[6] = name[2]
@@ -78,9 +96,9 @@ func (e *encoder) writeChunk(b []byte, name string) {
 	crc := crc32.NewIEEE()
 	crc.Write(e.header[4:8])
 	crc.Write(b)
-	writeUint32(e.footer[0:4], crc.Sum32())
+	writeUint32(e.footer[:4], crc.Sum32())
 
-	_, e.err = e.w.Write(e.header[0:8])
+	_, e.err = e.w.Write(e.header[:8])
 	if e.err != nil {
 		return
 	}
@@ -88,7 +106,7 @@ func (e *encoder) writeChunk(b []byte, name string) {
 	if e.err != nil {
 		return
 	}
-	_, e.err = e.w.Write(e.footer[0:4])
+	_, e.err = e.w.Write(e.footer[:4])
 }
 
 func (e *encoder) writeIHDR() {
@@ -122,36 +140,29 @@ func (e *encoder) writeIHDR() {
 	e.tmp[10] = 0 // default compression method
 	e.tmp[11] = 0 // default filter method
 	e.tmp[12] = 0 // non-interlaced
-	e.writeChunk(e.tmp[0:13], "IHDR")
+	e.writeChunk(e.tmp[:13], "IHDR")
 }
 
-func (e *encoder) writePLTE(p color.Palette) {
+func (e *encoder) writePLTEAndTRNS(p color.Palette) {
 	if len(p) < 1 || len(p) > 256 {
 		e.err = FormatError("bad palette length: " + strconv.Itoa(len(p)))
 		return
 	}
-	for i, c := range p {
-		r, g, b, _ := c.RGBA()
-		e.tmp[3*i+0] = uint8(r >> 8)
-		e.tmp[3*i+1] = uint8(g >> 8)
-		e.tmp[3*i+2] = uint8(b >> 8)
-	}
-	e.writeChunk(e.tmp[0:3*len(p)], "PLTE")
-}
-
-func (e *encoder) maybeWritetRNS(p color.Palette) {
 	last := -1
 	for i, c := range p {
-		_, _, _, a := c.RGBA()
-		if a != 0xffff {
+		c1 := color.NRGBAModel.Convert(c).(color.NRGBA)
+		e.tmp[3*i+0] = c1.R
+		e.tmp[3*i+1] = c1.G
+		e.tmp[3*i+2] = c1.B
+		if c1.A != 0xff {
 			last = i
 		}
-		e.tmp[i] = uint8(a >> 8)
+		e.tmp[3*256+i] = c1.A
 	}
-	if last == -1 {
-		return
+	e.writeChunk(e.tmp[:3*len(p)], "PLTE")
+	if last != -1 {
+		e.writeChunk(e.tmp[3*256:3*256+1+last], "tRNS")
 	}
-	e.writeChunk(e.tmp[:last+1], "tRNS")
 }
 
 // An encoder is an io.Writer that satisfies writes by writing PNG IDAT chunks,
@@ -195,7 +206,7 @@ func filter(cr *[nFilter][]byte, pr []byte, bpp int) int {
 	// The Paeth filter.
 	sum = 0
 	for i := 0; i < bpp; i++ {
-		cdat4[i] = cdat0[i] - paeth(0, pdat[i], 0)
+		cdat4[i] = cdat0[i] - pdat[i]
 		sum += abs8(cdat4[i])
 	}
 	for i := bpp; i < n; i++ {
@@ -262,8 +273,11 @@ func filter(cr *[nFilter][]byte, pr []byte, bpp int) int {
 	return filter
 }
 
-func writeImage(w io.Writer, m image.Image, cb int) error {
-	zw := zlib.NewWriter(w)
+func writeImage(w io.Writer, m image.Image, cb int, level int) error {
+	zw, err := zlib.NewWriterLevel(w, level)
+	if err != nil {
+		return err
+	}
 	defer zw.Close()
 
 	bpp := 0 // Bytes per pixel.
@@ -297,26 +311,42 @@ func writeImage(w io.Writer, m image.Image, cb int) error {
 	}
 	pr := make([]uint8, 1+bpp*b.Dx())
 
+	gray, _ := m.(*image.Gray)
+	rgba, _ := m.(*image.RGBA)
+	paletted, _ := m.(*image.Paletted)
+	nrgba, _ := m.(*image.NRGBA)
+
 	for y := b.Min.Y; y < b.Max.Y; y++ {
 		// Convert from colors to bytes.
 		i := 1
 		switch cb {
 		case cbG8:
-			for x := b.Min.X; x < b.Max.X; x++ {
-				c := color.GrayModel.Convert(m.At(x, y)).(color.Gray)
-				cr[0][i] = c.Y
-				i++
+			if gray != nil {
+				offset := (y - b.Min.Y) * gray.Stride
+				copy(cr[0][1:], gray.Pix[offset:offset+b.Dx()])
+			} else {
+				for x := b.Min.X; x < b.Max.X; x++ {
+					c := color.GrayModel.Convert(m.At(x, y)).(color.Gray)
+					cr[0][i] = c.Y
+					i++
+				}
 			}
 		case cbTC8:
 			// We have previously verified that the alpha value is fully opaque.
 			cr0 := cr[0]
-			if rgba, _ := m.(*image.RGBA); rgba != nil {
-				j0 := (y - b.Min.Y) * rgba.Stride
+			stride, pix := 0, []byte(nil)
+			if rgba != nil {
+				stride, pix = rgba.Stride, rgba.Pix
+			} else if nrgba != nil {
+				stride, pix = nrgba.Stride, nrgba.Pix
+			}
+			if stride != 0 {
+				j0 := (y - b.Min.Y) * stride
 				j1 := j0 + b.Dx()*4
 				for j := j0; j < j1; j += 4 {
-					cr0[i+0] = rgba.Pix[j+0]
-					cr0[i+1] = rgba.Pix[j+1]
-					cr0[i+2] = rgba.Pix[j+2]
+					cr0[i+0] = pix[j+0]
+					cr0[i+1] = pix[j+1]
+					cr0[i+2] = pix[j+2]
 					i += 3
 				}
 			} else {
@@ -329,9 +359,9 @@ func writeImage(w io.Writer, m image.Image, cb int) error {
 				}
 			}
 		case cbP8:
-			if p, _ := m.(*image.Paletted); p != nil {
-				offset := (y - b.Min.Y) * p.Stride
-				copy(cr[0][1:], p.Pix[offset:offset+b.Dx()])
+			if paletted != nil {
+				offset := (y - b.Min.Y) * paletted.Stride
+				copy(cr[0][1:], paletted.Pix[offset:offset+b.Dx()])
 			} else {
 				pi := m.(image.PalettedImage)
 				for x := b.Min.X; x < b.Max.X; x++ {
@@ -340,14 +370,19 @@ func writeImage(w io.Writer, m image.Image, cb int) error {
 				}
 			}
 		case cbTCA8:
-			// Convert from image.Image (which is alpha-premultiplied) to PNG's non-alpha-premultiplied.
-			for x := b.Min.X; x < b.Max.X; x++ {
-				c := color.NRGBAModel.Convert(m.At(x, y)).(color.NRGBA)
-				cr[0][i+0] = c.R
-				cr[0][i+1] = c.G
-				cr[0][i+2] = c.B
-				cr[0][i+3] = c.A
-				i += 4
+			if nrgba != nil {
+				offset := (y - b.Min.Y) * nrgba.Stride
+				copy(cr[0][1:], nrgba.Pix[offset:offset+b.Dx()*4])
+			} else {
+				// Convert from image.Image (which is alpha-premultiplied) to PNG's non-alpha-premultiplied.
+				for x := b.Min.X; x < b.Max.X; x++ {
+					c := color.NRGBAModel.Convert(m.At(x, y)).(color.NRGBA)
+					cr[0][i+0] = c.R
+					cr[0][i+1] = c.G
+					cr[0][i+2] = c.B
+					cr[0][i+3] = c.A
+					i += 4
+				}
 			}
 		case cbG16:
 			for x := b.Min.X; x < b.Max.X; x++ {
@@ -385,7 +420,13 @@ func writeImage(w io.Writer, m image.Image, cb int) error {
 		}
 
 		// Apply the filter.
-		f := filter(&cr, pr, bpp)
+		// Skip filter for NoCompression and paletted images (cbP8) as
+		// "filters are rarely useful on palette images" and will result
+		// in larger files (see http://www.libpng.org/pub/png/book/chapter09.html).
+		f := ftNone
+		if level != zlib.NoCompression && cb != cbP8 {
+			f = filter(&cr, pr, bpp)
+		}
 
 		// Write the compressed bytes.
 		if _, err := zw.Write(cr[f]); err != nil {
@@ -405,27 +446,51 @@ func (e *encoder) writeIDATs() {
 	}
 	var bw *bufio.Writer
 	bw = bufio.NewWriterSize(e, 1<<15)
-	e.err = writeImage(bw, e.m, e.cb)
+	e.err = writeImage(bw, e.m, e.cb, levelToZlib(e.enc.CompressionLevel))
 	if e.err != nil {
 		return
 	}
 	e.err = bw.Flush()
 }
 
-func (e *encoder) writeIEND() { e.writeChunk(e.tmp[0:0], "IEND") }
+// This function is required because we want the zero value of
+// Encoder.CompressionLevel to map to zlib.DefaultCompression.
+func levelToZlib(l CompressionLevel) int {
+	switch l {
+	case DefaultCompression:
+		return zlib.DefaultCompression
+	case NoCompression:
+		return zlib.NoCompression
+	case BestSpeed:
+		return zlib.BestSpeed
+	case BestCompression:
+		return zlib.BestCompression
+	default:
+		return zlib.DefaultCompression
+	}
+}
 
-// Encode writes the Image m to w in PNG format. Any Image may be encoded, but
-// images that are not image.NRGBA might be encoded lossily.
+func (e *encoder) writeIEND() { e.writeChunk(nil, "IEND") }
+
+// Encode writes the Image m to w in PNG format. Any Image may be
+// encoded, but images that are not image.NRGBA might be encoded lossily.
 func Encode(w io.Writer, m image.Image) error {
+	var e Encoder
+	return e.Encode(w, m)
+}
+
+// Encode writes the Image m to w in PNG format.
+func (enc *Encoder) Encode(w io.Writer, m image.Image) error {
 	// Obviously, negative widths and heights are invalid. Furthermore, the PNG
 	// spec section 11.2.2 says that zero is invalid. Excessively large images are
 	// also rejected.
 	mw, mh := int64(m.Bounds().Dx()), int64(m.Bounds().Dy())
 	if mw <= 0 || mh <= 0 || mw >= 1<<32 || mh >= 1<<32 {
-		return FormatError("invalid image size: " + strconv.FormatInt(mw, 10) + "x" + strconv.FormatInt(mw, 10))
+		return FormatError("invalid image size: " + strconv.FormatInt(mw, 10) + "x" + strconv.FormatInt(mh, 10))
 	}
 
 	var e encoder
+	e.enc = enc
 	e.w = w
 	e.m = m
 
@@ -460,8 +525,7 @@ func Encode(w io.Writer, m image.Image) error {
 	_, e.err = io.WriteString(w, pngHeader)
 	e.writeIHDR()
 	if pal != nil {
-		e.writePLTE(pal)
-		e.maybeWritetRNS(pal)
+		e.writePLTEAndTRNS(pal)
 	}
 	e.writeIDATs()
 	e.writeIEND()

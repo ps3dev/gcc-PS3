@@ -1,5 +1,4 @@
-dnl Copyright (C) 2005, 2006, 2007, 2008, 2011, 2012
-dnl Free Software Foundation, Inc.
+dnl Copyright (C) 2005-2017 Free Software Foundation, Inc.
 dnl
 dnl This file is part of GCC.
 dnl
@@ -221,99 +220,6 @@ test -z "$INSTALL_DATA" && INSTALL_DATA='${INSTALL} -m 644'
 AC_SUBST(INSTALL_DATA)dnl
 ])
 
-# mmap(2) blacklisting.  Some platforms provide the mmap library routine
-# but don't support all of the features we need from it.
-AC_DEFUN([gcc_AC_FUNC_MMAP_BLACKLIST],
-[
-AC_CHECK_HEADER([sys/mman.h],
-		[gcc_header_sys_mman_h=yes], [gcc_header_sys_mman_h=no])
-AC_CHECK_FUNC([mmap], [gcc_func_mmap=yes], [gcc_func_mmap=no])
-if test "$gcc_header_sys_mman_h" != yes \
- || test "$gcc_func_mmap" != yes; then
-   gcc_cv_func_mmap_file=no
-   gcc_cv_func_mmap_dev_zero=no
-   gcc_cv_func_mmap_anon=no
-else
-   AC_CACHE_CHECK([whether read-only mmap of a plain file works], 
-  gcc_cv_func_mmap_file,
-  [# Add a system to this blacklist if 
-   # mmap(0, stat_size, PROT_READ, MAP_PRIVATE, fd, 0) doesn't return a
-   # memory area containing the same data that you'd get if you applied
-   # read() to the same fd.  The only system known to have a problem here
-   # is VMS, where text files have record structure.
-   case "$host_os" in
-     vms* | ultrix*) 
-        gcc_cv_func_mmap_file=no ;;
-     *)
-        gcc_cv_func_mmap_file=yes;;
-   esac])
-   AC_CACHE_CHECK([whether mmap from /dev/zero works],
-  gcc_cv_func_mmap_dev_zero,
-  [# Add a system to this blacklist if it has mmap() but /dev/zero
-   # does not exist, or if mmapping /dev/zero does not give anonymous
-   # zeroed pages with both the following properties:
-   # 1. If you map N consecutive pages in with one call, and then
-   #    unmap any subset of those pages, the pages that were not
-   #    explicitly unmapped remain accessible.
-   # 2. If you map two adjacent blocks of memory and then unmap them
-   #    both at once, they must both go away.
-   # Systems known to be in this category are Windows (all variants),
-   # VMS, and Darwin.
-   case "$host_os" in
-     vms* | cygwin* | pe | mingw* | darwin* | ultrix* | hpux10* | hpux11.00)
-        gcc_cv_func_mmap_dev_zero=no ;;
-     *)
-        gcc_cv_func_mmap_dev_zero=yes;;
-   esac])
-
-   # Unlike /dev/zero, the MAP_ANON(YMOUS) defines can be probed for.
-   AC_CACHE_CHECK([for MAP_ANON(YMOUS)], gcc_cv_decl_map_anon,
-    [AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
-[#include <sys/types.h>
-#include <sys/mman.h>
-#include <unistd.h>
-
-#ifndef MAP_ANONYMOUS
-#define MAP_ANONYMOUS MAP_ANON
-#endif
-],
-[int n = MAP_ANONYMOUS;])],
-    gcc_cv_decl_map_anon=yes,
-    gcc_cv_decl_map_anon=no)])
-
-   if test $gcc_cv_decl_map_anon = no; then
-     gcc_cv_func_mmap_anon=no
-   else
-     AC_CACHE_CHECK([whether mmap with MAP_ANON(YMOUS) works],
-     gcc_cv_func_mmap_anon,
-  [# Add a system to this blacklist if it has mmap() and MAP_ANON or
-   # MAP_ANONYMOUS, but using mmap(..., MAP_PRIVATE|MAP_ANONYMOUS, -1, 0)
-   # doesn't give anonymous zeroed pages with the same properties listed
-   # above for use of /dev/zero.
-   # Systems known to be in this category are Windows, VMS, and SCO Unix.
-   case "$host_os" in
-     vms* | cygwin* | pe | mingw* | sco* | udk* )
-        gcc_cv_func_mmap_anon=no ;;
-     *)
-        gcc_cv_func_mmap_anon=yes;;
-   esac])
-   fi
-fi
-
-if test $gcc_cv_func_mmap_file = yes; then
-  AC_DEFINE(HAVE_MMAP_FILE, 1,
-	    [Define if read-only mmap of a plain file works.])
-fi
-if test $gcc_cv_func_mmap_dev_zero = yes; then
-  AC_DEFINE(HAVE_MMAP_DEV_ZERO, 1,
-	    [Define if mmap of /dev/zero works.])
-fi
-if test $gcc_cv_func_mmap_anon = yes; then
-  AC_DEFINE(HAVE_MMAP_ANON, 1,
-	    [Define if mmap with MAP_ANON(YMOUS) works.])
-fi
-])
-
 dnl Determine if enumerated bitfields are unsigned.   ISO C says they can 
 dnl be either signed or unsigned.
 dnl
@@ -403,43 +309,96 @@ int (*fp) (void) __attribute__ ((section (".init_array"))) = foo;
 	    gcc_cv_initfini_array=yes
 	  fi
 	elif test x$gcc_cv_as != x -a x$gcc_cv_ld != x -a x$gcc_cv_objdump != x ; then
-	  cat > conftest.s <<\EOF
-.section .dtors,"a",%progbits
+	  case $target:$gas in
+	    *:yes)
+	      sh_flags='"a"'
+	      sh_type='%progbits'
+	      ;;
+	    i?86-*-solaris2*:no | x86_64-*-solaris2*:no)
+	      sh_flags='"a"'
+	      sh_type='@progbits'
+	      ;;
+	    sparc*-*-solaris2*:no)
+	      sh_flags='#alloc'
+	      sh_type='#progbits'
+	      sh_quote='"'
+	      ;;
+	  esac
+	  case "$target:$gnu_ld" in
+	    *:yes)
+	      cat > conftest.s <<EOF
+.section .dtors,$sh_flags,$sh_type
 .balign 4
 .byte 'A', 'A', 'A', 'A'
-.section .ctors,"a",%progbits
+.section .ctors,$sh_flags,$sh_type
 .balign 4
 .byte 'B', 'B', 'B', 'B'
-.section .fini_array.65530,"a",%progbits
+.section .fini_array.65530,$sh_flags,$sh_type
 .balign 4
 .byte 'C', 'C', 'C', 'C'
-.section .init_array.65530,"a",%progbits
+.section .init_array.65530,$sh_flags,$sh_type
 .balign 4
 .byte 'D', 'D', 'D', 'D'
-.section .dtors.64528,"a",%progbits
+.section .dtors.64528,$sh_flags,$sh_type
 .balign 4
 .byte 'E', 'E', 'E', 'E'
-.section .ctors.64528,"a",%progbits
+.section .ctors.64528,$sh_flags,$sh_type
 .balign 4
 .byte 'F', 'F', 'F', 'F'
-.section .fini_array.01005,"a",%progbits
+.section .fini_array.01005,$sh_flags,$sh_type
 .balign 4
 .byte 'G', 'G', 'G', 'G'
-.section .init_array.01005,"a",%progbits
+.section .init_array.01005,$sh_flags,$sh_type
 .balign 4
 .byte 'H', 'H', 'H', 'H'
 .text
 .globl _start
 _start:
 EOF
-	  if $gcc_cv_as -o conftest.o conftest.s > /dev/null 2>&1 \
-	     && $gcc_cv_ld -o conftest conftest.o > /dev/null 2>&1 \
-	     && $gcc_cv_objdump -s -j .init_array conftest \
-		| grep HHHHFFFFDDDDBBBB > /dev/null 2>&1 \
-	     && $gcc_cv_objdump -s -j .fini_array conftest \
-		| grep GGGGEEEECCCCAAAA > /dev/null 2>&1; then
-	    gcc_cv_initfini_array=yes
-	  fi
+	      if $gcc_cv_as -o conftest.o conftest.s > /dev/null 2>&1 \
+	         && $gcc_cv_ld -o conftest conftest.o > /dev/null 2>&1 \
+	         && $gcc_cv_objdump -s -j .init_array conftest \
+		    | grep HHHHFFFFDDDDBBBB > /dev/null 2>&1 \
+	         && $gcc_cv_objdump -s -j .fini_array conftest \
+		    | grep GGGGEEEECCCCAAAA > /dev/null 2>&1; then
+	        gcc_cv_initfini_array=yes
+	      fi
+	      ;;
+	    *-*-solaris2*:no)
+	      # When Solaris ld added constructor priority support, it was
+	      # decided to only handle .init_array.N/.fini_array.N since
+	      # there was no need for backwards compatibility with
+	      # .ctors.N/.dtors.N.  .ctors/.dtors remain as separate
+	      # sections with correct execution order resp. to
+	      # .init_array/.fini_array, while gld merges them into
+	      # .init_array/.fini_array.
+	      cat > conftest.s <<EOF
+.section $sh_quote.fini_array.65530$sh_quote,$sh_flags,$sh_type
+.align 4
+.byte 'C', 'C', 'C', 'C'
+.section $sh_quote.init_array.65530$sh_quote,$sh_flags,$sh_type
+.align 4
+.byte 'D', 'D', 'D', 'D'
+.section $sh_quote.fini_array.01005$sh_quote,$sh_flags,$sh_type
+.align 4
+.byte 'G', 'G', 'G', 'G'
+.section $sh_quote.init_array.01005$sh_quote,$sh_flags,$sh_type
+.align 4
+.byte 'H', 'H', 'H', 'H'
+.text
+.globl _start
+_start:
+EOF
+	      if $gcc_cv_as -o conftest.o conftest.s > /dev/null 2>&1 \
+	         && $gcc_cv_ld -o conftest conftest.o > /dev/null 2>&1 \
+	         && $gcc_cv_objdump -s -j .init_array conftest \
+		    | grep HHHHDDDD > /dev/null 2>&1 \
+	         && $gcc_cv_objdump -s -j .fini_array conftest \
+		    | grep GGGGCCCC > /dev/null 2>&1; then
+	        gcc_cv_initfini_array=yes
+	      fi
+	      ;;
+	    esac
 changequote(,)dnl
 	  rm -f conftest conftest.*
 changequote([,])dnl
@@ -461,23 +420,7 @@ changequote([,])dnl
 #  error The C library not known to support .init_array/.fini_array
 # endif
 #endif
-])],[
-    case "${target}" in
-      *-*-solaris2.8*)
-	# .init_array/.fini_array support was introduced in Solaris 8
-	# patches 109147-08 (sparc) and 109148-08 (x86).  Since ld.so.1 and
-	# ld are guaranteed to be updated in lockstep, we can check ld -V
-	# instead.  Unfortunately, proper ld version numbers were only
-	# introduced in rev. -14, so we check for that.
-  	if test "$gcc_cv_sun_ld_vers_minor" -lt 272; then
-	  gcc_cv_initfini_array=no
-	fi
-      ;;
-      *-*-solaris2.9* | *-*-solaris2.1[[0-9]]*)
-        # .init_array/.fini_array support is present since Solaris 9 FCS.
-        ;;
-    esac
-], [gcc_cv_initfini_array=no]);;
+])],, [gcc_cv_initfini_array=no]);;
     esac
   else
     AC_MSG_CHECKING(cross compile... guessing)
@@ -485,10 +428,10 @@ changequote([,])dnl
   fi])
   enable_initfini_array=$gcc_cv_initfini_array
 ])
-if test $enable_initfini_array = yes; then
-  AC_DEFINE(HAVE_INITFINI_ARRAY_SUPPORT, 1,
-    [Define .init_array/.fini_array sections are available and working.])
-fi])
+AC_DEFINE_UNQUOTED(HAVE_INITFINI_ARRAY_SUPPORT,
+  [`if test $enable_initfini_array = yes; then echo 1; else echo 0; fi`],
+  [Define 0/1 if .init_array/.fini_array sections are available and working.])
+])
 
 dnl # _gcc_COMPUTE_GAS_VERSION
 dnl # Used by gcc_GAS_VERSION_GTE_IFELSE
@@ -500,13 +443,17 @@ AC_DEFUN([_gcc_COMPUTE_GAS_VERSION],
 [gcc_cv_as_bfd_srcdir=`echo $srcdir | sed -e 's,/gcc$,,'`/bfd
 for f in $gcc_cv_as_bfd_srcdir/configure \
          $gcc_cv_as_gas_srcdir/configure \
-         $gcc_cv_as_gas_srcdir/configure.in \
+         $gcc_cv_as_gas_srcdir/configure.ac \
          $gcc_cv_as_gas_srcdir/Makefile.in ; do
-  gcc_cv_gas_version=`sed -n -e 's/^[[ 	]]*\(VERSION=[[0-9]]*\.[[0-9]]*.*\)/\1/p' < $f`
+  gcc_cv_gas_version=`sed -n -e 's/^[[ 	]]*VERSION=[[^0-9A-Za-z_]]*\([[0-9]]*\.[[0-9]]*.*\)/VERSION=\1/p' < $f`
   if test x$gcc_cv_gas_version != x; then
     break
   fi
 done
+case $gcc_cv_gas_version in
+  VERSION=[[0-9]]*) ;;
+  *) AC_MSG_ERROR([[cannot find version of in-tree assembler]]);;
+esac
 gcc_cv_gas_major_version=`expr "$gcc_cv_gas_version" : "VERSION=\([[0-9]]*\)"`
 gcc_cv_gas_minor_version=`expr "$gcc_cv_gas_version" : "VERSION=[[0-9]]*\.\([[0-9]]*\)"`
 gcc_cv_gas_patch_version=`expr "$gcc_cv_gas_version" : "VERSION=[[0-9]]*\.[[0-9]]*\.\([[0-9]]*\)"`
@@ -550,8 +497,16 @@ AC_DEFUN([gcc_GAS_FLAGS],
 [AC_CACHE_CHECK([assembler flags], gcc_cv_as_flags,
 [ case "$target" in
   i[[34567]]86-*-linux*)
-    dnl Always pass --32 to ia32 Linux assembler.
-    gcc_cv_as_flags="--32"
+    dnl Override the default, which may be incompatible.
+    gcc_cv_as_flags=--32
+    ;;
+  x86_64-*-linux-gnux32)
+    dnl Override the default, which may be incompatible.
+    gcc_cv_as_flags=--x32
+    ;;
+  x86_64-*-linux*)
+    dnl Override the default, which may be incompatible.
+    gcc_cv_as_flags=--64
     ;;
   powerpc*-*-darwin*)
     dnl Always pass -arch ppc to assembler.
@@ -595,6 +550,10 @@ AC_CACHE_CHECK([assembler for $1], [$2],
 ifelse([$7],,,[dnl
 if test $[$2] = yes; then
   $7
+fi])
+ifelse([$8],,,[dnl
+if test $[$2] != yes; then
+  $8
 fi])])
 
 dnl gcc_SUN_LD_VERSION
@@ -659,3 +618,12 @@ dnl Make sure that build_exeext is looked for
 AC_DEFUN([gcc_AC_BUILD_EXEEXT], [
 ac_executable_extensions="$build_exeext"])
 
+dnl GCC_GLIBC_VERSION_GTE_IFELSE(MAJOR, MINOR, IF-TRUE, IF-FALSE)
+dnl -------------------------------------------------------------
+dnl If the target glibc version ($glibc_version_major.$glibc_version_minor)
+dnl is at least MAJOR.MINOR, call IF-TRUE, otherwise call IF-FALSE.
+AC_DEFUN([GCC_GLIBC_VERSION_GTE_IFELSE],
+[
+AS_IF([test $glibc_version_major -gt $1 \
+  || ( test $glibc_version_major -eq $1 && test $glibc_version_minor -ge $2 )],
+[$3], [$4])])

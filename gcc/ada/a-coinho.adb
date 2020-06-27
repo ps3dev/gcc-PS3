@@ -2,11 +2,11 @@
 --                                                                          --
 --                         GNAT LIBRARY COMPONENTS                          --
 --                                                                          --
---       A D A . C O N T A I N E R S . B O U N D E D _ V E C T O R S        --
+--     A D A . C O N T A I N E R S . I N D E F I N I T E _ H O L D E R S    --
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---             Copyright (C) 2011, Free Software Foundation, Inc.           --
+--          Copyright (C) 2012-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -40,10 +40,8 @@ package body Ada.Containers.Indefinite_Holders is
    begin
       if Left.Element = null and Right.Element = null then
          return True;
-
       elsif Left.Element /= null and Right.Element /= null then
          return Left.Element.all = Right.Element.all;
-
       else
          return False;
       end if;
@@ -60,6 +58,17 @@ package body Ada.Containers.Indefinite_Holders is
       end if;
 
       Container.Busy := 0;
+   end Adjust;
+
+   overriding procedure Adjust (Control : in out Reference_Control_Type) is
+   begin
+      if Control.Container /= null then
+         declare
+            B : Natural renames Control.Container.Busy;
+         begin
+            B := B + 1;
+         end;
+      end if;
    end Adjust;
 
    ------------
@@ -94,6 +103,22 @@ package body Ada.Containers.Indefinite_Holders is
       Free (Container.Element);
    end Clear;
 
+   ------------------------
+   -- Constant_Reference --
+   ------------------------
+
+   function Constant_Reference
+     (Container : aliased Holder) return Constant_Reference_Type
+   is
+      Ref : constant Constant_Reference_Type :=
+              (Element => Container.Element.all'Access,
+               Control => (Controlled with Container'Unrestricted_Access));
+      B : Natural renames Ref.Control.Container.Busy;
+   begin
+      B := B + 1;
+      return Ref;
+   end Constant_Reference;
+
    ----------
    -- Copy --
    ----------
@@ -101,9 +126,9 @@ package body Ada.Containers.Indefinite_Holders is
    function Copy (Source : Holder) return Holder is
    begin
       if Source.Element = null then
-         return (AF.Controlled with null, 0);
+         return (Controlled with null, 0);
       else
-         return (AF.Controlled with new Element_Type'(Source.Element.all), 0);
+         return (Controlled with new Element_Type'(Source.Element.all), 0);
       end if;
    end Copy;
 
@@ -131,6 +156,19 @@ package body Ada.Containers.Indefinite_Holders is
       end if;
 
       Free (Container.Element);
+   end Finalize;
+
+   overriding procedure Finalize (Control : in out Reference_Control_Type) is
+   begin
+      if Control.Container /= null then
+         declare
+            B : Natural renames Control.Container.Busy;
+         begin
+            B := B - 1;
+         end;
+      end if;
+
+      Control.Container := null;
    end Finalize;
 
    --------------
@@ -207,6 +245,37 @@ package body Ada.Containers.Indefinite_Holders is
       end if;
    end Read;
 
+   procedure Read
+     (Stream : not null access Root_Stream_Type'Class;
+      Item   : out Constant_Reference_Type)
+   is
+   begin
+      raise Program_Error with "attempt to stream reference";
+   end Read;
+
+   procedure Read
+     (Stream : not null access Root_Stream_Type'Class;
+      Item   : out Reference_Type)
+   is
+   begin
+      raise Program_Error with "attempt to stream reference";
+   end Read;
+
+   ---------------
+   -- Reference --
+   ---------------
+
+   function Reference
+     (Container : aliased in out Holder) return Reference_Type
+   is
+      Ref : constant Reference_Type :=
+              (Element => Container.Element.all'Access,
+               Control => (Controlled with Container'Unrestricted_Access));
+   begin
+      Container.Busy := Container.Busy + 1;
+      return Ref;
+   end Reference;
+
    ---------------------
    -- Replace_Element --
    ---------------------
@@ -220,8 +289,19 @@ package body Ada.Containers.Indefinite_Holders is
          raise Program_Error with "attempt to tamper with elements";
       end if;
 
-      Free (Container.Element);
-      Container.Element := new Element_Type'(New_Item);
+      declare
+         X : Element_Access := Container.Element;
+
+         --  Element allocator may need an accessibility check in case actual
+         --  type is class-wide or has access discriminants (RM 4.8(10.1) and
+         --  AI12-0035).
+
+         pragma Unsuppress (Accessibility_Check);
+
+      begin
+         Container.Element := new Element_Type'(New_Item);
+         Free (X);
+      end;
    end Replace_Element;
 
    ---------------
@@ -229,8 +309,15 @@ package body Ada.Containers.Indefinite_Holders is
    ---------------
 
    function To_Holder (New_Item : Element_Type) return Holder is
+
+      --  The element allocator may need an accessibility check in the case the
+      --  actual type is class-wide or has access discriminants (RM 4.8(10.1)
+      --  and AI12-0035).
+
+      pragma Unsuppress (Accessibility_Check);
+
    begin
-      return (AF.Controlled with new Element_Type'(New_Item), 0);
+      return (Controlled with new Element_Type'(New_Item), 0);
    end To_Holder;
 
    --------------------
@@ -238,10 +325,10 @@ package body Ada.Containers.Indefinite_Holders is
    --------------------
 
    procedure Update_Element
-     (Container : Holder;
+     (Container : in out Holder;
       Process   : not null access procedure (Element : in out Element_Type))
    is
-      B : Natural renames Container'Unrestricted_Access.Busy;
+      B : Natural renames Container.Busy;
 
    begin
       if Container.Element = null then
@@ -275,6 +362,22 @@ package body Ada.Containers.Indefinite_Holders is
       if Container.Element /= null then
          Element_Type'Output (Stream, Container.Element.all);
       end if;
+   end Write;
+
+   procedure Write
+     (Stream : not null access Root_Stream_Type'Class;
+      Item   : Reference_Type)
+   is
+   begin
+      raise Program_Error with "attempt to stream reference";
+   end Write;
+
+   procedure Write
+     (Stream : not null access Root_Stream_Type'Class;
+      Item   : Constant_Reference_Type)
+   is
+   begin
+      raise Program_Error with "attempt to stream reference";
    end Write;
 
 end Ada.Containers.Indefinite_Holders;

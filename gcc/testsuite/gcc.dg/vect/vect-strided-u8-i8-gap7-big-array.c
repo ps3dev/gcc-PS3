@@ -18,13 +18,15 @@ typedef struct {
 
 s check_res[N];
 
+volatile int y = 0;
+
 __attribute__ ((noinline)) int
 main1 (s *arr)
 {
   int i;
   s *ptr = arr;
   s res[N];
-  unsigned char u, t, s, x, y, z, w;
+  unsigned char u, t, s, x, z, w;
 
   for (i = 0; i < N; i++)
     {
@@ -63,7 +65,7 @@ int main (void)
 {
   int i;
   s arr[N];
-  unsigned char u, t, s, x, y, z, w;
+  unsigned char u, t, s, x, z, w;
 
   check_vect ();
 
@@ -91,8 +93,8 @@ int main (void)
       check_res[i].h = arr[i].d;
       check_res[i].g = u + t;
 
-      if (arr[i].a == 178)
-         abort ();
+      if (y) /* Avoid vectorization.  */
+        abort ();
     }
 
   main1 (arr);
@@ -101,5 +103,4 @@ int main (void)
 }
 
 /* { dg-final { scan-tree-dump-times "vectorized 1 loops" 1 "vect" { target vect_strided8 } } } */
-/* { dg-final { cleanup-tree-dump "vect" } } */
 

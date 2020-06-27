@@ -1,6 +1,5 @@
 /* Default language-specific hooks.
-   Copyright 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2001-2017 Free Software Foundation, Inc.
    Contributed by Alexandre Oliva  <aoliva@redhat.com>
 
 This file is part of GCC.
@@ -22,24 +21,20 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "intl.h"
-#include "tm.h"
-#include "toplev.h"
-#include "tree.h"
-#include "tree-inline.h"
-#include "gimple.h"
-#include "rtl.h"
-#include "insn-config.h"
-#include "integrate.h"
-#include "flags.h"
-#include "langhooks.h"
 #include "target.h"
-#include "langhooks-def.h"
-#include "ggc.h"
+#include "rtl.h"
+#include "tree.h"
+#include "timevar.h"
+#include "stringpool.h"
 #include "diagnostic.h"
+#include "intl.h"
+#include "toplev.h"
+#include "attribs.h"
+#include "gimplify.h"
+#include "langhooks.h"
 #include "tree-diagnostic.h"
-#include "cgraph.h"
 #include "output.h"
+#include "timevar.h"
 
 /* Do nothing; in many cases the default hook.  */
 
@@ -82,14 +77,6 @@ lhd_do_nothing_f (struct function * ARG_UNUSED (f))
 /* Do nothing (return NULL_TREE).  */
 
 tree
-lhd_return_null_tree_v (void)
-{
-  return NULL_TREE;
-}
-
-/* Do nothing (return NULL_TREE).  */
-
-tree
 lhd_return_null_tree (tree ARG_UNUSED (t))
 {
   return NULL_TREE;
@@ -123,17 +110,17 @@ lhd_print_tree_nothing (FILE * ARG_UNUSED (file),
 {
 }
 
-/* Called from check_global_declarations.  */
+/* Called from check_global_declaration.  */
 
 bool
 lhd_warn_unused_global_decl (const_tree decl)
 {
-  /* This is what used to exist in check_global_declarations.  Probably
+  /* This is what used to exist in check_global_declaration.  Probably
      not many of these actually apply to non-C languages.  */
 
   if (TREE_CODE (decl) == FUNCTION_DECL && DECL_DECLARED_INLINE_P (decl))
     return false;
-  if (TREE_CODE (decl) == VAR_DECL && TREE_READONLY (decl))
+  if (VAR_P (decl) && TREE_READONLY (decl))
     return false;
   if (DECL_IN_SYSTEM_HEADER (decl))
     return false;
@@ -147,12 +134,17 @@ lhd_set_decl_assembler_name (tree decl)
 {
   tree id;
 
+  /* set_decl_assembler_name may be called on TYPE_DECL to record ODR
+     name for C++ types.  By default types have no ODR names.  */
+  if (TREE_CODE (decl) == TYPE_DECL)
+    return;
+
   /* The language-independent code should never use the
      DECL_ASSEMBLER_NAME for lots of DECLs.  Only FUNCTION_DECLs and
      VAR_DECLs for variables with static storage duration need a real
      DECL_ASSEMBLER_NAME.  */
   gcc_assert (TREE_CODE (decl) == FUNCTION_DECL
-	      || (TREE_CODE (decl) == VAR_DECL
+	      || (VAR_P (decl)
 		  && (TREE_STATIC (decl)
 		      || DECL_EXTERNAL (decl)
 		      || TREE_PUBLIC (decl))));
@@ -199,7 +191,8 @@ lhd_register_builtin_type (tree ARG_UNUSED (type),
 
 /* Invalid use of an incomplete type.  */
 void
-lhd_incomplete_type_error (const_tree ARG_UNUSED (value), const_tree type)
+lhd_incomplete_type_error (location_t ARG_UNUSED (loc),
+			   const_tree ARG_UNUSED (value), const_tree type)
 {
   gcc_assert (TREE_CODE (type) == ERROR_MARK);
   return;
@@ -290,18 +283,18 @@ lhd_decl_ok_for_sibcall (const_tree decl ATTRIBUTE_UNUSED)
   return true;
 }
 
-/* lang_hooks.decls.final_write_globals: perform final processing on
-   global variables.  */
+/* Generic global declaration processing.  This is meant to be called
+   by the front-ends at the end of parsing.  C/C++ do their own thing,
+   but other front-ends may call this.  */
+
 void
-write_global_declarations (void)
+global_decl_processing (void)
 {
   tree globals, decl, *vec;
   int len, i;
 
-  /* This lang hook is dual-purposed, and also finalizes the
-     compilation unit.  */
-  cgraph_finalize_compilation_unit ();
-
+  timevar_stop (TV_PHASE_PARSING);
+  timevar_start (TV_PHASE_DEFERRED);
   /* Really define vars that have had only a tentative definition.
      Really output inline functions that must actually be callable
      and have not been output so far.  */
@@ -317,10 +310,9 @@ write_global_declarations (void)
     vec[len - i - 1] = decl;
 
   wrapup_global_declarations (vec, len);
-  check_global_declarations (vec, len);
-  emit_debug_global_declarations (vec, len);
+  timevar_stop (TV_PHASE_DEFERRED);
 
-  /* Clean up.  */
+  timevar_start (TV_PHASE_PARSING);
   free (vec);
 }
 
@@ -366,7 +358,7 @@ lhd_print_error_function (diagnostic_context *context, const char *file,
       const char *old_prefix = context->printer->prefix;
       tree abstract_origin = diagnostic_abstract_origin (diagnostic);
       char *new_prefix = (file && abstract_origin == NULL)
-			 ? file_name_as_prefix (file) : NULL;
+			 ? file_name_as_prefix (context, file) : NULL;
 
       pp_set_prefix (context->printer, new_prefix);
 
@@ -440,20 +432,20 @@ lhd_print_error_function (diagnostic_context *context, const char *file,
 	      if (fndecl)
 		{
 		  expanded_location s = expand_location (*locus);
-		  pp_character (context->printer, ',');
+		  pp_comma (context->printer);
 		  pp_newline (context->printer);
 		  if (s.file != NULL)
 		    {
 		      if (context->show_column)
 			pp_printf (context->printer,
-				   _("    inlined from %qs at %s:%d:%d"),
+				   _("    inlined from %qs at %r%s:%d:%d%R"),
 				   identifier_to_locale (lang_hooks.decl_printable_name (fndecl, 2)),
-				   s.file, s.line, s.column);
+				   "locus", s.file, s.line, s.column);
 		      else
 			pp_printf (context->printer,
-				   _("    inlined from %qs at %s:%d"),
+				   _("    inlined from %qs at %r%s:%d%R"),
 				   identifier_to_locale (lang_hooks.decl_printable_name (fndecl, 2)),
-				   s.file, s.line);
+				   "locus", s.file, s.line);
 
 		    }
 		  else
@@ -461,27 +453,70 @@ lhd_print_error_function (diagnostic_context *context, const char *file,
 			       identifier_to_locale (lang_hooks.decl_printable_name (fndecl, 2)));
 		}
 	    }
-	  pp_character (context->printer, ':');
+	  pp_colon (context->printer);
 	}
 
       diagnostic_set_last_function (context, diagnostic);
-      pp_flush (context->printer);
+      pp_newline_and_flush (context->printer);
       context->printer->prefix = old_prefix;
       free ((char*) new_prefix);
     }
 }
 
 tree
-lhd_callgraph_analyze_expr (tree *tp ATTRIBUTE_UNUSED,
-			    int *walk_subtrees ATTRIBUTE_UNUSED)
-{
-  return NULL;
-}
-
-tree
 lhd_make_node (enum tree_code code)
 {
   return make_node (code);
+}
+
+/* Default implementation of LANG_HOOKS_TYPE_FOR_SIZE.
+   Return an integer type with PRECISION bits of precision,
+   that is unsigned if UNSIGNEDP is nonzero, otherwise signed.  */
+
+tree
+lhd_type_for_size (unsigned precision, int unsignedp)
+{
+  int i;
+
+  if (precision == TYPE_PRECISION (integer_type_node))
+    return unsignedp ? unsigned_type_node : integer_type_node;
+
+  if (precision == TYPE_PRECISION (signed_char_type_node))
+    return unsignedp ? unsigned_char_type_node : signed_char_type_node;
+
+  if (precision == TYPE_PRECISION (short_integer_type_node))
+    return unsignedp ? short_unsigned_type_node : short_integer_type_node;
+
+  if (precision == TYPE_PRECISION (long_integer_type_node))
+    return unsignedp ? long_unsigned_type_node : long_integer_type_node;
+
+  if (precision == TYPE_PRECISION (long_long_integer_type_node))
+    return unsignedp
+	   ? long_long_unsigned_type_node
+	   : long_long_integer_type_node;
+
+  for (i = 0; i < NUM_INT_N_ENTS; i ++)
+    if (int_n_enabled_p[i]
+	&& precision == int_n_data[i].bitsize)
+      return (unsignedp ? int_n_trees[i].unsigned_type
+	      : int_n_trees[i].signed_type);
+
+  if (precision <= TYPE_PRECISION (intQI_type_node))
+    return unsignedp ? unsigned_intQI_type_node : intQI_type_node;
+
+  if (precision <= TYPE_PRECISION (intHI_type_node))
+    return unsignedp ? unsigned_intHI_type_node : intHI_type_node;
+
+  if (precision <= TYPE_PRECISION (intSI_type_node))
+    return unsignedp ? unsigned_intSI_type_node : intSI_type_node;
+
+  if (precision <= TYPE_PRECISION (intDI_type_node))
+    return unsignedp ? unsigned_intDI_type_node : intDI_type_node;
+
+  if (precision <= TYPE_PRECISION (intTI_type_node))
+    return unsignedp ? unsigned_intTI_type_node : intTI_type_node;
+
+  return NULL_TREE;
 }
 
 HOST_WIDE_INT
@@ -515,6 +550,31 @@ lhd_omp_assignment (tree clause ATTRIBUTE_UNUSED, tree dst, tree src)
   return build2 (MODIFY_EXPR, TREE_TYPE (dst), dst, src);
 }
 
+/* Finalize clause C.  */
+
+void
+lhd_omp_finish_clause (tree, gimple_seq *)
+{
+}
+
+/* Return true if DECL is a scalar variable (for the purpose of
+   implicit firstprivatization).  */
+
+bool
+lhd_omp_scalar_p (tree decl)
+{
+  tree type = TREE_TYPE (decl);
+  if (TREE_CODE (type) == REFERENCE_TYPE)
+    type = TREE_TYPE (type);
+  if (TREE_CODE (type) == COMPLEX_TYPE)
+    type = TREE_TYPE (type);
+  if (INTEGRAL_TYPE_P (type)
+      || SCALAR_FLOAT_TYPE_P (type)
+      || TREE_CODE (type) == POINTER_TYPE)
+    return true;
+  return false;
+}
+
 /* Register language specific type size variables as potentially OpenMP
    firstprivate variables.  */
 
@@ -522,6 +582,17 @@ void
 lhd_omp_firstprivatize_type_sizes (struct gimplify_omp_ctx *c ATTRIBUTE_UNUSED,
 				   tree t ATTRIBUTE_UNUSED)
 {
+}
+
+/* Return true if TYPE is an OpenMP mappable type.  */
+
+bool
+lhd_omp_mappable_type (tree type)
+{
+  /* Mappable type has to be complete.  */
+  if (type == error_mark_node || !COMPLETE_TYPE_P (type))
+    return false;
+  return true;
 }
 
 /* Common function for add_builtin_function and
@@ -550,6 +621,8 @@ add_builtin_function_common (const char *name,
   if (library_name)
     {
       tree libname = get_identifier (library_name);
+
+      libname = targetm.mangle_decl_assembler_name (decl, libname);
       SET_DECL_ASSEMBLER_NAME (decl, libname);
     }
 
@@ -605,6 +678,16 @@ lhd_builtin_function (tree decl)
   return decl;
 }
 
+/* Create a builtin type.  */
+
+tree
+add_builtin_type (const char *name, tree type)
+{
+  tree   id = get_identifier (name);
+  tree decl = build_decl (BUILTINS_LOCATION, TYPE_DECL, id, type);
+  return lang_hooks.decls.pushdecl (decl);
+}
+
 /* LTO hooks.  */
 
 /* Used to save and restore any previously active section.  */
@@ -627,20 +710,23 @@ lhd_begin_section (const char *name)
     saved_section = text_section;
 
   /* Create a new section and switch to it.  */
-  section = get_section (name, SECTION_DEBUG, NULL);
+  section = get_section (name, SECTION_DEBUG | SECTION_EXCLUDE, NULL);
   switch_to_section (section);
 }
 
 
 /* Write DATA of length LEN to the current LTO output section.  This default
-   implementation just calls assemble_string and frees BLOCK.  */
+   implementation just calls assemble_string.  */
 
 void
-lhd_append_data (const void *data, size_t len, void *block)
+lhd_append_data (const void *data, size_t len, void *)
 {
   if (data)
-    assemble_string ((const char *)data, len);
-  free (block);
+    {
+      timevar_push (TV_IPA_LTO_OUTPUT);
+      assemble_string ((const char *)data, len);
+      timevar_pop (TV_IPA_LTO_OUTPUT);
+    }
 }
 
 
@@ -656,4 +742,82 @@ lhd_end_section (void)
       switch_to_section (saved_section);
       saved_section = NULL;
     }
+}
+
+/* Default implementation of enum_underlying_base_type using type_for_size.  */
+
+tree
+lhd_enum_underlying_base_type (const_tree enum_type)
+{
+  return lang_hooks.types.type_for_size (TYPE_PRECISION (enum_type),
+					 TYPE_UNSIGNED (enum_type));
+}
+
+/* Default implementation of LANG_HOOKS_GET_SUBSTRING_LOCATION.  */
+
+const char *
+lhd_get_substring_location (const substring_loc &, location_t *)
+{
+  return "unimplemented";
+}
+
+/* Default implementation of LANG_HOOKS_DECL_DWARF_ATTRIBUTE.  Don't add
+   any attributes.  */
+
+int
+lhd_decl_dwarf_attribute (const_tree, int)
+{
+  return -1;
+}
+
+/* Default implementation of LANG_HOOKS_TYPE_DWARF_ATTRIBUTE.  Don't add
+   any attributes.  */
+
+int
+lhd_type_dwarf_attribute (const_tree, int)
+{
+  return -1;
+}
+
+/* Default implementation of LANG_HOOKS_UNIT_SIZE_WITHOUT_REUSABLE_PADDING.
+   Just return TYPE_SIZE_UNIT unadjusted.  */
+
+tree
+lhd_unit_size_without_reusable_padding (tree t)
+{
+  return TYPE_SIZE_UNIT (t);
+}
+
+/* Returns true if the current lang_hooks represents the GNU C frontend.  */
+
+bool
+lang_GNU_C (void)
+{
+  return (strncmp (lang_hooks.name, "GNU C", 5) == 0
+	  && (lang_hooks.name[5] == '\0' || ISDIGIT (lang_hooks.name[5])));
+}
+
+/* Returns true if the current lang_hooks represents the GNU C++ frontend.  */
+
+bool
+lang_GNU_CXX (void)
+{
+  return strncmp (lang_hooks.name, "GNU C++", 7) == 0;
+}
+
+/* Returns true if the current lang_hooks represents the GNU Fortran frontend.  */
+
+bool
+lang_GNU_Fortran (void)
+{
+  return strncmp (lang_hooks.name, "GNU Fortran", 11) == 0;
+}
+
+/* Returns true if the current lang_hooks represents the GNU Objective-C
+   frontend.  */
+
+bool
+lang_GNU_OBJC (void)
+{
+  return strncmp (lang_hooks.name, "GNU Objective-C", 15) == 0;
 }

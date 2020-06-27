@@ -10,18 +10,12 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net/textproto"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
-
-func TestHorizontalWhitespace(t *testing.T) {
-	if !onlyHorizontalWhitespace([]byte(" \t")) {
-		t.Error("expected pass")
-	}
-	if onlyHorizontalWhitespace([]byte("foo bar")) {
-		t.Error("expected failure")
-	}
-}
 
 func TestBoundaryLine(t *testing.T) {
 	mr := NewReader(strings.NewReader(""), "myBoundary")
@@ -131,6 +125,7 @@ func TestMultipartSlowInput(t *testing.T) {
 }
 
 func testMultipart(t *testing.T, r io.Reader, onlyNewlines bool) {
+	t.Parallel()
 	reader := NewReader(r, "MyBoundary")
 	buf := new(bytes.Buffer)
 
@@ -318,29 +313,6 @@ Oh no, premature EOF!
 	}
 }
 
-func TestZeroLengthBody(t *testing.T) {
-	testBody := strings.Replace(`
-This is a multi-part message.  This line is ignored.
---MyBoundary
-foo: bar
-
-
---MyBoundary--
-`, "\n", "\r\n", -1)
-	r := NewReader(strings.NewReader(testBody), "MyBoundary")
-	part, err := r.NextPart()
-	if err != nil {
-		t.Fatalf("didn't get a part")
-	}
-	n, err := io.Copy(ioutil.Discard, part)
-	if err != nil {
-		t.Errorf("error reading part: %v", err)
-	}
-	if n != 0 {
-		t.Errorf("read %d bytes; expected 0", n)
-	}
-}
-
 type slowReader struct {
 	r io.Reader
 }
@@ -350,6 +322,73 @@ func (s *slowReader) Read(p []byte) (int, error) {
 		return s.r.Read(p)
 	}
 	return s.r.Read(p[:1])
+}
+
+type sentinelReader struct {
+	// done is closed when this reader is read from.
+	done chan struct{}
+}
+
+func (s *sentinelReader) Read([]byte) (int, error) {
+	if s.done != nil {
+		close(s.done)
+		s.done = nil
+	}
+	return 0, io.EOF
+}
+
+// TestMultipartStreamReadahead tests that PartReader does not block
+// on reading past the end of a part, ensuring that it can be used on
+// a stream like multipart/x-mixed-replace. See golang.org/issue/15431
+func TestMultipartStreamReadahead(t *testing.T) {
+	testBody1 := `
+This is a multi-part message.  This line is ignored.
+--MyBoundary
+foo-bar: baz
+
+Body
+--MyBoundary
+`
+	testBody2 := `foo-bar: bop
+
+Body 2
+--MyBoundary--
+`
+	done1 := make(chan struct{})
+	reader := NewReader(
+		io.MultiReader(
+			strings.NewReader(testBody1),
+			&sentinelReader{done1},
+			strings.NewReader(testBody2)),
+		"MyBoundary")
+
+	var i int
+	readPart := func(hdr textproto.MIMEHeader, body string) {
+		part, err := reader.NextPart()
+		if part == nil || err != nil {
+			t.Fatalf("Part %d: NextPart failed: %v", i, err)
+		}
+
+		if !reflect.DeepEqual(part.Header, hdr) {
+			t.Errorf("Part %d: part.Header = %v, want %v", i, part.Header, hdr)
+		}
+		data, err := ioutil.ReadAll(part)
+		expectEq(t, body, string(data), fmt.Sprintf("Part %d body", i))
+		if err != nil {
+			t.Fatalf("Part %d: ReadAll failed: %v", i, err)
+		}
+		i++
+	}
+
+	readPart(textproto.MIMEHeader{"Foo-Bar": {"baz"}}, "Body")
+
+	select {
+	case <-done1:
+		t.Errorf("Reader read past second boundary")
+	default:
+	}
+
+	readPart(textproto.MIMEHeader{"Foo-Bar": {"bop"}}, "Body 2")
 }
 
 func TestLineContinuation(t *testing.T) {
@@ -368,12 +407,476 @@ func TestLineContinuation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("didn't get a part")
 		}
-		n, err := io.Copy(ioutil.Discard, part)
+		var buf bytes.Buffer
+		n, err := io.Copy(&buf, part)
 		if err != nil {
-			t.Errorf("error reading part: %v", err)
+			t.Errorf("error reading part: %v\nread so far: %q", err, buf.String())
 		}
 		if n <= 0 {
 			t.Errorf("read %d bytes; expected >0", n)
 		}
 	}
+}
+
+func TestQuotedPrintableEncoding(t *testing.T) {
+	// From https://golang.org/issue/4411
+	body := "--0016e68ee29c5d515f04cedf6733\r\nContent-Type: text/plain; charset=ISO-8859-1\r\nContent-Disposition: form-data; name=text\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nwords words words words words words words words words words words words wor=\r\nds words words words words words words words words words words words words =\r\nwords words words words words words words words words words words words wor=\r\nds words words words words words words words words words words words words =\r\nwords words words words words words words words words\r\n--0016e68ee29c5d515f04cedf6733\r\nContent-Type: text/plain; charset=ISO-8859-1\r\nContent-Disposition: form-data; name=submit\r\n\r\nSubmit\r\n--0016e68ee29c5d515f04cedf6733--"
+	r := NewReader(strings.NewReader(body), "0016e68ee29c5d515f04cedf6733")
+	part, err := r.NextPart()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if te, ok := part.Header["Content-Transfer-Encoding"]; ok {
+		t.Errorf("unexpected Content-Transfer-Encoding of %q", te)
+	}
+	var buf bytes.Buffer
+	_, err = io.Copy(&buf, part)
+	if err != nil {
+		t.Error(err)
+	}
+	got := buf.String()
+	want := "words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words words"
+	if got != want {
+		t.Errorf("wrong part value:\n got: %q\nwant: %q", got, want)
+	}
+}
+
+// Test parsing an image attachment from gmail, which previously failed.
+func TestNested(t *testing.T) {
+	// nested-mime is the body part of a multipart/mixed email
+	// with boundary e89a8ff1c1e83553e304be640612
+	f, err := os.Open("testdata/nested-mime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	mr := NewReader(f, "e89a8ff1c1e83553e304be640612")
+	p, err := mr.NextPart()
+	if err != nil {
+		t.Fatalf("error reading first section (alternative): %v", err)
+	}
+
+	// Read the inner text/plain and text/html sections of the multipart/alternative.
+	mr2 := NewReader(p, "e89a8ff1c1e83553e004be640610")
+	p, err = mr2.NextPart()
+	if err != nil {
+		t.Fatalf("reading text/plain part: %v", err)
+	}
+	if b, err := ioutil.ReadAll(p); string(b) != "*body*\r\n" || err != nil {
+		t.Fatalf("reading text/plain part: got %q, %v", b, err)
+	}
+	p, err = mr2.NextPart()
+	if err != nil {
+		t.Fatalf("reading text/html part: %v", err)
+	}
+	if b, err := ioutil.ReadAll(p); string(b) != "<b>body</b>\r\n" || err != nil {
+		t.Fatalf("reading text/html part: got %q, %v", b, err)
+	}
+
+	p, err = mr2.NextPart()
+	if err != io.EOF {
+		t.Fatalf("final inner NextPart = %v; want io.EOF", err)
+	}
+
+	// Back to the outer multipart/mixed, reading the image attachment.
+	_, err = mr.NextPart()
+	if err != nil {
+		t.Fatalf("error reading the image attachment at the end: %v", err)
+	}
+
+	_, err = mr.NextPart()
+	if err != io.EOF {
+		t.Fatalf("final outer NextPart = %v; want io.EOF", err)
+	}
+}
+
+type headerBody struct {
+	header textproto.MIMEHeader
+	body   string
+}
+
+func formData(key, value string) headerBody {
+	return headerBody{
+		textproto.MIMEHeader{
+			"Content-Type":        {"text/plain; charset=ISO-8859-1"},
+			"Content-Disposition": {"form-data; name=" + key},
+		},
+		value,
+	}
+}
+
+type parseTest struct {
+	name    string
+	in, sep string
+	want    []headerBody
+}
+
+var parseTests = []parseTest{
+	// Actual body from App Engine on a blob upload. The final part (the
+	// Content-Type: message/external-body) is what App Engine replaces
+	// the uploaded file with. The other form fields (prefixed with
+	// "other" in their form-data name) are unchanged. A bug was
+	// reported with blob uploads failing when the other fields were
+	// empty. This was the MIME POST body that previously failed.
+	{
+		name: "App Engine post",
+		sep:  "00151757727e9583fd04bfbca4c6",
+		in:   "--00151757727e9583fd04bfbca4c6\r\nContent-Type: text/plain; charset=ISO-8859-1\r\nContent-Disposition: form-data; name=otherEmpty1\r\n\r\n--00151757727e9583fd04bfbca4c6\r\nContent-Type: text/plain; charset=ISO-8859-1\r\nContent-Disposition: form-data; name=otherFoo1\r\n\r\nfoo\r\n--00151757727e9583fd04bfbca4c6\r\nContent-Type: text/plain; charset=ISO-8859-1\r\nContent-Disposition: form-data; name=otherFoo2\r\n\r\nfoo\r\n--00151757727e9583fd04bfbca4c6\r\nContent-Type: text/plain; charset=ISO-8859-1\r\nContent-Disposition: form-data; name=otherEmpty2\r\n\r\n--00151757727e9583fd04bfbca4c6\r\nContent-Type: text/plain; charset=ISO-8859-1\r\nContent-Disposition: form-data; name=otherRepeatFoo\r\n\r\nfoo\r\n--00151757727e9583fd04bfbca4c6\r\nContent-Type: text/plain; charset=ISO-8859-1\r\nContent-Disposition: form-data; name=otherRepeatFoo\r\n\r\nfoo\r\n--00151757727e9583fd04bfbca4c6\r\nContent-Type: text/plain; charset=ISO-8859-1\r\nContent-Disposition: form-data; name=otherRepeatEmpty\r\n\r\n--00151757727e9583fd04bfbca4c6\r\nContent-Type: text/plain; charset=ISO-8859-1\r\nContent-Disposition: form-data; name=otherRepeatEmpty\r\n\r\n--00151757727e9583fd04bfbca4c6\r\nContent-Type: text/plain; charset=ISO-8859-1\r\nContent-Disposition: form-data; name=submit\r\n\r\nSubmit\r\n--00151757727e9583fd04bfbca4c6\r\nContent-Type: message/external-body; charset=ISO-8859-1; blob-key=AHAZQqG84qllx7HUqO_oou5EvdYQNS3Mbbkb0RjjBoM_Kc1UqEN2ygDxWiyCPulIhpHRPx-VbpB6RX4MrsqhWAi_ZxJ48O9P2cTIACbvATHvg7IgbvZytyGMpL7xO1tlIvgwcM47JNfv_tGhy1XwyEUO8oldjPqg5Q\r\nContent-Disposition: form-data; name=file; filename=\"fall.png\"\r\n\r\nContent-Type: image/png\r\nContent-Length: 232303\r\nX-AppEngine-Upload-Creation: 2012-05-10 23:14:02.715173\r\nContent-MD5: MzRjODU1ZDZhZGU1NmRlOWEwZmMwMDdlODBmZTA0NzA=\r\nContent-Disposition: form-data; name=file; filename=\"fall.png\"\r\n\r\n\r\n--00151757727e9583fd04bfbca4c6--",
+		want: []headerBody{
+			formData("otherEmpty1", ""),
+			formData("otherFoo1", "foo"),
+			formData("otherFoo2", "foo"),
+			formData("otherEmpty2", ""),
+			formData("otherRepeatFoo", "foo"),
+			formData("otherRepeatFoo", "foo"),
+			formData("otherRepeatEmpty", ""),
+			formData("otherRepeatEmpty", ""),
+			formData("submit", "Submit"),
+			{textproto.MIMEHeader{
+				"Content-Type":        {"message/external-body; charset=ISO-8859-1; blob-key=AHAZQqG84qllx7HUqO_oou5EvdYQNS3Mbbkb0RjjBoM_Kc1UqEN2ygDxWiyCPulIhpHRPx-VbpB6RX4MrsqhWAi_ZxJ48O9P2cTIACbvATHvg7IgbvZytyGMpL7xO1tlIvgwcM47JNfv_tGhy1XwyEUO8oldjPqg5Q"},
+				"Content-Disposition": {"form-data; name=file; filename=\"fall.png\""},
+			}, "Content-Type: image/png\r\nContent-Length: 232303\r\nX-AppEngine-Upload-Creation: 2012-05-10 23:14:02.715173\r\nContent-MD5: MzRjODU1ZDZhZGU1NmRlOWEwZmMwMDdlODBmZTA0NzA=\r\nContent-Disposition: form-data; name=file; filename=\"fall.png\"\r\n\r\n"},
+		},
+	},
+
+	// Single empty part, ended with --boundary immediately after headers.
+	{
+		name: "single empty part, --boundary",
+		sep:  "abc",
+		in:   "--abc\r\nFoo: bar\r\n\r\n--abc--",
+		want: []headerBody{
+			{textproto.MIMEHeader{"Foo": {"bar"}}, ""},
+		},
+	},
+
+	// Single empty part, ended with \r\n--boundary immediately after headers.
+	{
+		name: "single empty part, \r\n--boundary",
+		sep:  "abc",
+		in:   "--abc\r\nFoo: bar\r\n\r\n\r\n--abc--",
+		want: []headerBody{
+			{textproto.MIMEHeader{"Foo": {"bar"}}, ""},
+		},
+	},
+
+	// Final part empty.
+	{
+		name: "final part empty",
+		sep:  "abc",
+		in:   "--abc\r\nFoo: bar\r\n\r\n--abc\r\nFoo2: bar2\r\n\r\n--abc--",
+		want: []headerBody{
+			{textproto.MIMEHeader{"Foo": {"bar"}}, ""},
+			{textproto.MIMEHeader{"Foo2": {"bar2"}}, ""},
+		},
+	},
+
+	// Final part empty with newlines after final separator.
+	{
+		name: "final part empty then crlf",
+		sep:  "abc",
+		in:   "--abc\r\nFoo: bar\r\n\r\n--abc--\r\n",
+		want: []headerBody{
+			{textproto.MIMEHeader{"Foo": {"bar"}}, ""},
+		},
+	},
+
+	// Final part empty with lwsp-chars after final separator.
+	{
+		name: "final part empty then lwsp",
+		sep:  "abc",
+		in:   "--abc\r\nFoo: bar\r\n\r\n--abc-- \t",
+		want: []headerBody{
+			{textproto.MIMEHeader{"Foo": {"bar"}}, ""},
+		},
+	},
+
+	// No parts (empty form as submitted by Chrome)
+	{
+		name: "no parts",
+		sep:  "----WebKitFormBoundaryQfEAfzFOiSemeHfA",
+		in:   "------WebKitFormBoundaryQfEAfzFOiSemeHfA--\r\n",
+		want: []headerBody{},
+	},
+
+	// Part containing data starting with the boundary, but with additional suffix.
+	{
+		name: "fake separator as data",
+		sep:  "sep",
+		in:   "--sep\r\nFoo: bar\r\n\r\n--sepFAKE\r\n--sep--",
+		want: []headerBody{
+			{textproto.MIMEHeader{"Foo": {"bar"}}, "--sepFAKE"},
+		},
+	},
+
+	// Part containing a boundary with whitespace following it.
+	{
+		name: "boundary with whitespace",
+		sep:  "sep",
+		in:   "--sep \r\nFoo: bar\r\n\r\ntext\r\n--sep--",
+		want: []headerBody{
+			{textproto.MIMEHeader{"Foo": {"bar"}}, "text"},
+		},
+	},
+
+	// With ignored leading line.
+	{
+		name: "leading line",
+		sep:  "MyBoundary",
+		in: strings.Replace(`This is a multi-part message.  This line is ignored.
+--MyBoundary
+foo: bar
+
+
+--MyBoundary--`, "\n", "\r\n", -1),
+		want: []headerBody{
+			{textproto.MIMEHeader{"Foo": {"bar"}}, ""},
+		},
+	},
+
+	// Issue 10616; minimal
+	{
+		name: "issue 10616 minimal",
+		sep:  "sep",
+		in: "--sep \r\nFoo: bar\r\n\r\n" +
+			"a\r\n" +
+			"--sep_alt\r\n" +
+			"b\r\n" +
+			"\r\n--sep--",
+		want: []headerBody{
+			{textproto.MIMEHeader{"Foo": {"bar"}}, "a\r\n--sep_alt\r\nb\r\n"},
+		},
+	},
+
+	// Issue 10616; full example from bug.
+	{
+		name: "nested separator prefix is outer separator",
+		sep:  "----=_NextPart_4c2fbafd7ec4c8bf08034fe724b608d9",
+		in: strings.Replace(`------=_NextPart_4c2fbafd7ec4c8bf08034fe724b608d9
+Content-Type: multipart/alternative; boundary="----=_NextPart_4c2fbafd7ec4c8bf08034fe724b608d9_alt"
+
+------=_NextPart_4c2fbafd7ec4c8bf08034fe724b608d9_alt
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+This is a multi-part message in MIME format.
+
+------=_NextPart_4c2fbafd7ec4c8bf08034fe724b608d9_alt
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+html things
+------=_NextPart_4c2fbafd7ec4c8bf08034fe724b608d9_alt--
+------=_NextPart_4c2fbafd7ec4c8bf08034fe724b608d9--`, "\n", "\r\n", -1),
+		want: []headerBody{
+			{textproto.MIMEHeader{"Content-Type": {`multipart/alternative; boundary="----=_NextPart_4c2fbafd7ec4c8bf08034fe724b608d9_alt"`}},
+				strings.Replace(`------=_NextPart_4c2fbafd7ec4c8bf08034fe724b608d9_alt
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+This is a multi-part message in MIME format.
+
+------=_NextPart_4c2fbafd7ec4c8bf08034fe724b608d9_alt
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+html things
+------=_NextPart_4c2fbafd7ec4c8bf08034fe724b608d9_alt--`, "\n", "\r\n", -1),
+			},
+		},
+	},
+	// Issue 12662: Check that we don't consume the leading \r if the peekBuffer
+	// ends in '\r\n--separator-'
+	{
+		name: "peek buffer boundary condition",
+		sep:  "00ffded004d4dd0fdf945fbdef9d9050cfd6a13a821846299b27fc71b9db",
+		in: strings.Replace(`--00ffded004d4dd0fdf945fbdef9d9050cfd6a13a821846299b27fc71b9db
+Content-Disposition: form-data; name="block"; filename="block"
+Content-Type: application/octet-stream
+
+`+strings.Repeat("A", peekBufferSize-65)+"\n--00ffded004d4dd0fdf945fbdef9d9050cfd6a13a821846299b27fc71b9db--", "\n", "\r\n", -1),
+		want: []headerBody{
+			{textproto.MIMEHeader{"Content-Type": {`application/octet-stream`}, "Content-Disposition": {`form-data; name="block"; filename="block"`}},
+				strings.Repeat("A", peekBufferSize-65),
+			},
+		},
+	},
+	// Issue 12662: Same test as above with \r\n at the end
+	{
+		name: "peek buffer boundary condition",
+		sep:  "00ffded004d4dd0fdf945fbdef9d9050cfd6a13a821846299b27fc71b9db",
+		in: strings.Replace(`--00ffded004d4dd0fdf945fbdef9d9050cfd6a13a821846299b27fc71b9db
+Content-Disposition: form-data; name="block"; filename="block"
+Content-Type: application/octet-stream
+
+`+strings.Repeat("A", peekBufferSize-65)+"\n--00ffded004d4dd0fdf945fbdef9d9050cfd6a13a821846299b27fc71b9db--\n", "\n", "\r\n", -1),
+		want: []headerBody{
+			{textproto.MIMEHeader{"Content-Type": {`application/octet-stream`}, "Content-Disposition": {`form-data; name="block"; filename="block"`}},
+				strings.Repeat("A", peekBufferSize-65),
+			},
+		},
+	},
+	// Issue 12662v2: We want to make sure that for short buffers that end with
+	// '\r\n--separator-' we always consume at least one (valid) symbol from the
+	// peekBuffer
+	{
+		name: "peek buffer boundary condition",
+		sep:  "aaaaaaaaaa00ffded004d4dd0fdf945fbdef9d9050cfd6a13a821846299b27fc71b9db",
+		in: strings.Replace(`--aaaaaaaaaa00ffded004d4dd0fdf945fbdef9d9050cfd6a13a821846299b27fc71b9db
+Content-Disposition: form-data; name="block"; filename="block"
+Content-Type: application/octet-stream
+
+`+strings.Repeat("A", peekBufferSize)+"\n--aaaaaaaaaa00ffded004d4dd0fdf945fbdef9d9050cfd6a13a821846299b27fc71b9db--", "\n", "\r\n", -1),
+		want: []headerBody{
+			{textproto.MIMEHeader{"Content-Type": {`application/octet-stream`}, "Content-Disposition": {`form-data; name="block"; filename="block"`}},
+				strings.Repeat("A", peekBufferSize),
+			},
+		},
+	},
+	// Context: https://github.com/camlistore/camlistore/issues/642
+	// If the file contents in the form happens to have a size such as:
+	// size = peekBufferSize - (len("\n--") + len(boundary) + len("\r") + 1), (modulo peekBufferSize)
+	// then peekBufferSeparatorIndex was wrongly returning (-1, false), which was leading to an nCopy
+	// cut such as:
+	// "somedata\r| |\n--Boundary\r" (instead of "somedata| |\r\n--Boundary\r"), which was making the
+	// subsequent Read miss the boundary.
+	{
+		name: "safeCount off by one",
+		sep:  "08b84578eabc563dcba967a945cdf0d9f613864a8f4a716f0e81caa71a74",
+		in: strings.Replace(`--08b84578eabc563dcba967a945cdf0d9f613864a8f4a716f0e81caa71a74
+Content-Disposition: form-data; name="myfile"; filename="my-file.txt"
+Content-Type: application/octet-stream
+
+`, "\n", "\r\n", -1) +
+			strings.Repeat("A", peekBufferSize-(len("\n--")+len("08b84578eabc563dcba967a945cdf0d9f613864a8f4a716f0e81caa71a74")+len("\r")+1)) +
+			strings.Replace(`
+--08b84578eabc563dcba967a945cdf0d9f613864a8f4a716f0e81caa71a74
+Content-Disposition: form-data; name="key"
+
+val
+--08b84578eabc563dcba967a945cdf0d9f613864a8f4a716f0e81caa71a74--
+`, "\n", "\r\n", -1),
+		want: []headerBody{
+			{textproto.MIMEHeader{"Content-Type": {`application/octet-stream`}, "Content-Disposition": {`form-data; name="myfile"; filename="my-file.txt"`}},
+				strings.Repeat("A", peekBufferSize-(len("\n--")+len("08b84578eabc563dcba967a945cdf0d9f613864a8f4a716f0e81caa71a74")+len("\r")+1)),
+			},
+			{textproto.MIMEHeader{"Content-Disposition": {`form-data; name="key"`}},
+				"val",
+			},
+		},
+	},
+
+	roundTripParseTest(),
+}
+
+func TestParse(t *testing.T) {
+Cases:
+	for _, tt := range parseTests {
+		r := NewReader(strings.NewReader(tt.in), tt.sep)
+		got := []headerBody{}
+		for {
+			p, err := r.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Errorf("in test %q, NextPart: %v", tt.name, err)
+				continue Cases
+			}
+			pbody, err := ioutil.ReadAll(p)
+			if err != nil {
+				t.Errorf("in test %q, error reading part: %v", tt.name, err)
+				continue Cases
+			}
+			got = append(got, headerBody{p.Header, string(pbody)})
+		}
+		if !reflect.DeepEqual(tt.want, got) {
+			t.Errorf("test %q:\n got: %v\nwant: %v", tt.name, got, tt.want)
+			if len(tt.want) != len(got) {
+				t.Errorf("test %q: got %d parts, want %d", tt.name, len(got), len(tt.want))
+			} else if len(got) > 1 {
+				for pi, wantPart := range tt.want {
+					if !reflect.DeepEqual(wantPart, got[pi]) {
+						t.Errorf("test %q, part %d:\n got: %v\nwant: %v", tt.name, pi, got[pi], wantPart)
+					}
+				}
+			}
+		}
+	}
+}
+
+func partsFromReader(r *Reader) ([]headerBody, error) {
+	got := []headerBody{}
+	for {
+		p, err := r.NextPart()
+		if err == io.EOF {
+			return got, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("NextPart: %v", err)
+		}
+		pbody, err := ioutil.ReadAll(p)
+		if err != nil {
+			return nil, fmt.Errorf("error reading part: %v", err)
+		}
+		got = append(got, headerBody{p.Header, string(pbody)})
+	}
+}
+
+func TestParseAllSizes(t *testing.T) {
+	t.Parallel()
+	const maxSize = 5 << 10
+	var buf bytes.Buffer
+	body := strings.Repeat("a", maxSize)
+	bodyb := []byte(body)
+	for size := 0; size < maxSize; size++ {
+		buf.Reset()
+		w := NewWriter(&buf)
+		part, _ := w.CreateFormField("f")
+		part.Write(bodyb[:size])
+		part, _ = w.CreateFormField("key")
+		part.Write([]byte("val"))
+		w.Close()
+		r := NewReader(&buf, w.Boundary())
+		got, err := partsFromReader(r)
+		if err != nil {
+			t.Errorf("For size %d: %v", size, err)
+			continue
+		}
+		if len(got) != 2 {
+			t.Errorf("For size %d, num parts = %d; want 2", size, len(got))
+			continue
+		}
+		if got[0].body != body[:size] {
+			t.Errorf("For size %d, got unexpected len %d: %q", size, len(got[0].body), got[0].body)
+		}
+	}
+}
+
+func roundTripParseTest() parseTest {
+	t := parseTest{
+		name: "round trip",
+		want: []headerBody{
+			formData("empty", ""),
+			formData("lf", "\n"),
+			formData("cr", "\r"),
+			formData("crlf", "\r\n"),
+			formData("foo", "bar"),
+		},
+	}
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	for _, p := range t.want {
+		pw, err := w.CreatePart(p.header)
+		if err != nil {
+			panic(err)
+		}
+		_, err = pw.Write([]byte(p.body))
+		if err != nil {
+			panic(err)
+		}
+	}
+	w.Close()
+	t.in = buf.String()
+	t.sep = w.Boundary()
+	return t
 }

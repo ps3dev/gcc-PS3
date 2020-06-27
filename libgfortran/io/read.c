@@ -1,5 +1,4 @@
-/* Copyright (C) 2002, 2003, 2005, 2007, 2008, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+/* Copyright (C) 2002-2017 Free Software Foundation, Inc.
    Contributed by Andy Vaught
    F2003 I/O support contributed by Jerry DeLisle
 
@@ -29,9 +28,7 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #include "format.h"
 #include "unix.h"
 #include <string.h>
-#include <errno.h>
 #include <ctype.h>
-#include <stdlib.h>
 #include <assert.h>
 
 typedef unsigned char uchar;
@@ -87,46 +84,36 @@ set_integer (void *dest, GFC_INTEGER_LARGEST value, int length)
 }
 
 
-/* max_value()-- Given a length (kind), return the maximum signed or
- * unsigned value */
+/* Max signed value of size give by length argument.  */
 
 GFC_UINTEGER_LARGEST
-max_value (int length, int signed_flag)
+si_max (int length)
 {
-  GFC_UINTEGER_LARGEST value;
 #if defined HAVE_GFC_REAL_16 || defined HAVE_GFC_REAL_10
-  int n;
+  GFC_UINTEGER_LARGEST value;
 #endif
 
   switch (length)
-    {
+      {
 #if defined HAVE_GFC_REAL_16 || defined HAVE_GFC_REAL_10
     case 16:
     case 10:
       value = 1;
-      for (n = 1; n < 4 * length; n++)
+      for (int n = 1; n < 4 * length; n++)
         value = (value << 2) + 3;
-      if (! signed_flag)
-        value = 2*value+1;
-      break;
+      return value;
 #endif
     case 8:
-      value = signed_flag ? 0x7fffffffffffffff : 0xffffffffffffffff;
-      break;
+      return GFC_INTEGER_8_HUGE;
     case 4:
-      value = signed_flag ? 0x7fffffff : 0xffffffff;
-      break;
+      return GFC_INTEGER_4_HUGE;
     case 2:
-      value = signed_flag ? 0x7fff : 0xffff;
-      break;
+      return GFC_INTEGER_2_HUGE;
     case 1:
-      value = signed_flag ? 0x7f : 0xff;
-      break;
+      return GFC_INTEGER_1_HUGE;
     default:
       internal_error (NULL, "Bad integer kind");
     }
-
-  return value;
 }
 
 
@@ -140,6 +127,24 @@ int
 convert_real (st_parameter_dt *dtp, void *dest, const char *buffer, int length)
 {
   char *endptr = NULL;
+  int round_mode, old_round_mode;
+
+  switch (dtp->u.p.current_unit->round_status)
+    {
+      case ROUND_COMPATIBLE:
+	/* FIXME: As NEAREST but round away from zero for a tie.  */
+      case ROUND_UNSPECIFIED:
+	/* Should not occur.  */
+      case ROUND_PROCDEFINED:
+	round_mode = ROUND_NEAREST;
+	break;
+      default:
+	round_mode = dtp->u.p.current_unit->round_status;
+	break;
+    }
+
+  old_round_mode = get_fpu_rounding_mode();
+  set_fpu_rounding_mode (round_mode);
 
   switch (length)
     {
@@ -177,6 +182,8 @@ convert_real (st_parameter_dt *dtp, void *dest, const char *buffer, int length)
     default:
       internal_error (&dtp->common, "Unsupported real kind during IO");
     }
+
+  set_fpu_rounding_mode (old_round_mode);
 
   if (buffer == endptr)
     {
@@ -558,7 +565,7 @@ read_a_char4 (st_parameter_dt *dtp, const fnode *f, char *p, int length)
 }
 
 /* eat_leading_spaces()-- Given a character pointer and a width,
- * ignore the leading spaces.  */
+   ignore the leading spaces.  */
 
 static char *
 eat_leading_spaces (int *width, char *p)
@@ -610,7 +617,7 @@ next_char (st_parameter_dt *dtp, char **p, int *w)
 
 
 /* read_decimal()-- Read a decimal integer value.  The values here are
- * signed values. */
+   signed values. */
 
 void
 read_decimal (st_parameter_dt *dtp, const fnode *f, char *dest, int length)
@@ -634,11 +641,7 @@ read_decimal (st_parameter_dt *dtp, const fnode *f, char *dest, int length)
       return;
     }
 
-  maxv = max_value (length, 1);
-  maxv_10 = maxv / 10;
-
   negative = 0;
-  value = 0;
 
   switch (*p)
     {
@@ -656,6 +659,11 @@ read_decimal (st_parameter_dt *dtp, const fnode *f, char *dest, int length)
       break;
     }
 
+  maxv = si_max (length);
+  if (negative)
+    maxv++;
+  maxv_10 = maxv / 10;
+
   /* At this point we have a digit-string */
   value = 0;
 
@@ -667,27 +675,34 @@ read_decimal (st_parameter_dt *dtp, const fnode *f, char *dest, int length)
 	
       if (c == ' ')
         {
-	  if (dtp->u.p.blank_status == BLANK_NULL) continue;
+	  if (dtp->u.p.blank_status == BLANK_NULL)
+	    {
+	      /* Skip spaces.  */
+	      for ( ; w > 0; p++, w--)
+		if (*p != ' ') break; 
+	      continue;
+	    }
 	  if (dtp->u.p.blank_status == BLANK_ZERO) c = '0';
         }
         
       if (c < '0' || c > '9')
 	goto bad;
 
-      if (value > maxv_10 && compile_options.range_check == 1)
+      if (value > maxv_10)
 	goto overflow;
 
       c -= '0';
       value = 10 * value;
 
-      if (value > maxv - c && compile_options.range_check == 1)
+      if (value > maxv - c)
 	goto overflow;
       value += c;
     }
 
-  v = value;
   if (negative)
-    v = -v;
+    v = -value;
+  else
+    v = value;
 
   set_integer (dest, v, length);
   return;
@@ -707,9 +722,9 @@ read_decimal (st_parameter_dt *dtp, const fnode *f, char *dest, int length)
 
 
 /* read_radix()-- This function reads values for non-decimal radixes.
- * The difference here is that we treat the values here as unsigned
- * values for the purposes of overflow.  If minus sign is present and
- * the top bit is set, the value will be incorrect. */
+   The difference here is that we treat the values here as unsigned
+   values for the purposes of overflow.  If minus sign is present and
+   the top bit is set, the value will be incorrect. */
 
 void
 read_radix (st_parameter_dt *dtp, const fnode *f, char *dest, int length,
@@ -734,7 +749,8 @@ read_radix (st_parameter_dt *dtp, const fnode *f, char *dest, int length,
       return;
     }
 
-  maxv = max_value (length, 0);
+  /* Maximum unsigned value, assuming two's complement.  */
+  maxv = 2 * si_max (length) + 1;
   maxv_r = maxv / radix;
 
   negative = 0;
@@ -863,6 +879,9 @@ read_radix (st_parameter_dt *dtp, const fnode *f, char *dest, int length,
 void
 read_f (st_parameter_dt *dtp, const fnode *f, char *dest, int length)
 {
+#define READF_TMP 50
+  char tmp[READF_TMP];
+  size_t buf_size = 0;
   int w, seen_dp, exponent;
   int exponent_sign;
   const char *p;
@@ -877,6 +896,7 @@ read_f (st_parameter_dt *dtp, const fnode *f, char *dest, int length)
   exponent_sign = 1;
   exponent = 0;
   w = f->u.w;
+  buffer = tmp;
 
   /* Read in the next block.  */
   p = read_block_form (dtp, &w);
@@ -893,7 +913,10 @@ read_f (st_parameter_dt *dtp, const fnode *f, char *dest, int length)
      exponent because of an implicit decimal point or the like.  Thus allocating
      strlen ("+0.0e-1000") == 10 characters plus one for NUL more than the
      original buffer had should be enough.  */
-  buffer = gfc_alloca (w + 11);
+  buf_size = w + 11;
+  if (buf_size > READF_TMP)
+    buffer = xmalloc (buf_size);
+
   out = buffer;
 
   /* Optional sign */
@@ -966,6 +989,8 @@ read_f (st_parameter_dt *dtp, const fnode *f, char *dest, int length)
 	goto bad_float;
 
       convert_infnan (dtp, dest, buffer, length);
+      if (buf_size > READF_TMP)
+	free (buffer);
       return;
     }
 
@@ -1026,6 +1051,8 @@ found_digit:
 	case 'E':
 	case 'd':
 	case 'D':
+	case 'q':
+	case 'Q':
 	  ++p;
 	  --w;
 	  goto exponent;
@@ -1058,7 +1085,13 @@ exponent:
      the d parameter before explict conversion takes place.  */
 
   if (w == 0)
-    goto bad_float;
+    {
+      /* Extension: allow default exponent of 0 when omitted.  */
+      if (dtp->common.flags & IOPARM_DT_DEFAULT_EXP)
+	goto done;
+      else
+	goto bad_float;
+    }
 
   if (dtp->u.p.blank_status == BLANK_UNSPECIFIED)
     {
@@ -1136,7 +1169,9 @@ done:
 	  exponent = - exponent;
 	}
 
-      assert (exponent < 10000);
+      if (exponent >= 10000)
+	goto bad_float;
+
       for (dig = 3; dig >= 0; --dig)
 	{
 	  out[dig] = (char) ('0' + exponent % 10);
@@ -1148,7 +1183,8 @@ done:
 
   /* Do the actual conversion.  */
   convert_real (dtp, dest, buffer, length);
-
+  if (buf_size > READF_TMP)
+    free (buffer);
   return;
 
   /* The value read is zero.  */
@@ -1181,6 +1217,8 @@ zero:
   return;
 
 bad_float:
+  if (buf_size > READF_TMP)
+    free (buffer);
   generate_error (&dtp->common, LIBERROR_READ_VALUE,
 		  "Bad value during floating point read");
   next_record (dtp, 1);
@@ -1189,7 +1227,7 @@ bad_float:
 
 
 /* read_x()-- Deal with the X/TR descriptor.  We just read some data
- * and never look at it. */
+   and never look at it. */
 
 void
 read_x (st_parameter_dt *dtp, int n)
@@ -1222,7 +1260,8 @@ read_x (st_parameter_dt *dtp, int n)
       q = fbuf_getc (dtp->u.p.current_unit);
       if (q == EOF)
 	break;
-      else if (q == '\n' || q == '\r')
+      else if (dtp->u.p.current_unit->flags.cc != CC_NONE
+	       && (q == '\n' || q == '\r'))
 	{
 	  /* Unexpected end of line. Set the position.  */
 	  dtp->u.p.sf_seen_eor = 1;
@@ -1248,8 +1287,9 @@ read_x (st_parameter_dt *dtp, int n)
     } 
 
  done:
-  if ((dtp->common.flags & IOPARM_DT_HAS_SIZE) != 0)
-    dtp->u.p.size_used += (GFC_IO_INT) n;
+  if (((dtp->common.flags & IOPARM_DT_HAS_SIZE) != 0) ||
+      dtp->u.p.current_unit->has_size)
+    dtp->u.p.current_unit->size_used += (GFC_IO_INT) n;
   dtp->u.p.current_unit->bytes_left -= n;
   dtp->u.p.current_unit->strm_pos += (gfc_offset) n;
 }

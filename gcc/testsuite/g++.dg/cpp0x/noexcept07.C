@@ -1,7 +1,6 @@
 // Test that checking of a nothrow specification uses the one on the
-// definition.
-// { dg-options "-std=c++0x" }
-// { dg-do run }
+// definition.  In C++17 throw() is equivalent to noexcept(true).
+// { dg-do run { target { c++11 && c++14_down } } }
 
 #include <exception>
 #include <cstdlib>

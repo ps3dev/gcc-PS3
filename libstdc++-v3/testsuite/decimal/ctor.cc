@@ -1,4 +1,4 @@
-// Copyright (C) 2009 Free Software Foundation, Inc.
+// Copyright (C) 2009-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -16,6 +16,7 @@
 // <http://www.gnu.org/licenses/>.
 
 // { dg-require-effective-target dfp }
+// { dg-options "-Wno-pedantic" }
 
 // ISO/IEC TR 24733  3.2.2.1  Construct/copy/destroy (decimal32).
 // ISO/IEC TR 24733  3.2.3.1  Construct/copy/destroy (decimal64).
@@ -35,7 +36,7 @@ ctor_32 (void)
   decimal32 a;
   float b __attribute__((mode(SD))) = 0.e-101DF;
 
-  VERIFY (memcmp (&a, &b, 4) == 0);
+  VERIFY (std::memcmp (&a, &b, 4) == 0);
 }
 
 void
@@ -44,7 +45,7 @@ ctor_64 (void)
   decimal64 a;
   float b __attribute__((mode(DD))) = 0.e-398DD;
 
-  VERIFY (memcmp (&a, &b, 8) == 0);
+  VERIFY (std::memcmp (&a, &b, 8) == 0);
 }
 
 void
@@ -53,7 +54,7 @@ ctor_128 (void)
   decimal128 a;
   float b __attribute__((mode(TD))) = 0.e-6176DL;
 
-  VERIFY (memcmp (&a, &b, 16) == 0);
+  VERIFY (std::memcmp (&a, &b, 16) == 0);
 }
 
 int

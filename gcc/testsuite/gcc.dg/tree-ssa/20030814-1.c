@@ -2,7 +2,9 @@
 /* { dg-options "-O1 -fdump-tree-dom2" } */
    
 extern void abort (void);
+extern void oof (int);
 
+int
 com(int *blah)
 {
   int z = *blah;
@@ -18,4 +20,3 @@ com(int *blah)
    more than one, then the dominator optimizations failed.  */
 /* { dg-final { scan-tree-dump-times "\\*blah" 1 "dom2"} } */
   
-/* { dg-final { cleanup-tree-dump "dom2" } } */

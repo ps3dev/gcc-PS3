@@ -1,5 +1,5 @@
-// { dg-do compile }
-// { dg-options "-std=c++0x" }
+// { dg-do compile { target c++11 } }
+
 
 // Test template deduction
 
@@ -17,10 +17,10 @@ void test_g()
   // Deduction to nullptr_t, no deduction to pointer type
   //
   g(nullptr);               // { dg-error "no matching function for call to " }
-  // { dg-message "(candidate|mismatched types)" "candidate note" { target *-*-* } 19 }
+  // { dg-message "(candidate|mismatched types)" "candidate note" { target *-*-* } .-1 }
   type_equal<float*>(g((float*)nullptr));
   decltype(nullptr) mynull = 0;
   g(mynull);                // { dg-error "no matching function for call to " }
-  // { dg-message "(candidate|mismatched types)" "candidate note" { target *-*-* } 23 }
+  // { dg-message "(candidate|mismatched types)" "candidate note" { target *-*-* } .-1 }
   type_equal<float*>(g((float*)mynull));
 }

@@ -1,6 +1,6 @@
 // future -*- C++ -*-
 
-// Copyright (C) 2009, 2010, 2011, 2012 Free Software Foundation, Inc.
+// Copyright (C) 2009-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -23,6 +23,7 @@
 // <http://www.gnu.org/licenses/>.
 
 #include <future>
+#include <bits/functexcept.h>
 
 namespace
 {
@@ -32,6 +33,7 @@ namespace
     name() const noexcept
     { return "future"; }
 
+    _GLIBCXX_DEFAULT_ABI_TAG
     virtual std::string message(int __ec) const
     {
       std::string __msg;
@@ -60,7 +62,7 @@ namespace
   const future_error_category&
   __future_category_instance() noexcept
   {
-    static const future_error_category __fec;
+    static const future_error_category __fec{};
     return __fec;
   }
 }
@@ -69,50 +71,46 @@ namespace std _GLIBCXX_VISIBILITY(default)
 {
 _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
+  void
+  __throw_future_error(int __i __attribute__((unused)))
+  { _GLIBCXX_THROW_OR_ABORT(future_error(make_error_code(future_errc(__i)))); }
+
   const error_category& future_category() noexcept
   { return __future_category_instance(); }
 
   future_error::~future_error() noexcept { }
 
   const char*
-  future_error::what() const noexcept { return _M_code.message().c_str(); }
+  future_error::what() const noexcept { return logic_error::what(); }
 
-#if defined(_GLIBCXX_HAS_GTHREADS) && defined(_GLIBCXX_USE_C99_STDINT_TR1) \
-  && (ATOMIC_INT_LOCK_FREE > 1)
+#if defined(_GLIBCXX_HAS_GTHREADS) && defined(_GLIBCXX_USE_C99_STDINT_TR1)
   __future_base::_Result_base::_Result_base() = default;
 
   __future_base::_Result_base::~_Result_base() = default;
 
-  __future_base::_State_base::~_State_base() = default;
+  void
+  __future_base::_State_baseV2::_Make_ready::_S_run(void* p)
+  {
+    unique_ptr<_Make_ready> mr{static_cast<_Make_ready*>(p)};
+    if (auto state = mr->_M_shared_state.lock())
+      {
+	// Use release MO to synchronize with observers of the ready state.
+	state->_M_status._M_store_notify_all(_Status::__ready,
+	    memory_order_release);
+      }
+  }
 
-#ifdef _GLIBCXX_HAVE_TLS
-  __future_base::_Async_state_common::~_Async_state_common() { _M_join(); }
+  // defined in src/c++11/condition_variable.cc
+  extern void
+  __at_thread_exit(__at_thread_exit_elt* elt);
 
-  // Explicit instantiation due to -fno-implicit-instantiation.
-  template void call_once(once_flag&, void (thread::*&&)(), reference_wrapper<thread>&&);
-  template _Bind_simple_helper<void (thread::*)(), reference_wrapper<thread>>::__type __bind_simple(void (thread::*&&)(), reference_wrapper<thread>&&);
-#endif
+  void
+  __future_base::_State_baseV2::_Make_ready::_M_set()
+  {
+    _M_cb = &_Make_ready::_S_run;
+    __at_thread_exit(this);
+  }
 #endif
 
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace std
-
-// XXX GLIBCXX_ABI Deprecated
-// gcc-4.6.0
-// <future> export changes
-#if defined(_GLIBCXX_SYMVER_GNU) && defined(PIC) \
-    && defined(_GLIBCXX_HAVE_AS_SYMVER_DIRECTIVE) \
-    && defined(_GLIBCXX_HAVE_SYMVER_SYMBOL_RENAMING_RUNTIME_SUPPORT)
-
-namespace __gnu_cxx _GLIBCXX_VISIBILITY(default)
-{
-  const std::error_category* future_category = &__future_category_instance();
-}
-
-#define _GLIBCXX_ASM_SYMVER(cur, old, version) \
-   asm (".symver " #cur "," #old "@@@" #version);
-
-_GLIBCXX_ASM_SYMVER(_ZN9__gnu_cxx15future_categoryE, _ZSt15future_category, GLIBCXX_3.4.14)
-
-#endif
-

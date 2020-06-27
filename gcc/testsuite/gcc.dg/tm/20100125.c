@@ -3,6 +3,7 @@
 
 /* Test that the call to george() doesn't end up inside the transaction.  */
 
+void george (void);
 int trxn;
 
 void set_remove(int * val)
@@ -14,4 +15,3 @@ void set_remove(int * val)
 }
 
 /* { dg-final { scan-tree-dump-times "getTMCloneOrIrrevocable" 0 "tmmark" } } */
-/* { dg-final { cleanup-tree-dump "tmmark" } } */

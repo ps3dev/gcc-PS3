@@ -6,7 +6,7 @@ package math
 
 // The original C code, the long comment, and the constants
 // below are from FreeBSD's /usr/src/lib/msun/src/e_acosh.c
-// and came with this notice.  The go code is a simplified
+// and came with this notice. The go code is a simplified
 // version of the original C.
 //
 // ====================================================
@@ -33,7 +33,7 @@ package math
 //	acosh(NaN) is NaN without signal.
 //
 
-// Acosh(x) calculates the inverse hyperbolic cosine of x.
+// Acosh returns the inverse hyperbolic cosine of x.
 //
 // Special cases are:
 //	Acosh(+Inf) = +Inf

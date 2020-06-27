@@ -3,7 +3,7 @@
 
 /* { dg-do compile } */
 /* { dg-require-effective-target lp64 } */
-/* { dg-options "-O2 -mxop -ftree-vectorize" } */
+/* { dg-options "-O2 -mxop -mno-avx2 -ftree-vectorize" } */
 
 extern void exit (int);
 
@@ -32,5 +32,5 @@ int main ()
   exit (0);
 }
 
-/* { dg-final { scan-assembler "vpmacsdql" } } */
+/* { dg-final { scan-assembler "vpmuldq" } } */
 /* { dg-final { scan-assembler "vpmacsdqh" } } */

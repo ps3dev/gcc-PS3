@@ -6,7 +6,7 @@
  *                                                                          *
  *                              C Header File                               *
  *                                                                          *
- *         Copyright (C) 2004-2011, Free Software Foundation, Inc.          *
+ *         Copyright (C) 2004-2016, Free Software Foundation, Inc.          *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -29,9 +29,9 @@
  *                                                                          *
  ****************************************************************************/
 
-#if defined(__nucleus__) || defined(VTHREADS)
+#if defined(VTHREADS) || defined(__PikeOS__) || defined(__DJGPP__)
 
-#warning Sockets not supported on these platforms
+/* Sockets not supported on these platforms.  */
 #undef HAVE_SOCKETS
 
 #else
@@ -51,11 +51,6 @@
 #ifndef _ALL_SOURCE
 #define _ALL_SOURCE 1
 /* For AIX */
-#endif
-
-#ifndef _OSF_SOURCE
-#define _OSF_SOURCE 1
-/* For Tru64 */
 #endif
 
 /** No system header may be included prior to this point since on some targets
@@ -188,6 +183,11 @@
 #include <sys/time.h>
 #endif
 
+#if defined(__rtems__)
+#include <unistd.h>
+/* Required, for read(), write(), and close() */
+#endif
+
 /*
  * RTEMS has these .h files but not until you have built and installed RTEMS.
  * When building a C/C++ toolset, you also build the newlib C library, so the
@@ -201,15 +201,22 @@
 #include <netinet/tcp.h>
 #include <sys/ioctl.h>
 #include <netdb.h>
+#include <unistd.h>
+#endif
+
+#ifdef __ANDROID__
+#include <unistd.h>
+#include <sys/select.h>
 #endif
 
 #if defined (_AIX) || defined (__FreeBSD__) || defined (__hpux__) || \
-    defined (__osf__) || defined (_WIN32) || defined (__APPLE__)
+    defined (_WIN32) || defined (__APPLE__) || defined (__ANDROID__) || \
+    defined (__DragonFly__) || defined (__NetBSD__) || defined (__OpenBSD__)
 # define HAVE_THREAD_SAFE_GETxxxBYyyy 1
 
-#elif defined (sgi) || defined (linux) || defined (__GLIBC__) || \
-     (defined (sun) && defined (__SVR4) && !defined (__vxworks)) || \
-      defined(__rtems__)
+#elif defined (__linux__) || defined (__GLIBC__) || \
+     (defined (__sun__) && !defined (__vxworks)) || \
+      defined (__rtems__)
 # define HAVE_GETxxxBYyyy_R 1
 #endif
 
@@ -236,7 +243,8 @@
 # endif
 #endif
 
-#if defined (__FreeBSD__) || defined (__vxworks) || defined(__rtems__)
+#if defined (__FreeBSD__) || defined (__vxworks) || defined(__rtems__) \
+ || defined (__DragonFly__) || defined (__NetBSD__) || defined (__OpenBSD__)
 # define Has_Sockaddr_Len 1
 #else
 # define Has_Sockaddr_Len 0
@@ -246,4 +254,4 @@
 # define HAVE_INET_PTON
 #endif
 
-#endif /* defined(__nucleus__) */
+#endif /* defined(VTHREADS) */

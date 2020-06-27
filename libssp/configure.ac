@@ -77,7 +77,7 @@ AS_HELP_STRING([--disable-symvers],
   [disable symbol versioning for libssp]),
 ssp_use_symver=$enableval,
 ssp_use_symver=yes)
-if test "x$ssp_use_symver" = xyes; then
+if test "x$ssp_use_symver" != xno; then
   if test x$gcc_no_link = xyes; then
     # If we cannot link, we cannot build shared libraries, so do not use
     # symbol versioning.
@@ -194,6 +194,9 @@ if test ${multilib} = yes; then
 else
   multilib_arg=
 fi
+
+# Determine what GCC version number to use in filesystem paths.
+GCC_BASE_VER
 
 AC_CONFIG_FILES([Makefile ssp/ssp.h])
 AC_OUTPUT

@@ -1,5 +1,5 @@
 /* C++ specific Solaris system support.
-   Copyright (C) 2011 Free Software Foundation, Inc.
+   Copyright (C) 2011-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -20,10 +20,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tree.h"
 #include "cp/cp-tree.h"
-#include "tm.h"
-#include "tm_p.h"
+#include "stringpool.h"
 
 /* Before GCC 4.7, g++ defined __cplusplus 1 to avoid coping with the C++98
    overloads in Solaris system headers.  Since this was fixed, 4 structure

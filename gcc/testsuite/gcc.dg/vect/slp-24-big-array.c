@@ -84,8 +84,8 @@ int main (void)
       arr[i].b = i * 2 + 10;
       arr[i].c = 17;
       arr[i].d = i+34;
-      if (arr[i].a == 178)
-         abort ();
+      if (y) /* Avoid vectorization.  */
+        abort ();
     }
   check_vect ();
 
@@ -96,4 +96,3 @@ int main (void)
 
 /* { dg-final { scan-tree-dump-times "vectorized 1 loops" 1 "vect" { xfail { vect_no_align && ilp32 } } } } */
 /* { dg-final { scan-tree-dump-times "vectorizing stmts using SLP" 2 "vect" { xfail { vect_no_align && ilp32 } } } } */
-/* { dg-final { cleanup-tree-dump "vect" } } */

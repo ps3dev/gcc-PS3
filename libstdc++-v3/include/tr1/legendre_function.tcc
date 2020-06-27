@@ -1,7 +1,6 @@
 // Special functions -*- C++ -*-
 
-// Copyright (C) 2006, 2007, 2008, 2009, 2010
-// Free Software Foundation, Inc.
+// Copyright (C) 2006-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -49,8 +48,15 @@
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
+#if _GLIBCXX_USE_STD_SPEC_FUNCS
+# define _GLIBCXX_MATH_NS ::std
+#elif defined(_GLIBCXX_TR1_CMATH)
 namespace tr1
 {
+# define _GLIBCXX_MATH_NS ::std::tr1
+#else
+# error do not include this header directly, use <cmath> or <tr1/cmath>
+#endif
   // [5.2] Special functions
 
   // Implementation-space details.
@@ -73,7 +79,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __poly_legendre_p(const unsigned int __l, const _Tp __x)
+    __poly_legendre_p(unsigned int __l, _Tp __x)
     {
 
       if ((__x < _Tp(-1)) || (__x > _Tp(+1)))
@@ -130,8 +136,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __assoc_legendre_p(const unsigned int __l, const unsigned int __m,
-                       const _Tp __x)
+    __assoc_legendre_p(unsigned int __l, unsigned int __m, _Tp __x)
     {
 
       if (__x < _Tp(-1) || __x > _Tp(+1))
@@ -210,8 +215,7 @@ namespace tr1
      */
     template <typename _Tp>
     _Tp
-    __sph_legendre(const unsigned int __l, const unsigned int __m,
-                   const _Tp __theta)
+    __sph_legendre(unsigned int __l, unsigned int __m, _Tp __theta)
     {
       if (__isnan(__theta))
         return std::numeric_limits<_Tp>::quiet_NaN();
@@ -246,14 +250,14 @@ namespace tr1
           const _Tp __sgn = ( __m % 2 == 1 ? -_Tp(1) : _Tp(1));
           const _Tp __y_mp1m_factor = __x * std::sqrt(_Tp(2 * __m + 3));
 #if _GLIBCXX_USE_C99_MATH_TR1
-          const _Tp __lncirc = std::tr1::log1p(-__x * __x);
+          const _Tp __lncirc = _GLIBCXX_MATH_NS::log1p(-__x * __x);
 #else
           const _Tp __lncirc = std::log(_Tp(1) - __x * __x);
 #endif
           //  Gamma(m+1/2) / Gamma(m)
 #if _GLIBCXX_USE_C99_MATH_TR1
-          const _Tp __lnpoch = std::tr1::lgamma(_Tp(__m + _Tp(0.5L)))
-                             - std::tr1::lgamma(_Tp(__m));
+          const _Tp __lnpoch = _GLIBCXX_MATH_NS::lgamma(_Tp(__m + _Tp(0.5L)))
+                             - _GLIBCXX_MATH_NS::lgamma(_Tp(__m));
 #else
           const _Tp __lnpoch = __log_gamma(_Tp(__m + _Tp(0.5L)))
                              - __log_gamma(_Tp(__m));
@@ -299,8 +303,11 @@ namespace tr1
     }
 
   _GLIBCXX_END_NAMESPACE_VERSION
-  } // namespace std::tr1::__detail
-}
+  } // namespace __detail
+#undef _GLIBCXX_MATH_NS
+#if ! _GLIBCXX_USE_STD_SPEC_FUNCS && defined(_GLIBCXX_TR1_CMATH)
+} // namespace tr1
+#endif
 }
 
 #endif // _GLIBCXX_TR1_LEGENDRE_FUNCTION_TCC

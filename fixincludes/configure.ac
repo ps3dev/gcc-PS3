@@ -53,7 +53,8 @@ fi],
 	i?86-*-msdosdjgpp* | \
 	i?86-*-mingw32* | \
 	x86_64-*-mingw32* | \
-	*-*-beos* )
+	*-*-beos* | \
+        *-*-*vms*)
 		TARGET=twoprocess
 		;;
 
@@ -95,7 +96,7 @@ AC_CHECK_DECLS(m4_split(m4_normalize(fixincludes_UNLOCKED_FUNCS)))
 AC_C_CONST
 
 # Checks for library functions.
-gcc_AC_FUNC_MMAP_BLACKLIST
+GCC_AC_FUNC_MMAP_BLACKLIST
 
 AC_MSG_CHECKING([whether to enable maintainer-specific portions of Makefiles])
 AC_ARG_ENABLE(maintainer-mode,
@@ -112,6 +113,9 @@ fi
 AC_SUBST(MAINT)
 AC_DEFINE_UNQUOTED([SED_PROGRAM], "${SED}",
    [Defined to the best working sed program on the host system])
+
+# Determine what GCC version number to use in filesystem paths.
+GCC_BASE_VER
 
 AC_CONFIG_HEADERS(config.h, [echo timestamp > stamp-h])
 AC_CONFIG_FILES(Makefile mkheaders.almost:mkheaders.in)

@@ -1,6 +1,5 @@
 /* { dg-do compile } */
 /* { dg-options "-O2 -fipa-sra -fdump-tree-eipa_sra-details"  } */
-/* { dg-require-effective-target non_strict_align } */
 
 struct bovid
 {
@@ -50,4 +49,3 @@ int main (int argc, char *argv[])
 /* { dg-final { scan-tree-dump "About to replace expr cow_.*D.->green with ISRA" "eipa_sra"  } } */
 /* { dg-final { scan-tree-dump "About to replace expr calf_.*D.->red with \\*ISRA" "eipa_sra"  } } */
 /* { dg-final { scan-tree-dump "About to replace expr calf_.*D.->green with ISRA" "eipa_sra"  } } */
-/* { dg-final { cleanup-tree-dump "eipa_sra" } } */

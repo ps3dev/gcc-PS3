@@ -6,26 +6,18 @@
 #include <stdint.h>
 #include <sys/time.h>
 
+#include "runtime.h"
+
 // Return current time.  This is the implementation of time.now().
-
-struct time_now_ret
-{
-  int64_t sec;
-  int32_t nsec;
-};
-
-struct time_now_ret now()
-  __asm__ ("libgo_time.time.now")
-  __attribute__ ((no_split_stack));
 
 struct time_now_ret
 now()
 {
-  struct timeval tv;
+  struct timespec ts;
   struct time_now_ret ret;
 
-  gettimeofday (&tv, NULL);
-  ret.sec = tv.tv_sec;
-  ret.nsec = tv.tv_usec * 1000;
+  clock_gettime (CLOCK_REALTIME, &ts);
+  ret.sec = ts.tv_sec;
+  ret.nsec = ts.tv_nsec;
   return ret;
 }

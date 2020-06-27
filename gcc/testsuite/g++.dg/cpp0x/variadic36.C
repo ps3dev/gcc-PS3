@@ -1,8 +1,8 @@
-// { dg-options "-std=gnu++0x" }
+// { dg-do compile { target c++11 } }
 template<typename T, typename... Args>
 void f(const T&, const Args&... args)
 {
-  f(args); // { dg-error "packs not expanded" }
+  f(args); // { dg-error "4:parameter packs not expanded" }
 }
 
 template<typename... Values>

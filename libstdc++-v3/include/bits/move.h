@@ -1,6 +1,6 @@
-// Move, forward and identity for C++0x + swap -*- C++ -*-
+// Move, forward and identity for C++11 + swap -*- C++ -*-
 
-// Copyright (C) 2007, 2008, 2009, 2010, 2011 Free Software Foundation, Inc.
+// Copyright (C) 2007-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -43,17 +43,14 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @ingroup utilities
    */
   template<typename _Tp>
-    inline _Tp*
+    inline _GLIBCXX_CONSTEXPR _Tp*
     __addressof(_Tp& __r) _GLIBCXX_NOEXCEPT
-    {
-      return reinterpret_cast<_Tp*>
-	(&const_cast<char&>(reinterpret_cast<const volatile char&>(__r)));
-    }
+    { return __builtin_addressof(__r); }
 
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
 #include <type_traits> // Brings in std::declval too.
 
 namespace std _GLIBCXX_VISIBILITY(default)
@@ -65,7 +62,6 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @{
    */
 
-  // forward (as per N3143)
   /**
    *  @brief  Forward an lvalue.
    *  @return The parameter cast to the specified type.
@@ -117,13 +113,18 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  type is copyable, in which case an lvalue-reference is returned instead.
    */
   template<typename _Tp>
-    inline typename
+    constexpr typename
     conditional<__move_if_noexcept_cond<_Tp>::value, const _Tp&, _Tp&&>::type
     move_if_noexcept(_Tp& __x) noexcept
     { return std::move(__x); }
 
   // declval, from type_traits.
 
+#if __cplusplus > 201402L
+  // _GLIBCXX_RESOLVE_LIB_DEFECTS
+  // 2296. std::addressof should be constexpr
+# define __cpp_lib_addressof_constexpr 201603
+#endif
   /**
    *  @brief Returns the actual address of the object or function
    *         referenced by r, even in the presence of an overloaded
@@ -132,9 +133,24 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @return   The actual address.
   */
   template<typename _Tp>
-    inline _Tp*
+    inline _GLIBCXX17_CONSTEXPR _Tp*
     addressof(_Tp& __r) noexcept
     { return std::__addressof(__r); }
+
+  // _GLIBCXX_RESOLVE_LIB_DEFECTS
+  // 2598. addressof works on temporaries
+  template<typename _Tp>
+    const _Tp* addressof(const _Tp&&) = delete;
+
+  // C++11 version of std::exchange for internal use.
+  template <typename _Tp, typename _Up = _Tp>
+    inline _Tp
+    __exchange(_Tp& __obj, _Up&& __new_val)
+    {
+      _Tp __old_val = std::move(__obj);
+      __obj = std::forward<_Up>(__new_val);
+      return __old_val;
+    }
 
   /// @} group utilities
 _GLIBCXX_END_NAMESPACE_VERSION
@@ -163,11 +179,17 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @return   Nothing.
   */
   template<typename _Tp>
-    inline void
+    inline
+#if __cplusplus >= 201103L
+    typename enable_if<__and_<__not_<__is_tuple_like<_Tp>>,
+			      is_move_constructible<_Tp>,
+			      is_move_assignable<_Tp>>::value>::type
     swap(_Tp& __a, _Tp& __b)
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
     noexcept(__and_<is_nothrow_move_constructible<_Tp>,
 	            is_nothrow_move_assignable<_Tp>>::value)
+#else
+    void
+    swap(_Tp& __a, _Tp& __b)
 #endif
     {
       // concept requirements
@@ -182,10 +204,14 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   // DR 809. std::swap should be overloaded for array types.
   /// Swap the contents of two arrays.
   template<typename _Tp, size_t _Nm>
-    inline void
+    inline
+#if __cplusplus >= 201103L
+    typename enable_if<__is_swappable<_Tp>::value>::type
     swap(_Tp (&__a)[_Nm], _Tp (&__b)[_Nm])
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
-    noexcept(noexcept(swap(*__a, *__b)))
+    noexcept(__is_nothrow_swappable<_Tp>::value)
+#else
+    void
+    swap(_Tp (&__a)[_Nm], _Tp (&__b)[_Nm])
 #endif
     {
       for (size_t __n = 0; __n < _Nm; ++__n)

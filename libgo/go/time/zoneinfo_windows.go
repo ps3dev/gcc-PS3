@@ -6,6 +6,7 @@ package time
 
 import (
 	"errors"
+	"internal/syscall/windows/registry"
 	"runtime"
 	"syscall"
 )
@@ -15,27 +16,95 @@ import (
 // BUG(brainman,rsc): On Windows, the operating system does not provide complete
 // time zone information.
 // The implementation assumes that this year's rules for daylight savings
-// time apply to all previous and future years as well. 
-// Also, time zone abbreviations are unavailable.  The implementation constructs
-// them using the capital letters from a longer time zone description.	
+// time apply to all previous and future years as well.
 
-// abbrev returns the abbreviation to use for the given zone name.
-func abbrev(name []uint16) string {
-	// name is 'Pacific Standard Time' but we want 'PST'.
-	// Extract just capital letters.  It's not perfect but the
-	// information we need is not available from the kernel.
-	// Because time zone abbreviations are not unique,
-	// Windows refuses to expose them.
-	//
-	// http://social.msdn.microsoft.com/Forums/eu/vclanguage/thread/a87e1d25-fb71-4fe0-ae9c-a9578c9753eb
-	// http://stackoverflow.com/questions/4195948/windows-time-zone-abbreviations-in-asp-net
+// matchZoneKey checks if stdname and dstname match the corresponding key
+// values "MUI_Std" and MUI_Dlt" or "Std" and "Dlt" (the latter down-level
+// from Vista) in the kname key stored under the open registry key zones.
+func matchZoneKey(zones registry.Key, kname string, stdname, dstname string) (matched bool, err2 error) {
+	k, err := registry.OpenKey(zones, kname, registry.READ)
+	if err != nil {
+		return false, err
+	}
+	defer k.Close()
+
+	var std, dlt string
+	if err = registry.LoadRegLoadMUIString(); err == nil {
+		// Try MUI_Std and MUI_Dlt first, fallback to Std and Dlt if *any* error occurs
+		std, err = k.GetMUIStringValue("MUI_Std")
+		if err == nil {
+			dlt, err = k.GetMUIStringValue("MUI_Dlt")
+		}
+	}
+	if err != nil { // Fallback to Std and Dlt
+		if std, _, err = k.GetStringValue("Std"); err != nil {
+			return false, err
+		}
+		if dlt, _, err = k.GetStringValue("Dlt"); err != nil {
+			return false, err
+		}
+	}
+
+	if std != stdname {
+		return false, nil
+	}
+	if dlt != dstname && dstname != stdname {
+		return false, nil
+	}
+	return true, nil
+}
+
+// toEnglishName searches the registry for an English name of a time zone
+// whose zone names are stdname and dstname and returns the English name.
+func toEnglishName(stdname, dstname string) (string, error) {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows NT\CurrentVersion\Time Zones`, registry.ENUMERATE_SUB_KEYS|registry.QUERY_VALUE)
+	if err != nil {
+		return "", err
+	}
+	defer k.Close()
+
+	names, err := k.ReadSubKeyNames(-1)
+	if err != nil {
+		return "", err
+	}
+	for _, name := range names {
+		matched, err := matchZoneKey(k, name, stdname, dstname)
+		if err == nil && matched {
+			return name, nil
+		}
+	}
+	return "", errors.New(`English name for time zone "` + stdname + `" not found in registry`)
+}
+
+// extractCAPS extracts capital letters from description desc.
+func extractCAPS(desc string) string {
 	var short []rune
-	for _, c := range name {
+	for _, c := range desc {
 		if 'A' <= c && c <= 'Z' {
-			short = append(short, rune(c))
+			short = append(short, c)
 		}
 	}
 	return string(short)
+}
+
+// abbrev returns the abbreviations to use for the given zone z.
+func abbrev(z *syscall.Timezoneinformation) (std, dst string) {
+	stdName := syscall.UTF16ToString(z.StandardName[:])
+	a, ok := abbrs[stdName]
+	if !ok {
+		dstName := syscall.UTF16ToString(z.DaylightName[:])
+		// Perhaps stdName is not English. Try to convert it.
+		englishName, err := toEnglishName(stdName, dstName)
+		if err == nil {
+			a, ok = abbrs[englishName]
+			if ok {
+				return a.std, a.dst
+			}
+		}
+		// fallback to using capital letters
+		return extractCAPS(stdName), extractCAPS(dstName)
+	}
+	return a.std, a.dst
 }
 
 // pseudoUnix returns the pseudo-Unix time (seconds since Jan 1 1970 *LOCAL TIME*)
@@ -69,20 +138,27 @@ func pseudoUnix(year int, d *syscall.Systemtime) int64 {
 func initLocalFromTZI(i *syscall.Timezoneinformation) {
 	l := &localLoc
 
+	l.name = "Local"
+
 	nzone := 1
 	if i.StandardDate.Month > 0 {
 		nzone++
 	}
 	l.zone = make([]zone, nzone)
 
+	stdname, dstname := abbrev(i)
+
 	std := &l.zone[0]
-	std.name = abbrev(i.StandardName[0:])
+	std.name = stdname
 	if nzone == 1 {
 		// No daylight savings.
 		std.offset = -int(i.Bias) * 60
-		l.cacheStart = -1 << 63
-		l.cacheEnd = 1<<63 - 1
+		l.cacheStart = alpha
+		l.cacheEnd = omega
 		l.cacheZone = std
+		l.tx = make([]zoneTrans, 1)
+		l.tx[0].when = l.cacheStart
+		l.tx[0].index = 0
 		return
 	}
 
@@ -92,7 +168,7 @@ func initLocalFromTZI(i *syscall.Timezoneinformation) {
 	std.offset = -int(i.Bias+i.StandardBias) * 60
 
 	dst := &l.zone[1]
-	dst.name = abbrev(i.DaylightName[0:])
+	dst.name = dstname
 	dst.offset = -int(i.Bias+i.DaylightBias) * 60
 	dst.isDST = true
 
@@ -139,8 +215,25 @@ var usPacific = syscall.Timezoneinformation{
 	DaylightBias: -60,
 }
 
+var aus = syscall.Timezoneinformation{
+	Bias: -10 * 60,
+	StandardName: [32]uint16{
+		'A', 'U', 'S', ' ', 'E', 'a', 's', 't', 'e', 'r', 'n', ' ', 'S', 't', 'a', 'n', 'd', 'a', 'r', 'd', ' ', 'T', 'i', 'm', 'e',
+	},
+	StandardDate: syscall.Systemtime{Month: 4, Day: 1, Hour: 3},
+	DaylightName: [32]uint16{
+		'A', 'U', 'S', ' ', 'E', 'a', 's', 't', 'e', 'r', 'n', ' ', 'D', 'a', 'y', 'l', 'i', 'g', 'h', 't', ' ', 'T', 'i', 'm', 'e',
+	},
+	DaylightDate: syscall.Systemtime{Month: 10, Day: 1, Hour: 2},
+	DaylightBias: -60,
+}
+
 func initTestingZone() {
 	initLocalFromTZI(&usPacific)
+}
+
+func initAusTestingZone() {
+	initLocalFromTZI(&aus)
 }
 
 func initLocal() {
@@ -153,9 +246,14 @@ func initLocal() {
 }
 
 func loadLocation(name string) (*Location, error) {
-	if z, err := loadZoneFile(runtime.GOROOT()+`\lib\time\zoneinfo.zip`, name); err == nil {
-		z.name = name
-		return z, nil
+	z, err := loadZoneFile(runtime.GOROOT()+`\lib\time\zoneinfo.zip`, name)
+	if err != nil {
+		return nil, err
 	}
-	return nil, errors.New("unknown time zone " + name)
+	z.name = name
+	return z, nil
+}
+
+func forceZipFileForTesting(zipOnly bool) {
+	// We only use the zip file anyway.
 }

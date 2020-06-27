@@ -11,6 +11,8 @@ end module global
 program oh_no_not_pr15908_again
   character(12), dimension(:), pointer :: ptr
 
+  nullify(ptr)
+
   call a (ptr, 12)
   if (.not.associated (ptr) ) call abort ()
   if (any (ptr.ne."abc")) call abort ()
@@ -53,5 +55,3 @@ contains
   end subroutine a
 
 end program oh_no_not_pr15908_again
-
-! { dg-final { cleanup-modules "global" } }

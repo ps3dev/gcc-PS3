@@ -1,7 +1,7 @@
-// { dg-options "-std=gnu++0x" }
+// { dg-do run { target c++11 } }
 // { dg-require-cstdint "" }
 
-// Copyright (C) 2008, 2009 Free Software Foundation
+// Copyright (C) 2008-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -87,7 +87,6 @@ typedef type_emulator<double> dbl_emulator;
 void
 test01()
 {
-  bool test __attribute__((unused)) = true;
   using namespace std::chrono;
   
   duration<int> d0(3);

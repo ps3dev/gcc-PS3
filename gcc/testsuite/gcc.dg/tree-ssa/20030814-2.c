@@ -2,6 +2,7 @@
 /* { dg-options "-O1 -fdump-tree-dom2" } */
     
 extern void abort (void);
+extern void blah (void);
 
 void
 foo (int value)
@@ -19,4 +20,3 @@ foo (int value)
 /* There should be no IF conditionals.  */
 /* { dg-final { scan-tree-dump-times "if " 0 "dom2"} } */
  
-/* { dg-final { cleanup-tree-dump "dom2" } } */

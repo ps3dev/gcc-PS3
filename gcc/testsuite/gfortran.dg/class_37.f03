@@ -1,4 +1,5 @@
 ! { dg-do compile }
+! { dg-require-visibility "" }
 ! Test fix for PR47082, in which an ICE in the ALLOCATE at line 248.
 !
 ! Contributed by Salvatore Filippone  <salvatore.filippone@uniroma2.it>
@@ -259,5 +260,3 @@ subroutine psb_cdall(ictxt, desc, info,mg,ng,vg,vl,flag,nl,repl, globalcheck)
   return
 
 end subroutine psb_cdall
-
-! { dg-final { cleanup-modules "psb_penv_mod psb_indx_map_mod psb_gen_block_map_mod psb_descriptor_type psb_cd_if_tools_mod psb_cd_tools_mod psb_base_tools_mod" } } 

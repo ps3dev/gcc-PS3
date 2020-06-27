@@ -1,5 +1,6 @@
-/* { dg-do compile { target powerpc*-*-* } } */
-/* { dg-options "-m64 -O3 -mcpu=power6" } */
+/* { dg-do compile { target { powerpc*-*-* } } } */
+/* { dg-skip-if "do not override -mcpu" { *-*-* } { "-mcpu=*" } { "-mcpu=power6" } } */
+/* { dg-additional-options "-O3 -mcpu=power6" } */
 
 enum reg_class
 {
@@ -32,8 +33,10 @@ static char *regs_change_size;
 static HARD_REG_SET *after_insn_hard_regs;
 static int stupid_find_reg (int, enum reg_class, enum machine_mode, int, int,
 			    int);
+enum reg_class reg_preferred_class (int);
 void
 stupid_life_analysis (f, nregs, file)
+     int nregs, file;
      rtx f;
 {
   register int i;
@@ -51,7 +54,7 @@ stupid_life_analysis (f, nregs, file)
 static int
 stupid_find_reg (call_preserved, class, mode, born_insn, dead_insn,
 		 changes_size)
-     int call_preserved;
+     int call_preserved, born_insn, dead_insn, changes_size;
      enum reg_class class;
      enum machine_mode mode;
 {
@@ -79,4 +82,3 @@ stupid_find_reg (call_preserved, class, mode, born_insn, dead_insn,
     }
 }
 
-/* { dg-final { cleanup-tree-dump "vect" } } */

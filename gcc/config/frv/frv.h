@@ -1,7 +1,5 @@
 /* Target macros for the FRV port of GCC.
-   Copyright (C) 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2007, 2008, 2009,
-   2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 1999-2017 Free Software Foundation, Inc.
    Contributed by Red Hat Inc.
 
    This file is part of GCC.
@@ -44,12 +42,12 @@
 "%{mno-pack:\
    %{!mhard-float:-msoft-float}\
    %{!mmedia:-mno-media}}\
- %{!mfdpic:%{fpic|fPIC: -multilib-library-pic}}\
+ %{!mfdpic:%{" FPIC_SPEC ": -multilib-library-pic}}\
  %{mfdpic:%{!fpic:%{!fpie:%{!fPIC:%{!fPIE:\
    	    %{!fno-pic:%{!fno-pie:%{!fno-PIC:%{!fno-PIE:-fPIE}}}}}}}} \
-	  %{!mno-inline-plt:%{O*:%{!O0:%{!Os:%{fpic|fPIC:-minline-plt} \
-                    %{!fpic:%{!fPIC:%{!O:%{!O1:%{!O2:-minline-plt}}}}}}}}} \
-	  %{!mno-gprel-ro:%{!fpic:%{!fpie:-mgprel-ro}}}} \
+	  %{!mno-inline-plt:%{O*:%{!O0:%{!Os:%{" FPIC_SPEC ":-minline-plt} \
+                    %{" NO_FPIC_SPEC ":%{!O:%{!O1:%{!O2:-minline-plt}}}}}}}} \
+	  %{!mno-gprel-ro:%{" NO_FPIE1_AND_FPIC1_SPEC ":-mgprel-ro}}} \
 "
 #ifndef SUBTARGET_DRIVER_SELF_SPECS
 # define SUBTARGET_DRIVER_SELF_SPECS
@@ -69,7 +67,7 @@
     %{mmuladd} %{mno-muladd} \
     %{mpack} %{mno-pack} \
     %{mno-fdpic:-mnopic} %{mfdpic} \
-    %{fpic|fpie: -mpic} %{fPIC|fPIE: -mPIC} %{mlibrary-pic}}"
+    %{" FPIE1_OR_FPIC1_SPEC ":-mpic} %{" FPIE2_OR_FPIC2_SPEC ":-mPIC} %{mlibrary-pic}}"
 
 #undef  STARTFILE_SPEC
 #define STARTFILE_SPEC "crt0%O%s frvbegin%O%s"
@@ -333,7 +331,7 @@
    alignment computed in the usual way is COMPUTED.  GCC uses this
    value instead of the value in `BIGGEST_ALIGNMENT' or
    `BIGGEST_FIELD_ALIGNMENT', if defined, for structure fields only.  */
-#define ADJUST_FIELD_ALIGN(FIELD, COMPUTED) 				\
+#define ADJUST_FIELD_ALIGN(FIELD, TYPE, COMPUTED) 			\
   frv_adjust_field_align (FIELD, COMPUTED)
 #endif
 
@@ -1199,9 +1197,8 @@ typedef struct frv_stack {
   {FRAME_POINTER_REGNUM, STACK_POINTER_REGNUM}				\
 }
 
-/* This macro is similar to `INITIAL_FRAME_POINTER_OFFSET'.  It specifies the
-   initial difference between the specified pair of registers.  This macro must
-   be defined if `ELIMINABLE_REGS' is defined.  */
+/* This macro returns the initial difference between the specified pair
+   of registers.  */
 
 #define INITIAL_ELIMINATION_OFFSET(FROM, TO, OFFSET)			\
   (OFFSET) = frv_initial_elimination_offset (FROM, TO)
@@ -1519,9 +1516,6 @@ __asm__("\n"								\
 #define REVERSIBLE_CC_MODE(MODE) \
   ((MODE) == CCmode || (MODE) == CC_UNSmode || (MODE) == CC_NZmode)
 
-/* Frv CCR_MODE's are not reversible.  */
-#define REVERSE_CONDEXEC_PREDICATES_P(x,y)      0
-
 
 /* Describing Relative Costs of Operations.  */
 
@@ -1544,7 +1538,7 @@ __asm__("\n"								\
 
 /* Define this macro if it is as good or better to call a constant function
    address than to call an address kept in a register.  */
-#define NO_FUNCTION_CSE
+#define NO_FUNCTION_CSE 1
 
 
 /* Dividing the output into sections.  */
@@ -1825,8 +1819,8 @@ fprintf (STREAM, "\t.word .L%d\n", VALUE)
 /* Define this macro to 0 if your target supports DWARF 2 frame unwind
    information, but it does not yet work with exception handling.  Otherwise,
    if your target supports this information (if it defines
-   `INCOMING_RETURN_ADDR_RTX' and either `UNALIGNED_INT_ASM_OP' or
-   `OBJECT_FORMAT_ELF'), GCC will provide a default definition of 1.
+   `INCOMING_RETURN_ADDR_RTX' and `OBJECT_FORMAT_ELF'), GCC will provide
+   a default definition of 1.
 
    If this macro is defined to 1, the DWARF 2 unwinder will be the default
    exception handling mechanism; otherwise, setjmp/longjmp will be used by
@@ -1887,7 +1881,7 @@ fprintf (STREAM, "\t.word .L%d\n", VALUE)
 /* Define this macro if operations between registers with integral mode smaller
    than a word are always performed on the entire register.  Most RISC machines
    have this property and most CISC machines do not.  */
-#define WORD_REGISTER_OPERATIONS
+#define WORD_REGISTER_OPERATIONS 1
 
 /* Define this macro to be a C expression indicating when insns that read
    memory in MODE, an integral mode narrower than a word, set the bits outside
@@ -1904,7 +1898,7 @@ fprintf (STREAM, "\t.word .L%d\n", VALUE)
 #define LOAD_EXTEND_OP(MODE) SIGN_EXTEND
 
 /* Define if loading short immediate values into registers sign extends.  */
-#define SHORT_IMMEDIATES_SIGN_EXTEND
+#define SHORT_IMMEDIATES_SIGN_EXTEND 1
 
 /* The maximum number of bytes that a single instruction can move quickly from
    memory to memory.  */
@@ -1978,8 +1972,8 @@ frv_ifcvt_modify_multiple_tests (CE_INFO, BB, &TRUE_EXPR, &FALSE_EXPR)
    information CE_INFO.  */
 #define IFCVT_MODIFY_CANCEL(CE_INFO) frv_ifcvt_modify_cancel (CE_INFO)
 
-/* Initialize the extra fields provided by IFCVT_EXTRA_FIELDS.  */
-#define IFCVT_INIT_EXTRA_FIELDS(CE_INFO) frv_ifcvt_init_extra_fields (CE_INFO)
+/* Initialize the machine-specific static data for if-conversion.  */
+#define IFCVT_MACHDEP_INIT(CE_INFO) frv_ifcvt_machdep_init (CE_INFO)
 
 /* The definition of the following macro results in that the 2nd jump
    optimization (after the 2nd insn scheduling) is minimal.  It is
@@ -2129,10 +2123,5 @@ enum frv_builtins
 #define MD_CALL_PROTOTYPES 1
 
 #define CPU_UNITS_QUERY 1
-
-#ifdef __FRV_FDPIC__
-#define CRT_GET_RFIB_DATA(dbase) \
-  ({ extern void *_GLOBAL_OFFSET_TABLE_; (dbase) = &_GLOBAL_OFFSET_TABLE_; })
-#endif
 
 #endif /* __FRV_H__ */

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+// +build !solaristag
+
 package os
 
 import (
@@ -9,23 +11,16 @@ import (
 	"time"
 )
 
-func sameFile(sys1, sys2 interface{}) bool {
-	stat1 := sys1.(*syscall.Stat_t)
-	stat2 := sys2.(*syscall.Stat_t)
-	return stat1.Dev == stat2.Dev && stat1.Ino == stat2.Ino
-}
-
-func fileInfoFromStat(st *syscall.Stat_t, name string) FileInfo {
-	fs := &fileStat{
-		name:    basename(name),
-		size:    int64(st.Size),
-		modTime: timestrucToTime(st.Mtime),
-		sys:     st,
-	}
-	fs.mode = FileMode(st.Mode & 0777)
-	switch st.Mode & syscall.S_IFMT {
-	case syscall.S_IFBLK, syscall.S_IFCHR:
+func fillFileStatFromSys(fs *fileStat, name string) {
+	fs.name = basename(name)
+	fs.size = int64(fs.sys.Size)
+	fs.modTime = timestrucToTime(fs.sys.Mtim)
+	fs.mode = FileMode(fs.sys.Mode & 0777)
+	switch fs.sys.Mode & syscall.S_IFMT {
+	case syscall.S_IFBLK:
 		fs.mode |= ModeDevice
+	case syscall.S_IFCHR:
+		fs.mode |= ModeDevice | ModeCharDevice
 	case syscall.S_IFDIR:
 		fs.mode |= ModeDir
 	case syscall.S_IFIFO:
@@ -37,13 +32,15 @@ func fileInfoFromStat(st *syscall.Stat_t, name string) FileInfo {
 	case syscall.S_IFSOCK:
 		fs.mode |= ModeSocket
 	}
-	if st.Mode&syscall.S_ISGID != 0 {
+	if fs.sys.Mode&syscall.S_ISGID != 0 {
 		fs.mode |= ModeSetgid
 	}
-	if st.Mode&syscall.S_ISUID != 0 {
+	if fs.sys.Mode&syscall.S_ISUID != 0 {
 		fs.mode |= ModeSetuid
 	}
-	return fs
+	if fs.sys.Mode&syscall.S_ISVTX != 0 {
+		fs.mode |= ModeSticky
+	}
 }
 
 func timestrucToTime(ts syscall.Timestruc) time.Time {
@@ -52,5 +49,5 @@ func timestrucToTime(ts syscall.Timestruc) time.Time {
 
 // For testing.
 func atime(fi FileInfo) time.Time {
-	return timestrucToTime(fi.(*fileStat).Sys().(*syscall.Stat_t).Atime)
+	return timestrucToTime(fi.(*fileStat).Sys().(*syscall.Stat_t).Atim)
 }

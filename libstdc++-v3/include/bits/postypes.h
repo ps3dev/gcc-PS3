@@ -1,8 +1,6 @@
 // Position types -*- C++ -*-
 
-// Copyright (C) 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005,
-// 2006, 2007, 2008, 2009, 2010
-// Free Software Foundation, Inc.
+// Copyright (C) 1997-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -43,7 +41,7 @@
 
 // XXX If <stdint.h> is really needed, make sure to define the macros
 // before including it, in order not to break <tr1/cstdint> (and <cstdint>
-// in C++0x).  Reconsider all this as soon as possible...
+// in C++11).  Reconsider all this as soon as possible...
 #if (defined(_GLIBCXX_HAVE_INT64_T) && !defined(_GLIBCXX_HAVE_INT64_T_LONG) \
      && !defined(_GLIBCXX_HAVE_INT64_T_LONG_LONG))
 
@@ -231,7 +229,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   /// File position for wchar_t streams.
   typedef fpos<mbstate_t> wstreampos;
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
   /// File position for char16_t streams.
   typedef fpos<mbstate_t> u16streampos;
   /// File position for char32_t streams.

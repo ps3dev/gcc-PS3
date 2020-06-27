@@ -1,5 +1,5 @@
 /* Implementation of the COUNT intrinsic
-   Copyright 2002, 2007, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2002-2017 Free Software Foundation, Inc.
    Contributed by Paul Brook <paul@nowt.org>
 
 This file is part of the GNU Fortran runtime library (libgfortran).
@@ -24,8 +24,6 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 <http://www.gnu.org/licenses/>.  */
 
 #include "libgfortran.h"
-#include <stdlib.h>
-#include <assert.h>
 
 
 #if defined (HAVE_GFC_INTEGER_4)
@@ -83,7 +81,7 @@ count_4_l (gfc_array_i4 * const restrict retarray,
 	extent[n] = 0;
     }
 
-  if (retarray->data == NULL)
+  if (retarray->base_addr == NULL)
     {
       size_t alloc_size, str;
 
@@ -101,8 +99,7 @@ count_4_l (gfc_array_i4 * const restrict retarray,
       retarray->offset = 0;
       retarray->dtype = (array->dtype & ~GFC_DTYPE_RANK_MASK) | rank;
 
-      alloc_size = sizeof (GFC_INTEGER_4) * GFC_DESCRIPTOR_STRIDE(retarray,rank-1)
-    		   * extent[rank-1];
+      alloc_size = GFC_DESCRIPTOR_STRIDE(retarray,rank-1) * extent[rank-1];
 
       if (alloc_size == 0)
 	{
@@ -111,7 +108,7 @@ count_4_l (gfc_array_i4 * const restrict retarray,
 	  return;
 	}
       else
-	retarray->data = internal_malloc_size (alloc_size);
+	retarray->base_addr = xmallocarray (alloc_size, sizeof (GFC_INTEGER_4));
     }
   else
     {
@@ -145,7 +142,7 @@ count_4_l (gfc_array_i4 * const restrict retarray,
 	return;
     }
 
-  base = array->data;
+  base = array->base_addr;
 
   if (src_kind == 1 || src_kind == 2 || src_kind == 4 || src_kind == 8
 #ifdef HAVE_GFC_LOGICAL_16
@@ -159,7 +156,7 @@ count_4_l (gfc_array_i4 * const restrict retarray,
   else
     internal_error (NULL, "Funny sized logical array in COUNT intrinsic");
 
-  dest = retarray->data;
+  dest = retarray->base_addr;
 
   continue_loop = 1;
   while (continue_loop)
@@ -198,9 +195,9 @@ count_4_l (gfc_array_i4 * const restrict retarray,
           base -= sstride[n] * extent[n];
           dest -= dstride[n] * extent[n];
           n++;
-          if (n == rank)
+          if (n >= rank)
             {
-              /* Break out of the look.  */
+              /* Break out of the loop.  */
               continue_loop = 0;
               break;
             }

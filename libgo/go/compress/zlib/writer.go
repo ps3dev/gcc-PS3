@@ -19,6 +19,7 @@ const (
 	BestSpeed          = flate.BestSpeed
 	BestCompression    = flate.BestCompression
 	DefaultCompression = flate.DefaultCompression
+	HuffmanOnly        = flate.HuffmanOnly
 )
 
 // A Writer takes data written to it and writes the compressed
@@ -34,8 +35,8 @@ type Writer struct {
 	wroteHeader bool
 }
 
-// NewWriter creates a new Writer that satisfies writes by compressing data
-// written to w.
+// NewWriter creates a new Writer.
+// Writes to the returned Writer are compressed and written to w.
 //
 // It is the caller's responsibility to call Close on the WriteCloser when done.
 // Writes may be buffered and not flushed until Close.
@@ -47,9 +48,9 @@ func NewWriter(w io.Writer) *Writer {
 // NewWriterLevel is like NewWriter but specifies the compression level instead
 // of assuming DefaultCompression.
 //
-// The compression level can be DefaultCompression, NoCompression, or any
-// integer value between BestSpeed and BestCompression inclusive. The error
-// returned will be nil if the level is valid.
+// The compression level can be DefaultCompression, NoCompression, HuffmanOnly
+// or any integer value between BestSpeed and BestCompression inclusive.
+// The error returned will be nil if the level is valid.
 func NewWriterLevel(w io.Writer, level int) (*Writer, error) {
 	return NewWriterLevelDict(w, level, nil)
 }
@@ -60,7 +61,7 @@ func NewWriterLevel(w io.Writer, level int) (*Writer, error) {
 // The dictionary may be nil. If not, its contents should not be modified until
 // the Writer is closed.
 func NewWriterLevelDict(w io.Writer, level int, dict []byte) (*Writer, error) {
-	if level < DefaultCompression || level > BestCompression {
+	if level < HuffmanOnly || level > BestCompression {
 		return nil, fmt.Errorf("zlib: invalid compression level: %d", level)
 	}
 	return &Writer{
@@ -68,6 +69,23 @@ func NewWriterLevelDict(w io.Writer, level int, dict []byte) (*Writer, error) {
 		level: level,
 		dict:  dict,
 	}, nil
+}
+
+// Reset clears the state of the Writer z such that it is equivalent to its
+// initial state from NewWriterLevel or NewWriterLevelDict, but instead writing
+// to w.
+func (z *Writer) Reset(w io.Writer) {
+	z.w = w
+	// z.level and z.dict left unchanged.
+	if z.compressor != nil {
+		z.compressor.Reset(w)
+	}
+	if z.digest != nil {
+		z.digest.Reset()
+	}
+	z.err = nil
+	z.scratch = [4]byte{}
+	z.wroteHeader = false
 }
 
 // writeHeader writes the ZLIB header.
@@ -82,7 +100,7 @@ func (z *Writer) writeHeader() (err error) {
 	// The next bit, FDICT, is set if a dictionary is given.
 	// The final five FCHECK bits form a mod-31 checksum.
 	switch z.level {
-	case 0, 1:
+	case -2, 0, 1:
 		z.scratch[1] = 0 << 6
 	case 2, 3, 4, 5:
 		z.scratch[1] = 1 << 6
@@ -111,11 +129,15 @@ func (z *Writer) writeHeader() (err error) {
 			return err
 		}
 	}
-	z.compressor, err = flate.NewWriterDict(z.w, z.level, z.dict)
-	if err != nil {
-		return err
+	if z.compressor == nil {
+		// Initialize deflater unless the Writer is being reused
+		// after a Reset call.
+		z.compressor, err = flate.NewWriterDict(z.w, z.level, z.dict)
+		if err != nil {
+			return err
+		}
+		z.digest = adler32.New()
 	}
-	z.digest = adler32.New()
 	return nil
 }
 
@@ -153,7 +175,8 @@ func (z *Writer) Flush() error {
 	return z.err
 }
 
-// Calling Close does not close the wrapped io.Writer originally passed to NewWriter.
+// Close closes the Writer, flushing any unwritten data to the underlying
+// io.Writer, but does not close the underlying io.Writer.
 func (z *Writer) Close() error {
 	if !z.wroteHeader {
 		z.err = z.writeHeader()

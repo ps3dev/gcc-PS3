@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -40,7 +40,6 @@ with Sinfo;    use Sinfo;
 with Sinput;   use Sinput;
 with Sprint;   use Sprint;
 with Sdefault; use Sdefault;
-with Targparm; use Targparm;
 with Treepr;   use Treepr;
 with Types;    use Types;
 
@@ -74,8 +73,8 @@ package body Comperr is
 
    procedure Compiler_Abort
      (X            : String;
-      Code         : Integer := 0;
-      Fallback_Loc : String := "")
+      Fallback_Loc : String  := "";
+      From_GCC     : Boolean := False)
    is
       --  The procedures below output a "bug box" with information about
       --  the cause of the compiler abort and about the preferred method
@@ -115,36 +114,20 @@ package body Comperr is
 
       Abort_In_Progress := True;
 
-      --  Generate a "standard" error message instead of a bug box in case of
-      --  .NET compiler, since we do not support all constructs of the
-      --  language. Of course ideally, we should detect this before bombing
-      --  on e.g. an assertion error, but in practice most of these bombs
-      --  are due to a legitimate case of a construct not being supported (in
-      --  a sense they all are, since for sure we are not supporting something
-      --  if we bomb!) By giving this message, we provide a more reasonable
-      --  practical interface, since giving scary bug boxes on unsupported
-      --  features is definitely not helpful.
-
-      --  Similarly if we are generating SCIL, an error message is sufficient
-      --  instead of generating a bug box.
+      --  Generate a "standard" error message instead of a bug box in case
+      --  of CodePeer rather than generating a bug box, friendlier.
 
       --  Note that the call to Error_Msg_N below sets Serious_Errors_Detected
       --  to 1, so we use the regular mechanism below in order to display a
       --  "compilation abandoned" message and exit, so we still know we have
       --  this case (and -gnatdk can still be used to get the bug box).
 
-      if (VM_Target = CLI_Target or else CodePeer_Mode)
+      if CodePeer_Mode
         and then Serious_Errors_Detected = 0
         and then not Debug_Flag_K
         and then Sloc (Current_Error_Node) > No_Location
       then
-         if VM_Target = CLI_Target then
-            Error_Msg_N
-              ("unsupported construct in this context",
-               Current_Error_Node);
-         else
-            Error_Msg_N ("cannot generate 'S'C'I'L", Current_Error_Node);
-         end if;
+         Error_Msg_N ("cannot generate 'S'C'I'L", Current_Error_Node);
       end if;
 
       --  If we are in CodePeer mode, we must also delete SCIL files
@@ -206,7 +189,7 @@ package body Comperr is
          Write_Str (") ");
 
          if X'Length + Column > 76 then
-            if Code < 0 then
+            if From_GCC then
                Write_Str ("GCC error:");
             end if;
 
@@ -235,11 +218,7 @@ package body Comperr is
             Write_Str (X);
          end if;
 
-         if Code > 0 then
-            Write_Str (", Code=");
-            Write_Int (Int (Code));
-
-         elsif Code = 0 then
+         if not From_GCC then
 
             --  For exception case, get exception message from the TSD. Note
             --  that it would be neater and cleaner to pass the exception
@@ -315,7 +294,7 @@ package body Comperr is
                if Is_FSF_Version then
                   Write_Str
                     ("| Please submit a bug report; see" &
-                     " http://gcc.gnu.org/bugs.html.");
+                     " https://gcc.gnu.org/bugs/ .");
                   End_Line;
 
                elsif Is_GPL_Version then
@@ -371,21 +350,16 @@ package body Comperr is
                End_Line;
 
                Write_Str
-                 ("| Include the exact gcc or gnatmake command " &
-                  "that you entered.");
+                 ("| Include the exact command that you entered.");
                End_Line;
 
                Write_Str
-                 ("| Also include sources listed below in gnatchop format");
-               End_Line;
-
-               Write_Str
-                 ("| (concatenated together with no headers between files).");
+                 ("| Also include sources listed below.");
                End_Line;
 
                if not Is_FSF_Version then
                   Write_Str
-                    ("| Use plain ASCII or MIME attachment.");
+                    ("| Use plain ASCII or MIME attachment(s).");
                   End_Line;
                end if;
             end if;
@@ -477,7 +451,7 @@ package body Comperr is
          Name_Len := K;
       end Decode_Name_Buffer;
 
-   --  Start of processing for Decode_Name_Buffer
+   --  Start of processing for Delete_SCIL_Files
 
    begin
       --  If parsing was not successful, no Main_Unit is available, so return
@@ -493,11 +467,22 @@ package body Comperr is
       Main := Unit (Cunit (Main_Unit));
 
       case Nkind (Main) is
-         when N_Subprogram_Body | N_Package_Declaration =>
+         when N_Package_Declaration
+            | N_Subprogram_Body
+            | N_Subprogram_Declaration
+         =>
             Unit_Name := Defining_Unit_Name (Specification (Main));
 
          when N_Package_Body =>
             Unit_Name := Corresponding_Spec (Main);
+
+         when N_Package_Renaming_Declaration =>
+            Unit_Name := Defining_Unit_Name (Main);
+
+         --  No SCIL file generated for generic package declarations
+
+         when N_Generic_Package_Declaration =>
+            return;
 
          --  Should never happen, but can be ignored in production
 

@@ -1,8 +1,8 @@
 /* Test that the compiler properly generates floating point multiply
    and add instructions FMA4 systems.  */
 
-/* { dg-do compile { target { ! { ia32 } } } } */
-/* { dg-options "-O2 -mfma4" } */
+/* { dg-do compile { target { ! ia32 } } } */
+/* { dg-options "-O2 -mfma4 -mno-fma" } */
 
 #ifndef __FP_FAST_FMAF
 # error "__FP_FAST_FMAF should be defined"

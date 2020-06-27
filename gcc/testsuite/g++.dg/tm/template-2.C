@@ -1,5 +1,5 @@
-// { dg-do compile }
-// { dg-options "-fgnu-tm -O -std=c++0x -fdump-tree-tmmark" }
+// { dg-do compile { target c++11 } }
+// { dg-options "-fgnu-tm -O -fdump-tree-tmmark" }
 
 struct TrueFalse
 {
@@ -19,4 +19,3 @@ int f1()
 }
 
 /* { dg-final { scan-tree-dump-times "ITM_RU" 2 "tmmark" } } */
-/* { dg-final { cleanup-tree-dump "tmmark" } } */

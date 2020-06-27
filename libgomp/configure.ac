@@ -2,7 +2,7 @@
 # aclocal -I ../config && autoconf && autoheader && automake
 
 AC_PREREQ(2.64)
-AC_INIT([GNU OpenMP Runtime Library], 1.0,,[libgomp])
+AC_INIT([GNU Offloading and Multi Processing Runtime Library], 1.0,,[libgomp])
 AC_CONFIG_HEADER(config.h)
 
 # -------
@@ -170,28 +170,52 @@ AC_SUBST(libtool_VERSION)
 AC_STDC_HEADERS
 AC_HEADER_TIME
 ACX_HEADER_STRING
-AC_CHECK_HEADERS(unistd.h semaphore.h sys/loadavg.h sys/time.h sys/time.h)
+AC_CHECK_HEADERS(pthread.h unistd.h semaphore.h sys/loadavg.h sys/sysctl.h sys/time.h)
 
 GCC_HEADER_STDINT(gstdint.h)
 
-# Check to see if -pthread or -lpthread is needed.  Prefer the former.
-# In case the pthread.h system header is not found, this test will fail.
 XPCFLAGS=""
-CFLAGS="$CFLAGS -pthread"
-AC_LINK_IFELSE(
- [AC_LANG_PROGRAM(
-  [#include <pthread.h>
-   void *g(void *d) { return NULL; }],
-  [pthread_t t; pthread_create(&t,NULL,g,NULL);])],
- [XPCFLAGS=" -Wc,-pthread"],
- [CFLAGS="$save_CFLAGS" LIBS="-lpthread $LIBS"
-  AC_LINK_IFELSE(
-   [AC_LANG_PROGRAM(
-    [#include <pthread.h>
-     void *g(void *d) { return NULL; }],
-    [pthread_t t; pthread_create(&t,NULL,g,NULL);])],
-   [],
-   [AC_MSG_ERROR([Pthreads are required to build libgomp])])])
+case "$host" in
+  *-*-rtems*)
+    # RTEMS supports Pthreads, but the library is not available at GCC build time.
+    ;;
+  nvptx*-*-*)
+    # NVPTX does not support Pthreads, has its own code replacement.
+    libgomp_use_pthreads=no
+    # NVPTX is an accelerator-only target
+    libgomp_offloaded_only=yes
+    ;;
+  *)
+    # Check to see if -pthread or -lpthread is needed.  Prefer the former.
+    # In case the pthread.h system header is not found, this test will fail.
+    CFLAGS="$CFLAGS -pthread"
+    AC_LINK_IFELSE(
+     [AC_LANG_PROGRAM(
+      [#include <pthread.h>
+       void *g(void *d) { return NULL; }],
+      [pthread_t t; pthread_create(&t,NULL,g,NULL);])],
+     [XPCFLAGS=" -Wc,-pthread"],
+     [CFLAGS="$save_CFLAGS" LIBS="-lpthread $LIBS"
+      AC_LINK_IFELSE(
+       [AC_LANG_PROGRAM(
+        [#include <pthread.h>
+         void *g(void *d) { return NULL; }],
+        [pthread_t t; pthread_create(&t,NULL,g,NULL);])],
+       [],
+       [AC_MSG_ERROR([Pthreads are required to build libgomp])])])
+esac
+
+if test x$libgomp_use_pthreads != xno; then
+  AC_DEFINE(LIBGOMP_USE_PTHREADS, 1,
+            [Define to 1 if libgomp should use POSIX threads.])
+fi
+
+if test x$libgomp_offloaded_only = xyes; then
+  AC_DEFINE(LIBGOMP_OFFLOADED_ONLY, 1,
+            [Define to 1 if building libgomp for an accelerator-only target.])
+fi
+
+m4_include([plugin/configfrag.ac])
 
 # Check for functions needed.
 AC_CHECK_FUNCS(getloadavg clock_gettime strtoull)
@@ -202,6 +226,13 @@ case "$host" in
   *-darwin*)
     AC_DEFINE(HAVE_BROKEN_POSIX_SEMAPHORES, 1,
 	Define if the POSIX Semaphores do not work on your system.)
+    ;;
+esac
+
+# RTEMS specific checks
+case "$host" in
+  *-*-rtems*)
+    AC_CHECK_TYPES([struct _Mutex_Control],[],[],[#include <sys/lock.h>])
     ;;
 esac
 
@@ -238,7 +269,10 @@ fi
 # See if we support thread-local storage.
 GCC_CHECK_TLS
 
-# See what sort of export controls are availible.
+# See if we have emulated thread-local storage.
+GCC_CHECK_EMUTLS
+
+# See what sort of export controls are available.
 LIBGOMP_CHECK_ATTRIBUTE_VISIBILITY
 LIBGOMP_CHECK_ATTRIBUTE_DLLEXPORT
 LIBGOMP_CHECK_ATTRIBUTE_ALIAS
@@ -274,7 +308,7 @@ else
 fi
 
 # Set up the set of libraries that we need to link against for libgomp.
-# Note that the GOMP_SELF_SPEC in gcc.c will force -pthread for -fopenmp,
+# Note that the GOMP_SELF_SPEC in gcc.c may force -pthread,
 # which will force linkage against -lpthread (or equivalent for the system).
 # That's not 100% ideal, but about the best we can do easily.
 if test $enable_shared = yes; then
@@ -345,6 +379,10 @@ AC_SUBST(OMP_LOCK_25_KIND)
 AC_SUBST(OMP_NEST_LOCK_25_KIND)
 CFLAGS="$save_CFLAGS"
 
+# Determine what GCC version number to use in filesystem paths.
+GCC_BASE_VER
+
 AC_CONFIG_FILES(omp.h omp_lib.h omp_lib.f90 libgomp_f.h)
 AC_CONFIG_FILES(Makefile testsuite/Makefile libgomp.spec)
+AC_CONFIG_FILES([testsuite/libgomp-test-support.pt.exp:testsuite/libgomp-test-support.exp.in])
 AC_OUTPUT

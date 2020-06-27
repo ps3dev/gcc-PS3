@@ -3,7 +3,7 @@
 #include <stdarg.h>
 #include "tree-vect.h"
 
-#define N 16 
+#define N 24
 
 typedef struct {
    unsigned char a;
@@ -15,6 +15,8 @@ typedef struct {
    unsigned char g;
    unsigned char h;
 } s;
+
+volatile int y = 0;
 
 __attribute__ ((noinline)) int
 main1 ()
@@ -34,8 +36,8 @@ main1 ()
       arr[i].f = i * 2 + 2;
       arr[i].g = i - 3;
       arr[i].h = 56;
-      if (arr[i].a == 178)
-         abort();
+      if (y) /* Avoid vectorization.  */
+        abort ();
     }
 
   for (i = 0; i < N; i++)
@@ -77,5 +79,4 @@ int main (void)
 }
 
 /* { dg-final { scan-tree-dump-times "vectorized 1 loops" 1 "vect" { target vect_strided8 } } } */
-/* { dg-final { cleanup-tree-dump "vect" } } */
   

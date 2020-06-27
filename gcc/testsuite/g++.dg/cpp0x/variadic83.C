@@ -1,8 +1,8 @@
 // PR c++/31441
-// { dg-options "-std=gnu++0x" }
+// { dg-do compile { target c++11 } }
 
 template<typename> struct A;
 
-template<typename... T> struct A<T...> { }; // { dg-bogus "cannot expand" "" }
+template<typename... T> struct A<T...> { }; // { dg-error "" }
 
-A<int> a; // { dg-bogus "incomplete type" "" }
+A<int> a;

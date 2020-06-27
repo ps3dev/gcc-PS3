@@ -20,5 +20,4 @@ int foo (void)
       }
 }
 
-/* { dg-final { scan-tree-dump-times "GOMP_parallel_loop_runtime_start" 3 "optimized" } } */
-/* { dg-final { cleanup-tree-dump "optimized" } } */
+/* { dg-final { scan-tree-dump-times "GOMP_parallel_loop_runtime" 3 "optimized" } } */

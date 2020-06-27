@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2014, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -91,7 +91,7 @@ package body Ada.Strings.Wide_Wide_Unbounded is
       --  Overwise, allocate new shared string and fill data
 
       else
-         DR := Allocate (LR.Last + RR.Last);
+         DR := Allocate (DL);
          DR.Data (1 .. LR.Last) := LR.Data (1 .. LR.Last);
          DR.Data (LR.Last + 1 .. DL) := RR.Data (1 .. RR.Last);
          DR.Last := DL;
@@ -486,12 +486,11 @@ package body Ada.Strings.Wide_Wide_Unbounded is
 
    function Aligned_Max_Length (Max_Length : Natural) return Natural is
       Static_Size  : constant Natural :=
-                       Empty_Shared_Wide_Wide_String'Size
-                         / Standard'Storage_Unit;
+        Empty_Shared_Wide_Wide_String'Size / Standard'Storage_Unit;
       --  Total size of all static components
 
       Element_Size : constant Natural :=
-                       Wide_Wide_Character'Size / Standard'Storage_Unit;
+        Wide_Wide_Character'Size / Standard'Storage_Unit;
 
    begin
       return
@@ -645,8 +644,7 @@ package body Ada.Strings.Wide_Wide_Unbounded is
      (Source  : Unbounded_Wide_Wide_String;
       Pattern : Wide_Wide_String;
       Mapping : Wide_Wide_Maps.Wide_Wide_Character_Mapping :=
-                  Wide_Wide_Maps.Identity)
-      return Natural
+        Wide_Wide_Maps.Identity) return Natural
    is
       SR : constant Shared_Wide_Wide_String_Access := Source.Reference;
    begin
@@ -889,7 +887,7 @@ package body Ada.Strings.Wide_Wide_Unbounded is
          if Count < SR.Last then
             DR.Data (1 .. Count) := SR.Data (1 .. Count);
 
-         --  Length of the source string is less then requested, copy all
+         --  Length of the source string is less than requested, copy all
          --  contents and fill others by Pad character.
 
          else
@@ -943,13 +941,13 @@ package body Ada.Strings.Wide_Wide_Unbounded is
       else
          DR := Allocate (Count);
 
-         --  Length of the source string is greater then requested, copy
+         --  Length of the source string is greater than requested, copy
          --  corresponding slice.
 
          if Count < SR.Last then
             DR.Data (1 .. Count) := SR.Data (1 .. Count);
 
-         --  Length of the source string is less the requested, copy all
+         --  Length of the source string is less than requested, copy all
          --  exists data and fill others by Pad character.
 
          else
@@ -975,8 +973,7 @@ package body Ada.Strings.Wide_Wide_Unbounded is
       Pattern : Wide_Wide_String;
       Going   : Strings.Direction := Strings.Forward;
       Mapping : Wide_Wide_Maps.Wide_Wide_Character_Mapping :=
-                  Wide_Wide_Maps.Identity)
-      return Natural
+        Wide_Wide_Maps.Identity) return Natural
    is
       SR : constant Shared_Wide_Wide_String_Access := Source.Reference;
    begin
@@ -1014,8 +1011,7 @@ package body Ada.Strings.Wide_Wide_Unbounded is
       From    : Positive;
       Going   : Direction := Forward;
       Mapping : Wide_Wide_Maps.Wide_Wide_Character_Mapping :=
-                  Wide_Wide_Maps.Identity)
-      return Natural
+        Wide_Wide_Maps.Identity) return Natural
    is
       SR : constant Shared_Wide_Wide_String_Access := Source.Reference;
    begin
@@ -1618,9 +1614,9 @@ package body Ada.Strings.Wide_Wide_Unbounded is
       end if;
    end Tail;
 
-   --------------------
+   -------------------------
    -- To_Wide_Wide_String --
-   --------------------
+   -------------------------
 
    function To_Wide_Wide_String
      (Source : Unbounded_Wide_Wide_String) return Wide_Wide_String is
@@ -1628,26 +1624,44 @@ package body Ada.Strings.Wide_Wide_Unbounded is
       return Source.Reference.Data (1 .. Source.Reference.Last);
    end To_Wide_Wide_String;
 
-   ------------------------------
+   -----------------------------------
    -- To_Unbounded_Wide_Wide_String --
-   ------------------------------
+   -----------------------------------
 
    function To_Unbounded_Wide_Wide_String
      (Source : Wide_Wide_String) return Unbounded_Wide_Wide_String
    is
-      DR : constant Shared_Wide_Wide_String_Access := Allocate (Source'Length);
+      DR : Shared_Wide_Wide_String_Access;
+
    begin
-      DR.Data (1 .. Source'Length) := Source;
-      DR.Last := Source'Length;
+      if Source'Length = 0 then
+         Reference (Empty_Shared_Wide_Wide_String'Access);
+         DR := Empty_Shared_Wide_Wide_String'Access;
+
+      else
+         DR := Allocate (Source'Length);
+         DR.Data (1 .. Source'Length) := Source;
+         DR.Last := Source'Length;
+      end if;
+
       return (AF.Controlled with Reference => DR);
    end To_Unbounded_Wide_Wide_String;
 
    function To_Unbounded_Wide_Wide_String
      (Length : Natural) return Unbounded_Wide_Wide_String
    is
-      DR : constant Shared_Wide_Wide_String_Access := Allocate (Length);
+      DR : Shared_Wide_Wide_String_Access;
+
    begin
-      DR.Last := Length;
+      if Length = 0 then
+         Reference (Empty_Shared_Wide_Wide_String'Access);
+         DR := Empty_Shared_Wide_Wide_String'Access;
+
+      else
+         DR := Allocate (Length);
+         DR.Last := Length;
+      end if;
+
       return (AF.Controlled with Reference => DR);
    end To_Unbounded_Wide_Wide_String;
 

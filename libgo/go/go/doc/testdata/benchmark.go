@@ -13,7 +13,7 @@ import (
 )
 
 var matchBenchmarks = flag.String("test.bench", "", "regular expression to select benchmarks to run")
-var benchTime = flag.Float64("test.benchtime", 1, "approximate run time for each benchmark, in seconds")
+var benchTime = flag.Duration("test.benchtime", 1*time.Second, "approximate run time for each benchmark")
 
 // An internal type but exported because it is cross-package; part of the implementation
 // of go test.
@@ -33,7 +33,7 @@ type B struct {
 	result    BenchmarkResult
 }
 
-// StartTimer starts timing a test.  This function is called automatically
+// StartTimer starts timing a test. This function is called automatically
 // before a benchmark starts, but it can also used to resume timing after
 // a call to StopTimer.
 func (b *B) StartTimer() {
@@ -43,7 +43,7 @@ func (b *B) StartTimer() {
 	}
 }
 
-// StopTimer stops timing a test.  This can be used to pause the timer
+// StopTimer stops timing a test. This can be used to pause the timer
 // while performing complex initialization that you don't
 // want to measure.
 func (b *B) StopTimer() {
@@ -134,9 +134,9 @@ func (b *B) run() BenchmarkResult {
 	return b.result
 }
 
-// launch launches the benchmark function.  It gradually increases the number
+// launch launches the benchmark function. It gradually increases the number
 // of benchmark iterations until the benchmark runs for a second in order
-// to get a reasonable measurement.  It prints timing information in this form
+// to get a reasonable measurement. It prints timing information in this form
 //		testing.BenchmarkHello	100000		19 ns/op
 // launch is run by the fun function as a separate goroutine.
 func (b *B) launch() {
@@ -151,7 +151,7 @@ func (b *B) launch() {
 
 	b.runN(n)
 	// Run the benchmark for at least the specified amount of time.
-	d := time.Duration(*benchTime * float64(time.Second))
+	d := *benchTime
 	for !b.failed && b.duration < d && n < 1e9 {
 		last := n
 		// Predict iterations/sec.

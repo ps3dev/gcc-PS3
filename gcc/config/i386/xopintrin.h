@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+/* Copyright (C) 2007-2017 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -28,13 +28,15 @@
 #ifndef _XOPMMINTRIN_H_INCLUDED
 #define _XOPMMINTRIN_H_INCLUDED
 
-#ifndef __XOP__
-# error "XOP instruction set not enabled"
-#else
-
 #include <fma4intrin.h>
 
-/* Integer multiply/add intructions. */
+#ifndef __XOP__
+#pragma GCC push_options
+#pragma GCC target("xop")
+#define __DISABLE_XOP__
+#endif /* __XOP__ */
+
+/* Integer multiply/add instructions. */
 extern __inline __m128i __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm_maccs_epi16(__m128i __A, __m128i __B, __m128i __C)
 {
@@ -328,7 +330,7 @@ _mm_sha_epi64(__m128i __A,  __m128i __B)
 }
 
 /* Compare and Predicate Generation
-   pcom (integer, unsinged bytes) */
+   pcom (integer, unsigned bytes) */
 
 extern __inline __m128i __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm_comlt_epu8(__m128i __A, __m128i __B)
@@ -378,7 +380,7 @@ _mm_comtrue_epu8(__m128i __A, __m128i __B)
   return (__m128i) __builtin_ia32_vpcomtrueub ((__v16qi)__A, (__v16qi)__B);
 }
 
-/*pcom (integer, unsinged words) */
+/*pcom (integer, unsigned words) */
 
 extern __inline __m128i __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm_comlt_epu16(__m128i __A, __m128i __B)
@@ -428,7 +430,7 @@ _mm_comtrue_epu16(__m128i __A, __m128i __B)
   return (__m128i) __builtin_ia32_vpcomtrueuw ((__v8hi)__A, (__v8hi)__B);
 }
 
-/*pcom (integer, unsinged double words) */
+/*pcom (integer, unsigned double words) */
 
 extern __inline __m128i __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm_comlt_epu32(__m128i __A, __m128i __B)
@@ -478,7 +480,7 @@ _mm_comtrue_epu32(__m128i __A, __m128i __B)
   return (__m128i) __builtin_ia32_vpcomtrueud ((__v4si)__A, (__v4si)__B);
 }
 
-/*pcom (integer, unsinged quad words) */
+/*pcom (integer, unsigned quad words) */
 
 extern __inline __m128i __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm_comlt_epu64(__m128i __A, __m128i __B)
@@ -745,13 +747,17 @@ _mm_frcz_pd (__m128d __A)
 extern __inline __m128 __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm_frcz_ss (__m128 __A, __m128 __B)
 {
-  return (__m128) __builtin_ia32_vfrczss ((__v4sf)__A, (__v4sf)__B);
+  return (__m128) __builtin_ia32_movss ((__v4sf)__A,
+					(__v4sf)
+					__builtin_ia32_vfrczss ((__v4sf)__B));
 }
 
 extern __inline __m128d __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm_frcz_sd (__m128d __A, __m128d __B)
 {
-  return (__m128d) __builtin_ia32_vfrczsd ((__v2df)__A, (__v2df)__B);
+  return (__m128d) __builtin_ia32_movsd ((__v2df)__A,
+					 (__v2df)
+					 __builtin_ia32_vfrczsd ((__v2df)__B));
 }
 
 extern __inline __m256 __attribute__((__gnu_inline__, __always_inline__, __artificial__))
@@ -830,6 +836,9 @@ _mm256_permute2_ps (__m256 __X, __m256 __Y, __m256i __C, const int __I)
  					  (int)(I)))
 #endif /* __OPTIMIZE__ */
 
-#endif /* __XOP__ */
+#ifdef __DISABLE_XOP__
+#undef __DISABLE_XOP__
+#pragma GCC pop_options
+#endif /* __DISABLE_XOP__ */
 
 #endif /* _XOPMMINTRIN_H_INCLUDED */

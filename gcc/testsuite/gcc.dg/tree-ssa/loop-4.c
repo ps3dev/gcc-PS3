@@ -37,10 +37,9 @@ void xxx(void)
 
 /* { dg-final { scan-tree-dump-times " \\* \[^\\n\\r\]*=" 0 "optimized" } } */
 /* { dg-final { scan-tree-dump-times "\[^\\n\\r\]*= \\* " 0 "optimized" } } */
-/* { dg-final { scan-tree-dump-times "MEM" 1 "optimized" } } */
+/* { dg-final { scan-tree-dump-times " MEM" 1 "optimized" } } */
 
 /* And the original induction variable should be eliminated.  */
 
 /* { dg-final { scan-tree-dump-times "iter" 0 "optimized" } } */
 
-/* { dg-final { cleanup-tree-dump "optimized" } } */

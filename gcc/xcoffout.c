@@ -1,6 +1,5 @@
 /* Output xcoff-format symbol table information from GNU compiler.
-   Copyright (C) 1992, 1994, 1995, 1997, 1998, 1999, 2000, 2002, 2003, 2004,
-   2007, 2008, 2010  Free Software Foundation, Inc.
+   Copyright (C) 1992-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -26,14 +25,12 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
-#include "tree.h"
-#include "rtl.h"
-#include "flags.h"
-#include "diagnostic-core.h"
-#include "output.h"
-#include "ggc.h"
 #include "target.h"
+#include "rtl.h"
+#include "tree.h"
+#include "diagnostic-core.h"
+#include "varasm.h"
+#include "output.h"
 #include "debug.h"
 
 #ifdef XCOFF_DEBUGGING_INFO
@@ -66,6 +63,8 @@ static const char *xcoff_current_function_file;
 
 char *xcoff_bss_section_name;
 char *xcoff_private_data_section_name;
+char *xcoff_tls_data_section_name;
+char *xcoff_tbss_section_name;
 char *xcoff_read_only_section_name;
 
 /* Last source file name mentioned in a NOTE insn.  */
@@ -328,8 +327,8 @@ xcoffout_source_file (FILE *file, const char *filename, int inline_p)
 /* Output a line number symbol entry for location (FILENAME, LINE).  */
 
 void
-xcoffout_source_line (unsigned int line, const char *filename,
-                      int discriminator ATTRIBUTE_UNUSED,
+xcoffout_source_line (unsigned int line, unsigned int column ATTRIBUTE_UNUSED,
+		      const char *filename, int discriminator ATTRIBUTE_UNUSED,
                       bool is_stmt ATTRIBUTE_UNUSED)
 {
   bool inline_p = (strcmp (xcoff_current_function_file, filename) != 0
@@ -447,6 +446,7 @@ xcoffout_declare_function (FILE *file, tree decl, const char *name)
 
 void
 xcoffout_begin_prologue (unsigned int line,
+			 unsigned int column ATTRIBUTE_UNUSED,
 			 const char *file ATTRIBUTE_UNUSED)
 {
   ASM_OUTPUT_LFB (asm_out_file, line);

@@ -1,39 +1,40 @@
-// Copyright 2011 The Go Authors.  All rights reserved.
+// Copyright 2011 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// MAC address manipulations
-
 package net
 
-import (
-	"bytes"
-	"errors"
-	"fmt"
-)
+const hexDigit = "0123456789abcdef"
 
 // A HardwareAddr represents a physical hardware address.
 type HardwareAddr []byte
 
 func (a HardwareAddr) String() string {
-	var buf bytes.Buffer
+	if len(a) == 0 {
+		return ""
+	}
+	buf := make([]byte, 0, len(a)*3-1)
 	for i, b := range a {
 		if i > 0 {
-			buf.WriteByte(':')
+			buf = append(buf, ':')
 		}
-		fmt.Fprintf(&buf, "%02x", b)
+		buf = append(buf, hexDigit[b>>4])
+		buf = append(buf, hexDigit[b&0xF])
 	}
-	return buf.String()
+	return string(buf)
 }
 
-// ParseMAC parses s as an IEEE 802 MAC-48, EUI-48, or EUI-64 using one of the
-// following formats:
+// ParseMAC parses s as an IEEE 802 MAC-48, EUI-48, EUI-64, or a 20-octet
+// IP over InfiniBand link-layer address using one of the following formats:
 //   01:23:45:67:89:ab
 //   01:23:45:67:89:ab:cd:ef
+//   01:23:45:67:89:ab:cd:ef:00:00:01:23:45:67:89:ab:cd:ef:00:00
 //   01-23-45-67-89-ab
 //   01-23-45-67-89-ab-cd-ef
+//   01-23-45-67-89-ab-cd-ef-00-00-01-23-45-67-89-ab-cd-ef-00-00
 //   0123.4567.89ab
 //   0123.4567.89ab.cdef
+//   0123.4567.89ab.cdef.0000.0123.4567.89ab.cdef.0000
 func ParseMAC(s string) (hw HardwareAddr, err error) {
 	if len(s) < 14 {
 		goto error
@@ -44,7 +45,7 @@ func ParseMAC(s string) (hw HardwareAddr, err error) {
 			goto error
 		}
 		n := (len(s) + 1) / 3
-		if n != 6 && n != 8 {
+		if n != 6 && n != 8 && n != 20 {
 			goto error
 		}
 		hw = make(HardwareAddr, n)
@@ -60,7 +61,7 @@ func ParseMAC(s string) (hw HardwareAddr, err error) {
 			goto error
 		}
 		n := 2 * (len(s) + 1) / 5
-		if n != 6 && n != 8 {
+		if n != 6 && n != 8 && n != 20 {
 			goto error
 		}
 		hw = make(HardwareAddr, n)
@@ -80,5 +81,5 @@ func ParseMAC(s string) (hw HardwareAddr, err error) {
 	return hw, nil
 
 error:
-	return nil, errors.New("invalid MAC address: " + s)
+	return nil, &AddrError{Err: "invalid MAC address", Addr: s}
 }

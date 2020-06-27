@@ -6,7 +6,11 @@ package bytes_test
 
 import (
 	. "bytes"
+	"fmt"
+	"internal/testenv"
+	"math/rand"
 	"reflect"
+	"strings"
 	"testing"
 	"unicode"
 	"unicode/utf8"
@@ -24,16 +28,16 @@ func eq(a, b []string) bool {
 	return true
 }
 
-func arrayOfString(a [][]byte) []string {
-	result := make([]string, len(a))
-	for j := 0; j < len(a); j++ {
-		result[j] = string(a[j])
+func sliceOfString(s [][]byte) []string {
+	result := make([]string, len(s))
+	for i, v := range s {
+		result[i] = string(v)
 	}
 	return result
 }
 
 // For ease of reading, the test cases use strings that are converted to byte
-// arrays before invoking the functions.
+// slices before invoking the functions.
 
 var abcd = "abcd"
 var faces = "☺☻☹"
@@ -46,34 +50,8 @@ type BinOpTest struct {
 	i int
 }
 
-var compareTests = []struct {
-	a, b []byte
-	i    int
-}{
-	{[]byte(""), []byte(""), 0},
-	{[]byte("a"), []byte(""), 1},
-	{[]byte(""), []byte("a"), -1},
-	{[]byte("abc"), []byte("abc"), 0},
-	{[]byte("ab"), []byte("abc"), -1},
-	{[]byte("abc"), []byte("ab"), 1},
-	{[]byte("x"), []byte("ab"), 1},
-	{[]byte("ab"), []byte("x"), -1},
-	{[]byte("x"), []byte("a"), 1},
-	{[]byte("b"), []byte("x"), -1},
-	// nil tests
-	{nil, nil, 0},
-	{[]byte(""), nil, 0},
-	{nil, []byte(""), 0},
-	{[]byte("a"), nil, 1},
-	{nil, []byte("a"), -1},
-}
-
-func TestCompare(t *testing.T) {
+func TestEqual(t *testing.T) {
 	for _, tt := range compareTests {
-		cmp := Compare(tt.a, tt.b)
-		if cmp != tt.i {
-			t.Errorf(`Compare(%q, %q) = %v`, tt.a, tt.b, cmp)
-		}
 		eql := Equal(tt.a, tt.b)
 		if eql != (tt.i == 0) {
 			t.Errorf(`Equal(%q, %q) = %v`, tt.a, tt.b, eql)
@@ -85,11 +63,64 @@ func TestCompare(t *testing.T) {
 	}
 }
 
+func TestEqualExhaustive(t *testing.T) {
+	var size = 128
+	if testing.Short() {
+		size = 32
+	}
+	a := make([]byte, size)
+	b := make([]byte, size)
+	b_init := make([]byte, size)
+	// randomish but deterministic data
+	for i := 0; i < size; i++ {
+		a[i] = byte(17 * i)
+		b_init[i] = byte(23*i + 100)
+	}
+
+	for len := 0; len <= size; len++ {
+		for x := 0; x <= size-len; x++ {
+			for y := 0; y <= size-len; y++ {
+				copy(b, b_init)
+				copy(b[y:y+len], a[x:x+len])
+				if !Equal(a[x:x+len], b[y:y+len]) || !Equal(b[y:y+len], a[x:x+len]) {
+					t.Errorf("Equal(%d, %d, %d) = false", len, x, y)
+				}
+			}
+		}
+	}
+}
+
+// make sure Equal returns false for minimally different strings. The data
+// is all zeros except for a single one in one location.
+func TestNotEqual(t *testing.T) {
+	var size = 128
+	if testing.Short() {
+		size = 32
+	}
+	a := make([]byte, size)
+	b := make([]byte, size)
+
+	for len := 0; len <= size; len++ {
+		for x := 0; x <= size-len; x++ {
+			for y := 0; y <= size-len; y++ {
+				for diffpos := x; diffpos < x+len; diffpos++ {
+					a[diffpos] = 1
+					if Equal(a[x:x+len], b[y:y+len]) || Equal(b[y:y+len], a[x:x+len]) {
+						t.Errorf("NotEqual(%d, %d, %d, %d) = true", len, x, y, diffpos)
+					}
+					a[diffpos] = 0
+				}
+			}
+		}
+	}
+}
+
 var indexTests = []BinOpTest{
 	{"", "", 0},
 	{"", "a", -1},
 	{"", "foo", -1},
 	{"fo", "foo", -1},
+	{"foo", "baz", -1},
 	{"foo", "foo", 0},
 	{"oofofoofooo", "f", 2},
 	{"oofofoofooo", "foo", 4},
@@ -136,8 +167,12 @@ var indexAnyTests = []BinOpTest{
 	{"abc", "xyz", -1},
 	{"abc", "xcz", 2},
 	{"ab☺c", "x☺yz", 2},
+	{"a☺b☻c☹d", "cx", len("a☺b☻")},
+	{"a☺b☻c☹d", "uvw☻xyz", len("a☺b")},
 	{"aRegExp*", ".(|)*+?^$[]", 7},
 	{dots + dots + dots, " ", -1},
+	{"012abcba210", "\xffb", 4},
+	{"012\x80bcb\x80210", "\xffb", 3},
 }
 
 var lastIndexAnyTests = []BinOpTest{
@@ -149,18 +184,13 @@ var lastIndexAnyTests = []BinOpTest{
 	{"aaa", "a", 2},
 	{"abc", "xyz", -1},
 	{"abc", "ab", 1},
-	{"a☺b☻c☹d", "uvw☻xyz", 2 + len("☺")},
+	{"ab☺c", "x☺yz", 2},
+	{"a☺b☻c☹d", "cx", len("a☺b☻")},
+	{"a☺b☻c☹d", "uvw☻xyz", len("a☺b")},
 	{"a.RegExp*", ".(|)*+?^$[]", 8},
 	{dots + dots + dots, " ", -1},
-}
-
-var indexRuneTests = []BinOpTest{
-	{"", "a", -1},
-	{"", "☺", -1},
-	{"foo", "☹", -1},
-	{"foo", "o", 1},
-	{"foo☺bar", "☺", 3},
-	{"foo☺☻☹bar", "☹", 9},
+	{"012abcba210", "\xffb", 6},
+	{"012\x80bcb\x80210", "\xffb", 7},
 }
 
 // Execute f on each test case.  funcName should be the name of f; it's used
@@ -207,6 +237,23 @@ func TestIndexByte(t *testing.T) {
 		posp := IndexBytePortable(a, b)
 		if posp != tt.i {
 			t.Errorf(`indexBytePortable(%q, '%c') = %v`, tt.a, b, posp)
+		}
+	}
+}
+
+func TestLastIndexByte(t *testing.T) {
+	testCases := []BinOpTest{
+		{"", "q", -1},
+		{"abcdef", "q", -1},
+		{"abcdefabcdef", "a", len("abcdef")},      // something in the middle
+		{"abcdefabcdef", "f", len("abcdefabcde")}, // last byte
+		{"zabcdefabcdef", "z", 0},                 // first byte
+		{"a☺b☻c☹d", "b", len("a☺")},               // non-ascii
+	}
+	for _, test := range testCases {
+		actual := LastIndexByte([]byte(test.a), test.b[0])
+		if actual != test.i {
+			t.Errorf("LastIndexByte(%q,%c) = %v; want %v", test.a, test.b[0], actual, test.i)
 		}
 	}
 }
@@ -264,158 +311,282 @@ func TestIndexByteBig(t *testing.T) {
 	}
 }
 
-func TestIndexRune(t *testing.T) {
-	for _, tt := range indexRuneTests {
-		a := []byte(tt.a)
-		r, _ := utf8.DecodeRuneInString(tt.b)
-		pos := IndexRune(a, r)
-		if pos != tt.i {
-			t.Errorf(`IndexRune(%q, '%c') = %v`, tt.a, r, pos)
+// test a small index across all page offsets
+func TestIndexByteSmall(t *testing.T) {
+	b := make([]byte, 5015) // bigger than a page
+	// Make sure we find the correct byte even when straddling a page.
+	for i := 0; i <= len(b)-15; i++ {
+		for j := 0; j < 15; j++ {
+			b[i+j] = byte(100 + j)
 		}
+		for j := 0; j < 15; j++ {
+			p := IndexByte(b[i:i+15], byte(100+j))
+			if p != j {
+				t.Errorf("IndexByte(%q, %d) = %d", b[i:i+15], 100+j, p)
+			}
+		}
+		for j := 0; j < 15; j++ {
+			b[i+j] = 0
+		}
+	}
+	// Make sure matches outside the slice never trigger.
+	for i := 0; i <= len(b)-15; i++ {
+		for j := 0; j < 15; j++ {
+			b[i+j] = 1
+		}
+		for j := 0; j < 15; j++ {
+			p := IndexByte(b[i:i+15], byte(0))
+			if p != -1 {
+				t.Errorf("IndexByte(%q, %d) = %d", b[i:i+15], 0, p)
+			}
+		}
+		for j := 0; j < 15; j++ {
+			b[i+j] = 0
+		}
+	}
+}
+
+func TestIndexRune(t *testing.T) {
+	tests := []struct {
+		in   string
+		rune rune
+		want int
+	}{
+		{"", 'a', -1},
+		{"", '☺', -1},
+		{"foo", '☹', -1},
+		{"foo", 'o', 1},
+		{"foo☺bar", '☺', 3},
+		{"foo☺☻☹bar", '☹', 9},
+		{"a A x", 'A', 2},
+		{"some_text=some_value", '=', 9},
+		{"☺a", 'a', 3},
+		{"a☻☺b", '☺', 4},
+
+		// RuneError should match any invalid UTF-8 byte sequence.
+		{"�", '�', 0},
+		{"\xff", '�', 0},
+		{"☻x�", '�', len("☻x")},
+		{"☻x\xe2\x98", '�', len("☻x")},
+		{"☻x\xe2\x98�", '�', len("☻x")},
+		{"☻x\xe2\x98x", '�', len("☻x")},
+
+		// Invalid rune values should never match.
+		{"a☺b☻c☹d\xe2\x98�\xff�\xed\xa0\x80", -1, -1},
+		{"a☺b☻c☹d\xe2\x98�\xff�\xed\xa0\x80", 0xD800, -1}, // Surrogate pair
+		{"a☺b☻c☹d\xe2\x98�\xff�\xed\xa0\x80", utf8.MaxRune + 1, -1},
+	}
+	for _, tt := range tests {
+		if got := IndexRune([]byte(tt.in), tt.rune); got != tt.want {
+			t.Errorf("IndexRune(%q, %d) = %v; want %v", tt.in, tt.rune, got, tt.want)
+		}
+	}
+
+	haystack := []byte("test世界")
+	allocs := testing.AllocsPerRun(1000, func() {
+		if i := IndexRune(haystack, 's'); i != 2 {
+			t.Fatalf("'s' at %d; want 2", i)
+		}
+		if i := IndexRune(haystack, '世'); i != 4 {
+			t.Fatalf("'世' at %d; want 4", i)
+		}
+	})
+	if allocs != 0 {
+		t.Errorf("expected no allocations, got %f", allocs)
 	}
 }
 
 var bmbuf []byte
 
-func BenchmarkIndexByte32(b *testing.B)          { bmIndexByte(b, IndexByte, 32) }
-func BenchmarkIndexByte4K(b *testing.B)          { bmIndexByte(b, IndexByte, 4<<10) }
-func BenchmarkIndexByte4M(b *testing.B)          { bmIndexByte(b, IndexByte, 4<<20) }
-func BenchmarkIndexByte64M(b *testing.B)         { bmIndexByte(b, IndexByte, 64<<20) }
-func BenchmarkIndexBytePortable32(b *testing.B)  { bmIndexByte(b, IndexBytePortable, 32) }
-func BenchmarkIndexBytePortable4K(b *testing.B)  { bmIndexByte(b, IndexBytePortable, 4<<10) }
-func BenchmarkIndexBytePortable4M(b *testing.B)  { bmIndexByte(b, IndexBytePortable, 4<<20) }
-func BenchmarkIndexBytePortable64M(b *testing.B) { bmIndexByte(b, IndexBytePortable, 64<<20) }
-
-func bmIndexByte(b *testing.B, index func([]byte, byte) int, n int) {
-	if len(bmbuf) < n {
-		bmbuf = make([]byte, n)
+func valName(x int) string {
+	if s := x >> 20; s<<20 == x {
+		return fmt.Sprintf("%dM", s)
 	}
-	b.SetBytes(int64(n))
-	buf := bmbuf[0:n]
-	buf[n-1] = 'x'
-	for i := 0; i < b.N; i++ {
-		j := index(buf, 'x')
-		if j != n-1 {
-			b.Fatal("bad index", j)
-		}
+	if s := x >> 10; s<<10 == x {
+		return fmt.Sprintf("%dK", s)
 	}
-	buf[n-1] = '\x00'
+	return fmt.Sprint(x)
 }
 
-func BenchmarkEqual32(b *testing.B)          { bmEqual(b, Equal, 32) }
-func BenchmarkEqual4K(b *testing.B)          { bmEqual(b, Equal, 4<<10) }
-func BenchmarkEqual4M(b *testing.B)          { bmEqual(b, Equal, 4<<20) }
-func BenchmarkEqual64M(b *testing.B)         { bmEqual(b, Equal, 64<<20) }
-func BenchmarkEqualPort32(b *testing.B)      { bmEqual(b, EqualPortable, 32) }
-func BenchmarkEqualPort4K(b *testing.B)      { bmEqual(b, EqualPortable, 4<<10) }
-func BenchmarkEqualPortable4M(b *testing.B)  { bmEqual(b, EqualPortable, 4<<20) }
-func BenchmarkEqualPortable64M(b *testing.B) { bmEqual(b, EqualPortable, 64<<20) }
-
-func bmEqual(b *testing.B, equal func([]byte, []byte) bool, n int) {
-	if len(bmbuf) < 2*n {
-		bmbuf = make([]byte, 2*n)
-	}
-	b.SetBytes(int64(n))
-	buf1 := bmbuf[0:n]
-	buf2 := bmbuf[n : 2*n]
-	buf1[n-1] = 'x'
-	buf2[n-1] = 'x'
-	for i := 0; i < b.N; i++ {
-		eq := equal(buf1, buf2)
-		if !eq {
-			b.Fatal("bad equal")
+func benchBytes(b *testing.B, sizes []int, f func(b *testing.B, n int)) {
+	for _, n := range sizes {
+		if isRaceBuilder && n > 4<<10 {
+			continue
 		}
+		b.Run(valName(n), func(b *testing.B) {
+			if len(bmbuf) < n {
+				bmbuf = make([]byte, n)
+			}
+			b.SetBytes(int64(n))
+			f(b, n)
+		})
 	}
-	buf1[n-1] = '\x00'
-	buf2[n-1] = '\x00'
 }
 
-func BenchmarkIndex32(b *testing.B)  { bmIndex(b, Index, 32) }
-func BenchmarkIndex4K(b *testing.B)  { bmIndex(b, Index, 4<<10) }
-func BenchmarkIndex4M(b *testing.B)  { bmIndex(b, Index, 4<<20) }
-func BenchmarkIndex64M(b *testing.B) { bmIndex(b, Index, 64<<20) }
+var indexSizes = []int{10, 32, 4 << 10, 4 << 20, 64 << 20}
 
-func bmIndex(b *testing.B, index func([]byte, []byte) int, n int) {
-	if len(bmbuf) < n {
-		bmbuf = make([]byte, n)
-	}
-	b.SetBytes(int64(n))
-	buf := bmbuf[0:n]
-	buf[n-1] = 'x'
-	for i := 0; i < b.N; i++ {
-		j := index(buf, buf[n-7:])
-		if j != n-7 {
-			b.Fatal("bad index", j)
-		}
-	}
-	buf[n-1] = '\x00'
+var isRaceBuilder = strings.HasSuffix(testenv.Builder(), "-race")
+
+func BenchmarkIndexByte(b *testing.B) {
+	benchBytes(b, indexSizes, bmIndexByte(IndexByte))
 }
 
-func BenchmarkIndexEasy32(b *testing.B)  { bmIndexEasy(b, Index, 32) }
-func BenchmarkIndexEasy4K(b *testing.B)  { bmIndexEasy(b, Index, 4<<10) }
-func BenchmarkIndexEasy4M(b *testing.B)  { bmIndexEasy(b, Index, 4<<20) }
-func BenchmarkIndexEasy64M(b *testing.B) { bmIndexEasy(b, Index, 64<<20) }
-
-func bmIndexEasy(b *testing.B, index func([]byte, []byte) int, n int) {
-	if len(bmbuf) < n {
-		bmbuf = make([]byte, n)
-	}
-	b.SetBytes(int64(n))
-	buf := bmbuf[0:n]
-	buf[n-1] = 'x'
-	buf[n-7] = 'x'
-	for i := 0; i < b.N; i++ {
-		j := index(buf, buf[n-7:])
-		if j != n-7 {
-			b.Fatal("bad index", j)
-		}
-	}
-	buf[n-1] = '\x00'
-	buf[n-7] = '\x00'
+func BenchmarkIndexBytePortable(b *testing.B) {
+	benchBytes(b, indexSizes, bmIndexByte(IndexBytePortable))
 }
 
-func BenchmarkCount32(b *testing.B)  { bmCount(b, Count, 32) }
-func BenchmarkCount4K(b *testing.B)  { bmCount(b, Count, 4<<10) }
-func BenchmarkCount4M(b *testing.B)  { bmCount(b, Count, 4<<20) }
-func BenchmarkCount64M(b *testing.B) { bmCount(b, Count, 64<<20) }
-
-func bmCount(b *testing.B, count func([]byte, []byte) int, n int) {
-	if len(bmbuf) < n {
-		bmbuf = make([]byte, n)
-	}
-	b.SetBytes(int64(n))
-	buf := bmbuf[0:n]
-	buf[n-1] = 'x'
-	for i := 0; i < b.N; i++ {
-		j := count(buf, buf[n-7:])
-		if j != 1 {
-			b.Fatal("bad count", j)
+func bmIndexByte(index func([]byte, byte) int) func(b *testing.B, n int) {
+	return func(b *testing.B, n int) {
+		buf := bmbuf[0:n]
+		buf[n-1] = 'x'
+		for i := 0; i < b.N; i++ {
+			j := index(buf, 'x')
+			if j != n-1 {
+				b.Fatal("bad index", j)
+			}
 		}
+		buf[n-1] = '\x00'
 	}
-	buf[n-1] = '\x00'
 }
 
-func BenchmarkCountEasy32(b *testing.B)  { bmCountEasy(b, Count, 32) }
-func BenchmarkCountEasy4K(b *testing.B)  { bmCountEasy(b, Count, 4<<10) }
-func BenchmarkCountEasy4M(b *testing.B)  { bmCountEasy(b, Count, 4<<20) }
-func BenchmarkCountEasy64M(b *testing.B) { bmCountEasy(b, Count, 64<<20) }
+func BenchmarkIndexRune(b *testing.B) {
+	benchBytes(b, indexSizes, bmIndexRune(IndexRune))
+}
 
-func bmCountEasy(b *testing.B, count func([]byte, []byte) int, n int) {
-	if len(bmbuf) < n {
-		bmbuf = make([]byte, n)
-	}
-	b.SetBytes(int64(n))
-	buf := bmbuf[0:n]
-	buf[n-1] = 'x'
-	buf[n-7] = 'x'
-	for i := 0; i < b.N; i++ {
-		j := count(buf, buf[n-7:])
-		if j != 1 {
-			b.Fatal("bad count", j)
+func BenchmarkIndexRuneASCII(b *testing.B) {
+	benchBytes(b, indexSizes, bmIndexRuneASCII(IndexRune))
+}
+
+func bmIndexRuneASCII(index func([]byte, rune) int) func(b *testing.B, n int) {
+	return func(b *testing.B, n int) {
+		buf := bmbuf[0:n]
+		buf[n-1] = 'x'
+		for i := 0; i < b.N; i++ {
+			j := index(buf, 'x')
+			if j != n-1 {
+				b.Fatal("bad index", j)
+			}
 		}
+		buf[n-1] = '\x00'
 	}
-	buf[n-1] = '\x00'
-	buf[n-7] = '\x00'
+}
+
+func bmIndexRune(index func([]byte, rune) int) func(b *testing.B, n int) {
+	return func(b *testing.B, n int) {
+		buf := bmbuf[0:n]
+		utf8.EncodeRune(buf[n-3:], '世')
+		for i := 0; i < b.N; i++ {
+			j := index(buf, '世')
+			if j != n-3 {
+				b.Fatal("bad index", j)
+			}
+		}
+		buf[n-3] = '\x00'
+		buf[n-2] = '\x00'
+		buf[n-1] = '\x00'
+	}
+}
+
+func BenchmarkEqual(b *testing.B) {
+	b.Run("0", func(b *testing.B) {
+		var buf [4]byte
+		buf1 := buf[0:0]
+		buf2 := buf[1:1]
+		for i := 0; i < b.N; i++ {
+			eq := Equal(buf1, buf2)
+			if !eq {
+				b.Fatal("bad equal")
+			}
+		}
+	})
+
+	sizes := []int{1, 6, 9, 15, 16, 20, 32, 4 << 10, 4 << 20, 64 << 20}
+	benchBytes(b, sizes, bmEqual(Equal))
+}
+
+func BenchmarkEqualPort(b *testing.B) {
+	sizes := []int{1, 6, 32, 4 << 10, 4 << 20, 64 << 20}
+	benchBytes(b, sizes, bmEqual(EqualPortable))
+}
+
+func bmEqual(equal func([]byte, []byte) bool) func(b *testing.B, n int) {
+	return func(b *testing.B, n int) {
+		if len(bmbuf) < 2*n {
+			bmbuf = make([]byte, 2*n)
+		}
+		buf1 := bmbuf[0:n]
+		buf2 := bmbuf[n : 2*n]
+		buf1[n-1] = 'x'
+		buf2[n-1] = 'x'
+		for i := 0; i < b.N; i++ {
+			eq := equal(buf1, buf2)
+			if !eq {
+				b.Fatal("bad equal")
+			}
+		}
+		buf1[n-1] = '\x00'
+		buf2[n-1] = '\x00'
+	}
+}
+
+func BenchmarkIndex(b *testing.B) {
+	benchBytes(b, indexSizes, func(b *testing.B, n int) {
+		buf := bmbuf[0:n]
+		buf[n-1] = 'x'
+		for i := 0; i < b.N; i++ {
+			j := Index(buf, buf[n-7:])
+			if j != n-7 {
+				b.Fatal("bad index", j)
+			}
+		}
+		buf[n-1] = '\x00'
+	})
+}
+
+func BenchmarkIndexEasy(b *testing.B) {
+	benchBytes(b, indexSizes, func(b *testing.B, n int) {
+		buf := bmbuf[0:n]
+		buf[n-1] = 'x'
+		buf[n-7] = 'x'
+		for i := 0; i < b.N; i++ {
+			j := Index(buf, buf[n-7:])
+			if j != n-7 {
+				b.Fatal("bad index", j)
+			}
+		}
+		buf[n-1] = '\x00'
+		buf[n-7] = '\x00'
+	})
+}
+
+func BenchmarkCount(b *testing.B) {
+	benchBytes(b, indexSizes, func(b *testing.B, n int) {
+		buf := bmbuf[0:n]
+		buf[n-1] = 'x'
+		for i := 0; i < b.N; i++ {
+			j := Count(buf, buf[n-7:])
+			if j != 1 {
+				b.Fatal("bad count", j)
+			}
+		}
+		buf[n-1] = '\x00'
+	})
+}
+
+func BenchmarkCountEasy(b *testing.B) {
+	benchBytes(b, indexSizes, func(b *testing.B, n int) {
+		buf := bmbuf[0:n]
+		buf[n-1] = 'x'
+		buf[n-7] = 'x'
+		for i := 0; i < b.N; i++ {
+			j := Count(buf, buf[n-7:])
+			if j != 1 {
+				b.Fatal("bad count", j)
+			}
+		}
+		buf[n-1] = '\x00'
+		buf[n-7] = '\x00'
+	})
 }
 
 type ExplodeTest struct {
@@ -434,7 +605,7 @@ var explodetests = []ExplodeTest{
 func TestExplode(t *testing.T) {
 	for _, tt := range explodetests {
 		a := SplitN([]byte(tt.s), nil, tt.n)
-		result := arrayOfString(a)
+		result := sliceOfString(a)
 		if !eq(result, tt.a) {
 			t.Errorf(`Explode("%s", %d) = %v; want %v`, tt.s, tt.n, result, tt.a)
 			continue
@@ -472,7 +643,7 @@ var splittests = []SplitTest{
 func TestSplit(t *testing.T) {
 	for _, tt := range splittests {
 		a := SplitN([]byte(tt.s), []byte(tt.sep), tt.n)
-		result := arrayOfString(a)
+		result := sliceOfString(a)
 		if !eq(result, tt.a) {
 			t.Errorf(`Split(%q, %q, %d) = %v; want %v`, tt.s, tt.sep, tt.n, result, tt.a)
 			continue
@@ -488,6 +659,12 @@ func TestSplit(t *testing.T) {
 			b := Split([]byte(tt.s), []byte(tt.sep))
 			if !reflect.DeepEqual(a, b) {
 				t.Errorf("Split disagrees withSplitN(%q, %q, %d) = %v; want %v", tt.s, tt.sep, tt.n, b, a)
+			}
+		}
+		if len(a) > 0 {
+			in, out := a[0], s
+			if cap(in) == cap(out) && &in[:1][0] == &out[:1][0] {
+				t.Errorf("Join(%#v, %q) didn't copy", a, tt.sep)
 			}
 		}
 	}
@@ -512,7 +689,7 @@ var splitaftertests = []SplitTest{
 func TestSplitAfter(t *testing.T) {
 	for _, tt := range splitaftertests {
 		a := SplitAfterN([]byte(tt.s), []byte(tt.sep), tt.n)
-		result := arrayOfString(a)
+		result := sliceOfString(a)
 		if !eq(result, tt.a) {
 			t.Errorf(`Split(%q, %q, %d) = %v; want %v`, tt.s, tt.sep, tt.n, result, tt.a)
 			continue
@@ -552,7 +729,7 @@ var fieldstests = []FieldsTest{
 func TestFields(t *testing.T) {
 	for _, tt := range fieldstests {
 		a := Fields([]byte(tt.s))
-		result := arrayOfString(a)
+		result := sliceOfString(a)
 		if !eq(result, tt.a) {
 			t.Errorf("Fields(%q) = %v; want %v", tt.s, a, tt.a)
 			continue
@@ -561,6 +738,14 @@ func TestFields(t *testing.T) {
 }
 
 func TestFieldsFunc(t *testing.T) {
+	for _, tt := range fieldstests {
+		a := FieldsFunc([]byte(tt.s), unicode.IsSpace)
+		result := sliceOfString(a)
+		if !eq(result, tt.a) {
+			t.Errorf("FieldsFunc(%q, unicode.IsSpace) = %v; want %v", tt.s, a, tt.a)
+			continue
+		}
+	}
 	pred := func(c rune) bool { return c == 'X' }
 	var fieldsFuncTests = []FieldsTest{
 		{"", []string{}},
@@ -570,15 +755,15 @@ func TestFieldsFunc(t *testing.T) {
 	}
 	for _, tt := range fieldsFuncTests {
 		a := FieldsFunc([]byte(tt.s), pred)
-		result := arrayOfString(a)
+		result := sliceOfString(a)
 		if !eq(result, tt.a) {
 			t.Errorf("FieldsFunc(%q) = %v, want %v", tt.s, a, tt.a)
 		}
 	}
 }
 
-// Test case for any function which accepts and returns a byte array.
-// For ease of creation, we write the byte arrays as strings.
+// Test case for any function which accepts and returns a byte slice.
+// For ease of creation, we write the byte slices as strings.
 type StringTest struct {
 	in, out string
 }
@@ -655,7 +840,7 @@ func TestMap(t *testing.T) {
 	// Run a couple of awful growth/shrinkage tests
 	a := tenRunes('a')
 
-	// 1.  Grow.  This triggers two reallocations in Map.
+	// 1.  Grow. This triggers two reallocations in Map.
 	maxRune := func(r rune) rune { return unicode.MaxRune }
 	m := Map(maxRune, []byte(a))
 	expect := tenRunes(unicode.MaxRune)
@@ -697,6 +882,16 @@ func TestMap(t *testing.T) {
 	if string(m) != expect {
 		t.Errorf("drop: expected %q got %q", expect, m)
 	}
+
+	// 6. Invalid rune
+	invalidRune := func(r rune) rune {
+		return utf8.MaxRune + 1
+	}
+	m = Map(invalidRune, []byte("x"))
+	expect = "\uFFFD"
+	if string(m) != expect {
+		t.Errorf("invalidRune: expected %q got %q", expect, m)
+	}
 }
 
 func TestToUpper(t *testing.T) { runStringTests(t, ToUpper, "ToUpper", upperTests) }
@@ -728,6 +923,54 @@ func TestRepeat(t *testing.T) {
 		if !Equal(a, tout) {
 			t.Errorf("Repeat(%q, %d) = %q; want %q", tin, tt.count, a, tout)
 			continue
+		}
+	}
+}
+
+func repeat(b []byte, count int) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			switch v := r.(type) {
+			case error:
+				err = v
+			default:
+				err = fmt.Errorf("%s", v)
+			}
+		}
+	}()
+
+	Repeat(b, count)
+
+	return
+}
+
+// See Issue golang.org/issue/16237
+func TestRepeatCatchesOverflow(t *testing.T) {
+	tests := [...]struct {
+		s      string
+		count  int
+		errStr string
+	}{
+		0: {"--", -2147483647, "negative"},
+		1: {"", int(^uint(0) >> 1), ""},
+		2: {"-", 10, ""},
+		3: {"gopher", 0, ""},
+		4: {"-", -1, "negative"},
+		5: {"--", -102, "negative"},
+		6: {string(make([]byte, 255)), int((^uint(0))/255 + 1), "overflow"},
+	}
+
+	for i, tt := range tests {
+		err := repeat([]byte(tt.s), tt.count)
+		if tt.errStr == "" {
+			if err != nil {
+				t.Errorf("#%d panicked %v", i, err)
+			}
+			continue
+		}
+
+		if err == nil || !strings.Contains(err.Error(), tt.errStr) {
+			t.Errorf("#%d expected %q got %q", i, tt.errStr, err)
 		}
 	}
 }
@@ -779,8 +1022,8 @@ func TestRunes(t *testing.T) {
 }
 
 type TrimTest struct {
-	f               string
-	in, cutset, out string
+	f            string
+	in, arg, out string
 }
 
 var trimTests = []TrimTest{
@@ -794,6 +1037,9 @@ var trimTests = []TrimTest{
 	{"Trim", "* listitem", " *", "listitem"},
 	{"Trim", `"quote"`, `"`, "quote"},
 	{"Trim", "\u2C6F\u2C6F\u0250\u0250\u2C6F\u2C6F", "\u2C6F", "\u0250\u0250"},
+	{"Trim", "\x80test\xff", "\xff", "test"},
+	{"Trim", " Ġ ", " ", "Ġ"},
+	{"Trim", " Ġİ0", "0 ", "Ġİ"},
 	//empty string tests
 	{"Trim", "abba", "", "abba"},
 	{"Trim", "", "123", ""},
@@ -805,12 +1051,17 @@ var trimTests = []TrimTest{
 	{"TrimRight", "", "123", ""},
 	{"TrimRight", "", "", ""},
 	{"TrimRight", "☺\xc0", "☺", "☺\xc0"},
+	{"TrimPrefix", "aabb", "a", "abb"},
+	{"TrimPrefix", "aabb", "b", "aabb"},
+	{"TrimSuffix", "aabb", "a", "aabb"},
+	{"TrimSuffix", "aabb", "b", "aab"},
 }
 
 func TestTrim(t *testing.T) {
 	for _, tc := range trimTests {
 		name := tc.f
 		var f func([]byte, string) []byte
+		var fb func([]byte, []byte) []byte
 		switch name {
 		case "Trim":
 			f = Trim
@@ -818,12 +1069,21 @@ func TestTrim(t *testing.T) {
 			f = TrimLeft
 		case "TrimRight":
 			f = TrimRight
+		case "TrimPrefix":
+			fb = TrimPrefix
+		case "TrimSuffix":
+			fb = TrimSuffix
 		default:
 			t.Errorf("Undefined trim function %s", name)
 		}
-		actual := string(f([]byte(tc.in), tc.cutset))
+		var actual string
+		if f != nil {
+			actual = string(f([]byte(tc.in), tc.arg))
+		} else {
+			actual = string(fb([]byte(tc.in), []byte(tc.arg)))
+		}
 		if actual != tc.out {
-			t.Errorf("%s(%q, %q) = %q; want %q", name, tc.in, tc.cutset, actual, tc.out)
+			t.Errorf("%s(%q, %q) = %q; want %q", name, tc.in, tc.arg, actual, tc.out)
 		}
 	}
 }
@@ -971,12 +1231,32 @@ var TitleTests = []TitleTest{
 	{"123a456", "123a456"},
 	{"double-blind", "Double-Blind"},
 	{"ÿøû", "Ÿøû"},
+	{"with_underscore", "With_underscore"},
+	{"unicode \xe2\x80\xa8 line separator", "Unicode \xe2\x80\xa8 Line Separator"},
 }
 
 func TestTitle(t *testing.T) {
 	for _, tt := range TitleTests {
 		if s := string(Title([]byte(tt.in))); s != tt.out {
 			t.Errorf("Title(%q) = %q, want %q", tt.in, s, tt.out)
+		}
+	}
+}
+
+var ToTitleTests = []TitleTest{
+	{"", ""},
+	{"a", "A"},
+	{" aaa aaa aaa ", " AAA AAA AAA "},
+	{" Aaa Aaa Aaa ", " AAA AAA AAA "},
+	{"123a456", "123A456"},
+	{"double-blind", "DOUBLE-BLIND"},
+	{"ÿøû", "ŸØÛ"},
+}
+
+func TestToTitle(t *testing.T) {
+	for _, tt := range ToTitleTests {
+		if s := string(ToTitle([]byte(tt.in))); s != tt.out {
+			t.Errorf("ToTitle(%q) = %q, want %q", tt.in, s, tt.out)
 		}
 	}
 }
@@ -1005,6 +1285,205 @@ func TestEqualFold(t *testing.T) {
 		}
 		if out := EqualFold([]byte(tt.t), []byte(tt.s)); out != tt.out {
 			t.Errorf("EqualFold(%#q, %#q) = %v, want %v", tt.t, tt.s, out, tt.out)
+		}
+	}
+}
+
+func TestBufferGrowNegative(t *testing.T) {
+	defer func() {
+		if err := recover(); err == nil {
+			t.Fatal("Grow(-1) should have panicked")
+		}
+	}()
+	var b Buffer
+	b.Grow(-1)
+}
+
+func TestBufferTruncateNegative(t *testing.T) {
+	defer func() {
+		if err := recover(); err == nil {
+			t.Fatal("Truncate(-1) should have panicked")
+		}
+	}()
+	var b Buffer
+	b.Truncate(-1)
+}
+
+func TestBufferTruncateOutOfRange(t *testing.T) {
+	defer func() {
+		if err := recover(); err == nil {
+			t.Fatal("Truncate(20) should have panicked")
+		}
+	}()
+	var b Buffer
+	b.Write(make([]byte, 10))
+	b.Truncate(20)
+}
+
+var containsTests = []struct {
+	b, subslice []byte
+	want        bool
+}{
+	{[]byte("hello"), []byte("hel"), true},
+	{[]byte("日本語"), []byte("日本"), true},
+	{[]byte("hello"), []byte("Hello, world"), false},
+	{[]byte("東京"), []byte("京東"), false},
+}
+
+func TestContains(t *testing.T) {
+	for _, tt := range containsTests {
+		if got := Contains(tt.b, tt.subslice); got != tt.want {
+			t.Errorf("Contains(%q, %q) = %v, want %v", tt.b, tt.subslice, got, tt.want)
+		}
+	}
+}
+
+var ContainsAnyTests = []struct {
+	b        []byte
+	substr   string
+	expected bool
+}{
+	{[]byte(""), "", false},
+	{[]byte(""), "a", false},
+	{[]byte(""), "abc", false},
+	{[]byte("a"), "", false},
+	{[]byte("a"), "a", true},
+	{[]byte("aaa"), "a", true},
+	{[]byte("abc"), "xyz", false},
+	{[]byte("abc"), "xcz", true},
+	{[]byte("a☺b☻c☹d"), "uvw☻xyz", true},
+	{[]byte("aRegExp*"), ".(|)*+?^$[]", true},
+	{[]byte(dots + dots + dots), " ", false},
+}
+
+func TestContainsAny(t *testing.T) {
+	for _, ct := range ContainsAnyTests {
+		if ContainsAny(ct.b, ct.substr) != ct.expected {
+			t.Errorf("ContainsAny(%s, %s) = %v, want %v",
+				ct.b, ct.substr, !ct.expected, ct.expected)
+		}
+	}
+}
+
+var ContainsRuneTests = []struct {
+	b        []byte
+	r        rune
+	expected bool
+}{
+	{[]byte(""), 'a', false},
+	{[]byte("a"), 'a', true},
+	{[]byte("aaa"), 'a', true},
+	{[]byte("abc"), 'y', false},
+	{[]byte("abc"), 'c', true},
+	{[]byte("a☺b☻c☹d"), 'x', false},
+	{[]byte("a☺b☻c☹d"), '☻', true},
+	{[]byte("aRegExp*"), '*', true},
+}
+
+func TestContainsRune(t *testing.T) {
+	for _, ct := range ContainsRuneTests {
+		if ContainsRune(ct.b, ct.r) != ct.expected {
+			t.Errorf("ContainsRune(%q, %q) = %v, want %v",
+				ct.b, ct.r, !ct.expected, ct.expected)
+		}
+	}
+}
+
+var makeFieldsInput = func() []byte {
+	x := make([]byte, 1<<20)
+	// Input is ~10% space, ~10% 2-byte UTF-8, rest ASCII non-space.
+	for i := range x {
+		switch rand.Intn(10) {
+		case 0:
+			x[i] = ' '
+		case 1:
+			if i > 0 && x[i-1] == 'x' {
+				copy(x[i-1:], "χ")
+				break
+			}
+			fallthrough
+		default:
+			x[i] = 'x'
+		}
+	}
+	return x
+}
+
+var fieldsInput = makeFieldsInput()
+
+func BenchmarkFields(b *testing.B) {
+	b.SetBytes(int64(len(fieldsInput)))
+	for i := 0; i < b.N; i++ {
+		Fields(fieldsInput)
+	}
+}
+
+func BenchmarkFieldsFunc(b *testing.B) {
+	b.SetBytes(int64(len(fieldsInput)))
+	for i := 0; i < b.N; i++ {
+		FieldsFunc(fieldsInput, unicode.IsSpace)
+	}
+}
+
+func BenchmarkTrimSpace(b *testing.B) {
+	s := []byte("  Some text.  \n")
+	for i := 0; i < b.N; i++ {
+		TrimSpace(s)
+	}
+}
+
+func BenchmarkRepeat(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		Repeat([]byte("-"), 80)
+	}
+}
+
+func BenchmarkBytesCompare(b *testing.B) {
+	for n := 1; n <= 2048; n <<= 1 {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			var x = make([]byte, n)
+			var y = make([]byte, n)
+
+			for i := 0; i < n; i++ {
+				x[i] = 'a'
+			}
+
+			for i := 0; i < n; i++ {
+				y[i] = 'a'
+			}
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				Compare(x, y)
+			}
+		})
+	}
+}
+
+func BenchmarkIndexAnyASCII(b *testing.B) {
+	x := Repeat([]byte{'#'}, 4096) // Never matches set
+	cs := "0123456789abcdef"
+	for k := 1; k <= 4096; k <<= 4 {
+		for j := 1; j <= 16; j <<= 1 {
+			b.Run(fmt.Sprintf("%d:%d", k, j), func(b *testing.B) {
+				for i := 0; i < b.N; i++ {
+					IndexAny(x[:k], cs[:j])
+				}
+			})
+		}
+	}
+}
+
+func BenchmarkTrimASCII(b *testing.B) {
+	cs := "0123456789abcdef"
+	for k := 1; k <= 4096; k <<= 4 {
+		for j := 1; j <= 16; j <<= 1 {
+			b.Run(fmt.Sprintf("%d:%d", k, j), func(b *testing.B) {
+				x := Repeat([]byte(cs[:j]), k) // Always matches set
+				for i := 0; i < b.N; i++ {
+					Trim(x[:k], cs[:j])
+				}
+			})
 		}
 	}
 }

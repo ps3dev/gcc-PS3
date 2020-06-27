@@ -16,17 +16,13 @@ struct tree_common
   enum tree_code code:8;
 };
 
-
-
-
-
 union tree_node
 {
   struct tree_common common;
 };
 
-
-
+int foo (int);
+int get_alias_set (tree);
 
 int
 objects_must_conflict_p (t1, t2)
@@ -46,4 +42,3 @@ objects_must_conflict_p (t1, t2)
    second to be propagated into all its uses and eliminated.   */
 /* { dg-final { scan-rtl-dump-times "PART.. = 0" 1 "expand"} } */
  
-/* { dg-final { cleanup-rtl-dump "expand" } } */

@@ -14,7 +14,10 @@
 ------------------------------------------------------------------------------
 
 package Ada.Dispatching is
-   pragma Pure (Dispatching);
+   pragma Preelaborate (Dispatching);
+
+   procedure Yield with
+     Global => null;
 
    Dispatching_Policy_Error : exception;
 end Ada.Dispatching;

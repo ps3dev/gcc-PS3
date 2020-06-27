@@ -1,6 +1,5 @@
 /* Memory address lowering and addressing mode selection.
-   Copyright (C) 2004, 2006, 2007, 2008, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 2004-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -24,27 +23,30 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
+#include "backend.h"
+#include "target.h"
+#include "rtl.h"
 #include "tree.h"
-#include "tm_p.h"
-#include "basic-block.h"
-#include "output.h"
+#include "gimple.h"
+#include "stringpool.h"
+#include "tree-vrp.h"
+#include "tree-ssanames.h"
+#include "expmed.h"
+#include "insn-config.h"
+#include "recog.h"
 #include "tree-pretty-print.h"
-#include "tree-flow.h"
-#include "tree-dump.h"
-#include "tree-pass.h"
-#include "timevar.h"
-#include "flags.h"
-#include "tree-inline.h"
+#include "fold-const.h"
+#include "stor-layout.h"
+#include "gimple-iterator.h"
+#include "gimplify-me.h"
+#include "tree-ssa-loop-ivopts.h"
+#include "expr.h"
+#include "tree-dfa.h"
+#include "dumpfile.h"
 #include "tree-affine.h"
 
 /* FIXME: We compute address costs using RTL.  */
-#include "insn-config.h"
-#include "rtl.h"
-#include "recog.h"
-#include "expr.h"
-#include "ggc.h"
-#include "target.h"
+#include "tree-ssa-address.h"
 
 /* TODO -- handling of symbols (according to Richard Hendersons
    comments, http://gcc.gnu.org/ml/gcc-patches/2005-04/msg00949.html):
@@ -73,22 +75,20 @@ along with GCC; see the file COPYING3.  If not see
 /* A "template" for memory address, used to determine whether the address is
    valid for mode.  */
 
-typedef struct GTY (()) mem_addr_template {
+struct GTY (()) mem_addr_template {
   rtx ref;			/* The template.  */
   rtx * GTY ((skip)) step_p;	/* The point in template where the step should be
 				   filled in.  */
   rtx * GTY ((skip)) off_p;	/* The point in template where the offset should
 				   be filled in.  */
-} mem_addr_template;
+};
 
-DEF_VEC_O (mem_addr_template);
-DEF_VEC_ALLOC_O (mem_addr_template, gc);
 
 /* The templates.  Each of the low five bits of the index corresponds to one
    component of TARGET_MEM_REF being present, while the high bits identify
    the address space.  See TEMPL_IDX.  */
 
-static GTY(()) VEC (mem_addr_template, gc) *mem_addr_template_list;
+static GTY(()) vec<mem_addr_template, va_gc> *mem_addr_template_list;
 
 #define TEMPL_IDX(AS, SYMBOL, BASE, INDEX, STEP, OFFSET) \
   (((int) (AS) << 5) \
@@ -103,7 +103,7 @@ static GTY(()) VEC (mem_addr_template, gc) *mem_addr_template_list;
    to where step is placed to *STEP_P and offset to *OFFSET_P.  */
 
 static void
-gen_addr_rtx (enum machine_mode address_mode,
+gen_addr_rtx (machine_mode address_mode,
 	      rtx symbol, rtx base, rtx index, rtx step, rtx offset,
 	      rtx *addr, rtx **step_p, rtx **offset_p)
 {
@@ -115,7 +115,7 @@ gen_addr_rtx (enum machine_mode address_mode,
   if (offset_p)
     *offset_p = NULL;
 
-  if (index)
+  if (index && index != const0_rtx)
     {
       act_elem = index;
       if (step)
@@ -178,6 +178,13 @@ gen_addr_rtx (enum machine_mode address_mode,
     *addr = const0_rtx;
 }
 
+/* Description of a memory address.  */
+
+struct mem_address
+{
+  tree symbol, base, index, step, offset;
+};
+
 /* Returns address for TARGET_MEM_REF with parameters given by ADDR
    in address space AS.
    If REALLY_EXPAND is false, just make fake registers instead
@@ -188,21 +195,21 @@ rtx
 addr_for_mem_ref (struct mem_address *addr, addr_space_t as,
 		  bool really_expand)
 {
-  enum machine_mode address_mode = targetm.addr_space.address_mode (as);
-  enum machine_mode pointer_mode = targetm.addr_space.pointer_mode (as);
+  machine_mode address_mode = targetm.addr_space.address_mode (as);
+  machine_mode pointer_mode = targetm.addr_space.pointer_mode (as);
   rtx address, sym, bse, idx, st, off;
   struct mem_addr_template *templ;
 
   if (addr->step && !integer_onep (addr->step))
-    st = immed_double_int_const (tree_to_double_int (addr->step), pointer_mode);
+    st = immed_wide_int_const (addr->step, pointer_mode);
   else
     st = NULL_RTX;
 
   if (addr->offset && !integer_zerop (addr->offset))
-    off = immed_double_int_const
-	    (double_int_sext (tree_to_double_int (addr->offset),
-			      TYPE_PRECISION (TREE_TYPE (addr->offset))),
-	     pointer_mode);
+    {
+      offset_int dc = offset_int::from (addr->offset, SIGNED);
+      off = immed_wide_int_const (dc, pointer_mode);
+    }
   else
     off = NULL_RTX;
 
@@ -211,13 +218,11 @@ addr_for_mem_ref (struct mem_address *addr, addr_space_t as,
       unsigned int templ_index
 	= TEMPL_IDX (as, addr->symbol, addr->base, addr->index, st, off);
 
-      if (templ_index
-	  >= VEC_length (mem_addr_template, mem_addr_template_list))
-	VEC_safe_grow_cleared (mem_addr_template, gc, mem_addr_template_list,
-			       templ_index + 1);
+      if (templ_index >= vec_safe_length (mem_addr_template_list))
+	vec_safe_grow_cleared (mem_addr_template_list, templ_index + 1);
 
       /* Reuse the templates for addresses, so that we do not waste memory.  */
-      templ = VEC_index (mem_addr_template, mem_addr_template_list, templ_index);
+      templ = &(*mem_addr_template_list)[templ_index];
       if (!templ->ref)
 	{
 	  sym = (addr->symbol ?
@@ -261,6 +266,17 @@ addr_for_mem_ref (struct mem_address *addr, addr_space_t as,
   if (pointer_mode != address_mode)
     address = convert_memory_address (address_mode, address);
   return address;
+}
+
+/* implement addr_for_mem_ref() directly from a tree, which avoids exporting
+   the mem_address structure.  */
+
+rtx
+addr_for_mem_ref (tree exp, addr_space_t as, bool really_expand)
+{
+  struct mem_address addr;
+  get_address_description (exp, &addr);
+  return addr_for_mem_ref (&addr, as, really_expand);
 }
 
 /* Returns address of MEM_REF in TYPE.  */
@@ -315,7 +331,7 @@ tree_mem_ref_addr (tree type, tree mem_ref)
    ADDR is valid on the current target.  */
 
 static bool
-valid_mem_ref_p (enum machine_mode mode, addr_space_t as,
+valid_mem_ref_p (machine_mode mode, addr_space_t as,
 		 struct mem_address *addr)
 {
   rtx address;
@@ -362,7 +378,7 @@ create_mem_ref_raw (tree type, tree alias_ptr_type, struct mem_address *addr,
     }
   else
     {
-      base = build_int_cst (ptr_type_node, 0);
+      base = build_int_cst (build_pointer_type (type), 0);
       index2 = addr->base;
     }
 
@@ -384,9 +400,8 @@ create_mem_ref_raw (tree type, tree alias_ptr_type, struct mem_address *addr,
 static bool
 fixed_address_object_p (tree obj)
 {
-  return (TREE_CODE (obj) == VAR_DECL
-	  && (TREE_STATIC (obj)
-	      || DECL_EXTERNAL (obj))
+  return (VAR_P (obj)
+	  && (TREE_STATIC (obj) || DECL_EXTERNAL (obj))
 	  && ! DECL_DLLIMPORT_P (obj));
 }
 
@@ -401,7 +416,7 @@ move_fixed_address_to_symbol (struct mem_address *parts, aff_tree *addr)
 
   for (i = 0; i < addr->n; i++)
     {
-      if (!double_int_one_p (addr->elts[i].coef))
+      if (addr->elts[i].coef != 1)
 	continue;
 
       val = addr->elts[i].val;
@@ -429,7 +444,7 @@ move_hint_to_base (tree type, struct mem_address *parts, tree base_hint,
 
   for (i = 0; i < addr->n; i++)
     {
-      if (!double_int_one_p (addr->elts[i].coef))
+      if (addr->elts[i].coef != 1)
 	continue;
 
       val = addr->elts[i].val;
@@ -461,7 +476,7 @@ move_pointer_to_base (struct mem_address *parts, aff_tree *addr)
 
   for (i = 0; i < addr->n; i++)
     {
-      if (!double_int_one_p (addr->elts[i].coef))
+      if (addr->elts[i].coef != 1)
 	continue;
 
       val = addr->elts[i].val;
@@ -497,7 +512,7 @@ move_variant_to_index (struct mem_address *parts, aff_tree *addr, tree v)
     return;
 
   parts->index = fold_convert (sizetype, val);
-  parts->step = double_int_to_tree (sizetype, addr->elts[i].coef);
+  parts->step = wide_int_to_tree (sizetype, addr->elts[i].coef);
   aff_combination_remove_elt (addr, i);
 }
 
@@ -538,31 +553,30 @@ most_expensive_mult_to_index (tree type, struct mem_address *parts,
 			      aff_tree *addr, bool speed)
 {
   addr_space_t as = TYPE_ADDR_SPACE (type);
-  enum machine_mode address_mode = targetm.addr_space.address_mode (as);
+  machine_mode address_mode = targetm.addr_space.address_mode (as);
   HOST_WIDE_INT coef;
-  double_int best_mult, amult, amult_neg;
   unsigned best_mult_cost = 0, acost;
   tree mult_elt = NULL_TREE, elt;
   unsigned i, j;
   enum tree_code op_code;
 
-  best_mult = double_int_zero;
+  offset_int best_mult = 0;
   for (i = 0; i < addr->n; i++)
     {
-      if (!double_int_fits_in_shwi_p (addr->elts[i].coef))
+      if (!wi::fits_shwi_p (addr->elts[i].coef))
 	continue;
 
-      coef = double_int_to_shwi (addr->elts[i].coef);
+      coef = addr->elts[i].coef.to_shwi ();
       if (coef == 1
 	  || !multiplier_allowed_in_address_p (coef, TYPE_MODE (type), as))
 	continue;
 
-      acost = multiply_by_cost (coef, address_mode, speed);
+      acost = mult_by_coeff_cost (coef, address_mode, speed);
 
       if (acost > best_mult_cost)
 	{
 	  best_mult_cost = acost;
-	  best_mult = addr->elts[i].coef;
+	  best_mult = offset_int::from (addr->elts[i].coef, SIGNED);
 	}
     }
 
@@ -572,12 +586,12 @@ most_expensive_mult_to_index (tree type, struct mem_address *parts,
   /* Collect elements multiplied by best_mult.  */
   for (i = j = 0; i < addr->n; i++)
     {
-      amult = addr->elts[i].coef;
-      amult_neg = double_int_ext_for_comb (double_int_neg (amult), addr);
+      offset_int amult = offset_int::from (addr->elts[i].coef, SIGNED);
+      offset_int amult_neg = -wi::sext (amult, TYPE_PRECISION (addr->type));
 
-      if (double_int_equal_p (amult, best_mult))
+      if (amult == best_mult)
 	op_code = PLUS_EXPR;
-      else if (double_int_equal_p (amult_neg, best_mult))
+      else if (amult_neg == best_mult)
 	op_code = MINUS_EXPR;
       else
 	{
@@ -597,7 +611,7 @@ most_expensive_mult_to_index (tree type, struct mem_address *parts,
   addr->n = j;
 
   parts->index = mult_elt;
-  parts->step = double_int_to_tree (sizetype, best_mult);
+  parts->step = wide_int_to_tree (sizetype, best_mult);
 }
 
 /* Splits address ADDR for a memory access of type TYPE into PARTS.
@@ -625,8 +639,8 @@ addr_to_parts (tree type, aff_tree *addr, tree iv_cand,
   parts->index = NULL_TREE;
   parts->step = NULL_TREE;
 
-  if (!double_int_zero_p (addr->offset))
-    parts->offset = double_int_to_tree (sizetype, addr->offset);
+  if (addr->offset != 0)
+    parts->offset = wide_int_to_tree (sizetype, addr->offset);
   else
     parts->offset = NULL_TREE;
 
@@ -657,9 +671,9 @@ addr_to_parts (tree type, aff_tree *addr, tree iv_cand,
   for (i = 0; i < addr->n; i++)
     {
       part = fold_convert (sizetype, addr->elts[i].val);
-      if (!double_int_one_p (addr->elts[i].coef))
+      if (addr->elts[i].coef != 1)
 	part = fold_build2 (MULT_EXPR, sizetype, part,
-			    double_int_to_tree (sizetype, addr->elts[i].coef));
+			    wide_int_to_tree (sizetype, addr->elts[i].coef));
       add_to_parts (parts, part);
     }
   if (addr->rest)
@@ -822,16 +836,6 @@ get_address_description (tree op, struct mem_address *addr)
   addr->offset = TMR_OFFSET (op);
 }
 
-/* Copies the additional information attached to target_mem_ref FROM to TO.  */
-
-void
-copy_mem_ref_info (tree to, tree from)
-{
-  /* And the info about the original reference.  */
-  TREE_SIDE_EFFECTS (to) = TREE_SIDE_EFFECTS (from);
-  TREE_THIS_VOLATILE (to) = TREE_THIS_VOLATILE (from);
-}
-
 /* Copies the reference information from OLD_REF to NEW_REF, where
    NEW_REF should be either a MEM_REF or a TARGET_MEM_REF.  */
 
@@ -863,28 +867,32 @@ copy_ref_info (tree new_ref, tree old_ref)
 	       && SSA_NAME_PTR_INFO (TREE_OPERAND (base, 0)))
 	{
 	  struct ptr_info_def *new_pi;
+	  unsigned int align, misalign;
+
 	  duplicate_ssa_name_ptr_info
 	    (new_ptr_base, SSA_NAME_PTR_INFO (TREE_OPERAND (base, 0)));
 	  new_pi = SSA_NAME_PTR_INFO (new_ptr_base);
-	  /* We have to be careful about transfering alignment information.  */
-	  if (TREE_CODE (old_ref) == MEM_REF
+	  /* We have to be careful about transferring alignment information.  */
+	  if (get_ptr_info_alignment (new_pi, &align, &misalign)
+	      && TREE_CODE (old_ref) == MEM_REF
 	      && !(TREE_CODE (new_ref) == TARGET_MEM_REF
 		   && (TMR_INDEX2 (new_ref)
+		       /* TODO: Below conditions can be relaxed if TMR_INDEX
+			  is an indcution variable and its initial value and
+			  step are aligned.  */
+		       || (TMR_INDEX (new_ref) && !TMR_STEP (new_ref))
 		       || (TMR_STEP (new_ref)
 			   && (TREE_INT_CST_LOW (TMR_STEP (new_ref))
-			       < new_pi->align)))))
+			       < align)))))
 	    {
-	      new_pi->misalign += double_int_sub (mem_ref_offset (old_ref),
-						  mem_ref_offset (new_ref)).low;
-	      new_pi->misalign &= (new_pi->align - 1);
+	      unsigned int inc = (mem_ref_offset (old_ref).to_short_addr ()
+				  - mem_ref_offset (new_ref).to_short_addr ());
+	      adjust_ptr_info_misalignment (new_pi, inc);
 	    }
 	  else
-	    {
-	      new_pi->align = 1;
-	      new_pi->misalign = 0;
-	    }
+	    mark_ptr_info_alignment_unknown (new_pi);
 	}
-      else if (TREE_CODE (base) == VAR_DECL
+      else if (VAR_P (base)
 	       || TREE_CODE (base) == PARM_DECL
 	       || TREE_CODE (base) == RESULT_DECL)
 	{
@@ -902,7 +910,7 @@ maybe_fold_tmr (tree ref)
 {
   struct mem_address addr;
   bool changed = false;
-  tree ret, off;
+  tree new_ref, off;
 
   get_address_description (ref, &addr);
 
@@ -963,10 +971,11 @@ maybe_fold_tmr (tree ref)
      ended up folding it, always create a new TARGET_MEM_REF regardless
      if it is valid in this for on the target - the propagation result
      wouldn't be anyway.  */
-  ret = create_mem_ref_raw (TREE_TYPE (ref),
-			    TREE_TYPE (addr.offset), &addr, false);
-  copy_mem_ref_info (ret, ref);
-  return ret;
+  new_ref = create_mem_ref_raw (TREE_TYPE (ref),
+			        TREE_TYPE (addr.offset), &addr, false);
+  TREE_SIDE_EFFECTS (new_ref) = TREE_SIDE_EFFECTS (ref);
+  TREE_THIS_VOLATILE (new_ref) = TREE_THIS_VOLATILE (ref);
+  return new_ref;
 }
 
 /* Dump PARTS to FILE.  */

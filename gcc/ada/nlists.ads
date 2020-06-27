@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2010, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -149,7 +149,6 @@ package Nlists is
    --  No_List. (No_List is not considered to be the same as an empty list).
 
    function List_Length (List : List_Id) return Nat;
-   pragma Inline (List_Length);
    --  Returns number of items in the given list. It is an error to call
    --  this function with No_List (No_List is not considered to be the same
    --  as an empty list).
@@ -226,9 +225,19 @@ package Nlists is
 
    procedure Append (Node : Node_Or_Entity_Id; To : List_Id);
    --  Appends Node at the end of node list To. Node must be a non-empty node
-   --  that is not already a member of a node list, and To must be a
-   --  node list. An attempt to append an error node is ignored without
-   --  complaint and the list is unchanged.
+   --  that is not already a member of a node list, and To must be a node list.
+   --  An attempt to append an error node is ignored without complaint and the
+   --  list is unchanged.
+
+   procedure Append_New (Node : Node_Or_Entity_Id; To : in out List_Id);
+   pragma Inline (Append_New);
+   --  Appends Node at the end of node list To. If To is non-existent list, a
+   --  list is created. Node must be a non-empty node that is not already a
+   --  member of a node list, and To must be a node list.
+
+   procedure Append_New_To (To : in out List_Id; Node : Node_Or_Entity_Id);
+   pragma Inline (Append_New_To);
+   --  Like Append_New, but the arguments are in reverse order
 
    procedure Append_To (To : List_Id; Node : Node_Or_Entity_Id);
    pragma Inline (Append_To);
@@ -280,12 +289,6 @@ package Nlists is
    --  node list. An attempt to prepend an error node is ignored without
    --  complaint and the list is unchanged.
 
-   procedure Prepend_To
-     (To   : List_Id;
-      Node : Node_Or_Entity_Id);
-   pragma Inline (Prepend_To);
-   --  Like Prepend, but arguments are the other way round
-
    procedure Prepend_List
      (List : List_Id;
       To   : List_Id);
@@ -297,6 +300,22 @@ package Nlists is
       List : List_Id);
    pragma Inline (Prepend_List_To);
    --  Like Prepend_List, but arguments are the other way round
+
+   procedure Prepend_New (Node : Node_Or_Entity_Id; To : in out List_Id);
+   pragma Inline (Prepend_New);
+   --  Prepends Node at the end of node list To. If To is non-existent list, a
+   --  list is created. Node must be a non-empty node that is not already a
+   --  member of a node list, and To must be a node list.
+
+   procedure Prepend_New_To (To : in out List_Id; Node : Node_Or_Entity_Id);
+   pragma Inline (Prepend_New_To);
+   --  Like Prepend_New, but the arguments are in reverse order
+
+   procedure Prepend_To
+     (To   : List_Id;
+      Node : Node_Or_Entity_Id);
+   pragma Inline (Prepend_To);
+   --  Like Prepend, but arguments are the other way round
 
    procedure Remove (Node : Node_Or_Entity_Id);
    --  Removes Node, which must be a node that is a member of a node list,
@@ -321,8 +340,17 @@ package Nlists is
    procedure Lock;
    --  Called to lock tables before back end is called
 
+   procedure Lock_Lists;
+   --  Called to lock list contents when assertions are enabled. Without
+   --  assertions calling this subprogram has no effect. The initial state
+   --  of the lock is unlocked.
+
    procedure Unlock;
    --  Unlock tables, in cases where the back end needs to modify them
+
+   procedure Unlock_Lists;
+   --  Called to unlock list contents when assertions are enabled; if
+   --  assertions are not enabled calling this subprogram has no effect.
 
    procedure Tree_Read;
    --  Initializes internal tables from current tree file using the relevant
@@ -346,7 +374,9 @@ package Nlists is
    function No (List : List_Id) return Boolean;
    pragma Inline (No);
    --  Tests given Id for equality with No_List. This allows notations like
-   --  "if No (Statements)" as opposed to "if Statements = No_List".
+   --  "if No (Statements)" as opposed to "if Statements = No_List". Note that
+   --  an empty list gives False for this test, as opposed to Is_Empty_List
+   --  which gives True either for No_List or for an empty list.
 
    function Present (List : List_Id) return Boolean;
    pragma Inline (Present);
@@ -362,13 +392,5 @@ package Nlists is
    function Prev_Node_Address return System.Address;
    --  These functions return the addresses of the Next_Node and Prev_Node
    --  tables (used in Back_End for Gigi).
-
-   function p (U : Union_Id) return Node_Or_Entity_Id;
-   --  This function is intended for use from the debugger, it determines
-   --  whether U is a Node_Id or List_Id, and calls the appropriate Parent
-   --  function and returns the parent Node in either case. This is shorter
-   --  to type, and avoids the overloading problem of using Parent. It
-   --  should NEVER be used except from the debugger. If p is called with
-   --  other than a node or list id value, it returns 99_999_999.
 
 end Nlists;

@@ -1,7 +1,8 @@
 /* { dg-do compile } */
-/* { dg-require-effective-target arm_vfp_ok } */
+/* { dg-require-effective-target arm_fp_ok } */
 /* { dg-skip-if "need fp instructions" { *-*-* } { "-mfloat-abi=soft" } { "" } } */
-/* { dg-options "-O2 -mfpu=vfp -mfloat-abi=softfp" } */
+/* { dg-options "-O2" } */
+/* { dg-add-options arm_fp } */
 
 void
 foo (float *p, float a, float b, int n)
@@ -12,4 +13,4 @@ foo (float *p, float a, float b, int n)
   while (n--);
 }
 
-/* { dg-final { scan-assembler "fstmdbs" } } */
+/* { dg-final { scan-assembler "vstmdb.32" } } */

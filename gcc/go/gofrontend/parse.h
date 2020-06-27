@@ -14,6 +14,7 @@ class Named_object;
 class Type;
 class Typed_identifier;
 class Typed_identifier_list;
+class Channel_type;
 class Function_type;
 class Block;
 class Expression;
@@ -80,7 +81,8 @@ class Parse
     Expression* expr;
 
     Type_switch()
-      : found(false), name(), location(UNKNOWN_LOCATION), expr(NULL)
+        : found(false), name(), location(Linemap::unknown_location()),
+          expr(NULL)
     { }
   };
 
@@ -155,14 +157,10 @@ class Parse
   // break or continue statement with no label.
   typedef std::vector<std::pair<Statement*, Label*> > Bc_stack;
 
-  // Map from type switch variables to the variables they mask, so
-  // that a use of the type switch variable can become a use of the
-  // real variable.
-  typedef Unordered_map(Named_object*, Named_object*) Type_switch_vars;
-
   // Parser nonterminals.
   void identifier_list(Typed_identifier_list*);
-  Expression_list* expression_list(Expression*, bool may_be_sink);
+  Expression_list* expression_list(Expression*, bool may_be_sink,
+				   bool may_be_composite_lit);
   bool qualified_ident(std::string*, Named_object**);
   Type* type();
   bool type_may_start_here();
@@ -177,10 +175,10 @@ class Parse
   Function_type* signature(Typed_identifier*, Location);
   bool parameters(Typed_identifier_list**, bool* is_varargs);
   Typed_identifier_list* parameter_list(bool* is_varargs);
-  void parameter_decl(bool, Typed_identifier_list*, bool*, bool*);
+  void parameter_decl(bool, Typed_identifier_list*, bool*, bool*, bool*);
   bool result(Typed_identifier_list**);
   Location block();
-  Type* interface_type();
+  Type* interface_type(bool record);
   void method_spec(Typed_identifier_list*);
   void declaration();
   bool declaration_may_start_here();
@@ -204,31 +202,37 @@ class Parse
 				 Expression*, bool is_coloneq,
 				 Location);
   Named_object* init_var(const Typed_identifier&, Type*, Expression*,
-			 bool is_coloneq, bool type_from_init, bool* is_new);
+			 bool is_coloneq, bool type_from_init, bool* is_new,
+			 Expression_list* vars, Expression_list* vals);
   Named_object* create_dummy_global(Type*, Expression*, Location);
+  void finish_init_vars(Expression_list* vars, Expression_list* vals,
+			Location);
   void simple_var_decl_or_assignment(const std::string&, Location,
+				     bool may_be_composite_lit,
 				     Range_clause*, Type_switch*);
-  void function_decl();
+  void function_decl(unsigned int pragmas);
   Typed_identifier* receiver();
-  Expression* operand(bool may_be_sink);
+  Expression* operand(bool may_be_sink, bool *is_parenthesized);
   Expression* enclosing_var_reference(Named_object*, Named_object*,
-				      Location);
+				      bool may_be_sink, Location);
   Expression* composite_lit(Type*, int depth, Location);
   Expression* function_lit();
   Expression* create_closure(Named_object* function, Enclosing_vars*,
 			     Location);
   Expression* primary_expr(bool may_be_sink, bool may_be_composite_lit,
-			   bool* is_type_switch);
+			   bool* is_type_switch, bool* is_parenthesized);
   Expression* selector(Expression*, bool* is_type_switch);
   Expression* index(Expression*);
   Expression* call(Expression*);
   Expression* expression(Precedence, bool may_be_sink,
-			 bool may_be_composite_lit, bool* is_type_switch);
+			 bool may_be_composite_lit, bool* is_type_switch,
+			 bool *is_parenthesized);
   bool expression_may_start_here();
   Expression* unary_expr(bool may_be_sink, bool may_be_composite_lit,
-			 bool* is_type_switch);
+			 bool* is_type_switch, bool* is_parenthesized);
+  Type* reassociate_chan_direction(Channel_type*, Location);
   Expression* qualified_expr(Expression*, Location);
-  Expression* id_to_expression(const std::string&, Location);
+  Expression* id_to_expression(const std::string&, Location, bool);
   void statement(Label*);
   bool statement_may_start_here();
   void labeled_stmt(const std::string&, Location);
@@ -237,10 +241,11 @@ class Parse
   void statement_list();
   bool statement_list_may_start_here();
   void expression_stat(Expression*);
-  void send_stmt(Expression*);
+  void send_stmt(Expression*, bool may_be_composite_lit);
   void inc_dec_stat(Expression*);
-  void assignment(Expression*, Range_clause*);
-  void tuple_assignment(Expression_list*, Range_clause*);
+  void assignment(Expression*, bool may_be_composite_lit, Range_clause*);
+  void tuple_assignment(Expression_list*, bool may_be_composite_lit,
+			Range_clause*);
   void send();
   void go_or_defer_stat();
   void return_stat();
@@ -250,7 +255,8 @@ class Parse
   void expr_case_clause(Case_clauses*, bool* saw_default);
   Expression_list* expr_switch_case(bool*);
   Statement* type_switch_body(Label*, const Type_switch&, Location);
-  void type_case_clause(Named_object*, Type_case_clauses*, bool* saw_default);
+  void type_case_clause(const std::string&, Expression*, Type_case_clauses*,
+                        bool* saw_default, std::vector<Named_object*>*);
   void type_switch_case(std::vector<Type*>*, bool*);
   void select_stat(Label*);
   void comm_clause(Select_clauses*, bool* saw_default);
@@ -318,8 +324,6 @@ class Parse
   // References from the local function to variables defined in
   // enclosing functions.
   Enclosing_vars enclosing_vars_;
-  // Map from type switch variables to real variables.
-  Type_switch_vars type_switch_vars_;
 };
 
 

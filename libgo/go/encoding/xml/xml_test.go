@@ -1,14 +1,17 @@
-// Copyright 2009 The Go Authors.  All rights reserved.
+// Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
 package xml
 
 import (
+	"bytes"
+	"fmt"
 	"io"
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 const testInput = `
@@ -18,6 +21,7 @@ const testInput = `
 <body xmlns:foo="ns1" xmlns="ns2" xmlns:tag="ns3" ` +
 	"\r\n\t" + `  >
   <hello lang="en">World &lt;&gt;&apos;&quot; &#x767d;&#40300;翔</hello>
+  <query>&何; &is-it;</query>
   <goodbye />
   <outer foo:attr="value" xmlns:tag="ns4">
     <inner/>
@@ -26,6 +30,8 @@ const testInput = `
     <![CDATA[Some text here.]]>
   </tag:name>
 </body><!-- missing final newline -->`
+
+var testEntity = map[string]string{"何": "What", "is-it": "is it?"}
 
 var rawTokens = []Token{
 	CharData("\n"),
@@ -39,6 +45,10 @@ var rawTokens = []Token{
 	StartElement{Name{"", "hello"}, []Attr{{Name{"", "lang"}, "en"}}},
 	CharData("World <>'\" 白鵬翔"),
 	EndElement{Name{"", "hello"}},
+	CharData("\n  "),
+	StartElement{Name{"", "query"}, []Attr{}},
+	CharData("What is it?"),
+	EndElement{Name{"", "query"}},
 	CharData("\n  "),
 	StartElement{Name{"", "goodbye"}, []Attr{}},
 	EndElement{Name{"", "goodbye"}},
@@ -72,6 +82,10 @@ var cookedTokens = []Token{
 	StartElement{Name{"ns2", "hello"}, []Attr{{Name{"", "lang"}, "en"}}},
 	CharData("World <>'\" 白鵬翔"),
 	EndElement{Name{"ns2", "hello"}},
+	CharData("\n  "),
+	StartElement{Name{"ns2", "query"}, []Attr{}},
+	CharData("What is it?"),
+	EndElement{Name{"ns2", "query"}},
 	CharData("\n  "),
 	StartElement{Name{"ns2", "goodbye"}, []Attr{}},
 	EndElement{Name{"ns2", "goodbye"}},
@@ -155,7 +169,61 @@ var xmlInput = []string{
 
 func TestRawToken(t *testing.T) {
 	d := NewDecoder(strings.NewReader(testInput))
-	testRawToken(t, d, rawTokens)
+	d.Entity = testEntity
+	testRawToken(t, d, testInput, rawTokens)
+}
+
+const nonStrictInput = `
+<tag>non&entity</tag>
+<tag>&unknown;entity</tag>
+<tag>&#123</tag>
+<tag>&#zzz;</tag>
+<tag>&なまえ3;</tag>
+<tag>&lt-gt;</tag>
+<tag>&;</tag>
+<tag>&0a;</tag>
+`
+
+var nonStrictTokens = []Token{
+	CharData("\n"),
+	StartElement{Name{"", "tag"}, []Attr{}},
+	CharData("non&entity"),
+	EndElement{Name{"", "tag"}},
+	CharData("\n"),
+	StartElement{Name{"", "tag"}, []Attr{}},
+	CharData("&unknown;entity"),
+	EndElement{Name{"", "tag"}},
+	CharData("\n"),
+	StartElement{Name{"", "tag"}, []Attr{}},
+	CharData("&#123"),
+	EndElement{Name{"", "tag"}},
+	CharData("\n"),
+	StartElement{Name{"", "tag"}, []Attr{}},
+	CharData("&#zzz;"),
+	EndElement{Name{"", "tag"}},
+	CharData("\n"),
+	StartElement{Name{"", "tag"}, []Attr{}},
+	CharData("&なまえ3;"),
+	EndElement{Name{"", "tag"}},
+	CharData("\n"),
+	StartElement{Name{"", "tag"}, []Attr{}},
+	CharData("&lt-gt;"),
+	EndElement{Name{"", "tag"}},
+	CharData("\n"),
+	StartElement{Name{"", "tag"}, []Attr{}},
+	CharData("&;"),
+	EndElement{Name{"", "tag"}},
+	CharData("\n"),
+	StartElement{Name{"", "tag"}, []Attr{}},
+	CharData("&0a;"),
+	EndElement{Name{"", "tag"}},
+	CharData("\n"),
+}
+
+func TestNonStrictRawToken(t *testing.T) {
+	d := NewDecoder(strings.NewReader(nonStrictInput))
+	d.Strict = false
+	testRawToken(t, d, nonStrictInput, nonStrictTokens)
 }
 
 type downCaser struct {
@@ -177,16 +245,14 @@ func (d *downCaser) Read(p []byte) (int, error) {
 }
 
 func TestRawTokenAltEncoding(t *testing.T) {
-	sawEncoding := ""
 	d := NewDecoder(strings.NewReader(testInputAltEncoding))
 	d.CharsetReader = func(charset string, input io.Reader) (io.Reader, error) {
-		sawEncoding = charset
 		if charset != "x-testing-uppercase" {
 			t.Fatalf("unexpected charset %q", charset)
 		}
 		return &downCaser{t, input.(io.ByteReader)}, nil
 	}
-	testRawToken(t, d, rawTokensAltEncoding)
+	testRawToken(t, d, testInputAltEncoding, rawTokensAltEncoding)
 }
 
 func TestRawTokenAltEncodingNoConverter(t *testing.T) {
@@ -212,15 +278,49 @@ func TestRawTokenAltEncodingNoConverter(t *testing.T) {
 	}
 }
 
-func testRawToken(t *testing.T, d *Decoder, rawTokens []Token) {
+func testRawToken(t *testing.T, d *Decoder, raw string, rawTokens []Token) {
+	lastEnd := int64(0)
 	for i, want := range rawTokens {
+		start := d.InputOffset()
 		have, err := d.RawToken()
+		end := d.InputOffset()
 		if err != nil {
 			t.Fatalf("token %d: unexpected error: %s", i, err)
 		}
 		if !reflect.DeepEqual(have, want) {
-			t.Errorf("token %d = %#v want %#v", i, have, want)
+			var shave, swant string
+			if _, ok := have.(CharData); ok {
+				shave = fmt.Sprintf("CharData(%q)", have)
+			} else {
+				shave = fmt.Sprintf("%#v", have)
+			}
+			if _, ok := want.(CharData); ok {
+				swant = fmt.Sprintf("CharData(%q)", want)
+			} else {
+				swant = fmt.Sprintf("%#v", want)
+			}
+			t.Errorf("token %d = %s, want %s", i, shave, swant)
 		}
+
+		// Check that InputOffset returned actual token.
+		switch {
+		case start < lastEnd:
+			t.Errorf("token %d: position [%d,%d) for %T is before previous token", i, start, end, have)
+		case start >= end:
+			// Special case: EndElement can be synthesized.
+			if start == end && end == lastEnd {
+				break
+			}
+			t.Errorf("token %d: position [%d,%d) for %T is empty", i, start, end, have)
+		case end > int64(len(raw)):
+			t.Errorf("token %d: position [%d,%d) for %T extends beyond input", i, start, end, have)
+		default:
+			text := raw[start:end]
+			if strings.ContainsAny(text, "<>") && (!strings.HasPrefix(text, "<") || !strings.HasSuffix(text, ">")) {
+				t.Errorf("token %d: misaligned raw token %#q for %T", i, text, have)
+			}
+		}
+		lastEnd = end
 	}
 }
 
@@ -272,6 +372,7 @@ func TestNestedDirectives(t *testing.T) {
 
 func TestToken(t *testing.T) {
 	d := NewDecoder(strings.NewReader(testInput))
+	d.Entity = testEntity
 
 	for i, want := range cookedTokens {
 		have, err := d.Token()
@@ -515,13 +616,6 @@ func TestEntityInsideCDATA(t *testing.T) {
 	}
 }
 
-// The last three tests (respectively one for characters in attribute
-// names and two for character entities) pass not because of code
-// changed for issue 1259, but instead pass with the given messages
-// from other parts of xml.Decoder.  I provide these to note the
-// current behavior of situations where one might think that character
-// range checking would detect the error, but it does not in fact.
-
 var characterTests = []struct {
 	in  string
 	err string
@@ -531,8 +625,10 @@ var characterTests = []struct {
 	{"\xef\xbf\xbe<doc/>", "illegal character code U+FFFE"},
 	{"<?xml version=\"1.0\"?><doc>\r\n<hiya/>\x07<toots/></doc>", "illegal character code U+0007"},
 	{"<?xml version=\"1.0\"?><doc \x12='value'>what's up</doc>", "expected attribute name in element"},
-	{"<doc>&\x01;</doc>", "invalid character entity &;"},
-	{"<doc>&\xef\xbf\xbe;</doc>", "invalid character entity &;"},
+	{"<doc>&abc\x01;</doc>", "invalid character entity &abc (no semicolon)"},
+	{"<doc>&\x01;</doc>", "invalid character entity & (no semicolon)"},
+	{"<doc>&\xef\xbf\xbe;</doc>", "invalid character entity &\uFFFE;"},
+	{"<doc>&hello;</doc>", "invalid character entity &hello;"},
 }
 
 func TestDisallowedCharacters(t *testing.T) {
@@ -549,30 +645,189 @@ func TestDisallowedCharacters(t *testing.T) {
 			t.Fatalf("input %d d.Token() = _, %v, want _, *SyntaxError", i, err)
 		}
 		if synerr.Msg != tt.err {
-			t.Fatalf("input %d synerr.Msg wrong: want '%s', got '%s'", i, tt.err, synerr.Msg)
+			t.Fatalf("input %d synerr.Msg wrong: want %q, got %q", i, tt.err, synerr.Msg)
 		}
 	}
 }
 
-type procInstEncodingTest struct {
-	expect, got string
-}
-
 var procInstTests = []struct {
-	input, expect string
+	input  string
+	expect [2]string
 }{
-	{`version="1.0" encoding="utf-8"`, "utf-8"},
-	{`version="1.0" encoding='utf-8'`, "utf-8"},
-	{`version="1.0" encoding='utf-8' `, "utf-8"},
-	{`version="1.0" encoding=utf-8`, ""},
-	{`encoding="FOO" `, "FOO"},
+	{`version="1.0" encoding="utf-8"`, [2]string{"1.0", "utf-8"}},
+	{`version="1.0" encoding='utf-8'`, [2]string{"1.0", "utf-8"}},
+	{`version="1.0" encoding='utf-8' `, [2]string{"1.0", "utf-8"}},
+	{`version="1.0" encoding=utf-8`, [2]string{"1.0", ""}},
+	{`encoding="FOO" `, [2]string{"", "FOO"}},
 }
 
 func TestProcInstEncoding(t *testing.T) {
 	for _, test := range procInstTests {
-		got := procInstEncoding(test.input)
-		if got != test.expect {
-			t.Errorf("procInstEncoding(%q) = %q; want %q", test.input, got, test.expect)
+		if got := procInst("version", test.input); got != test.expect[0] {
+			t.Errorf("procInst(version, %q) = %q; want %q", test.input, got, test.expect[0])
+		}
+		if got := procInst("encoding", test.input); got != test.expect[1] {
+			t.Errorf("procInst(encoding, %q) = %q; want %q", test.input, got, test.expect[1])
+		}
+	}
+}
+
+// Ensure that directives with comments include the complete
+// text of any nested directives.
+
+var directivesWithCommentsInput = `
+<!DOCTYPE [<!-- a comment --><!ENTITY rdf "http://www.w3.org/1999/02/22-rdf-syntax-ns#">]>
+<!DOCTYPE [<!ENTITY go "Golang"><!-- a comment-->]>
+<!DOCTYPE <!-> <!> <!----> <!-->--> <!--->--> [<!ENTITY go "Golang"><!-- a comment-->]>
+`
+
+var directivesWithCommentsTokens = []Token{
+	CharData("\n"),
+	Directive(`DOCTYPE [<!ENTITY rdf "http://www.w3.org/1999/02/22-rdf-syntax-ns#">]`),
+	CharData("\n"),
+	Directive(`DOCTYPE [<!ENTITY go "Golang">]`),
+	CharData("\n"),
+	Directive(`DOCTYPE <!-> <!>    [<!ENTITY go "Golang">]`),
+	CharData("\n"),
+}
+
+func TestDirectivesWithComments(t *testing.T) {
+	d := NewDecoder(strings.NewReader(directivesWithCommentsInput))
+
+	for i, want := range directivesWithCommentsTokens {
+		have, err := d.Token()
+		if err != nil {
+			t.Fatalf("token %d: unexpected error: %s", i, err)
+		}
+		if !reflect.DeepEqual(have, want) {
+			t.Errorf("token %d = %#v want %#v", i, have, want)
+		}
+	}
+}
+
+// Writer whose Write method always returns an error.
+type errWriter struct{}
+
+func (errWriter) Write(p []byte) (n int, err error) { return 0, fmt.Errorf("unwritable") }
+
+func TestEscapeTextIOErrors(t *testing.T) {
+	expectErr := "unwritable"
+	err := EscapeText(errWriter{}, []byte{'A'})
+
+	if err == nil || err.Error() != expectErr {
+		t.Errorf("have %v, want %v", err, expectErr)
+	}
+}
+
+func TestEscapeTextInvalidChar(t *testing.T) {
+	input := []byte("A \x00 terminated string.")
+	expected := "A \uFFFD terminated string."
+
+	buff := new(bytes.Buffer)
+	if err := EscapeText(buff, input); err != nil {
+		t.Fatalf("have %v, want nil", err)
+	}
+	text := buff.String()
+
+	if text != expected {
+		t.Errorf("have %v, want %v", text, expected)
+	}
+}
+
+func TestIssue5880(t *testing.T) {
+	type T []byte
+	data, err := Marshal(T{192, 168, 0, 1})
+	if err != nil {
+		t.Errorf("Marshal error: %v", err)
+	}
+	if !utf8.Valid(data) {
+		t.Errorf("Marshal generated invalid UTF-8: %x", data)
+	}
+}
+
+func TestIssue11405(t *testing.T) {
+	testCases := []string{
+		"<root>",
+		"<root><foo>",
+		"<root><foo></foo>",
+	}
+	for _, tc := range testCases {
+		d := NewDecoder(strings.NewReader(tc))
+		var err error
+		for {
+			_, err = d.Token()
+			if err != nil {
+				break
+			}
+		}
+		if _, ok := err.(*SyntaxError); !ok {
+			t.Errorf("%s: Token: Got error %v, want SyntaxError", tc, err)
+		}
+	}
+}
+
+func TestIssue12417(t *testing.T) {
+	testCases := []struct {
+		s  string
+		ok bool
+	}{
+		{`<?xml encoding="UtF-8" version="1.0"?><root/>`, true},
+		{`<?xml encoding="UTF-8" version="1.0"?><root/>`, true},
+		{`<?xml encoding="utf-8" version="1.0"?><root/>`, true},
+		{`<?xml encoding="uuu-9" version="1.0"?><root/>`, false},
+	}
+	for _, tc := range testCases {
+		d := NewDecoder(strings.NewReader(tc.s))
+		var err error
+		for {
+			_, err = d.Token()
+			if err != nil {
+				if err == io.EOF {
+					err = nil
+				}
+				break
+			}
+		}
+		if err != nil && tc.ok {
+			t.Errorf("%q: Encoding charset: expected no error, got %s", tc.s, err)
+			continue
+		}
+		if err == nil && !tc.ok {
+			t.Errorf("%q: Encoding charset: expected error, got nil", tc.s)
+		}
+	}
+}
+
+func TestIssue19333(t *testing.T) {
+	type X struct {
+		XMLName Name `xml:"X"`
+		A       int  `xml:",attr"`
+		C       int
+	}
+
+	var tests = []struct {
+		input string
+		ok    bool
+	}{
+		{`<X></X>`, true},
+		{`<X A=""></X>`, true},
+		{`<X A="bad"></X>`, true},
+		{`<X></X>`, true},
+		{`<X><C></C></X>`, false},
+		{`<X><C/></X>`, false},
+		{`<X><C>bad</C></X>`, false},
+	}
+
+	for _, tt := range tests {
+		err := Unmarshal([]byte(tt.input), new(X))
+		if tt.ok {
+			if err != nil {
+				t.Errorf("%s: unexpected error: %v", tt.input, err)
+			}
+		} else {
+			if err == nil {
+				t.Errorf("%s: unexpected success", tt.input)
+			}
 		}
 	}
 }

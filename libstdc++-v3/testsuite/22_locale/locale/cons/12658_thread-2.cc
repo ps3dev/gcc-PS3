@@ -1,10 +1,9 @@
-// { dg-do run { target *-*-freebsd* *-*-netbsd* *-*-linux* *-*-solaris* *-*-cygwin *-*-darwin* alpha*-*-osf* mips-sgi-irix6* } }
-// { dg-options "-pthread" { target *-*-freebsd* *-*-netbsd* *-*-linux* alpha*-*-osf* mips-sgi-irix6* } }
-// { dg-options "-pthreads" { target *-*-solaris* } }
-// { dg-require-namedlocale "en_US" }
-// { dg-require-namedlocale "fr_FR" }
+// { dg-do run { target *-*-freebsd* *-*-dragonfly* *-*-netbsd* *-*-linux* *-*-gnu* *-*-solaris* *-*-cygwin *-*-rtems* *-*-darwin* } }
+// { dg-options "-pthread" { target *-*-freebsd* *-*-dragonfly* *-*-netbsd* *-*-linux* *-*-gnu* *-*-solaris* } }
+// { dg-require-namedlocale "en_US.ISO8859-1" }
+// { dg-require-namedlocale "fr_FR.ISO8859-15" }
 
-// Copyright (C) 2004, 2005, 2007, 2009, 2010 Free Software Foundation
+// Copyright (C) 2004-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -53,7 +52,7 @@ main()
   pthread_t tid[max_thread_count];
   
   for (int j = 0; j < max_locales; ++j)
-    loc[j] = std::locale(j % 2 ? "en_US" : "fr_FR");  
+    loc[j] = std::locale(j % 2 ? ISO_8859(1,en_US) : ISO_8859(15,fr_FR));
 
   for (int i = 0; i < max_thread_count; i++)
     pthread_create(&tid[i], 0, thread_main, 0);

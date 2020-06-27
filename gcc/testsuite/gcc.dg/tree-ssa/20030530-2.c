@@ -7,6 +7,7 @@ typedef struct rs6000_stack {
 } rs6000_stack_t;
 extern char regs_ever_live[113];
 extern rs6000_stack_t *rs6000_stack_info (void);
+extern void gen_rtx_REG (int);
 void
 rs6000_emit_prologue (int i, rs6000_stack_t *info)
 {
@@ -23,5 +24,4 @@ rs6000_emit_prologue (int i, rs6000_stack_t *info)
    commutative operands correctly.  */
 /* { dg-final { scan-tree-dump-times "\\+" 1 "dom2"} } */
  
-/* { dg-final { cleanup-tree-dump "dom2" } } */
 

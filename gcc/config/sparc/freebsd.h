@@ -1,6 +1,5 @@
 /* Definitions for Sun SPARC64 running FreeBSD using the ELF format
-   Copyright (C) 2001, 2002, 2004, 2005, 2006, 2007, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 2001-2017 Free Software Foundation, Inc.
    Contributed by David E. O'Brien <obrien@FreeBSD.org> and BSDi.
 
 This file is part of GCC.
@@ -39,7 +38,7 @@ along with GCC; see the file COPYING3.  If not see
   while (0)
 
 #undef ASM_SPEC
-#define ASM_SPEC "%{fpic|fPIC|fpie|fPIE:-K PIC} %(asm_cpu)"
+#define ASM_SPEC "%{" FPIE_OR_FPIC_SPEC ":-K PIC} %(asm_cpu)"
 
 #define LINK_SPEC "%(link_arch)						\
   %{!mno-relax:%{!r:-relax}}						\
@@ -71,14 +70,6 @@ along with GCC; see the file COPYING3.  If not see
    SPARC ABI says that long double is 4 words.  */
 #undef  LONG_DOUBLE_TYPE_SIZE
 #define LONG_DOUBLE_TYPE_SIZE (TARGET_LONG_DOUBLE_128 ? 128 : 64)
-
-/* Define this to set long double type size to use in libgcc2.c, which can
-   not depend on target_flags.  */
-#if defined(__arch64__) || defined(__LONG_DOUBLE_128__)
-#define LIBGCC2_LONG_DOUBLE_TYPE_SIZE 128
-#else
-#define LIBGCC2_LONG_DOUBLE_TYPE_SIZE 64
-#endif
 
 /* Definitions for 64-bit SPARC running systems with ELF. */
 

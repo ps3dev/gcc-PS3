@@ -1,5 +1,5 @@
 ! { dg-do compile }
-! { dg-options "-fdump-tree-original" }
+! { dg-options "-fdump-tree-original -Wc-binding-type" }
 !
 ! PR fortran/34079
 ! Character bind(c) arguments shall not pass the length as additional argument
@@ -148,4 +148,3 @@ end program test
 ! { dg-final { scan-tree-dump "subiso_val .121.;" "original" } }
 ! { dg-final { scan-tree-dump "subiso2_val ..z..;" "original" } }
 !
-! { dg-final { cleanup-tree-dump "original" } }

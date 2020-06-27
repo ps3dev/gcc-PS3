@@ -6,7 +6,7 @@
  *                                                                          *
  *                              C Header File                               *
  *                                                                          *
- *          Copyright (C) 1992-2011, Free Software Foundation, Inc.         *
+ *          Copyright (C) 1992-2016, Free Software Foundation, Inc.         *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -29,17 +29,24 @@
  *                                                                          *
  ****************************************************************************/
 
-/* This file contains definitions to access front-end functions and
-   variables used by gigi.  */
+/* This file contains declarations to access front-end functions and variables
+   used by gigi.
+
+   WARNING: functions taking String_Pointer parameters must abide by the rule
+   documented alongside the definition of String_Pointer in types.h.  */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* comperr:  */
+/* atree: */
+
+#define Serious_Errors_Detected atree__serious_errors_detected
+
+/* comperr: */
 
 #define Compiler_Abort comperr__compiler_abort
-extern int Compiler_Abort (Fat_Pointer, int, Fat_Pointer) ATTRIBUTE_NORETURN;
+extern int Compiler_Abort (String_Pointer, String_Pointer, Boolean) ATTRIBUTE_NORETURN;
 
 /* csets: */
 
@@ -52,9 +59,7 @@ extern char Fold_Lower[], Fold_Upper[];
 #define Debug_Flag_NN debug__debug_flag_nn
 extern Boolean Debug_Flag_NN;
 
-/* einfo: We will be setting Esize for types, Component_Bit_Offset for fields,
-   Alignment for types and objects, Component_Size for array types, and
-   Present_Expr for N_Variant nodes.  */
+/* einfo: */
 
 #define Set_Alignment			einfo__set_alignment
 #define Set_Component_Bit_Offset	einfo__set_component_bit_offset
@@ -62,7 +67,6 @@ extern Boolean Debug_Flag_NN;
 #define Set_Esize			einfo__set_esize
 #define Set_Mechanism			einfo__set_mechanism
 #define Set_RM_Size			einfo__set_rm_size
-#define Set_Present_Expr		sinfo__set_present_expr
 
 extern void Set_Alignment		(Entity_Id, Uint);
 extern void Set_Component_Bit_Offset	(Entity_Id, Uint);
@@ -70,10 +74,7 @@ extern void Set_Component_Size		(Entity_Id, Uint);
 extern void Set_Esize			(Entity_Id, Uint);
 extern void Set_Mechanism		(Entity_Id, Mechanism_Type);
 extern void Set_RM_Size			(Entity_Id, Uint);
-extern void Set_Present_Expr		(Node_Id, Uint);
 
-/* Test if the node N is the name of an entity (i.e. is an identifier,
-   expanded name, or an attribute reference that returns an entity).  */
 #define Is_Entity_Name einfo__is_entity_name
 extern Boolean Is_Entity_Name		(Node_Id);
 
@@ -86,8 +87,8 @@ extern Node_Id Get_Attribute_Definition_Clause (Entity_Id, char);
 #define Error_Msg_NE              errout__error_msg_ne
 #define Set_Identifier_Casing     errout__set_identifier_casing
 
-extern void Error_Msg_N	          (Fat_Pointer, Node_Id);
-extern void Error_Msg_NE          (Fat_Pointer, Node_Id, Entity_Id);
+extern void Error_Msg_N	          (String_Pointer, Node_Id);
+extern void Error_Msg_NE          (String_Pointer, Node_Id, Entity_Id);
 extern void Set_Identifier_Casing (Char *, const Char *);
 
 /* err_vars: */
@@ -95,7 +96,6 @@ extern void Set_Identifier_Casing (Char *, const Char *);
 #define Error_Msg_Node_2        err_vars__error_msg_node_2
 #define Error_Msg_Uint_1        err_vars__error_msg_uint_1
 #define Error_Msg_Uint_2        err_vars__error_msg_uint_2
-#define Serious_Errors_Detected err_vars__serious_errors_detected
 
 extern Entity_Id Error_Msg_Node_2;
 extern Uint      Error_Msg_Uint_1;
@@ -106,9 +106,11 @@ extern Nat       Serious_Errors_Detected;
 
 #define Get_Local_Raise_Call_Entity exp_ch11__get_local_raise_call_entity
 #define Get_RT_Exception_Entity exp_ch11__get_rt_exception_entity
+#define Get_RT_Exception_Name exp_ch11__get_rt_exception_name
 
 extern Entity_Id Get_Local_Raise_Call_Entity (void);
 extern Entity_Id Get_RT_Exception_Entity (int);
+extern void Get_RT_Exception_Name (int);
 
 /* exp_code:  */
 
@@ -142,11 +144,9 @@ extern void Setup_Asm_Outputs		(Node_Id);
 
 #define Get_Encoded_Name exp_dbug__get_encoded_name
 #define Get_External_Name exp_dbug__get_external_name
-#define Get_External_Name_With_Suffix exp_dbug__get_external_name_with_suffix
 
-extern void Get_Encoded_Name			(Entity_Id);
-extern void Get_External_Name			(Entity_Id, Boolean);
-extern void Get_External_Name_With_Suffix	(Entity_Id, Fat_Pointer);
+extern void Get_Encoded_Name	(Entity_Id);
+extern void Get_External_Name	(Entity_Id, Boolean, String_Pointer);
 
 /* exp_util: */
 
@@ -168,35 +168,65 @@ extern Boolean In_Same_Source_Unit              (Node_Id, Node_Id);
 
 /* opt: */
 
-#define Global_Discard_Names           opt__global_discard_names
+#define Back_End_Inlining              opt__back_end_inlining
 #define Exception_Extra_Info           opt__exception_extra_info
 #define Exception_Locations_Suppressed opt__exception_locations_suppressed
 #define Exception_Mechanism            opt__exception_mechanism
-#define Back_Annotate_Rep_Info         opt__back_annotate_rep_info
+#define Float_Format                   opt__float_format
+#define Generate_SCO_Instance_Table    opt__generate_sco_instance_table
+#define GNAT_Mode                      opt__gnat_mode
+#define List_Representation_Info       opt__list_representation_info
+#define No_Strict_Aliasing_CP          opt__no_strict_aliasing
 
-typedef enum {Setjmp_Longjmp, Back_End_Exceptions} Exception_Mechanism_Type;
+typedef enum {
+  Front_End_SJLJ, Back_End_ZCX, Back_End_SJLJ
+} Exception_Mechanism_Type;
 
-extern Boolean Global_Discard_Names;
+extern Boolean Back_End_Inlining;
 extern Boolean Exception_Extra_Info;
 extern Boolean Exception_Locations_Suppressed;
 extern Exception_Mechanism_Type Exception_Mechanism;
-extern Boolean Back_Annotate_Rep_Info;
+extern Char Float_Format;
+extern Boolean Generate_SCO_Instance_Table;
+extern Boolean GNAT_Mode;
+extern Int List_Representation_Info;
+extern Boolean No_Strict_Aliasing_CP;
+
+#define ZCX_Exceptions            opt__zcx_exceptions
+#define SJLJ_Exceptions           opt__sjlj_exceptions
+#define Front_End_Exceptions      opt__front_end_exceptions
+#define Back_End_Exceptions       opt__back_end_exceptions
+
+extern Boolean ZCX_Exceptions       (void);
+extern Boolean SJLJ_Exceptions      (void);
+extern Boolean Front_End_Exceptions (void);
+extern Boolean Back_End_Exceptions  (void);
 
 /* restrict: */
 
 #define No_Exception_Handlers_Set      restrict__no_exception_handlers_set
 #define Check_No_Implicit_Heap_Alloc   restrict__check_no_implicit_heap_alloc
+#define Check_No_Implicit_Task_Alloc   restrict__check_no_implicit_task_alloc
+#define Check_No_Implicit_Protected_Alloc restrict__check_no_implicit_protected_alloc
 #define Check_Elaboration_Code_Allowed restrict__check_elaboration_code_allowed
 #define Check_Implicit_Dynamic_Code_Allowed restrict__check_implicit_dynamic_code_allowed
 
 extern Boolean No_Exception_Handlers_Set   (void);
 extern void Check_No_Implicit_Heap_Alloc   (Node_Id);
+extern void Check_No_Implicit_Task_Alloc   (Node_Id);
+extern void Check_No_Implicit_Protected_Alloc (Node_Id);
 extern void Check_Elaboration_Code_Allowed (Node_Id);
 extern void Check_Implicit_Dynamic_Code_Allowed (Node_Id);
+
+/* sem_aggr:  */
+#define Is_Others_Aggregate    sem_aggr__is_others_aggregate
+
+extern Boolean Is_Others_Aggregate (Node_Id);
 
 /* sem_aux:  */
 
 #define Ancestor_Subtype               sem_aux__ancestor_subtype
+#define Constant_Value                 sem_aux__constant_value
 #define First_Discriminant             sem_aux__first_discriminant
 #define First_Stored_Discriminant      sem_aux__first_stored_discriminant
 #define First_Subtype                  sem_aux__first_subtype
@@ -204,6 +234,7 @@ extern void Check_Implicit_Dynamic_Code_Allowed (Node_Id);
 #define Is_Derived_Type                sem_aux__is_derived_type
 
 extern Entity_Id  Ancestor_Subtype             (Entity_Id);
+extern Node_Id    Constant_Value               (Entity_Id);
 extern Entity_Id  First_Discriminant           (Entity_Id);
 extern Entity_Id  First_Stored_Discriminant    (Entity_Id);
 extern Entity_Id  First_Subtype                (Entity_Id);
@@ -242,19 +273,27 @@ extern Node_Id First_Actual		(Node_Id);
 extern Node_Id Next_Actual		(Node_Id);
 extern Boolean Requires_Transient_Scope (Entity_Id);
 
-/* sinfo: These functions aren't in sinfo.h since we don't make the
-   setting functions, just the retrieval functions.  */
+/* sinfo: */
 
-#define Set_Has_No_Elaboration_Code sinfo__set_has_no_elaboration_code
+#define End_Location			sinfo__end_location
+#define Set_Has_No_Elaboration_Code 	sinfo__set_has_no_elaboration_code
+#define Set_Present_Expr		sinfo__set_present_expr
+
+extern Source_Ptr End_Location 		(Node_Id);
 extern void Set_Has_No_Elaboration_Code	(Node_Id, Boolean);
+extern void Set_Present_Expr		(Node_Id, Uint);
 
 /* targparm: */
 
 #define Backend_Overflow_Checks_On_Target targparm__backend_overflow_checks_on_target
+#define Machine_Overflows_On_Target targparm__machine_overflows_on_target
+#define Signed_Zeros_On_Target targparm__signed_zeros_on_target
 #define Stack_Check_Probes_On_Target targparm__stack_check_probes_on_target
 #define Stack_Check_Limits_On_Target targparm__stack_check_limits_on_target
 
 extern Boolean Backend_Overflow_Checks_On_Target;
+extern Boolean Machine_Overflows_On_Target;
+extern Boolean Signed_Zeros_On_Target;
 extern Boolean Stack_Check_Probes_On_Target;
 extern Boolean Stack_Check_Limits_On_Target;
 

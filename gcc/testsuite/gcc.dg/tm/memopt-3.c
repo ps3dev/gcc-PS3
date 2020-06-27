@@ -2,6 +2,7 @@
 /* { dg-options "-fgnu-tm -O -fdump-tree-tmmark" } */
 
 struct large { int x[100]; };
+extern int readint (void);
 extern int test(void) __attribute__((transaction_safe));
 
 int f()
@@ -16,5 +17,4 @@ int f()
   return lala.x[0];
 }
 
-/* { dg-final { scan-tree-dump-times "logging: lala.x\\\[i_1\\\]" 1 "tmmark" } } */
-/* { dg-final { cleanup-tree-dump "tmmark" } } */
+/* { dg-final { scan-tree-dump-times "logging: lala.x\\\[i_4\\\]" 1 "tmmark" } } */

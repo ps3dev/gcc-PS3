@@ -4,15 +4,9 @@
 
 <info><title>Parallel Mode</title>
   <keywordset>
-    <keyword>
-      C++
-    </keyword>
-    <keyword>
-      library
-    </keyword>
-    <keyword>
-      parallel
-    </keyword>
+    <keyword>C++</keyword>
+    <keyword>library</keyword>
+    <keyword>parallel</keyword>
   </keywordset>
 </info>
 
@@ -82,6 +76,7 @@ specific compiler flag.
 </section>
 
 <section xml:id="manual.ext.parallel_mode.semantics" xreflabel="Semantics"><info><title>Semantics</title></info>
+<?dbhtml filename="parallel_mode_semantics.html"?>
   
 
 <para> The parallel mode STL algorithms are currently not exception-safe,
@@ -99,6 +94,7 @@ It might work with other compilers, though.</para>
 </section>
 
 <section xml:id="manual.ext.parallel_mode.using" xreflabel="Using"><info><title>Using</title></info>
+<?dbhtml filename="parallel_mode_using.html"?>
   
 
 <section xml:id="parallel_mode.using.prereq_flags"><info><title>Prerequisite Compiler Flags</title></info>
@@ -110,7 +106,9 @@ It might work with other compilers, though.</para>
   not difficult: just compile your application with the compiler
   flag <literal>-fopenmp</literal>. This will link
   in <code>libgomp</code>, the
-  OpenMP <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://gcc.gnu.org/onlinedocs/libgomp/">GNU implementation</link>,
+  <link xmlns:xlink="http://www.w3.org/1999/xlink"
+    xlink:href="http://gcc.gnu.org/onlinedocs/libgomp/">GNU Offloading and
+    Multi Processing Runtime Library</link>,
   whose presence is mandatory.
 </para>
 
@@ -195,7 +193,7 @@ flags for atomic operations.)
   parallel algorithms that can be used in a similar manner:
 </para>
 
-<table frame="all">
+<table frame="all" xml:id="table.parallel_algos">
 <title>Parallel Algorithms</title>
 
 <tgroup cols="4" align="left" colsep="1" rowsep="1">
@@ -463,6 +461,7 @@ flags for atomic operations.)
 </section>
 
 <section xml:id="manual.ext.parallel_mode.design" xreflabel="Design"><info><title>Design</title></info>
+<?dbhtml filename="parallel_mode_design.html"?>
   
   <para>
   </para>
@@ -789,6 +788,7 @@ the generated source documentation.
 </section>
 
 <section xml:id="manual.ext.parallel_mode.test" xreflabel="Testing"><info><title>Testing</title></info>
+<?dbhtml filename="parallel_mode_test.html"?>
   
 
   <para>

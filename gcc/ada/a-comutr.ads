@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 2004-2012, Free Software Foundation, Inc.         --
+--          Copyright (C) 2004-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- This specification is derived from the Ada Reference Manual for use with --
 -- GNAT. The copyright notice above, and the license provisions that follow --
@@ -32,6 +32,8 @@
 ------------------------------------------------------------------------------
 
 with Ada.Iterator_Interfaces;
+
+with Ada.Containers.Helpers;
 private with Ada.Finalization;
 private with Ada.Streams;
 
@@ -41,6 +43,7 @@ generic
    with function "=" (Left, Right : Element_Type) return Boolean is <>;
 
 package Ada.Containers.Multiway_Trees is
+   pragma Annotate (CodePeer, Skip_Analysis);
    pragma Preelaborate;
    pragma Remote_Types;
 
@@ -308,17 +311,16 @@ package Ada.Containers.Multiway_Trees is
       Process : not null access procedure (Position : Cursor));
 
 private
-
    --  A node of this multiway tree comprises an element and a list of children
    --  (that are themselves trees). The root node is distinguished because it
    --  contains only children: it does not have an element itself.
-   --
-   --  This design feature puts two design goals in tension:
+
+   --  This design feature puts two design goals in tension with one another:
    --   (1) treat the root node the same as any other node
    --   (2) not declare any objects of type Element_Type unnecessarily
-   --
-   --  To satisfy (1), we could simply declare the Root node of the tree using
-   --  the normal Tree_Node_Type, but that would mean that (2) is not
+
+   --  To satisfy (1), we could simply declare the Root node of the tree
+   --  using the normal Tree_Node_Type, but that would mean that (2) is not
    --  satisfied. To resolve the tension (in favor of (2)), we declare the
    --  component Root as having a different node type, without an Element
    --  component (thus satisfying goal (2)) but otherwise identical to a normal
@@ -327,16 +329,23 @@ private
    --  normal, non-root node (thus satisfying goal (1)). We make an explicit
    --  check for Root when there is any attempt to manipulate the Element
    --  component of the node (a check required by the RM anyway).
-   --
+
    --  In order to be explicit about node (and pointer) representation, we
-   --  specify that the respective node types have convention C, to ensure that
-   --  the layout of the components of the node records is the same, thus
-   --  guaranteeing that (unchecked) conversions between access types
+   --  specify that the respective node types have convention C, to ensure
+   --  that the layout of the components of the node records is the same,
+   --  thus guaranteeing that (unchecked) conversions between access types
    --  designating each kind of node type is a meaningful conversion.
+
+   use Ada.Containers.Helpers;
+   package Implementation is new Generic_Implementation;
+   use Implementation;
 
    type Tree_Node_Type;
    type Tree_Node_Access is access all Tree_Node_Type;
    pragma Convention (C, Tree_Node_Access);
+   pragma No_Strict_Aliasing (Tree_Node_Access);
+   --  The above-mentioned Unchecked_Conversion is a violation of the normal
+   --  aliasing rules.
 
    type Children_Type is record
       First : Tree_Node_Access;
@@ -366,6 +375,11 @@ private
    end record;
    pragma Convention (C, Root_Node_Type);
 
+   for Root_Node_Type'Alignment use Standard'Maximum_Alignment;
+   --  The alignment has to be large enough to allow Root_Node to Tree_Node
+   --  access value conversions, and Tree_Node_Type's alignment may be bumped
+   --  up by the Element component.
+
    use Ada.Finalization;
 
    --  The Count component of type Tree represents the number of nodes that
@@ -382,8 +396,7 @@ private
 
    type Tree is new Controlled with record
       Root  : aliased Root_Node_Type;
-      Busy  : Natural := 0;
-      Lock  : Natural := 0;
+      TC    : aliased Tamper_Counts;
       Count : Count_Type := 0;
    end record;
 
@@ -425,21 +438,17 @@ private
 
    for Cursor'Read use Read;
 
-   type Reference_Control_Type is
-      new Controlled with record
-         Container : Tree_Access;
-      end record;
-
-   overriding procedure Adjust (Control : in out Reference_Control_Type);
-   pragma Inline (Adjust);
-
-   overriding procedure Finalize (Control : in out Reference_Control_Type);
-   pragma Inline (Finalize);
+   subtype Reference_Control_Type is Implementation.Reference_Control_Type;
+   --  It is necessary to rename this here, so that the compiler can find it
 
    type Constant_Reference_Type
      (Element : not null access constant Element_Type) is
       record
-         Control : Reference_Control_Type;
+         Control : Reference_Control_Type :=
+           raise Program_Error with "uninitialized reference";
+         --  The RM says, "The default initialization of an object of
+         --  type Constant_Reference_Type or Reference_Type propagates
+         --  Program_Error."
       end record;
 
    procedure Read
@@ -457,7 +466,11 @@ private
    type Reference_Type
      (Element : not null access Element_Type) is
       record
-         Control : Reference_Control_Type;
+         Control : Reference_Control_Type :=
+           raise Program_Error with "uninitialized reference";
+         --  The RM says, "The default initialization of an object of
+         --  type Constant_Reference_Type or Reference_Type propagates
+         --  Program_Error."
       end record;
 
    procedure Read
@@ -471,6 +484,25 @@ private
       Item   : Reference_Type);
 
    for Reference_Type'Write use Write;
+
+   --  Three operations are used to optimize in the expansion of "for ... of"
+   --  loops: the Next(Cursor) procedure in the visible part, and the following
+   --  Pseudo_Reference and Get_Element_Access functions. See Exp_Ch5 for
+   --  details.
+
+   function Pseudo_Reference
+     (Container : aliased Tree'Class) return Reference_Control_Type;
+   pragma Inline (Pseudo_Reference);
+   --  Creates an object of type Reference_Control_Type pointing to the
+   --  container, and increments the Lock. Finalization of this object will
+   --  decrement the Lock.
+
+   type Element_Access is access all Element_Type with
+     Storage_Size => 0;
+
+   function Get_Element_Access
+     (Position : Cursor) return not null Element_Access;
+   --  Returns a pointer to the element designated by Position.
 
    Empty_Tree : constant Tree := (Controlled with others => <>);
 

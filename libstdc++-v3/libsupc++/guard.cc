@@ -1,5 +1,4 @@
-// Copyright (C) 2002, 2004, 2006, 2008, 2009, 2010, 2011, 2012
-// Free Software Foundation, Inc.
+// Copyright (C) 2002-2017 Free Software Foundation, Inc.
 //  
 // This file is part of GCC.
 //
@@ -31,6 +30,7 @@
 #include <new>
 #include <ext/atomicity.h>
 #include <ext/concurrence.h>
+#include <bits/atomic_lockfree_defines.h>
 #if defined(__GTHREADS) && defined(__GTHREAD_HAS_COND) \
   && (ATOMIC_INT_LOCK_FREE > 1) && defined(_GLIBCXX_HAVE_LINUX_FUTEX)
 # include <climits>
@@ -108,22 +108,33 @@ namespace
 # endif
 
 # ifndef _GLIBCXX_GUARD_TEST_AND_ACQUIRE
+
+// Test the guard variable with a memory load with
+// acquire semantics.
+
 inline bool
 __test_and_acquire (__cxxabiv1::__guard *g)
 {
-  bool b = _GLIBCXX_GUARD_TEST (g);
-  _GLIBCXX_READ_MEM_BARRIER;
-  return b;
+  unsigned char __c;
+  unsigned char *__p = reinterpret_cast<unsigned char *>(g);
+  __atomic_load (__p, &__c,  __ATOMIC_ACQUIRE);
+  (void) __p;
+  return _GLIBCXX_GUARD_TEST(&__c);
 }
 #  define _GLIBCXX_GUARD_TEST_AND_ACQUIRE(G) __test_and_acquire (G)
 # endif
 
 # ifndef _GLIBCXX_GUARD_SET_AND_RELEASE
+
+// Set the guard variable to 1 with memory order release semantics.
+
 inline void
 __set_and_release (__cxxabiv1::__guard *g)
 {
-  _GLIBCXX_WRITE_MEM_BARRIER;
-  _GLIBCXX_GUARD_SET (g);
+  unsigned char *__p = reinterpret_cast<unsigned char *>(g);
+  unsigned char val = 1;
+  __atomic_store (__p, &val, __ATOMIC_RELEASE);
+  (void) __p;
 }
 #  define _GLIBCXX_GUARD_SET_AND_RELEASE(G) __set_and_release (G)
 # endif
@@ -204,7 +215,7 @@ namespace __cxxabiv1
   static inline void
   throw_recursive_init_exception()
   {
-#ifdef __EXCEPTIONS
+#if __cpp_exceptions
 	throw __gnu_cxx::recursive_init_error();
 #else
 	// Use __builtin_trap so we don't require abort().
@@ -244,16 +255,16 @@ namespace __cxxabiv1
     if (__gthread_active_p ())
       {
 	int *gi = (int *) (void *) g;
-	int expected(0);
 	const int guard_bit = _GLIBCXX_GUARD_BIT;
 	const int pending_bit = _GLIBCXX_GUARD_PENDING_BIT;
 	const int waiting_bit = _GLIBCXX_GUARD_WAITING_BIT;
 
 	while (1)
 	  {
+	    int expected(0);
 	    if (__atomic_compare_exchange_n(gi, &expected, pending_bit, false,
 					    __ATOMIC_ACQ_REL,
-					    __ATOMIC_RELAXED))
+					    __ATOMIC_ACQUIRE))
 	      {
 		// This thread should do the initialization.
 		return 1;
@@ -264,13 +275,26 @@ namespace __cxxabiv1
 		// Already initialized.
 		return 0;	
 	      }
+
 	     if (expected == pending_bit)
 	       {
+		 // Use acquire here.
 		 int newv = expected | waiting_bit;
 		 if (!__atomic_compare_exchange_n(gi, &expected, newv, false,
 						  __ATOMIC_ACQ_REL, 
-						  __ATOMIC_RELAXED))
-		   continue;
+						  __ATOMIC_ACQUIRE))
+		   {
+		     if (expected == guard_bit)
+		       {
+			 // Make a thread that failed to set the
+			 // waiting bit exit the function earlier,
+			 // if it detects that another thread has
+			 // successfully finished initialising.
+			 return 0;
+		       }
+		     if (expected == 0)
+		       continue;
+		   }
 		 
 		 expected = newv;
 	       }

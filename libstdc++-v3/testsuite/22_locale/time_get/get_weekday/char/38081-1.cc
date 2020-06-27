@@ -1,6 +1,6 @@
-// { dg-require-namedlocale "ru_RU.ISO-8859-5" }
+// { dg-require-namedlocale "ru_RU.ISO8859-5" }
 
-// Copyright (C) 2010, 2011 Free Software Foundation
+// Copyright (C) 2010-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -28,12 +28,11 @@
 void test01()
 {
   using namespace std;
-  bool test __attribute__((unused)) = true;
 
   typedef istreambuf_iterator<char> iterator_type;
 
   // basic construction
-  locale loc("ru_RU.ISO-8859-5");
+  locale loc(ISO_8859(5,ru_RU));
 
   // create an ostream-derived object, cache the time_get facet
   iterator_type end;
@@ -50,7 +49,11 @@ void test01()
   //             ios_base::iostate&, tm*) const
 
 #if __GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 14)
+# if __GLIBC__ > 2 || __GLIBC_MINOR__ >= 17
+  iss.str("\xbf\xdd");
+# else
   iss.str("\xbf\xdd\x2e");
+# endif
 #else
   iss.str("\xbf\xdd\xd4");
 #endif
@@ -72,7 +75,11 @@ void test01()
   VERIFY( errorstate == ios_base::eofbit );
 
 #if __GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 14)
+# if __GLIBC__ > 2 || __GLIBC_MINOR__ >= 17
+  iss.str("\xbf\xdd\xd5\xd4\xd5\xdb\xec\xdd\xd8\xda");
+# else
   iss.str("\xbf\xdd\x2e\xd5\xd4\xd5\xdb\xec\xdd\xd8\xda");
+# endif
 #else
   iss.str("\xbf\xdd\xd4\xd5\xd4\xd5\xdb\xec\xdd\xd8\xda");
 #endif

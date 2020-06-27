@@ -1,7 +1,6 @@
 /* { dg-do run } */
-/* { dg-xfail-if "" { "powerpc-ibm-aix*" } { "*" } { "" } } */
 /* { dg-skip-if "No dollar in identfiers" { "avr-*-*" } { "*" } { "" } } */
-/* { dg-options "-std=c99 -fdollars-in-identifiers -fextended-identifiers" } */
+/* { dg-options "-std=c99 -fdollars-in-identifiers -g" } */
 void abort (void);
 
 int a$b(void) { return 1; }

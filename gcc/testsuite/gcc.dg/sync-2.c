@@ -4,13 +4,14 @@
 /* { dg-options "-march=i486" { target { { i?86-*-* x86_64-*-* } && ia32 } } } */
 /* { dg-options "-mcpu=v9" { target sparc*-*-* } } */
 
-/* { dg-message "note: '__sync_fetch_and_nand' changed semantics in GCC 4.4" "" { target *-*-* } 0 } */
-/* { dg-message "note: '__sync_nand_and_fetch' changed semantics in GCC 4.4" "" { target *-*-* } 0 } */
+/* { dg-message "note: '__sync_fetch_and_nand' changed semantics in GCC 4.4" "fetch_and_nand" { target *-*-* } 0 } */
+/* { dg-message "note: '__sync_nand_and_fetch' changed semantics in GCC 4.4" "nand_and_fetch" { target *-*-* } 0 } */
 
 /* Test functionality of the intrinsics for 'short' and 'char'.  */
 
 extern void abort (void);
 extern void *memcpy (void *, const void *, __SIZE_TYPE__);
+extern int memcmp (const void *, const void *, __SIZE_TYPE__);
 
 static char AI[18];
 static char init_qi[18] = { 3,5,7,9,0,0,0 ,0  ,-1,0,0,-1,0,0  ,-1,0,0,-1 };

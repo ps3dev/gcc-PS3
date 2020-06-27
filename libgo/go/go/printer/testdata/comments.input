@@ -418,6 +418,68 @@ func _() {
 		aligned line */
 }
 
+// Issue 9751.
+func _() {
+	/*a string
+
+	b string*/
+
+	/*A string
+
+
+
+	Z string*/
+
+	/*a string
+
+	b string
+
+	c string*/
+
+	{
+		/*a string
+b string*/
+
+		/*a string
+
+b string*/
+
+		/*a string
+
+b string
+
+c string*/
+	}
+
+	{
+		/*a string
+				b string*/
+
+		/*a string
+
+				b string*/
+
+		/*a string
+
+				b string
+
+				c string*/
+	}
+
+	/*
+	*/
+
+	/*
+
+	*/
+
+	/*
+
+	 * line
+
+	*/
+}
+
 /*
  * line
  * of
@@ -500,15 +562,21 @@ func _() {
 func _(/* this */x/* is *//* an */ int) {
 }
 
-func _(/* no params */) {}
+func _(/* no params - extra blank before and after comment */) {}
+func _(a, b int /* params - no extra blank after comment */) {}
+
+func _() { f(/* no args - extra blank before and after comment */) }
+func _() { f(a, b /* args - no extra blank after comment */) }
 
 func _() {
-	f(/* no args */)
+	f(/* no args - extra blank before and after comment */)
+	f(a, b /* args - no extra blank after comment */)
 }
 
 func (/* comment1 */ T /* comment2 */) _() {}
 
-func _() { /* one-line functions with comments are formatted as multi-line functions */ }
+func _() { /* "short-ish one-line functions with comments are formatted as multi-line functions */ }
+func _() { x := 0; /* comment */ y = x /* comment */ }
 
 func _() {
 	_ = 0
@@ -534,10 +602,28 @@ func _() {
 }
 
 func _() {
-	var a = []int{1, 2, // jasldf 
+	var a = []int{1, 2, // jasldf
 	}
 	_ = a
 }
+
+// Test cases from issues 11274, 15137:
+// Semicolon must not be lost when multiple statements are on the same line with a comment.
+func _() {
+    x := 0 /**/; y := 1
+}
+
+func _() {
+	f(); f()
+	f(); /* comment */ f()
+	f() /* comment */; f()	
+	f(); /* a */ /* b */ f()
+	f() /* a */ /* b */; f()
+	f() /* a */; /* b */ f()
+}
+
+func _() {
+	f() /* a */ /* b */ }
 
 // Comments immediately adjacent to punctuation followed by a newline
 // remain after the punctuation (looks better and permits alignment of
@@ -630,5 +716,13 @@ var	vflag		string				// -v [y.output]	- y.output file
 var	lflag		bool				// -l			- disable line directives
 }
 
+// Trailing white space in comments should be trimmed
+func _() {
+// This comment has 4 blanks following that should be trimmed:    
+/* Each line of this comment has blanks or tabs following that should be trimmed:	
+   line 2:    
+   line 3:    			
+*/
+}
 
 /* This comment is the last entry in this file. It must be printed and should be followed by a newline */

@@ -1,6 +1,5 @@
 /* Inlining decision heuristics.
-   Copyright (C) 2003, 2004, 2007, 2008, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 2003-2017 Free Software Foundation, Inc.
    Contributed by Jan Hubicka
 
 This file is part of GCC.
@@ -19,24 +18,68 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
+#ifndef GCC_IPA_INLINE_H
+#define GCC_IPA_INLINE_H
+
+
 /* Representation of inline parameters that do depend on context function is
    inlined into (i.e. known constant values of function parameters.
 
    Conditions that are interesting for function body are collected into CONDS
    vector.  They are of simple for  function_param OP VAL, where VAL is
-   IPA invariant.  The conditions are then refered by predicates.  */
+   IPA invariant.  The conditions are then referred by predicates.  */
 
-typedef struct GTY(()) condition
-  {
-    tree val;
-    int operand_num;
-    enum tree_code code;
-  } condition;
+struct GTY(()) condition
+{
+  /* If agg_contents is set, this is the offset from which the used data was
+     loaded.  */
+  HOST_WIDE_INT offset;
+  /* Size of the access reading the data (or the PARM_DECL SSA_NAME).  */
+  HOST_WIDE_INT size;
+  tree val;
+  int operand_num;
+  ENUM_BITFIELD(tree_code) code : 16;
+  /* Set if the used data were loaded from an aggregate parameter or from
+     data received by reference.  */
+  unsigned agg_contents : 1;
+  /* If agg_contents is set, this differentiates between loads from data
+     passed by reference and by value.  */
+  unsigned by_ref : 1;
+};
 
-DEF_VEC_O (condition);
-DEF_VEC_ALLOC_O (condition, gc);
+/* Inline hints are reasons why inline heuristics should preffer inlining given
+   function.  They are represtented as bitmap of the following values.  */
+enum inline_hints_vals {
+  /* When inlining turns indirect call into a direct call,
+     it is good idea to do so.  */
+  INLINE_HINT_indirect_call = 1,
+  /* Inlining may make loop iterations or loop stride known.  It is good idea
+     to do so because it enables loop optimizatoins.  */
+  INLINE_HINT_loop_iterations = 2,
+  INLINE_HINT_loop_stride = 4,
+  /* Inlining within same strongly connected component of callgraph is often
+     a loss due to increased stack frame usage and prologue setup costs.  */
+  INLINE_HINT_same_scc = 8,
+  /* Inlining functions in strongly connected component is not such a great
+     win.  */
+  INLINE_HINT_in_scc = 16,
+  /* If function is declared inline by user, it may be good idea to inline
+     it.  */
+  INLINE_HINT_declared_inline = 32,
+  /* Programs are usually still organized for non-LTO compilation and thus
+     if functions are in different modules, inlining may not be so important. 
+   */
+  INLINE_HINT_cross_module = 64,
+  /* If array indexes of loads/stores become known there may be room for
+     further optimization.  */
+  INLINE_HINT_array_index = 128,
+  /* We know that the callee is hot by profile.  */
+  INLINE_HINT_known_hot = 256
+};
+typedef int inline_hints;
 
-typedef VEC(condition,gc) *conditions;
+
+typedef vec<condition, va_gc> *conditions;
 
 /* Representation of predicates i.e. formulas using conditions defined
    above.  Predicates are simple logical formulas in conjunctive-disjunctive
@@ -62,14 +105,12 @@ struct GTY(()) predicate
    accounted.  */
 #define INLINE_SIZE_SCALE 2
 #define INLINE_TIME_SCALE (CGRAPH_FREQ_BASE * 2)
-typedef struct GTY(()) size_time_entry
+struct GTY(()) size_time_entry
 {
   struct predicate predicate;
   int size;
   int time;
-} size_time_entry;
-DEF_VEC_O (size_time_entry);
-DEF_VEC_ALLOC_O (size_time_entry, gc);
+};
 
 /* Function inlining information.  */
 struct GTY(()) inline_summary
@@ -82,9 +123,19 @@ struct GTY(()) inline_summary
   int self_size;
   /* Time of the function body.  */
   int self_time;
+  /* Minimal size increase after inlining.  */
+  int min_size;
 
   /* False when there something makes inlining impossible (such as va_arg).  */
   unsigned inlinable : 1;
+  /* True when function contains cilk spawn (and thus we can not inline
+     into it).  */
+  unsigned contains_cilk_spawn : 1;
+  /* True wen there is only one caller of the function before small function
+     inlining.  */
+  unsigned int single_caller : 1;
+  /* True if function contains any floating point expressions.  */
+  unsigned int fp_expressions : 1;
 
   /* Information about function that will result after applying all the
      inline decisions present in the callgraph.  Generally kept up to
@@ -101,14 +152,48 @@ struct GTY(()) inline_summary
   /* Conditional size/time information.  The summaries are being
      merged during inlining.  */
   conditions conds;
-  VEC(size_time_entry,gc) *entry;
+  vec<size_time_entry, va_gc> *entry;
+
+  /* Predicate on when some loop in the function becomes to have known
+     bounds.   */
+  struct predicate * GTY((skip)) loop_iterations;
+  /* Predicate on when some loop in the function becomes to have known
+     stride.   */
+  struct predicate * GTY((skip)) loop_stride;
+  /* Predicate on when some array indexes become constants.  */
+  struct predicate * GTY((skip)) array_index;
+  /* Estimated growth for inlining all copies of the function before start
+     of small functions inlining.
+     This value will get out of date as the callers are duplicated, but
+     using up-to-date value in the badness metric mean a lot of extra
+     expenses.  */
+  int growth;
+  /* Number of SCC on the beginning of inlining process.  */
+  int scc_no;
 };
 
+class GTY((user)) inline_summary_t: public function_summary <inline_summary *>
+{
+public:
+  inline_summary_t (symbol_table *symtab, bool ggc):
+    function_summary <inline_summary *> (symtab, ggc) {}
 
-typedef struct inline_summary inline_summary_t;
-DEF_VEC_O(inline_summary_t);
-DEF_VEC_ALLOC_O(inline_summary_t,gc);
-extern GTY(()) VEC(inline_summary_t,gc) *inline_summary_vec;
+  static inline_summary_t *create_ggc (symbol_table *symtab)
+  {
+    struct inline_summary_t *summary = new (ggc_cleared_alloc <inline_summary_t> ())
+      inline_summary_t(symtab, true);
+    summary->disable_insertion_hook ();
+    return summary;
+  }
+
+
+  virtual void insert (cgraph_node *, inline_summary *);
+  virtual void remove (cgraph_node *node, inline_summary *);
+  virtual void duplicate (cgraph_node *src, cgraph_node *dst,
+			  inline_summary *src_data, inline_summary *dst_data);
+};
+
+extern GTY(()) function_summary <inline_summary *> *inline_summaries;
 
 /* Information kept about parameter of call site.  */
 struct inline_param_summary
@@ -122,9 +207,6 @@ struct inline_param_summary
      Value 0 is reserved for compile time invariants. */
   int change_prob;
 };
-typedef struct inline_param_summary inline_param_summary_t;
-DEF_VEC_O(inline_param_summary_t);
-DEF_VEC_ALLOC_O(inline_param_summary_t,heap);
 
 /* Information kept about callgraph edges.  */
 struct inline_edge_summary
@@ -138,122 +220,120 @@ struct inline_edge_summary
   /* Array indexed by parameters.
      0 means that parameter change all the time, REG_BR_PROB_BASE means
      that parameter is constant.  */
-  VEC (inline_param_summary_t, heap) *param;
+  vec<inline_param_summary> param;
 };
 
+/* Need a typedef for inline_edge_summary because of inline function
+   'inline_edge_summary' below.  */
 typedef struct inline_edge_summary inline_edge_summary_t;
-DEF_VEC_O(inline_edge_summary_t);
-DEF_VEC_ALLOC_O(inline_edge_summary_t,heap);
-extern VEC(inline_edge_summary_t,heap) *inline_edge_summary_vec;
+extern vec<inline_edge_summary_t> inline_edge_summary_vec;
 
-typedef struct edge_growth_cache_entry
+struct edge_growth_cache_entry
 {
   int time, size;
-} edge_growth_cache_entry;
-DEF_VEC_O(edge_growth_cache_entry);
-DEF_VEC_ALLOC_O(edge_growth_cache_entry,heap);
+  inline_hints hints;
+};
 
-extern VEC(int,heap) *node_growth_cache;
-extern VEC(edge_growth_cache_entry,heap) *edge_growth_cache;
+extern vec<edge_growth_cache_entry> edge_growth_cache;
 
 /* In ipa-inline-analysis.c  */
 void debug_inline_summary (struct cgraph_node *);
 void dump_inline_summaries (FILE *f);
-void dump_inline_summary (FILE * f, struct cgraph_node *node);
+void dump_inline_summary (FILE *f, struct cgraph_node *node);
+void dump_inline_hints (FILE *f, inline_hints);
 void inline_generate_summary (void);
 void inline_read_summary (void);
-void inline_write_summary (cgraph_node_set, varpool_node_set);
+void inline_write_summary (void);
 void inline_free_summary (void);
+void inline_analyze_function (struct cgraph_node *node);
 void initialize_inline_failed (struct cgraph_edge *);
 int estimate_time_after_inlining (struct cgraph_node *, struct cgraph_edge *);
 int estimate_size_after_inlining (struct cgraph_node *, struct cgraph_edge *);
 void estimate_ipcp_clone_size_and_time (struct cgraph_node *,
-					VEC (tree, heap) *known_vals,
-					VEC (tree, heap) *known_binfos,
-					int *, int *);
-int do_estimate_growth (struct cgraph_node *);
+					vec<tree>,
+					vec<ipa_polymorphic_call_context>,
+					vec<ipa_agg_jump_function_p>,
+					int *, int *, inline_hints *);
+int estimate_growth (struct cgraph_node *);
+bool growth_likely_positive (struct cgraph_node *, int);
 void inline_merge_summary (struct cgraph_edge *edge);
-int do_estimate_edge_growth (struct cgraph_edge *edge);
+void inline_update_overall_summary (struct cgraph_node *node);
+int do_estimate_edge_size (struct cgraph_edge *edge);
 int do_estimate_edge_time (struct cgraph_edge *edge);
+inline_hints do_estimate_edge_hints (struct cgraph_edge *edge);
 void initialize_growth_caches (void);
 void free_growth_caches (void);
 void compute_inline_parameters (struct cgraph_node *, bool);
+bool speculation_useful_p (struct cgraph_edge *e, bool anticipate_inlining);
+unsigned int early_inliner (function *fun);
+bool inline_account_function_p (struct cgraph_node *node);
+
 
 /* In ipa-inline-transform.c  */
-bool inline_call (struct cgraph_edge *, bool, VEC (cgraph_edge_p, heap) **, int *);
+bool inline_call (struct cgraph_edge *, bool, vec<cgraph_edge *> *, int *, bool,
+		  bool *callee_removed = NULL);
 unsigned int inline_transform (struct cgraph_node *);
-void clone_inlined_nodes (struct cgraph_edge *e, bool, bool, int *);
+void clone_inlined_nodes (struct cgraph_edge *e, bool, bool, int *,
+			  int freq_scale);
 
 extern int ncalls_inlined;
 extern int nfunctions_inlined;
 
-static inline struct inline_summary *
-inline_summary (struct cgraph_node *node)
-{
-  return VEC_index (inline_summary_t, inline_summary_vec, node->uid);
-}
-
 static inline struct inline_edge_summary *
 inline_edge_summary (struct cgraph_edge *edge)
 {
-  return VEC_index (inline_edge_summary_t,
-		    inline_edge_summary_vec, edge->uid);
+  return &inline_edge_summary_vec[edge->uid];
 }
 
-/* Return estimated unit growth after inlning all calls to NODE.
-   Quick accesors to the inline growth caches.  
-   For convenience we keep zero 0 as unknown.  Because growth
-   can be both positive and negative, we simply increase positive
-   growths by 1. */
+
+/* Return estimated size of the inline sequence of EDGE.  */
+
 static inline int
-estimate_growth (struct cgraph_node *node)
+estimate_edge_size (struct cgraph_edge *edge)
 {
   int ret;
-  if ((int)VEC_length (int, node_growth_cache) <= node->uid
-      || !(ret = VEC_index (int, node_growth_cache, node->uid)))
-    return do_estimate_growth (node);
+  if ((int)edge_growth_cache.length () <= edge->uid
+      || !(ret = edge_growth_cache[edge->uid].size))
+    return do_estimate_edge_size (edge);
   return ret - (ret > 0);
 }
-
 
 /* Return estimated callee growth after inlining EDGE.  */
 
 static inline int
 estimate_edge_growth (struct cgraph_edge *edge)
 {
-  int ret;
-  if ((int)VEC_length (edge_growth_cache_entry, edge_growth_cache) <= edge->uid
-      || !(ret = VEC_index (edge_growth_cache_entry,
-			    edge_growth_cache,
-			    edge->uid)->size))
-    return do_estimate_edge_growth (edge);
-  return ret - (ret > 0);
+  gcc_checking_assert (inline_edge_summary (edge)->call_stmt_size
+		       || !edge->callee->analyzed);
+  return (estimate_edge_size (edge)
+	  - inline_edge_summary (edge)->call_stmt_size);
 }
 
-
-/* Return estimated callee runtime increase after inlning
+/* Return estimated callee runtime increase after inlining
    EDGE.  */
 
 static inline int
 estimate_edge_time (struct cgraph_edge *edge)
 {
   int ret;
-  if ((int)VEC_length (edge_growth_cache_entry, edge_growth_cache) <= edge->uid
-      || !(ret = VEC_index (edge_growth_cache_entry,
-			    edge_growth_cache,
-			    edge->uid)->time))
+  if ((int)edge_growth_cache.length () <= edge->uid
+      || !(ret =  edge_growth_cache[edge->uid].time))
     return do_estimate_edge_time (edge);
   return ret - (ret > 0);
 }
 
 
-/* Reset cached value for NODE.  */
+/* Return estimated callee runtime increase after inlining
+   EDGE.  */
 
-static inline void
-reset_node_growth_cache (struct cgraph_node *node)
+static inline inline_hints
+estimate_edge_hints (struct cgraph_edge *edge)
 {
-  if ((int)VEC_length (int, node_growth_cache) > node->uid)
-    VEC_replace (int, node_growth_cache, node->uid, 0);
+  inline_hints ret;
+  if ((int)edge_growth_cache.length () <= edge->uid
+      || !(ret = edge_growth_cache[edge->uid].hints))
+    return do_estimate_edge_hints (edge);
+  return ret - 1;
 }
 
 /* Reset cached value for EDGE.  */
@@ -261,9 +341,11 @@ reset_node_growth_cache (struct cgraph_node *node)
 static inline void
 reset_edge_growth_cache (struct cgraph_edge *edge)
 {
-  if ((int)VEC_length (edge_growth_cache_entry, edge_growth_cache) > edge->uid)
+  if ((int)edge_growth_cache.length () > edge->uid)
     {
-      struct edge_growth_cache_entry zero = {0, 0};
-      VEC_replace (edge_growth_cache_entry, edge_growth_cache, edge->uid, &zero);
+      struct edge_growth_cache_entry zero = {0, 0, 0};
+      edge_growth_cache[edge->uid] = zero;
     }
 }
+
+#endif /* GCC_IPA_INLINE_H */

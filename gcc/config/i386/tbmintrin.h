@@ -1,4 +1,4 @@
-/* Copyright (C) 2010 Free Software Foundation, Inc.
+/* Copyright (C) 2010-2017 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -25,23 +25,25 @@
 # error "Never use <tbmintrin.h> directly; include <x86intrin.h> instead."
 #endif
 
-#ifndef __TBM__
-# error "TBM instruction set not enabled"
-#endif /* __TBM__ */
-
 #ifndef _TBMINTRIN_H_INCLUDED
 #define _TBMINTRIN_H_INCLUDED
+
+#ifndef __TBM__
+#pragma GCC push_options
+#pragma GCC target("tbm")
+#define __DISABLE_TBM__
+#endif /* __TBM__ */
 
 #ifdef __OPTIMIZE__
 extern __inline unsigned int __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 __bextri_u32 (unsigned int __X, const unsigned int __I)
 {
-	return __builtin_ia32_bextri_u32 (__X, __I);
+  return __builtin_ia32_bextri_u32 (__X, __I);
 }
 #else
-#define __bextri_u32(X, I)                                           \
-        ((unsigned int)__builtin_ia32_bextri_u32 ((unsigned int)(X), \
-	                                          (unsigned int)(I)))
+#define __bextri_u32(X, I)						\
+  ((unsigned int)__builtin_ia32_bextri_u32 ((unsigned int)(X),		\
+					    (unsigned int)(I)))
 #endif /*__OPTIMIZE__ */
 
 extern __inline unsigned int __attribute__((__gnu_inline__, __always_inline__, __artificial__))
@@ -169,4 +171,10 @@ __tzmsk_u64 (unsigned long long __X)
 
 
 #endif /* __x86_64__  */
+
+#ifdef __DISABLE_TBM__
+#undef __DISABLE_TBM__
+#pragma GCC pop_options
+#endif /* __DISABLE_TBM__ */
+
 #endif /* _TBMINTRIN_H_INCLUDED */

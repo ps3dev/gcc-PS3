@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1998-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1998-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -66,7 +66,7 @@ package body Lib.Xref is
 
       Loc : Source_Ptr;
       --  Location of reference (Original_Location (Sloc field of N parameter
-      --  to Generate_Reference). Set to No_Location for the case of a
+      --  to Generate_Reference)). Set to No_Location for the case of a
       --  defining occurrence.
 
       Typ : Character;
@@ -79,7 +79,7 @@ package body Lib.Xref is
       --  Unit number corresponding to Loc. Value is undefined and not
       --  referenced if Loc is set to No_Location.
 
-      --  The following components are only used for Alfa cross-references
+      --  The following components are only used for SPARK cross-references
 
       Ref_Scope : Entity_Id;
       --  Entity of the closest subprogram or package enclosing the reference
@@ -151,15 +151,18 @@ package body Lib.Xref is
      Hash       => Hash,
      Equal      => Equal);
 
-   ----------------------
-   -- Alfa Information --
-   ----------------------
+   -----------------------------
+   -- SPARK Xrefs Information --
+   -----------------------------
 
-   package body Alfa is separate;
+   package body SPARK_Specific is separate;
 
    ------------------------
    --  Local Subprograms --
    ------------------------
+
+   procedure Add_Entry (Key : Xref_Key; Ent_Scope_File : Unit_Number_Type);
+   --  Add an entry to the tables of Xref_Entries, avoiding duplicates
 
    procedure Generate_Prim_Op_References (Typ : Entity_Id);
    --  For a tagged type, generate implicit references to its primitive
@@ -169,9 +172,6 @@ package body Lib.Xref is
 
    function Lt (T1, T2 : Xref_Entry) return Boolean;
    --  Order cross-references
-
-   procedure Add_Entry (Key : Xref_Key; Ent_Scope_File : Unit_Number_Type);
-   --  Add an entry to the tables of Xref_Entries, avoiding duplicates
 
    ---------------
    -- Add_Entry --
@@ -191,8 +191,7 @@ package body Lib.Xref is
 
          Set_Has_Xref_Entry (Key.Ent);
 
-      --  It was already in Xref_Set, so throw away the tentatively-added
-      --  entry
+      --  It was already in Xref_Set, so throw away the tentatively-added entry
 
       else
          Xrefs.Decrement_Last;
@@ -373,23 +372,16 @@ package body Lib.Xref is
       Set_Ref : Boolean   := True;
       Force   : Boolean   := False)
    is
-      Nod : Node_Id;
-      Ref : Source_Ptr;
-      Def : Source_Ptr;
-      Ent : Entity_Id;
-
       Actual_Typ : Character := Typ;
-
-      Ref_Scope      : Entity_Id;
-      Ent_Scope      : Entity_Id;
-      Ent_Scope_File : Unit_Number_Type;
-
-      Call   : Node_Id;
-      Formal : Entity_Id;
-      --  Used for call to Find_Actual
-
-      Kind : Entity_Kind;
-      --  If Formal is non-Empty, then its Ekind, otherwise E_Void
+      Call       : Node_Id;
+      Def        : Source_Ptr;
+      Ent        : Entity_Id;
+      Ent_Scope  : Entity_Id;
+      Formal     : Entity_Id;
+      Kind       : Entity_Kind;
+      Nod        : Node_Id;
+      Ref        : Source_Ptr;
+      Ref_Scope  : Entity_Id;
 
       function Get_Through_Renamings (E : Entity_Id) return Entity_Id;
       --  Get the enclosing entity through renamings, which may come from
@@ -422,6 +414,7 @@ package body Lib.Xref is
 
       function Get_Through_Renamings (E : Entity_Id) return Entity_Id is
          Result : Entity_Id := E;
+
       begin
          while Present (Result)
            and then Is_Object (Result)
@@ -429,6 +422,7 @@ package body Lib.Xref is
          loop
             Result := Get_Enclosing_Object (Renamed_Object (Result));
          end loop;
+
          return Result;
       end Get_Through_Renamings;
 
@@ -439,6 +433,7 @@ package body Lib.Xref is
       --  ??? There are several routines here and there that perform a similar
       --      (but subtly different) computation, which should be factored:
 
+      --      Sem_Util.Is_LHS
       --      Sem_Util.May_Be_Lvalue
       --      Sem_Util.Known_To_Be_Assigned
       --      Exp_Ch2.Expand_Entry_Parameter.In_Assignment_Context
@@ -480,20 +475,27 @@ package body Lib.Xref is
 
             --  ??? case of a slice assignment?
 
-            --  ??? Note that in some cases this is called too early
-            --  (see comments in Sem_Ch8.Find_Direct_Name), at a point where
-            --  the tree is not fully typed yet. In that case we may lack
-            --  an Etype for N, and we must disable the check for an implicit
-            --  dereference. If the dereference is on an LHS, this causes a
-            --  false positive.
-
             elsif (K = N_Selected_Component or else K = N_Indexed_Component)
               and then Prefix (P) = N
-              and then not (Present (Etype (N))
-                              and then
-                            Is_Access_Type (Etype (N)))
             then
-               N := P;
+               --  Check for access type. First a special test, In some cases
+               --  this is called too early (see comments in Find_Direct_Name),
+               --  at a point where the tree is not fully typed yet. In that
+               --  case we may lack an Etype for N, and we can't check the
+               --  Etype. For now, we always return False in such a case,
+               --  but this is clearly not right in all cases ???
+
+               if No (Etype (N)) then
+                  return False;
+
+               elsif Is_Access_Type (Etype (N)) then
+                  return False;
+
+               --  Access type case dealt with, keep going
+
+               else
+                  N := P;
+               end if;
 
             --  All other cases, definitely not on left side
 
@@ -523,11 +525,10 @@ package body Lib.Xref is
                P := Parent (P);
 
                if Nkind (P) = N_Pragma then
-                  if Pragma_Name (P) = Name_Warnings
-                       or else
-                     Pragma_Name (P) = Name_Unmodified
-                       or else
-                     Pragma_Name (P) = Name_Unreferenced
+                  if Nam_In (Pragma_Name_Unmapped (P),
+                             Name_Warnings,
+                             Name_Unmodified,
+                             Name_Unreferenced)
                   then
                      return False;
                   end if;
@@ -604,7 +605,7 @@ package body Lib.Xref is
         and then Warn_On_Ada_2005_Compatibility
         and then (Typ = 'm' or else Typ = 'r' or else Typ = 's')
       then
-         Error_Msg_NE ("& is only defined in Ada 2005?", N, E);
+         Error_Msg_NE ("& is only defined in Ada 2005?y?", N, E);
       end if;
 
       --  Warn if reference to Ada 2012 entity not in Ada 2012 mode. We only
@@ -616,7 +617,16 @@ package body Lib.Xref is
         and then Warn_On_Ada_2012_Compatibility
         and then (Typ = 'm' or else Typ = 'r')
       then
-         Error_Msg_NE ("& is only defined in Ada 2012?", N, E);
+         Error_Msg_NE ("& is only defined in Ada 2012?y?", N, E);
+      end if;
+
+      --  Do not generate references if we are within a postcondition sub-
+      --  program, because the reference does not comes from source, and the
+      --  pre-analysis of the aspect has already created an entry for the ALI
+      --  file at the proper source location.
+
+      if Chars (Current_Scope) = Name_uPostconditions then
+         return;
       end if;
 
       --  Never collect references if not in main source unit. However, we omit
@@ -632,15 +642,42 @@ package body Lib.Xref is
       --  For the same reason we accept an implicit reference generated for
       --  a default in an instance.
 
+      --  We also set the referenced flag in a generic package that is not in
+      --  then main source unit, when the variable is of a formal private type,
+      --  to warn in the instance if the corresponding type is not a fully
+      --  initialized type.
+
       if not In_Extended_Main_Source_Unit (N) then
-         if Typ = 'e'
-           or else Typ = 'I'
-           or else Typ = 'p'
-           or else Typ = 'i'
-           or else Typ = 'k'
+         if Typ = 'e' or else
+            Typ = 'I' or else
+            Typ = 'p' or else
+            Typ = 'i' or else
+            Typ = 'k'
            or else (Typ = 'b' and then Is_Generic_Instance (E))
+
+            --  Allow the generation of references to reads, writes and calls
+            --  in SPARK mode when the related context comes from an instance.
+
+           or else
+             (GNATprove_Mode
+               and then In_Extended_Main_Code_Unit (N)
+               and then (Typ = 'm' or else Typ = 'r' or else Typ = 's'))
          then
             null;
+
+         elsif In_Instance_Body
+           and then In_Extended_Main_Code_Unit (N)
+           and then Is_Generic_Type (Etype (E))
+         then
+            Set_Referenced (E);
+            return;
+
+         elsif Inside_A_Generic
+           and then Is_Generic_Type (Etype (E))
+         then
+            Set_Referenced (E);
+            return;
+
          else
             return;
          end if;
@@ -805,6 +842,8 @@ package body Lib.Xref is
 
          --  Check for pragma Unreferenced given and reference is within
          --  this source unit (occasion for possible warning to be issued).
+         --  Note that the entity may be marked as unreferenced by pragma
+         --  Unused.
 
          if Has_Unreferenced (E)
            and then In_Same_Extended_Unit (E, N)
@@ -824,6 +863,14 @@ package body Lib.Xref is
             elsif Is_On_LHS (N) then
                null;
 
+            --  No warning if the reference is in a call that does not come
+            --  from source (e.g. a call to a controlled type primitive).
+
+            elsif not Comes_From_Source (Parent (N))
+              and then Nkind (Parent (N)) = N_Procedure_Call_Statement
+            then
+               null;
+
             --  For entry formals, we want to place the warning message on the
             --  corresponding entity in the accept statement. The current scope
             --  is the body of the accept, so we find the formal whose name
@@ -839,8 +886,13 @@ package body Lib.Xref is
                   BE := First_Entity (Current_Scope);
                   while Present (BE) loop
                      if Chars (BE) = Chars (E) then
-                        Error_Msg_NE -- CODEFIX
-                          ("?pragma Unreferenced given for&!", N, BE);
+                        if Has_Pragma_Unused (E) then
+                           Error_Msg_NE -- CODEFIX
+                             ("??pragma Unused given for&!", N, BE);
+                        else
+                           Error_Msg_NE -- CODEFIX
+                             ("??pragma Unreferenced given for&!", N, BE);
+                        end if;
                         exit;
                      end if;
 
@@ -850,9 +902,12 @@ package body Lib.Xref is
 
             --  Here we issue the warning, since this is a real reference
 
+            elsif Has_Pragma_Unused (E) then
+               Error_Msg_NE -- CODEFIX
+                 ("??pragma Unused given for&!", N, E);
             else
                Error_Msg_NE -- CODEFIX
-                 ("?pragma Unreferenced given for&!", N, E);
+                 ("??pragma Unreferenced given for&!", N, E);
             end if;
          end if;
 
@@ -884,37 +939,31 @@ package body Lib.Xref is
          and then Sloc (E) > No_Location
          and then Sloc (N) > No_Location
 
-         --  We ignore references from within an instance, except for default
-         --  subprograms, for which we generate an implicit reference.
+         --  Ignore references from within an instance. The only exceptions to
+         --  this are default subprograms, for which we generate an implicit
+         --  reference and compilations in SPARK mode.
 
          and then
-           (Instantiation_Location (Sloc (N)) = No_Location or else Typ = 'i')
+           (Instantiation_Location (Sloc (N)) = No_Location
+             or else Typ = 'i'
+             or else GNATprove_Mode)
 
-         --  Ignore dummy references
+        --  Ignore dummy references
 
         and then Typ /= ' '
       then
-         if Nkind (N) = N_Identifier
-              or else
-            Nkind (N) = N_Defining_Identifier
-              or else
-            Nkind (N) in N_Op
-              or else
-            Nkind (N) = N_Defining_Operator_Symbol
-              or else
-            Nkind (N) = N_Operator_Symbol
-              or else
-            (Nkind (N) = N_Character_Literal
-              and then Sloc (Entity (N)) /= Standard_Location)
-              or else
-            Nkind (N) = N_Defining_Character_Literal
+         if Nkind_In (N, N_Identifier,
+                         N_Defining_Identifier,
+                         N_Defining_Operator_Symbol,
+                         N_Operator_Symbol,
+                         N_Defining_Character_Literal)
+           or else Nkind (N) in N_Op
+           or else (Nkind (N) = N_Character_Literal
+                     and then Sloc (Entity (N)) /= Standard_Location)
          then
             Nod := N;
 
-         elsif Nkind (N) = N_Expanded_Name
-                 or else
-               Nkind (N) = N_Selected_Component
-         then
+         elsif Nkind_In (N, N_Expanded_Name, N_Selected_Component) then
             Nod := Selector_Name (N);
 
          else
@@ -924,6 +973,14 @@ package body Lib.Xref is
          --  Normal case of source entity comes from source
 
          if Comes_From_Source (E) then
+            Ent := E;
+
+         --  Because a declaration may be generated for a subprogram body
+         --  without declaration in GNATprove mode, for inlining, some
+         --  parameters may end up being marked as not coming from source
+         --  although they are. Take these into account specially.
+
+         elsif GNATprove_Mode and then Ekind (E) in Formal_Kind then
             Ent := E;
 
          --  Entity does not come from source, but is a derived subprogram and
@@ -950,6 +1007,13 @@ package body Lib.Xref is
          then
             Ent := E;
 
+         --  Ditto for the formals of such a subprogram
+
+         elsif Is_Overloadable (Scope (E))
+           and then Is_Child_Unit (Scope (E))
+         then
+            Ent := E;
+
          --  Record components of discriminated subtypes or derived types must
          --  be treated as references to the original component.
 
@@ -973,11 +1037,11 @@ package body Lib.Xref is
             return;
          end if;
 
-         --  In Alfa mode, consider the underlying entity renamed instead of
+         --  In SPARK mode, consider the underlying entity renamed instead of
          --  the renaming, which is needed to compute a valid set of effects
          --  (reads, writes) for the enclosing subprogram.
 
-         if Alfa_Mode then
+         if GNATprove_Mode then
             Ent := Get_Through_Renamings (Ent);
 
             --  If no enclosing object, then it could be a reference to any
@@ -987,10 +1051,10 @@ package body Lib.Xref is
 
             if No (Ent) then
                if Actual_Typ = 'w' then
-                  Alfa.Generate_Dereference (Nod, 'r');
-                  Alfa.Generate_Dereference (Nod, 'w');
+                  SPARK_Specific.Generate_Dereference (Nod, 'r');
+                  SPARK_Specific.Generate_Dereference (Nod, 'w');
                else
-                  Alfa.Generate_Dereference (Nod, 'r');
+                  SPARK_Specific.Generate_Dereference (Nod, 'r');
                end if;
 
                return;
@@ -999,21 +1063,25 @@ package body Lib.Xref is
 
          --  Record reference to entity
 
-         Ref := Original_Location (Sloc (Nod));
-         Def := Original_Location (Sloc (Ent));
-
          if Actual_Typ = 'p'
-           and then Is_Subprogram (N)
-           and then Present (Overridden_Operation (N))
+           and then Is_Subprogram (Nod)
+           and then Present (Overridden_Operation (Nod))
          then
             Actual_Typ := 'P';
          end if;
 
-         if Alfa_Mode then
-            Ref_Scope := Alfa.Enclosing_Subprogram_Or_Package (N);
-            Ent_Scope := Alfa.Enclosing_Subprogram_Or_Package (Ent);
+         --  Comment needed here for special SPARK code ???
 
-            --  Since we are reaching through renamings in Alfa mode, we may
+         if GNATprove_Mode then
+            Ref := Sloc (Nod);
+            Def := Sloc (Ent);
+
+            Ref_Scope :=
+              SPARK_Specific.Enclosing_Subprogram_Or_Library_Package (Nod);
+            Ent_Scope :=
+              SPARK_Specific.Enclosing_Subprogram_Or_Library_Package (Ent);
+
+            --  Since we are reaching through renamings in SPARK mode, we may
             --  end up with standard constants. Ignore those.
 
             if Sloc (Ent_Scope) <= Standard_Location
@@ -1022,22 +1090,78 @@ package body Lib.Xref is
                return;
             end if;
 
-            Ent_Scope_File := Get_Source_Unit (Ent_Scope);
-         else
-            Ref_Scope := Empty;
-            Ent_Scope := Empty;
-            Ent_Scope_File := No_Unit;
-         end if;
+            Add_Entry
+              ((Ent       => Ent,
+                Loc       => Ref,
+                Typ       => Actual_Typ,
+                Eun       => Get_Top_Level_Code_Unit (Def),
+                Lun       => Get_Top_Level_Code_Unit (Ref),
+                Ref_Scope => Ref_Scope,
+                Ent_Scope => Ent_Scope),
+               Ent_Scope_File => Get_Top_Level_Code_Unit (Ent));
 
-         Add_Entry
-           ((Ent => Ent,
-             Loc => Ref,
-             Typ => Actual_Typ,
-             Eun => Get_Source_Unit (Def),
-             Lun => Get_Source_Unit (Ref),
-             Ref_Scope => Ref_Scope,
-             Ent_Scope => Ent_Scope),
-            Ent_Scope_File => Ent_Scope_File);
+         else
+            Ref := Original_Location (Sloc (Nod));
+            Def := Original_Location (Sloc (Ent));
+
+            --  If this is an operator symbol, skip the initial quote for
+            --  navigation purposes. This is not done for the end label,
+            --  where we want the actual position after the closing quote.
+
+            if Typ = 't' then
+               null;
+
+            elsif Nkind (N) = N_Defining_Operator_Symbol
+              or else Nkind (Nod) = N_Operator_Symbol
+            then
+               Ref := Ref + 1;
+            end if;
+
+            Add_Entry
+              ((Ent       => Ent,
+                Loc       => Ref,
+                Typ       => Actual_Typ,
+                Eun       => Get_Source_Unit (Def),
+                Lun       => Get_Source_Unit (Ref),
+                Ref_Scope => Empty,
+                Ent_Scope => Empty),
+               Ent_Scope_File => No_Unit);
+
+            --  Generate reference to the first private entity
+
+            if Typ = 'e'
+              and then Comes_From_Source (E)
+              and then Nkind (Ent) = N_Defining_Identifier
+              and then (Is_Package_Or_Generic_Package (Ent)
+                         or else Is_Concurrent_Type (Ent))
+              and then Present (First_Private_Entity (E))
+              and then In_Extended_Main_Source_Unit (N)
+            then
+               --  Handle case in which the full-view and partial-view of the
+               --  first private entity are swapped.
+
+               declare
+                  First_Private : Entity_Id := First_Private_Entity (E);
+
+               begin
+                  if Is_Private_Type (First_Private)
+                    and then Present (Full_View (First_Private))
+                  then
+                     First_Private := Full_View (First_Private);
+                  end if;
+
+                  Add_Entry
+                    ((Ent       => Ent,
+                      Loc       => Sloc (First_Private),
+                      Typ       => 'E',
+                      Eun       => Get_Source_Unit (Def),
+                      Lun       => Get_Source_Unit (Ref),
+                      Ref_Scope => Empty,
+                      Ent_Scope => Empty),
+                     Ent_Scope_File => No_Unit);
+               end;
+            end if;
+         end if;
       end if;
    end Generate_Reference;
 
@@ -1058,6 +1182,9 @@ package body Lib.Xref is
             Next_Entity (Formal);
          end loop;
 
+      elsif Ekind (E) in Access_Subprogram_Kind then
+         Formal := First_Formal (Designated_Type (E));
+
       else
          Formal := First_Formal (E);
       end if;
@@ -1065,8 +1192,7 @@ package body Lib.Xref is
       while Present (Formal) loop
          if Ekind (Formal) = E_In_Parameter then
 
-            if Nkind (Parameter_Type (Parent (Formal)))
-              = N_Access_Definition
+            if Nkind (Parameter_Type (Parent (Formal))) = N_Access_Definition
             then
                Generate_Reference (E, Formal, '^', False);
             else
@@ -1110,6 +1236,21 @@ package body Lib.Xref is
    begin
       return E;
    end Get_Key;
+
+   ----------------------------
+   -- Has_Deferred_Reference --
+   ----------------------------
+
+   function Has_Deferred_Reference (Ent : Entity_Id) return Boolean is
+   begin
+      for J in Deferred_References.First .. Deferred_References.Last loop
+         if Deferred_References.Table (J).E = Ent then
+            return True;
+         end if;
+      end loop;
+
+      return False;
+   end Has_Deferred_Reference;
 
    ----------
    -- Hash --
@@ -1274,9 +1415,23 @@ package body Lib.Xref is
                         Right := '>';
                      end if;
 
-                  --  If non-derived ptr, get directly designated type.
+                  --  If the completion of a private type is itself a derived
+                  --  type, we need the parent of the full view.
+
+                  elsif Is_Private_Type (Tref)
+                    and then Present (Full_View (Tref))
+                    and then Etype (Full_View (Tref)) /= Full_View (Tref)
+                  then
+                     Tref := Etype (Full_View (Tref));
+
+                     if Left /= '(' then
+                        Left := '<';
+                        Right := '>';
+                     end if;
+
+                  --  If non-derived pointer, get directly designated type.
                   --  If the type has a full view, all references are on the
-                  --  partial view, that is seen first.
+                  --  partial view that is seen first.
 
                   elsif Is_Access_Type (Tref) then
                      Tref := Directly_Designated_Type (Tref);
@@ -1340,6 +1495,37 @@ package body Lib.Xref is
               or else Ekind (Tref) = E_Operator
             then
                Tref := Etype (Tref);
+
+               --  Another special case: an object of a classwide type
+               --  initialized with a tag-indeterminate call gets a subtype
+               --  of the classwide type during expansion. See if the original
+               --  type in the declaration is named, and return it instead
+               --  of going to the root type. The expression may be a class-
+               --  wide function call whose result is on the secondary stack,
+               --  which forces the declaration to be rewritten as a renaming,
+               --  so examine the source declaration.
+
+               if Ekind (Tref) = E_Class_Wide_Subtype then
+                  declare
+                     Decl : constant Node_Id := Original_Node (Parent (Ent));
+                  begin
+                     if Nkind (Decl) = N_Object_Declaration
+                       and then Is_Entity_Name
+                                  (Original_Node (Object_Definition (Decl)))
+                     then
+                        Tref :=
+                          Entity (Original_Node (Object_Definition (Decl)));
+                     end if;
+                  end;
+
+               --  For a function that returns a class-wide type, Tref is
+               --  already correct.
+
+               elsif Is_Overloadable (Ent)
+                 and then Is_Class_Wide_Type (Tref)
+               then
+                  return;
+               end if;
 
             --  For anything else, exit
 
@@ -1503,11 +1689,11 @@ package body Lib.Xref is
               and then Sloc (E) > No_Location
             then
                Add_Entry
-                 ((Ent => E,
-                   Loc => No_Location,
-                   Typ => Character'First,
-                   Eun => Get_Source_Unit (Original_Location (Sloc (E))),
-                   Lun => No_Unit,
+                 ((Ent       => E,
+                   Loc       => No_Location,
+                   Typ       => Character'First,
+                   Eun       => Get_Source_Unit (Original_Location (Sloc (E))),
+                   Lun       => No_Unit,
                    Ref_Scope => Empty,
                    Ent_Scope => Empty),
                   Ent_Scope_File => No_Unit);
@@ -1524,6 +1710,15 @@ package body Lib.Xref is
          J := 1;
          while J <= Xrefs.Last loop
             Ent := Xrefs.Table (J).Key.Ent;
+
+            --  Do not generate reference information for an ignored Ghost
+            --  entity because neither the entity nor its references will
+            --  appear in the final tree.
+
+            if Is_Ignored_Ghost_Entity (Ent) then
+               goto Orphan_Continue;
+            end if;
+
             Get_Type_Reference (Ent, Tref, L, R);
 
             if Present (Tref)
@@ -1591,11 +1786,11 @@ package body Lib.Xref is
 
                      if Present (Prim) then
                         Add_Entry
-                          ((Ent => Prim,
-                            Loc => No_Location,
-                            Typ => Character'First,
-                            Eun => Get_Source_Unit (Sloc (Prim)),
-                            Lun => No_Unit,
+                          ((Ent       => Prim,
+                            Loc       => No_Location,
+                            Typ       => Character'First,
+                            Eun       => Get_Source_Unit (Sloc (Prim)),
+                            Lun       => No_Unit,
                             Ref_Scope => Empty,
                             Ent_Scope => Empty),
                            Ent_Scope_File => No_Unit);
@@ -1606,15 +1801,15 @@ package body Lib.Xref is
                end;
             end if;
 
+            <<Orphan_Continue>>
             J := J + 1;
          end loop;
       end Handle_Orphan_Type_References;
 
-      --  Now we have all the references, including those for any embedded
-      --  type references, so we can sort them, and output them.
+      --  Now we have all the references, including those for any embedded type
+      --  references, so we can sort them, and output them.
 
       Output_Refs : declare
-
          Nrefs : constant Nat := Xrefs.Last;
          --  Number of references in table
 
@@ -1716,10 +1911,23 @@ package body Lib.Xref is
          --  types may be swapped, and the Sloc value may be incorrect. We
          --  also set up the pointer vector for the sort.
 
+         --  For user-defined operators we need to skip the initial quote and
+         --  point to the first character of the name, for navigation purposes.
+
          for J in 1 .. Nrefs loop
-            Rnums (J) := J;
-            Xrefs.Table (J).Def :=
-              Original_Location (Sloc (Xrefs.Table (J).Key.Ent));
+            declare
+               E   : constant Entity_Id  := Xrefs.Table (J).Key.Ent;
+               Loc : constant Source_Ptr := Original_Location (Sloc (E));
+
+            begin
+               Rnums (J) := J;
+
+               if Nkind (E) = N_Defining_Operator_Symbol then
+                  Xrefs.Table (J).Def := Loc + 1;
+               else
+                  Xrefs.Table (J).Def := Loc;
+               end if;
+            end;
          end loop;
 
          --  Sort the references
@@ -1750,12 +1958,18 @@ package body Lib.Xref is
 
                procedure Check_Type_Reference
                  (Ent            : Entity_Id;
-                  List_Interface : Boolean);
+                  List_Interface : Boolean;
+                  Is_Component   : Boolean := False);
                --  Find whether there is a meaningful type reference for
                --  Ent, and display it accordingly. If List_Interface is
                --  true, then Ent is a progenitor interface of the current
                --  type entity being listed. In that case list it as is,
-               --  without looking for a type reference for it.
+               --  without looking for a type reference for it. Flag is also
+               --  used for index types of an array type, where the caller
+               --  supplies the intended type reference. Is_Component serves
+               --  the same purpose, to display the component type of a
+               --  derived array type, for which only the parent type has
+               --  ben displayed so far.
 
                procedure Output_Instantiation_Refs (Loc : Source_Ptr);
                --  Recursive procedure to output instantiation references for
@@ -1772,7 +1986,8 @@ package body Lib.Xref is
 
                procedure Check_Type_Reference
                  (Ent            : Entity_Id;
-                  List_Interface : Boolean)
+                  List_Interface : Boolean;
+                  Is_Component   : Boolean := False)
                is
                begin
                   if List_Interface then
@@ -1783,6 +1998,13 @@ package body Lib.Xref is
                      Tref  := Ent;
                      Left  := '<';
                      Right := '>';
+
+                  --  The following is not documented in lib-xref.ads ???
+
+                  elsif Is_Component then
+                     Tref  := Ent;
+                     Left  := '(';
+                     Right := ')';
 
                   else
                      Get_Type_Reference (Ent, Tref, Left, Right);
@@ -1949,6 +2171,15 @@ package body Lib.Xref is
 
             begin
                Ent := XE.Key.Ent;
+
+               --  Do not generate reference information for an ignored Ghost
+               --  entity because neither the entity nor its references will
+               --  appear in the final tree.
+
+               if Is_Ignored_Ghost_Entity (Ent) then
+                  goto Continue;
+               end if;
+
                Ctyp := Xref_Entity_Letters (Ekind (Ent));
 
                --  Skip reference if it is the only reference to an entity,
@@ -2011,8 +2242,8 @@ package body Lib.Xref is
                      Ctyp := '*';
                   end if;
 
-                  --  Special handling for access parameters and objects of
-                  --  an anonymous access type.
+                  --  Special handling for access parameters and objects and
+                  --  components of an anonymous access type.
 
                   if Ekind_In (Etype (XE.Key.Ent),
                                E_Anonymous_Access_Type,
@@ -2020,7 +2251,9 @@ package body Lib.Xref is
                                E_Anonymous_Access_Protected_Subprogram_Type)
                   then
                      if Is_Formal (XE.Key.Ent)
-                       or else Ekind_In (XE.Key.Ent, E_Variable, E_Constant)
+                       or else
+                         Ekind_In
+                           (XE.Key.Ent, E_Variable, E_Constant, E_Component)
                      then
                         Ctyp := 'p';
                      end if;
@@ -2304,7 +2537,7 @@ package body Lib.Xref is
                      --  Write out information about generic parent, if entity
                      --  is an instance.
 
-                     if  Is_Generic_Instance (XE.Key.Ent) then
+                     if Is_Generic_Instance (XE.Key.Ent) then
                         declare
                            Gen_Par : constant Entity_Id :=
                                        Generic_Parent
@@ -2333,28 +2566,58 @@ package body Lib.Xref is
 
                      Check_Type_Reference (XE.Key.Ent, False);
 
-                     --  Additional information for types with progenitors
+                     --  Additional information for types with progenitors,
+                     --  including synchronized tagged types.
 
-                     if Is_Record_Type (XE.Key.Ent)
-                       and then Present (Interfaces (XE.Key.Ent))
-                     then
-                        declare
-                           Elmt : Elmt_Id :=
-                                    First_Elmt (Interfaces (XE.Key.Ent));
-                        begin
-                           while Present (Elmt) loop
-                              Check_Type_Reference (Node (Elmt), True);
-                              Next_Elmt (Elmt);
-                           end loop;
-                        end;
+                     declare
+                        Typ  : constant Entity_Id := XE.Key.Ent;
+                        Elmt : Elmt_Id;
+
+                     begin
+                        if Is_Record_Type (Typ)
+                          and then Present (Interfaces (Typ))
+                        then
+                           Elmt := First_Elmt (Interfaces (Typ));
+
+                        elsif Is_Concurrent_Type (Typ)
+                          and then Present (Corresponding_Record_Type (Typ))
+                          and then Present (
+                            Interfaces (Corresponding_Record_Type (Typ)))
+                        then
+                           Elmt :=
+                             First_Elmt (
+                              Interfaces (Corresponding_Record_Type (Typ)));
+
+                        else
+                           Elmt := No_Elmt;
+                        end if;
+
+                        while Present (Elmt) loop
+                           Check_Type_Reference (Node (Elmt), True);
+                           Next_Elmt (Elmt);
+                        end loop;
+                     end;
 
                      --  For array types, list index types as well. (This is
                      --  not C, indexes have distinct types).
 
-                     elsif Is_Array_Type (XE.Key.Ent) then
+                     if Is_Array_Type (XE.Key.Ent) then
                         declare
+                           A_Typ : constant Entity_Id := XE.Key.Ent;
                            Indx : Node_Id;
+
                         begin
+                           --  If this is a derived array type, we have
+                           --  output the parent type, so add the component
+                           --  type now.
+
+                           if Is_Derived_Type (A_Typ) then
+                              Check_Type_Reference
+                                (Component_Type (A_Typ), False, True);
+                           end if;
+
+                           --  Add references to index types.
+
                            Indx := First_Index (XE.Key.Ent);
                            while Present (Indx) loop
                               Check_Type_Reference
@@ -2412,11 +2675,13 @@ package body Lib.Xref is
                        (Int (Get_Logical_Line_Number (XE.Key.Loc)));
                      Write_Info_Char (XE.Key.Typ);
 
-                     if Is_Overloadable (XE.Key.Ent)
-                       and then Is_Imported (XE.Key.Ent)
-                       and then XE.Key.Typ = 'b'
-                     then
-                        Output_Import_Export_Info (XE.Key.Ent);
+                     if Is_Overloadable (XE.Key.Ent) then
+                        if (Is_Imported (XE.Key.Ent) and then XE.Key.Typ = 'b')
+                             or else
+                           (Is_Exported (XE.Key.Ent) and then XE.Key.Typ = 'i')
+                        then
+                           Output_Import_Export_Info (XE.Key.Ent);
+                        end if;
                      end if;
 
                      Write_Info_Nat (Int (Get_Column_Number (XE.Key.Loc)));
@@ -2433,6 +2698,40 @@ package body Lib.Xref is
          Write_Info_EOL;
       end Output_Refs;
    end Output_References;
+
+   ---------------------------------
+   -- Process_Deferred_References --
+   ---------------------------------
+
+   procedure Process_Deferred_References is
+   begin
+      for J in Deferred_References.First .. Deferred_References.Last loop
+         declare
+            D : Deferred_Reference_Entry renames Deferred_References.Table (J);
+
+         begin
+            case Is_LHS (D.N) is
+               when Yes =>
+                  Generate_Reference (D.E, D.N, 'm');
+
+               when No =>
+                  Generate_Reference (D.E, D.N, 'r');
+
+               --  Not clear if Unknown can occur at this stage, but if it
+               --  does we will treat it as a normal reference.
+
+               when Unknown =>
+                  Generate_Reference (D.E, D.N, 'r');
+            end case;
+         end;
+      end loop;
+
+      --  Clear processed entries from table
+
+      Deferred_References.Init;
+   end Process_Deferred_References;
+
+--  Start of elaboration for Lib.Xref
 
 begin
    --  Reset is necessary because Elmt_Ptr does not default to Null_Ptr,

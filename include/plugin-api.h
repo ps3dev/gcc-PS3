@@ -1,6 +1,6 @@
 /* plugin-api.h -- External linker plugin API.  */
 
-/* Copyright 2009, 2010 Free Software Foundation, Inc.
+/* Copyright (C) 2009-2017 Free Software Foundation, Inc.
    Written by Cary Coutant <ccoutant@google.com>.
 
    This file is part of binutils.
@@ -66,7 +66,8 @@ enum ld_plugin_output_file_type
 {
   LDPO_REL,
   LDPO_EXEC,
-  LDPO_DYN
+  LDPO_DYN,
+  LDPO_PIE
 };
 
 /* An input file managed by the plugin library.  */
@@ -317,6 +318,53 @@ typedef
 enum ld_plugin_status
 (*ld_plugin_allow_section_ordering) (void);
 
+/* The linker's interface for specifying that a subset of sections is
+   to be mapped to a unique segment.  If the plugin wants to call
+   unique_segment_for_sections, it must call this function from a
+   claim_file_handler or when it is first loaded.  */
+
+typedef
+enum ld_plugin_status
+(*ld_plugin_allow_unique_segment_for_sections) (void);
+
+/* The linker's interface for specifying that a specific set of sections
+   must be mapped to a unique segment.  ELF segments do not have names
+   and the NAME is used as the name of the newly created output section
+   that is then placed in the unique PT_LOAD segment.  FLAGS is used to
+   specify if any additional segment flags need to be set.  For instance,
+   a specific segment flag can be set to identify this segment.  Unsetting
+   segment flags that would be set by default is not possible.  The
+   parameter SEGMENT_ALIGNMENT when non-zero will override the default.  */
+
+typedef
+enum ld_plugin_status
+(*ld_plugin_unique_segment_for_sections) (
+    const char* segment_name,
+    uint64_t segment_flags,
+    uint64_t segment_alignment,
+    const struct ld_plugin_section * section_list,
+    unsigned int num_sections);
+
+/* The linker's interface for retrieving the section alignment requirement
+   of a specific section in an object.  This interface should only be invoked in the
+   claim_file handler.  This function sets *ADDRALIGN to the ELF sh_addralign
+   value of the input section.  */
+
+typedef
+enum ld_plugin_status
+(*ld_plugin_get_input_section_alignment) (const struct ld_plugin_section section,
+                                          unsigned int *addralign);
+
+/* The linker's interface for retrieving the section size of a specific section
+   in an object.  This interface should only be invoked in the claim_file handler.
+   This function sets *SECSIZE to the ELF sh_size
+   value of the input section.  */
+
+typedef
+enum ld_plugin_status
+(*ld_plugin_get_input_section_size) (const struct ld_plugin_section section,
+                                     uint64_t *secsize);
+
 enum ld_plugin_level
 {
   LDPL_INFO,
@@ -330,31 +378,36 @@ enum ld_plugin_level
 enum ld_plugin_tag
 {
   LDPT_NULL = 0,
-  LDPT_API_VERSION,
-  LDPT_GOLD_VERSION,
-  LDPT_LINKER_OUTPUT,
-  LDPT_OPTION,
-  LDPT_REGISTER_CLAIM_FILE_HOOK,
-  LDPT_REGISTER_ALL_SYMBOLS_READ_HOOK,
-  LDPT_REGISTER_CLEANUP_HOOK,
-  LDPT_ADD_SYMBOLS,
-  LDPT_GET_SYMBOLS,
-  LDPT_ADD_INPUT_FILE,
-  LDPT_MESSAGE,
-  LDPT_GET_INPUT_FILE,
-  LDPT_RELEASE_INPUT_FILE,
-  LDPT_ADD_INPUT_LIBRARY,
-  LDPT_OUTPUT_NAME,
-  LDPT_SET_EXTRA_LIBRARY_PATH,
-  LDPT_GNU_LD_VERSION,
-  LDPT_GET_VIEW,
-  LDPT_GET_INPUT_SECTION_COUNT,
-  LDPT_GET_INPUT_SECTION_TYPE,
-  LDPT_GET_INPUT_SECTION_NAME,
-  LDPT_GET_INPUT_SECTION_CONTENTS,
-  LDPT_UPDATE_SECTION_ORDER,
-  LDPT_ALLOW_SECTION_ORDERING,
-  LDPT_GET_SYMBOLS_V2
+  LDPT_API_VERSION = 1,
+  LDPT_GOLD_VERSION = 2,
+  LDPT_LINKER_OUTPUT = 3,
+  LDPT_OPTION = 4,
+  LDPT_REGISTER_CLAIM_FILE_HOOK = 5,
+  LDPT_REGISTER_ALL_SYMBOLS_READ_HOOK = 6,
+  LDPT_REGISTER_CLEANUP_HOOK = 7,
+  LDPT_ADD_SYMBOLS = 8,
+  LDPT_GET_SYMBOLS = 9,
+  LDPT_ADD_INPUT_FILE = 10,
+  LDPT_MESSAGE = 11,
+  LDPT_GET_INPUT_FILE = 12,
+  LDPT_RELEASE_INPUT_FILE = 13,
+  LDPT_ADD_INPUT_LIBRARY = 14,
+  LDPT_OUTPUT_NAME = 15,
+  LDPT_SET_EXTRA_LIBRARY_PATH = 16,
+  LDPT_GNU_LD_VERSION = 17,
+  LDPT_GET_VIEW = 18,
+  LDPT_GET_INPUT_SECTION_COUNT = 19,
+  LDPT_GET_INPUT_SECTION_TYPE = 20,
+  LDPT_GET_INPUT_SECTION_NAME = 21,
+  LDPT_GET_INPUT_SECTION_CONTENTS = 22,
+  LDPT_UPDATE_SECTION_ORDER = 23,
+  LDPT_ALLOW_SECTION_ORDERING = 24,
+  LDPT_GET_SYMBOLS_V2 = 25,
+  LDPT_ALLOW_UNIQUE_SEGMENT_FOR_SECTIONS = 26,
+  LDPT_UNIQUE_SEGMENT_FOR_SECTIONS = 27,
+  LDPT_GET_SYMBOLS_V3 = 28,
+  LDPT_GET_INPUT_SECTION_ALIGNMENT = 29,
+  LDPT_GET_INPUT_SECTION_SIZE = 30
 };
 
 /* The plugin transfer vector.  */
@@ -384,6 +437,10 @@ struct ld_plugin_tv
     ld_plugin_get_input_section_contents tv_get_input_section_contents;
     ld_plugin_update_section_order tv_update_section_order;
     ld_plugin_allow_section_ordering tv_allow_section_ordering;
+    ld_plugin_allow_unique_segment_for_sections tv_allow_unique_segment_for_sections; 
+    ld_plugin_unique_segment_for_sections tv_unique_segment_for_sections;
+    ld_plugin_get_input_section_alignment tv_get_input_section_alignment;
+    ld_plugin_get_input_section_size tv_get_input_section_size;
   } tv_u;
 };
 

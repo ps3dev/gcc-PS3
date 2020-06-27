@@ -1,19 +1,146 @@
-// Copyright 2010 The Go Authors.  All rights reserved.
+// Copyright 2010 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
 package net
 
 import (
+	"context"
+	"internal/nettrace"
 	"time"
 )
 
-func parseDialNetwork(net string) (afnet string, proto int, err error) {
+// A Dialer contains options for connecting to an address.
+//
+// The zero value for each field is equivalent to dialing
+// without that option. Dialing with the zero value of Dialer
+// is therefore equivalent to just calling the Dial function.
+type Dialer struct {
+	// Timeout is the maximum amount of time a dial will wait for
+	// a connect to complete. If Deadline is also set, it may fail
+	// earlier.
+	//
+	// The default is no timeout.
+	//
+	// When dialing a name with multiple IP addresses, the timeout
+	// may be divided between them.
+	//
+	// With or without a timeout, the operating system may impose
+	// its own earlier timeout. For instance, TCP timeouts are
+	// often around 3 minutes.
+	Timeout time.Duration
+
+	// Deadline is the absolute point in time after which dials
+	// will fail. If Timeout is set, it may fail earlier.
+	// Zero means no deadline, or dependent on the operating system
+	// as with the Timeout option.
+	Deadline time.Time
+
+	// LocalAddr is the local address to use when dialing an
+	// address. The address must be of a compatible type for the
+	// network being dialed.
+	// If nil, a local address is automatically chosen.
+	LocalAddr Addr
+
+	// DualStack enables RFC 6555-compliant "Happy Eyeballs" dialing
+	// when the network is "tcp" and the destination is a host name
+	// with both IPv4 and IPv6 addresses. This allows a client to
+	// tolerate networks where one address family is silently broken.
+	DualStack bool
+
+	// FallbackDelay specifies the length of time to wait before
+	// spawning a fallback connection, when DualStack is enabled.
+	// If zero, a default delay of 300ms is used.
+	FallbackDelay time.Duration
+
+	// KeepAlive specifies the keep-alive period for an active
+	// network connection.
+	// If zero, keep-alives are not enabled. Network protocols
+	// that do not support keep-alives ignore this field.
+	KeepAlive time.Duration
+
+	// Resolver optionally specifies an alternate resolver to use.
+	Resolver *Resolver
+
+	// Cancel is an optional channel whose closure indicates that
+	// the dial should be canceled. Not all types of dials support
+	// cancelation.
+	//
+	// Deprecated: Use DialContext instead.
+	Cancel <-chan struct{}
+}
+
+func minNonzeroTime(a, b time.Time) time.Time {
+	if a.IsZero() {
+		return b
+	}
+	if b.IsZero() || a.Before(b) {
+		return a
+	}
+	return b
+}
+
+// deadline returns the earliest of:
+//   - now+Timeout
+//   - d.Deadline
+//   - the context's deadline
+// Or zero, if none of Timeout, Deadline, or context's deadline is set.
+func (d *Dialer) deadline(ctx context.Context, now time.Time) (earliest time.Time) {
+	if d.Timeout != 0 { // including negative, for historical reasons
+		earliest = now.Add(d.Timeout)
+	}
+	if d, ok := ctx.Deadline(); ok {
+		earliest = minNonzeroTime(earliest, d)
+	}
+	return minNonzeroTime(earliest, d.Deadline)
+}
+
+func (d *Dialer) resolver() *Resolver {
+	if d.Resolver != nil {
+		return d.Resolver
+	}
+	return DefaultResolver
+}
+
+// partialDeadline returns the deadline to use for a single address,
+// when multiple addresses are pending.
+func partialDeadline(now, deadline time.Time, addrsRemaining int) (time.Time, error) {
+	if deadline.IsZero() {
+		return deadline, nil
+	}
+	timeRemaining := deadline.Sub(now)
+	if timeRemaining <= 0 {
+		return time.Time{}, errTimeout
+	}
+	// Tentatively allocate equal time to each remaining address.
+	timeout := timeRemaining / time.Duration(addrsRemaining)
+	// If the time per address is too short, steal from the end of the list.
+	const saneMinimum = 2 * time.Second
+	if timeout < saneMinimum {
+		if timeRemaining < saneMinimum {
+			timeout = timeRemaining
+		} else {
+			timeout = saneMinimum
+		}
+	}
+	return now.Add(timeout), nil
+}
+
+func (d *Dialer) fallbackDelay() time.Duration {
+	if d.FallbackDelay > 0 {
+		return d.FallbackDelay
+	} else {
+		return 300 * time.Millisecond
+	}
+}
+
+func parseNetwork(ctx context.Context, net string) (afnet string, proto int, err error) {
 	i := last(net, ':')
 	if i < 0 { // no colon
 		switch net {
 		case "tcp", "tcp4", "tcp6":
 		case "udp", "udp4", "udp6":
+		case "ip", "ip4", "ip6":
 		case "unix", "unixgram", "unixpacket":
 		default:
 			return "", 0, UnknownNetworkError(net)
@@ -24,9 +151,9 @@ func parseDialNetwork(net string) (afnet string, proto int, err error) {
 	switch afnet {
 	case "ip", "ip4", "ip6":
 		protostr := net[i+1:]
-		proto, i, ok := dtoi(protostr, 0)
+		proto, i, ok := dtoi(protostr)
 		if !ok || i != len(protostr) {
-			proto, err = lookupProtocol(protostr)
+			proto, err = lookupProtocol(ctx, protostr)
 			if err != nil {
 				return "", 0, err
 			}
@@ -36,193 +163,438 @@ func parseDialNetwork(net string) (afnet string, proto int, err error) {
 	return "", 0, UnknownNetworkError(net)
 }
 
-func resolveNetAddr(op, net, addr string) (afnet string, a Addr, err error) {
-	afnet, _, err = parseDialNetwork(net)
+// resolveAddrList resolves addr using hint and returns a list of
+// addresses. The result contains at least one address when error is
+// nil.
+func (r *Resolver) resolveAddrList(ctx context.Context, op, network, addr string, hint Addr) (addrList, error) {
+	afnet, _, err := parseNetwork(ctx, network)
 	if err != nil {
-		return "", nil, &OpError{op, net, nil, err}
+		return nil, err
 	}
 	if op == "dial" && addr == "" {
-		return "", nil, &OpError{op, net, nil, errMissingAddress}
+		return nil, errMissingAddress
 	}
 	switch afnet {
-	case "tcp", "tcp4", "tcp6":
-		if addr != "" {
-			a, err = ResolveTCPAddr(afnet, addr)
-		}
-	case "udp", "udp4", "udp6":
-		if addr != "" {
-			a, err = ResolveUDPAddr(afnet, addr)
-		}
-	case "ip", "ip4", "ip6":
-		if addr != "" {
-			a, err = ResolveIPAddr(afnet, addr)
-		}
 	case "unix", "unixgram", "unixpacket":
-		if addr != "" {
-			a, err = ResolveUnixAddr(afnet, addr)
+		addr, err := ResolveUnixAddr(afnet, addr)
+		if err != nil {
+			return nil, err
+		}
+		if op == "dial" && hint != nil && addr.Network() != hint.Network() {
+			return nil, &AddrError{Err: "mismatched local address type", Addr: hint.String()}
+		}
+		return addrList{addr}, nil
+	}
+	addrs, err := r.internetAddrList(ctx, afnet, addr)
+	if err != nil || op != "dial" || hint == nil {
+		return addrs, err
+	}
+	var (
+		tcp      *TCPAddr
+		udp      *UDPAddr
+		ip       *IPAddr
+		wildcard bool
+	)
+	switch hint := hint.(type) {
+	case *TCPAddr:
+		tcp = hint
+		wildcard = tcp.isWildcard()
+	case *UDPAddr:
+		udp = hint
+		wildcard = udp.isWildcard()
+	case *IPAddr:
+		ip = hint
+		wildcard = ip.isWildcard()
+	}
+	naddrs := addrs[:0]
+	for _, addr := range addrs {
+		if addr.Network() != hint.Network() {
+			return nil, &AddrError{Err: "mismatched local address type", Addr: hint.String()}
+		}
+		switch addr := addr.(type) {
+		case *TCPAddr:
+			if !wildcard && !addr.isWildcard() && !addr.IP.matchAddrFamily(tcp.IP) {
+				continue
+			}
+			naddrs = append(naddrs, addr)
+		case *UDPAddr:
+			if !wildcard && !addr.isWildcard() && !addr.IP.matchAddrFamily(udp.IP) {
+				continue
+			}
+			naddrs = append(naddrs, addr)
+		case *IPAddr:
+			if !wildcard && !addr.isWildcard() && !addr.IP.matchAddrFamily(ip.IP) {
+				continue
+			}
+			naddrs = append(naddrs, addr)
 		}
 	}
-	return
+	if len(naddrs) == 0 {
+		return nil, &AddrError{Err: errNoSuitableAddress.Error(), Addr: hint.String()}
+	}
+	return naddrs, nil
 }
 
-// Dial connects to the address addr on the network net.
+// Dial connects to the address on the named network.
 //
 // Known networks are "tcp", "tcp4" (IPv4-only), "tcp6" (IPv6-only),
 // "udp", "udp4" (IPv4-only), "udp6" (IPv6-only), "ip", "ip4"
-// (IPv4-only), "ip6" (IPv6-only), "unix" and "unixpacket".
+// (IPv4-only), "ip6" (IPv6-only), "unix", "unixgram" and
+// "unixpacket".
 //
 // For TCP and UDP networks, addresses have the form host:port.
-// If host is a literal IPv6 address, it must be enclosed
-// in square brackets.  The functions JoinHostPort and SplitHostPort
-// manipulate addresses in this form.
+// If host is a literal IPv6 address it must be enclosed
+// in square brackets as in "[::1]:80" or "[ipv6-host%zone]:80".
+// The functions JoinHostPort and SplitHostPort manipulate addresses
+// in this form.
+// If the host is empty, as in ":80", the local system is assumed.
 //
 // Examples:
-//	Dial("tcp", "12.34.56.78:80")
-//	Dial("tcp", "google.com:80")
-//	Dial("tcp", "[de:ad:be:ef::ca:fe]:80")
+//	Dial("tcp", "192.0.2.1:80")
+//	Dial("tcp", "golang.org:http")
+//	Dial("tcp", "[2001:db8::1]:http")
+//	Dial("tcp", "[fe80::1%lo0]:80")
+//	Dial("tcp", ":80")
 //
-// For IP networks, addr must be "ip", "ip4" or "ip6" followed
-// by a colon and a protocol number or name.
+// For IP networks, the network must be "ip", "ip4" or "ip6" followed
+// by a colon and a protocol number or name and the addr must be a
+// literal IP address.
 //
 // Examples:
-//	Dial("ip4:1", "127.0.0.1")
-//	Dial("ip6:ospf", "::1")
+//	Dial("ip4:1", "192.0.2.1")
+//	Dial("ip6:ipv6-icmp", "2001:db8::1")
 //
-func Dial(net, addr string) (Conn, error) {
-	_, addri, err := resolveNetAddr("dial", net, addr)
-	if err != nil {
-		return nil, err
-	}
-	return dialAddr(net, addr, addri)
-}
-
-func dialAddr(net, addr string, addri Addr) (c Conn, err error) {
-	switch ra := addri.(type) {
-	case *TCPAddr:
-		c, err = DialTCP(net, nil, ra)
-	case *UDPAddr:
-		c, err = DialUDP(net, nil, ra)
-	case *IPAddr:
-		c, err = DialIP(net, nil, ra)
-	case *UnixAddr:
-		c, err = DialUnix(net, nil, ra)
-	default:
-		err = &OpError{"dial", net + " " + addr, nil, UnknownNetworkError(net)}
-	}
-	if err != nil {
-		return nil, err
-	}
-	return
+// For Unix networks, the address must be a file system path.
+//
+// If the host is resolved to multiple addresses,
+// Dial will try each address in order until one succeeds.
+func Dial(network, address string) (Conn, error) {
+	var d Dialer
+	return d.Dial(network, address)
 }
 
 // DialTimeout acts like Dial but takes a timeout.
 // The timeout includes name resolution, if required.
-func DialTimeout(net, addr string, timeout time.Duration) (Conn, error) {
-	// TODO(bradfitz): the timeout should be pushed down into the
-	// net package's event loop, so on timeout to dead hosts we
-	// don't have a goroutine sticking around for the default of
-	// ~3 minutes.
-	t := time.NewTimer(timeout)
-	defer t.Stop()
-	type pair struct {
-		Conn
-		error
-	}
-	ch := make(chan pair, 1)
-	resolvedAddr := make(chan Addr, 1)
-	go func() {
-		_, addri, err := resolveNetAddr("dial", net, addr)
-		if err != nil {
-			ch <- pair{nil, err}
-			return
-		}
-		resolvedAddr <- addri // in case we need it for OpError
-		c, err := dialAddr(net, addr, addri)
-		ch <- pair{c, err}
-	}()
-	select {
-	case <-t.C:
-		// Try to use the real Addr in our OpError, if we resolved it
-		// before the timeout. Otherwise we just use stringAddr.
-		var addri Addr
-		select {
-		case a := <-resolvedAddr:
-			addri = a
-		default:
-			addri = &stringAddr{net, addr}
-		}
-		err := &OpError{
-			Op:   "dial",
-			Net:  net,
-			Addr: addri,
-			Err:  &timeoutError{},
-		}
-		return nil, err
-	case p := <-ch:
-		return p.Conn, p.error
-	}
-	panic("unreachable")
+func DialTimeout(network, address string, timeout time.Duration) (Conn, error) {
+	d := Dialer{Timeout: timeout}
+	return d.Dial(network, address)
 }
 
-type stringAddr struct {
-	net, addr string
+// dialParam contains a Dial's parameters and configuration.
+type dialParam struct {
+	Dialer
+	network, address string
 }
 
-func (a stringAddr) Network() string { return a.net }
-func (a stringAddr) String() string  { return a.addr }
+// Dial connects to the address on the named network.
+//
+// See func Dial for a description of the network and address
+// parameters.
+func (d *Dialer) Dial(network, address string) (Conn, error) {
+	return d.DialContext(context.Background(), network, address)
+}
 
-// Listen announces on the local network address laddr.
-// The network string net must be a stream-oriented network:
-// "tcp", "tcp4", "tcp6", or "unix", or "unixpacket".
-func Listen(net, laddr string) (Listener, error) {
-	afnet, a, err := resolveNetAddr("listen", net, laddr)
+// DialContext connects to the address on the named network using
+// the provided context.
+//
+// The provided Context must be non-nil. If the context expires before
+// the connection is complete, an error is returned. Once successfully
+// connected, any expiration of the context will not affect the
+// connection.
+//
+// When using TCP, and the host in the address parameter resolves to multiple
+// network addresses, any dial timeout (from d.Timeout or ctx) is spread
+// over each consecutive dial, such that each is given an appropriate
+// fraction of the time to connect.
+// For example, if a host has 4 IP addresses and the timeout is 1 minute,
+// the connect to each single address will be given 15 seconds to complete
+// before trying the next one.
+//
+// See func Dial for a description of the network and address
+// parameters.
+func (d *Dialer) DialContext(ctx context.Context, network, address string) (Conn, error) {
+	if ctx == nil {
+		panic("nil context")
+	}
+	deadline := d.deadline(ctx, time.Now())
+	if !deadline.IsZero() {
+		if d, ok := ctx.Deadline(); !ok || deadline.Before(d) {
+			subCtx, cancel := context.WithDeadline(ctx, deadline)
+			defer cancel()
+			ctx = subCtx
+		}
+	}
+	if oldCancel := d.Cancel; oldCancel != nil {
+		subCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		go func() {
+			select {
+			case <-oldCancel:
+				cancel()
+			case <-subCtx.Done():
+			}
+		}()
+		ctx = subCtx
+	}
+
+	// Shadow the nettrace (if any) during resolve so Connect events don't fire for DNS lookups.
+	resolveCtx := ctx
+	if trace, _ := ctx.Value(nettrace.TraceKey{}).(*nettrace.Trace); trace != nil {
+		shadow := *trace
+		shadow.ConnectStart = nil
+		shadow.ConnectDone = nil
+		resolveCtx = context.WithValue(resolveCtx, nettrace.TraceKey{}, &shadow)
+	}
+
+	addrs, err := d.resolver().resolveAddrList(resolveCtx, "dial", network, address, d.LocalAddr)
+	if err != nil {
+		return nil, &OpError{Op: "dial", Net: network, Source: nil, Addr: nil, Err: err}
+	}
+
+	dp := &dialParam{
+		Dialer:  *d,
+		network: network,
+		address: address,
+	}
+
+	var primaries, fallbacks addrList
+	if d.DualStack && network == "tcp" {
+		primaries, fallbacks = addrs.partition(isIPv4)
+	} else {
+		primaries = addrs
+	}
+
+	var c Conn
+	if len(fallbacks) > 0 {
+		c, err = dialParallel(ctx, dp, primaries, fallbacks)
+	} else {
+		c, err = dialSerial(ctx, dp, primaries)
+	}
 	if err != nil {
 		return nil, err
 	}
-	switch afnet {
-	case "tcp", "tcp4", "tcp6":
-		var la *TCPAddr
-		if a != nil {
-			la = a.(*TCPAddr)
-		}
-		return ListenTCP(net, la)
-	case "unix", "unixpacket":
-		var la *UnixAddr
-		if a != nil {
-			la = a.(*UnixAddr)
-		}
-		return ListenUnix(net, la)
+
+	if tc, ok := c.(*TCPConn); ok && d.KeepAlive > 0 {
+		setKeepAlive(tc.fd, true)
+		setKeepAlivePeriod(tc.fd, d.KeepAlive)
+		testHookSetKeepAlive()
 	}
-	return nil, UnknownNetworkError(net)
+	return c, nil
+}
+
+// dialParallel races two copies of dialSerial, giving the first a
+// head start. It returns the first established connection and
+// closes the others. Otherwise it returns an error from the first
+// primary address.
+func dialParallel(ctx context.Context, dp *dialParam, primaries, fallbacks addrList) (Conn, error) {
+	if len(fallbacks) == 0 {
+		return dialSerial(ctx, dp, primaries)
+	}
+
+	returned := make(chan struct{})
+	defer close(returned)
+
+	type dialResult struct {
+		Conn
+		error
+		primary bool
+		done    bool
+	}
+	results := make(chan dialResult) // unbuffered
+
+	startRacer := func(ctx context.Context, primary bool) {
+		ras := primaries
+		if !primary {
+			ras = fallbacks
+		}
+		c, err := dialSerial(ctx, dp, ras)
+		select {
+		case results <- dialResult{Conn: c, error: err, primary: primary, done: true}:
+		case <-returned:
+			if c != nil {
+				c.Close()
+			}
+		}
+	}
+
+	var primary, fallback dialResult
+
+	// Start the main racer.
+	primaryCtx, primaryCancel := context.WithCancel(ctx)
+	defer primaryCancel()
+	go startRacer(primaryCtx, true)
+
+	// Start the timer for the fallback racer.
+	fallbackTimer := time.NewTimer(dp.fallbackDelay())
+	defer fallbackTimer.Stop()
+
+	for {
+		select {
+		case <-fallbackTimer.C:
+			fallbackCtx, fallbackCancel := context.WithCancel(ctx)
+			defer fallbackCancel()
+			go startRacer(fallbackCtx, false)
+
+		case res := <-results:
+			if res.error == nil {
+				return res.Conn, nil
+			}
+			if res.primary {
+				primary = res
+			} else {
+				fallback = res
+			}
+			if primary.done && fallback.done {
+				return nil, primary.error
+			}
+			if res.primary && fallbackTimer.Stop() {
+				// If we were able to stop the timer, that means it
+				// was running (hadn't yet started the fallback), but
+				// we just got an error on the primary path, so start
+				// the fallback immediately (in 0 nanoseconds).
+				fallbackTimer.Reset(0)
+			}
+		}
+	}
+}
+
+// dialSerial connects to a list of addresses in sequence, returning
+// either the first successful connection, or the first error.
+func dialSerial(ctx context.Context, dp *dialParam, ras addrList) (Conn, error) {
+	var firstErr error // The error from the first address is most relevant.
+
+	for i, ra := range ras {
+		select {
+		case <-ctx.Done():
+			return nil, &OpError{Op: "dial", Net: dp.network, Source: dp.LocalAddr, Addr: ra, Err: mapErr(ctx.Err())}
+		default:
+		}
+
+		deadline, _ := ctx.Deadline()
+		partialDeadline, err := partialDeadline(time.Now(), deadline, len(ras)-i)
+		if err != nil {
+			// Ran out of time.
+			if firstErr == nil {
+				firstErr = &OpError{Op: "dial", Net: dp.network, Source: dp.LocalAddr, Addr: ra, Err: err}
+			}
+			break
+		}
+		dialCtx := ctx
+		if partialDeadline.Before(deadline) {
+			var cancel context.CancelFunc
+			dialCtx, cancel = context.WithDeadline(ctx, partialDeadline)
+			defer cancel()
+		}
+
+		c, err := dialSingle(dialCtx, dp, ra)
+		if err == nil {
+			return c, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	if firstErr == nil {
+		firstErr = &OpError{Op: "dial", Net: dp.network, Source: nil, Addr: nil, Err: errMissingAddress}
+	}
+	return nil, firstErr
+}
+
+// dialSingle attempts to establish and returns a single connection to
+// the destination address.
+func dialSingle(ctx context.Context, dp *dialParam, ra Addr) (c Conn, err error) {
+	trace, _ := ctx.Value(nettrace.TraceKey{}).(*nettrace.Trace)
+	if trace != nil {
+		raStr := ra.String()
+		if trace.ConnectStart != nil {
+			trace.ConnectStart(dp.network, raStr)
+		}
+		if trace.ConnectDone != nil {
+			defer func() { trace.ConnectDone(dp.network, raStr, err) }()
+		}
+	}
+	la := dp.LocalAddr
+	switch ra := ra.(type) {
+	case *TCPAddr:
+		la, _ := la.(*TCPAddr)
+		c, err = dialTCP(ctx, dp.network, la, ra)
+	case *UDPAddr:
+		la, _ := la.(*UDPAddr)
+		c, err = dialUDP(ctx, dp.network, la, ra)
+	case *IPAddr:
+		la, _ := la.(*IPAddr)
+		c, err = dialIP(ctx, dp.network, la, ra)
+	case *UnixAddr:
+		la, _ := la.(*UnixAddr)
+		c, err = dialUnix(ctx, dp.network, la, ra)
+	default:
+		return nil, &OpError{Op: "dial", Net: dp.network, Source: la, Addr: ra, Err: &AddrError{Err: "unexpected address type", Addr: dp.address}}
+	}
+	if err != nil {
+		return nil, &OpError{Op: "dial", Net: dp.network, Source: la, Addr: ra, Err: err} // c is non-nil interface containing nil pointer
+	}
+	return c, nil
+}
+
+// Listen announces on the local network address laddr.
+// The network net must be a stream-oriented network: "tcp", "tcp4",
+// "tcp6", "unix" or "unixpacket".
+// For TCP and UDP, the syntax of laddr is "host:port", like "127.0.0.1:8080".
+// If host is omitted, as in ":8080", Listen listens on all available interfaces
+// instead of just the interface with the given host address.
+// See Dial for more details about address syntax.
+//
+// Listening on a hostname is not recommended because this creates a socket
+// for at most one of its IP addresses.
+func Listen(net, laddr string) (Listener, error) {
+	addrs, err := DefaultResolver.resolveAddrList(context.Background(), "listen", net, laddr, nil)
+	if err != nil {
+		return nil, &OpError{Op: "listen", Net: net, Source: nil, Addr: nil, Err: err}
+	}
+	var l Listener
+	switch la := addrs.first(isIPv4).(type) {
+	case *TCPAddr:
+		l, err = ListenTCP(net, la)
+	case *UnixAddr:
+		l, err = ListenUnix(net, la)
+	default:
+		return nil, &OpError{Op: "listen", Net: net, Source: nil, Addr: la, Err: &AddrError{Err: "unexpected address type", Addr: laddr}}
+	}
+	if err != nil {
+		return nil, err // l is non-nil interface containing nil pointer
+	}
+	return l, nil
 }
 
 // ListenPacket announces on the local network address laddr.
-// The network string net must be a packet-oriented network:
-// "udp", "udp4", "udp6", "ip", "ip4", "ip6" or "unixgram".
-func ListenPacket(net, addr string) (PacketConn, error) {
-	afnet, a, err := resolveNetAddr("listen", net, addr)
+// The network net must be a packet-oriented network: "udp", "udp4",
+// "udp6", "ip", "ip4", "ip6" or "unixgram".
+// For TCP and UDP, the syntax of laddr is "host:port", like "127.0.0.1:8080".
+// If host is omitted, as in ":8080", ListenPacket listens on all available interfaces
+// instead of just the interface with the given host address.
+// See Dial for the syntax of laddr.
+//
+// Listening on a hostname is not recommended because this creates a socket
+// for at most one of its IP addresses.
+func ListenPacket(net, laddr string) (PacketConn, error) {
+	addrs, err := DefaultResolver.resolveAddrList(context.Background(), "listen", net, laddr, nil)
 	if err != nil {
-		return nil, err
+		return nil, &OpError{Op: "listen", Net: net, Source: nil, Addr: nil, Err: err}
 	}
-	switch afnet {
-	case "udp", "udp4", "udp6":
-		var la *UDPAddr
-		if a != nil {
-			la = a.(*UDPAddr)
-		}
-		return ListenUDP(net, la)
-	case "ip", "ip4", "ip6":
-		var la *IPAddr
-		if a != nil {
-			la = a.(*IPAddr)
-		}
-		return ListenIP(net, la)
-	case "unixgram":
-		var la *UnixAddr
-		if a != nil {
-			la = a.(*UnixAddr)
-		}
-		return DialUnix(net, la, nil)
+	var l PacketConn
+	switch la := addrs.first(isIPv4).(type) {
+	case *UDPAddr:
+		l, err = ListenUDP(net, la)
+	case *IPAddr:
+		l, err = ListenIP(net, la)
+	case *UnixAddr:
+		l, err = ListenUnixgram(net, la)
+	default:
+		return nil, &OpError{Op: "listen", Net: net, Source: nil, Addr: la, Err: &AddrError{Err: "unexpected address type", Addr: laddr}}
 	}
-	return nil, UnknownNetworkError(net)
+	if err != nil {
+		return nil, err // l is non-nil interface containing nil pointer
+	}
+	return l, nil
 }

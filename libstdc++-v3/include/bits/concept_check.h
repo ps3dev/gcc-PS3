@@ -1,6 +1,6 @@
 // Concept-checking control -*- C++ -*-
 
-// Copyright (C) 2001, 2009, 2010 Free Software Foundation, Inc.
+// Copyright (C) 2001-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -41,8 +41,9 @@
 
 // Concept-checking code is off by default unless users turn it on via
 // configure options or editing c++config.h.
+// It is not supported for freestanding implementations.
 
-#ifndef _GLIBCXX_CONCEPT_CHECKS
+#if !defined(_GLIBCXX_CONCEPT_CHECKS) || !_GLIBCXX_HOSTED
 
 #define __glibcxx_function_requires(...)
 #define __glibcxx_class_requires(_a,_b)
@@ -56,12 +57,12 @@
 
 // Note that the obvious and elegant approach of
 //
-//#define glibcxx_function_requires(C) boost::function_requires< boost::C >()
+//#define glibcxx_function_requires(C) debug::function_requires< debug::C >()
 //
 // won't work due to concept templates with more than one parameter, e.g.,
 // BinaryPredicateConcept.  The preprocessor tries to split things up on
 // the commas in the template argument list.  We can't use an inner pair of
-// parenthesis to hide the commas, because "boost::(Temp<Foo,Bar>)" isn't
+// parenthesis to hide the commas, because "debug::(Temp<Foo,Bar>)" isn't
 // a valid instantiation pattern.  Thus, we steal a feature from C99.
 
 #define __glibcxx_function_requires(...)                                 \

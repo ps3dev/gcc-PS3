@@ -18,9 +18,9 @@ structure as execution proceeds.
 The input text for a template is UTF-8-encoded text in any format.
 "Actions"--data evaluations or control structures--are delimited by
 "{{" and "}}"; all text outside actions is copied to the output unchanged.
-Actions may not span newlines, although comments can.
+Except for raw strings, actions may not span newlines, although comments can.
 
-Once constructed, a template may be executed safely in parallel.
+Once parsed, a template may be executed safely in parallel.
 
 Here is a trivial example that prints "17 items are made of wool".
 
@@ -36,20 +36,47 @@ Here is a trivial example that prints "17 items are made of wool".
 
 More intricate examples appear below.
 
+Text and spaces
+
+By default, all text between actions is copied verbatim when the template is
+executed. For example, the string " items are made of " in the example above appears
+on standard output when the program is run.
+
+However, to aid in formatting template source code, if an action's left delimiter
+(by default "{{") is followed immediately by a minus sign and ASCII space character
+("{{- "), all trailing white space is trimmed from the immediately preceding text.
+Similarly, if the right delimiter ("}}") is preceded by a space and minus sign
+(" -}}"), all leading white space is trimmed from the immediately following text.
+In these trim markers, the ASCII space must be present; "{{-3}}" parses as an
+action containing the number -3.
+
+For instance, when executing the template whose source is
+
+	"{{23 -}} < {{- 45}}"
+
+the generated output would be
+
+	"23<45"
+
+For this trimming, the definition of white space characters is the same as in Go:
+space, horizontal tab, carriage return, and newline.
+
 Actions
 
 Here is the list of actions. "Arguments" and "pipelines" are evaluations of
-data, defined in detail below.
+data, defined in detail in the corresponding sections that follow.
 
 */
 //	{{/* a comment */}}
 //		A comment; discarded. May contain newlines.
-//		Comments do not nest.
+//		Comments do not nest and must start and end at the
+//		delimiters, as shown here.
 /*
 
 	{{pipeline}}
-		The default textual representation of the value of the pipeline
-		is copied to the output.
+		The default textual representation (the same as would be
+		printed by fmt.Print) of the value of the pipeline is copied
+		to the output.
 
 	{{if pipeline}} T1 {{end}}
 		If the value of the pipeline is empty, no output is generated;
@@ -62,17 +89,23 @@ data, defined in detail below.
 		If the value of the pipeline is empty, T0 is executed;
 		otherwise, T1 is executed.  Dot is unaffected.
 
+	{{if pipeline}} T1 {{else if pipeline}} T0 {{end}}
+		To simplify the appearance of if-else chains, the else action
+		of an if may include another if directly; the effect is exactly
+		the same as writing
+			{{if pipeline}} T1 {{else}}{{if pipeline}} T0 {{end}}{{end}}
+
 	{{range pipeline}} T1 {{end}}
-		The value of the pipeline must be an array, slice, or map. If
-		the value of the pipeline has length zero, nothing is output;
+		The value of the pipeline must be an array, slice, map, or channel.
+		If the value of the pipeline has length zero, nothing is output;
 		otherwise, dot is set to the successive elements of the array,
 		slice, or map and T1 is executed. If the value is a map and the
 		keys are of basic type with a defined order ("comparable"), the
 		elements will be visited in sorted key order.
 
 	{{range pipeline}} T1 {{else}} T0 {{end}}
-		The value of the pipeline must be an array, slice, or map. If
-		the value of the pipeline has length zero, dot is unaffected and
+		The value of the pipeline must be an array, slice, map, or channel.
+		If the value of the pipeline has length zero, dot is unaffected and
 		T0 is executed; otherwise, dot is set to the successive elements
 		of the array, slice, or map and T1 is executed.
 
@@ -82,6 +115,14 @@ data, defined in detail below.
 	{{template "name" pipeline}}
 		The template with the specified name is executed with dot set
 		to the value of the pipeline.
+
+	{{block "name" pipeline}} T1 {{end}}
+		A block is shorthand for defining a template
+			{{define "name"}} T1 {{end}}
+		and then executing it in place
+			{{template "name" .}}
+		The typical use is to define a set of root templates that are
+		then customized by redefining the block templates within.
 
 	{{with pipeline}} T1 {{end}}
 		If the value of the pipeline is empty, no output is generated;
@@ -99,7 +140,8 @@ An argument is a simple value, denoted by one of the following.
 
 	- A boolean, string, character, integer, floating-point, imaginary
 	  or complex constant in Go syntax. These behave like Go's untyped
-	  constants, although raw strings may not span newlines.
+	  constants.
+	- The keyword nil, representing an untyped Go nil.
 	- The character '.' (period):
 		.
 	  The result is the value of dot.
@@ -147,6 +189,10 @@ An argument is a simple value, denoted by one of the following.
 	  The result is the value of invoking the function, fun(). The return
 	  types and values behave as in methods. Functions and function
 	  names are described below.
+	- A parenthesized instance of one the above, for grouping. The result
+	  may be accessed by a field or map key invocation.
+		print (.F1 arg1) (.F2 arg2)
+		(.StructValuedMethod "arg").Field
 
 Arguments may evaluate to any type; if they are pointers the implementation
 automatically indirects to the base type when required.
@@ -154,6 +200,8 @@ If an evaluation yields a function value, such as a function-valued
 field of a struct, the function is not invoked automatically, but it
 can be used as a truth value for an if action and the like. To invoke
 it, use the call function, defined below.
+
+Pipelines
 
 A pipeline is a possibly chained sequence of "commands". A command is a simple
 value (argument) or a function or method call, possibly with multiple arguments:
@@ -172,10 +220,8 @@ value (argument) or a function or method call, possibly with multiple arguments:
 			function(Argument1, etc.)
 		Functions and function names are described below.
 
-Pipelines
-
 A pipeline may be "chained" by separating a sequence of commands with pipeline
-characters '|'. In a chained pipeline, the result of the each command is
+characters '|'. In a chained pipeline, the result of each command is
 passed as the last argument of the following command. The output of the final
 command in the pipeline is the value of the pipeline.
 
@@ -198,7 +244,7 @@ If a "range" action initializes a variable, the variable is set to the
 successive elements of the iteration.  Also, a "range" may declare two
 variables, separated by a comma:
 
-	$index, $element := pipeline
+	range $index, $element := pipeline
 
 in which case $index and $element are set to the successive values of the
 array/slice index or map key and element, respectively.  Note that if there is
@@ -227,6 +273,8 @@ All produce the quoted word "output":
 	{{"output" | printf "%q"}}
 		A function call whose final argument comes from the previous
 		command.
+	{{printf "%q" (print "out" "put")}}
+		A parenthesized argument.
 	{{"put" | printf "%s%s" "out" | printf "%q"}}
 		A more elaborate call.
 	{{"output" | printf "%s" | printf "%q"}}
@@ -244,7 +292,7 @@ Functions
 
 During execution functions are found in two function maps: first in the
 template, then in the global function map. By default, no functions are defined
-in the template but the Funcs methods can be used to add them.
+in the template but the Funcs method can be used to add them.
 
 Predefined global functions are named as follows.
 
@@ -293,8 +341,42 @@ Predefined global functions are named as follows.
 		Returns the escaped value of the textual representation of
 		its arguments in a form suitable for embedding in a URL query.
 
-The boolean functions take any zero value to be false and a non-zero value to
-be true.
+The boolean functions take any zero value to be false and a non-zero
+value to be true.
+
+There is also a set of binary comparison operators defined as
+functions:
+
+	eq
+		Returns the boolean truth of arg1 == arg2
+	ne
+		Returns the boolean truth of arg1 != arg2
+	lt
+		Returns the boolean truth of arg1 < arg2
+	le
+		Returns the boolean truth of arg1 <= arg2
+	gt
+		Returns the boolean truth of arg1 > arg2
+	ge
+		Returns the boolean truth of arg1 >= arg2
+
+For simpler multi-way equality tests, eq (only) accepts two or more
+arguments and compares the second and subsequent to the first,
+returning in effect
+
+	arg1==arg2 || arg1==arg3 || arg1==arg4 ...
+
+(Unlike with || in Go, however, eq is a function call and all the
+arguments will be evaluated.)
+
+The comparison functions work on basic types only (or named basic
+types, such as "type Celsius float32"). They implement the Go rules
+for comparison of values, except that size and exact type are
+ignored, so any integer value, signed or unsigned, may be compared
+with any other integer value. (The arithmetic value is compared,
+not the bit pattern, so all negative integers are less than all
+unsigned integers.) However, as usual, one may not compare an int
+with a float32 and so on.
 
 Associated templates
 

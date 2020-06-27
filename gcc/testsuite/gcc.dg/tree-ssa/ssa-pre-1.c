@@ -9,7 +9,7 @@ int foo(int argc, char **argv)
 	b  = argc + 1;
 	c =  argc + 2;
 	a = b + c;
-	if (argc * 2)
+	if (argc > 2)
 	{
 		c = argc + 3;
 	}
@@ -18,4 +18,3 @@ int foo(int argc, char **argv)
 /* We should eliminate one evaluation of b + c along the main path,
    causing one reload. */
 /* { dg-final { scan-tree-dump-times "Eliminated: 1" 1 "pre"} } */
-/* { dg-final { cleanup-tree-dump "pre" } } */

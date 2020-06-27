@@ -1,7 +1,6 @@
 // Functor implementations -*- C++ -*-
 
-// Copyright (C) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2009, 2010, 2011
-// Free Software Foundation, Inc.
+// Copyright (C) 2001-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -56,6 +55,10 @@
 
 #ifndef _BACKWARD_BINDERS_H
 #define _BACKWARD_BINDERS_H 1
+
+// Suppress deprecated warning for this file.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
@@ -173,5 +176,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace
+
+#pragma GCC diagnostic pop
 
 #endif /* _BACKWARD_BINDERS_H */

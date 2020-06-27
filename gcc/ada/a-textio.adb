@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2012, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -71,7 +71,7 @@ package body Ada.Text_IO is
    --  correct filename length.
    --
    --  Note: the names for these files are bogus, and probably it would be
-   --  better for these files to have no names, but the ACVC tests insist!
+   --  better for these files to have no names, but the ACVC tests insist.
    --  We use names that are bound to fail in open etc.
 
    Null_Str : aliased constant String := "";
@@ -668,7 +668,7 @@ package body Ada.Text_IO is
             Available := True;
 
             Item :=
-              (if Is_Start_Of_Encoding (Character'Val (ch), File.WC_Method)
+              (if not Is_Start_Of_Encoding (Character'Val (ch), File.WC_Method)
                then Character'Val (ch)
                else Get_Upper_Half_Char_Immed (Character'Val (ch), File));
          end if;
@@ -693,9 +693,7 @@ package body Ada.Text_IO is
       Item : out String;
       Last : out Natural) is separate;
    --  The implementation of Ada.Text_IO.Get_Line is split into a subunit so
-   --  that different implementations can be used on different systems. In
-   --  particular the standard implementation uses low level stuff that is
-   --  not appropriate for the JVM and .NET implementations.
+   --  that different implementations can be used on different systems.
 
    procedure Get_Line
      (Item : out String;
@@ -706,9 +704,6 @@ package body Ada.Text_IO is
    end Get_Line;
 
    function Get_Line (File : File_Type) return String is
-      Buffer : String (1 .. 500);
-      Last   : Natural;
-
       function Get_Rest (S : String) return String;
       --  This is a recursive function that reads the rest of the line and
       --  returns it. S is the part read so far.
@@ -719,11 +714,12 @@ package body Ada.Text_IO is
 
       function Get_Rest (S : String) return String is
 
-         --  Each time we allocate a buffer the same size as what we have
-         --  read so far. This limits us to a logarithmic number of calls
-         --  to Get_Rest and also ensures only a linear use of stack space.
+         --  The first time we allocate a buffer of size 500. Each following
+         --  time we allocate a buffer the same size as what we have read so
+         --  far. This limits us to a logarithmic number of calls to Get_Rest
+         --  and also ensures only a linear use of stack space.
 
-         Buffer : String (1 .. S'Length);
+         Buffer : String (1 .. Integer'Max (500, S'Length));
          Last   : Natural;
 
       begin
@@ -734,8 +730,20 @@ package body Ada.Text_IO is
          begin
             if Last < Buffer'Last then
                return R;
+
             else
-               return Get_Rest (R);
+               pragma Assert (Last = Buffer'Last);
+
+               --  If the String has the same length as the buffer, and there
+               --  is no end of line, check whether we are at the end of file,
+               --  in which case we have the full String in the buffer.
+
+               if End_Of_File (File) then
+                  return R;
+
+               else
+                  return Get_Rest (R);
+               end if;
             end if;
          end;
       end Get_Rest;
@@ -743,13 +751,7 @@ package body Ada.Text_IO is
    --  Start of processing for Get_Line
 
    begin
-      Get_Line (File, Buffer, Last);
-
-      if Last < Buffer'Last then
-         return Buffer (1 .. Last);
-      else
-         return Get_Rest (Buffer (1 .. Last));
-      end if;
+      return Get_Rest ("");
    end Get_Line;
 
    function Get_Line return String is
@@ -921,7 +923,7 @@ package body Ada.Text_IO is
       Standard_Err.Is_Regular_File   := is_regular_file (fileno (stderr)) /= 0;
       Standard_Err.Is_Temporary_File := False;
       Standard_Err.Is_System_File    := True;
-      Standard_Err.Is_Text_File      := True;
+      Standard_Err.Text_Encoding     := Default_Text;
       Standard_Err.Access_Method     := 'T';
       Standard_Err.Self              := Standard_Err;
       Standard_Err.WC_Method         := Default_WCEM;
@@ -933,7 +935,7 @@ package body Ada.Text_IO is
       Standard_In.Is_Regular_File    := is_regular_file (fileno (stdin)) /= 0;
       Standard_In.Is_Temporary_File  := False;
       Standard_In.Is_System_File     := True;
-      Standard_In.Is_Text_File       := True;
+      Standard_In.Text_Encoding      := Default_Text;
       Standard_In.Access_Method      := 'T';
       Standard_In.Self               := Standard_In;
       Standard_In.WC_Method          := Default_WCEM;
@@ -945,7 +947,7 @@ package body Ada.Text_IO is
       Standard_Out.Is_Regular_File   := is_regular_file (fileno (stdout)) /= 0;
       Standard_Out.Is_Temporary_File := False;
       Standard_Out.Is_System_File    := True;
-      Standard_Out.Is_Text_File      := True;
+      Standard_Out.Text_Encoding     := Default_Text;
       Standard_Out.Access_Method     := 'T';
       Standard_Out.Self              := Standard_Out;
       Standard_Out.WC_Method         := Default_WCEM;
@@ -2118,8 +2120,7 @@ package body Ada.Text_IO is
       end Has_Translated_Characters;
 
       Needs_Binary_Write : constant Boolean :=
-                             text_translation_required
-                               and then Has_Translated_Characters;
+        text_translation_required and then Has_Translated_Characters;
 
    --  Start of processing for Write
 

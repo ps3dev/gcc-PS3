@@ -13,6 +13,9 @@
     <year>
       2010
     </year>
+    <year>
+      2014
+    </year>
     <holder>
       <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://www.fsf.org/">FSF
       </link>
@@ -37,64 +40,18 @@
 </para>
 
 <para>
-  The API documentation, rendered into HTML, can be viewed online:
+  The API documentation, rendered into HTML, can be viewed online
+  <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://gcc.gnu.org/onlinedocs/">for each GCC release</link>
+  and
+  <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://gcc.gnu.org/onlinedocs/libstdc++/latest-doxygen/index.html">
+  for the main development tree
+  </link>
+  (see the date on the first page).
 </para>
-
-<itemizedlist>
-  <listitem>
-    <para>
-      <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://gcc.gnu.org/onlinedocs/libstdc++/libstdc++-html-USERS-3.4/index.html">for the 3.4 release
-      </link>
-    </para>
-  </listitem>
-  <listitem>
-    <para>
-      <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://gcc.gnu.org/onlinedocs/libstdc++/libstdc++-html-USERS-4.1/index.html">for the 4.1 release
-      </link>
-    </para>
-  </listitem>
-  <listitem>
-    <para>
-      <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://gcc.gnu.org/onlinedocs/libstdc++/libstdc++-html-USERS-4.2/index.html">for the 4.2 release
-      </link>
-    </para>
-  </listitem>
-  <listitem>
-    <para>
-      <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://gcc.gnu.org/onlinedocs/libstdc++/libstdc++-html-USERS-4.3/index.html">for the 4.3 release
-      </link>
-    </para>
-  </listitem>
-  <listitem>
-    <para>
-      <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://gcc.gnu.org/onlinedocs/libstdc++/libstdc++-html-USERS-4.4/index.html">for the 4.4 release
-      </link>
-    </para>
-  </listitem>
-  <listitem>
-    <para>
-      <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://gcc.gnu.org/onlinedocs/libstdc++/libstdc++-api-4.5/index.html">for the 4.5 release
-      </link>
-    </para>
-  </listitem>
-  <listitem>
-    <para>
-      <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://gcc.gnu.org/onlinedocs/libstdc++/libstdc++-api-4.6/index.html">for the 4.6 release
-      </link>
-    </para>
-  </listitem>
-  <listitem>
-    <para>
-      <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://gcc.gnu.org/onlinedocs/libstdc++/latest-doxygen/index.html">"the latest collection"
-      </link>
-      (For the main development tree; see the date on the first page.)
-    </para>
-  </listitem>
-</itemizedlist>
 
 <para>
   The rendered HTML, as above, is also available for download on the
-  gcc.org site in a directory located at
+  gcc.gnu.org site in a directory located at
    <literal>&lt;URL:ftp://gcc.gnu.org/pub/gcc/libstdc++/doxygen/&gt;</literal>.
    You will almost certainly need to use one of the
    <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://gcc.gnu.org/mirrors.html">mirror sites</link> to download

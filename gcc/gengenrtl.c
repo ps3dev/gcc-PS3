@@ -1,6 +1,5 @@
 /* Generate code to allocate RTL structures.
-   Copyright (C) 1997, 1998, 1999, 2000, 2002, 2003, 2004, 2007, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 1997-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -38,7 +37,7 @@ static const struct rtx_definition defs[] =
 {
 #include "rtl.def"		/* rtl expressions are documented here */
 };
-#define NUM_RTX_CODE ARRAY_SIZE(defs)
+#define NUM_RTX_CODE ARRAY_SIZE (defs)
 
 static const char *formats[NUM_RTX_CODE];
 
@@ -64,9 +63,9 @@ type_from_format (int c)
     case 'E':
       return "rtvec ";
     case 't':
-      return "union tree_node *";  /* tree - typedef not available */
+      return "tree ";
     case 'B':
-      return "struct basic_block_def *";  /* basic block - typedef not available */
+      return "basic_block ";
     default:
       gcc_unreachable ();
     }
@@ -114,7 +113,16 @@ special_format (const char *fmt)
   return (strchr (fmt, '*') != 0
 	  || strchr (fmt, 'V') != 0
 	  || strchr (fmt, 'S') != 0
-	  || strchr (fmt, 'n') != 0);
+	  || strchr (fmt, 'n') != 0
+	  || strchr (fmt, 'r') != 0);
+}
+
+/* Return true if CODE always has VOIDmode.  */
+
+static inline bool
+always_void_p (int idx)
+{
+  return strcmp (defs[idx].enumname, "SET") == 0;
 }
 
 /* Return nonzero if the RTL code given by index IDX is one that we should
@@ -124,7 +132,10 @@ special_format (const char *fmt)
 static int
 special_rtx (int idx)
 {
-  return (strcmp (defs[idx].enumname, "CONST_INT") == 0
+  return (strcmp (defs[idx].enumname, "EXPR_LIST") == 0
+	  || strcmp (defs[idx].enumname, "INSN_LIST") == 0
+	  || strcmp (defs[idx].enumname, "INSN") == 0
+	  || strcmp (defs[idx].enumname, "CONST_INT") == 0
 	  || strcmp (defs[idx].enumname, "REG") == 0
 	  || strcmp (defs[idx].enumname, "SUBREG") == 0
 	  || strcmp (defs[idx].enumname, "MEM") == 0
@@ -142,8 +153,10 @@ special_rtx (int idx)
 static int
 excluded_rtx (int idx)
 {
-  return ((strcmp (defs[idx].enumname, "CONST_DOUBLE") == 0)
-	  || (strcmp (defs[idx].enumname, "CONST_FIXED") == 0));
+  return (strcmp (defs[idx].enumname, "VAR_LOCATION") == 0
+	  || strcmp (defs[idx].enumname, "CONST_DOUBLE") == 0
+	  || strcmp (defs[idx].enumname, "CONST_WIDE_INT") == 0
+	  || strcmp (defs[idx].enumname, "CONST_FIXED") == 0);
 }
 
 /* Place a list of all format specifiers we use into the array FORMAT.  */
@@ -177,6 +190,7 @@ static void
 genmacro (int idx)
 {
   const char *p;
+  const char *sep = "";
   int i;
 
   /* We write a macro that defines gen_rtx_RTLCODE to be an equivalent to
@@ -186,15 +200,25 @@ genmacro (int idx)
     /* Don't define a macro for this code.  */
     return;
 
-  printf ("#define gen_rtx_%s%s(MODE",
+  bool has_mode_p = !always_void_p (idx);
+  printf ("#define gen_rtx_%s%s(",
 	   special_rtx (idx) ? "raw_" : "", defs[idx].enumname);
+  if (has_mode_p)
+    {
+      printf ("MODE");
+      sep = ", ";
+    }
 
   for (p = defs[idx].format, i = 0; *p != 0; p++)
     if (*p != '0')
-      printf (", ARG%d", i++);
+      {
+	printf ("%sARG%d", sep, i++);
+	sep = ", ";
+      }
 
-  printf (") \\\n  gen_rtx_fmt_%s (%s, (MODE)",
-	  defs[idx].format, defs[idx].enumname);
+  printf (") \\\n  gen_rtx_fmt_%s (%s, %s",
+	  defs[idx].format, defs[idx].enumname,
+	  has_mode_p ? "(MODE)" : "VOIDmode");
 
   for (p = defs[idx].format, i = 0; *p != 0; p++)
     if (*p != '0')
@@ -215,7 +239,7 @@ gendef (const char *format)
   /* Start by writing the definition of the function name and the types
      of the arguments.  */
 
-  printf ("static inline rtx\ngen_rtx_fmt_%s_stat (RTX_CODE code, enum machine_mode mode", format);
+  printf ("static inline rtx\ngen_rtx_fmt_%s_stat (RTX_CODE code, machine_mode mode", format);
   for (p = format, i = 0; *p != 0; p++)
     if (*p != '0')
       printf (",\n\t%sarg%d", type_from_format (*p), i++);
@@ -228,7 +252,7 @@ gendef (const char *format)
   puts ("  rtx rt;");
   puts ("  rt = rtx_alloc_stat (code PASS_MEM_STAT);\n");
 
-  puts ("  PUT_MODE (rt, mode);");
+  puts ("  PUT_MODE_RAW (rt, mode);");
 
   for (p = format, i = j = 0; *p ; ++p, ++i)
     if (*p != '0')

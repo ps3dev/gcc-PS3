@@ -1,6 +1,5 @@
 /*  -*- Mode: Asm -*-  */
-/* Copyright (C) 1998, 1999, 2000, 2007, 2008, 2009
-   Free Software Foundation, Inc.
+/* Copyright (C) 1998-2017 Free Software Foundation, Inc.
    Contributed by Denis Chertykov <chertykov@gmail.com>
 
 This file is free software; you can redistribute it and/or modify it
@@ -22,10 +21,17 @@ a copy of the GCC Runtime Library Exception along with this program;
 see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 <http://www.gnu.org/licenses/>.  */
 
+#if defined (__AVR_TINY__)
+#define __zero_reg__ r17
+#define __tmp_reg__ r16
+#else
 #define __zero_reg__ r1
 #define __tmp_reg__ r0
+#endif
 #define __SREG__ 0x3f
+#if defined (__AVR_HAVE_SPH__)
 #define __SP_H__ 0x3e
+#endif
 #define __SP_L__ 0x3d
 #define __RAMPZ__ 0x3B
 #define __EIND__  0x3C
@@ -44,6 +50,10 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
            though they are in the same input section and all same
            input sections together are small enough to reach every
            location with a RCALL/RJMP instruction.  */
+
+#if defined (__AVR_HAVE_EIJMP_EICALL__) && !defined (__AVR_HAVE_ELPMX__)
+#error device not supported
+#endif
 
 	.macro	mov_l  r_dest, r_src
 #if defined (__AVR_HAVE_MOVW__)
@@ -78,6 +88,67 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #define XJMP  rjmp
 #endif
 
+#if defined (__AVR_HAVE_EIJMP_EICALL__)
+#define XICALL eicall
+#define XIJMP  eijmp
+#else
+#define XICALL icall
+#define XIJMP  ijmp
+#endif
+
+;; Prologue stuff
+
+.macro do_prologue_saves n_pushed n_frame=0
+    ldi r26, lo8(\n_frame)
+    ldi r27, hi8(\n_frame)
+    ldi r30, lo8(gs(.L_prologue_saves.\@))
+    ldi r31, hi8(gs(.L_prologue_saves.\@))
+    XJMP __prologue_saves__ + ((18 - (\n_pushed)) * 2)
+.L_prologue_saves.\@:
+.endm
+
+;; Epilogue stuff
+
+.macro do_epilogue_restores n_pushed n_frame=0
+    in      r28, __SP_L__
+#ifdef __AVR_HAVE_SPH__
+    in      r29, __SP_H__
+.if \n_frame > 63
+    subi    r28, lo8(-\n_frame)
+    sbci    r29, hi8(-\n_frame)
+.elseif \n_frame > 0
+    adiw    r28, \n_frame
+.endif
+#else
+    clr     r29
+.if \n_frame > 0
+    subi    r28, lo8(-\n_frame)
+.endif
+#endif /* HAVE SPH */
+    ldi     r30, \n_pushed
+    XJMP __epilogue_restores__ + ((18 - (\n_pushed)) * 2)
+.endm
+
+;; Support function entry and exit for convenience
+
+.macro wsubi r_arg1, i_arg2
+#if defined (__AVR_TINY__)
+    subi \r_arg1,   lo8(\i_arg2)
+    sbci \r_arg1+1, hi8(\i_arg2)
+#else
+    sbiw \r_arg1, \i_arg2
+#endif
+.endm
+
+.macro waddi r_arg1, i_arg2
+#if defined (__AVR_TINY__)
+    subi \r_arg1,   lo8(-\i_arg2)
+    sbci \r_arg1+1, hi8(-\i_arg2)
+#else
+    adiw \r_arg1, \i_arg2
+#endif
+.endm
+
 .macro DEFUN name
 .global \name
 .func \name
@@ -88,6 +159,51 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 .size \name, .-\name
 .endfunc
 .endm
+
+.macro FALIAS name
+.global \name
+.func \name
+\name:
+.size \name, .-\name
+.endfunc
+.endm
+
+;; Skip next instruction, typically a jump target
+#if defined(__AVR_TINY__)
+#define skip cpse 0,0
+#else
+#define skip cpse 16,16
+#endif
+
+;; Negate a 2-byte value held in consecutive registers
+.macro NEG2  reg
+    com     \reg+1
+    neg     \reg
+    sbci    \reg+1, -1
+.endm
+
+;; Negate a 4-byte value held in consecutive registers
+;; Sets the V flag for signed overflow tests if REG >= 16
+.macro NEG4  reg
+    com     \reg+3
+    com     \reg+2
+    com     \reg+1
+.if \reg >= 16
+    neg     \reg
+    sbci    \reg+1, -1
+    sbci    \reg+2, -1
+    sbci    \reg+3, -1
+.else
+    com     \reg
+    adc     \reg,   __zero_reg__
+    adc     \reg+1, __zero_reg__
+    adc     \reg+2, __zero_reg__
+    adc     \reg+3, __zero_reg__
+.endif
+.endm
+
+#define exp_lo(N)  hlo8 ((N) << 23)
+#define exp_hi(N)  hhi8 ((N) << 23)
 
 
 .section .text.libgcc.mul, "ax", @progbits
@@ -111,194 +227,282 @@ __mulqi3_loop:
 	add	r_res,r_arg2
 	add	r_arg2,r_arg2	; shift multiplicand
 	breq	__mulqi3_exit	; while multiplicand != 0
-	lsr	r_arg1		; 
+	lsr	r_arg1		;
 	brne	__mulqi3_loop	; exit if multiplier = 0
 __mulqi3_exit:	
 	mov	r_arg1,r_res	; result to return register
 	ret
 ENDF __mulqi3
 
-#undef r_arg2  
-#undef r_arg1  
-#undef r_res   
+#undef r_arg2
+#undef r_arg1
+#undef r_res
 	
 #endif 	/* defined (L_mulqi3) */
 
-#if defined (L_mulqihi3)
-DEFUN __mulqihi3
-	clr	r25
-	sbrc	r24, 7
-	dec	r25
-	clr	r23
-	sbrc	r22, 7
-	dec	r22
-	XJMP	__mulhi3
-ENDF __mulqihi3:
-#endif /* defined (L_mulqihi3) */
-
-#if defined (L_umulqihi3)
-DEFUN __umulqihi3
-	clr	r25
-	clr	r23
-	XJMP	__mulhi3
-ENDF __umulqihi3
-#endif /* defined (L_umulqihi3) */
 
 /*******************************************************
+    Widening Multiplication  16 = 8 x 8  without MUL
     Multiplication  16 x 16  without MUL
 *******************************************************/
+
+#define A0  22
+#define A1  23
+#define B0  24
+#define BB0 20
+#define B1  25
+;; Output overlaps input, thus expand result in CC0/1
+#define C0  24
+#define C1  25
+#define CC0  __tmp_reg__
+#define CC1  21
+
+#if defined (L_umulqihi3)
+;;; R25:R24 = (unsigned int) R22 * (unsigned int) R24
+;;; (C1:C0) = (unsigned int) A0  * (unsigned int) B0
+;;; Clobbers: __tmp_reg__, R21..R23
+DEFUN __umulqihi3
+    clr     A1
+    clr     B1
+    XJMP    __mulhi3
+ENDF __umulqihi3
+#endif /* L_umulqihi3 */
+
+#if defined (L_mulqihi3)
+;;; R25:R24 = (signed int) R22 * (signed int) R24
+;;; (C1:C0) = (signed int) A0  * (signed int) B0
+;;; Clobbers: __tmp_reg__, R20..R23
+DEFUN __mulqihi3
+    ;; Sign-extend B0
+    clr     B1
+    sbrc    B0, 7
+    com     B1
+    ;; The multiplication runs twice as fast if A1 is zero, thus:
+    ;; Zero-extend A0
+    clr     A1
+#ifdef __AVR_HAVE_JMP_CALL__
+    ;; Store  B0 * sign of A
+    clr     BB0
+    sbrc    A0, 7
+    mov     BB0, B0
+    call    __mulhi3
+#else /* have no CALL */
+    ;; Skip sign-extension of A if A >= 0
+    ;; Same size as with the first alternative but avoids errata skip
+    ;; and is faster if A >= 0
+    sbrs    A0, 7
+    rjmp    __mulhi3
+    ;; If  A < 0  store B
+    mov     BB0, B0
+    rcall   __mulhi3
+#endif /* HAVE_JMP_CALL */
+    ;; 1-extend A after the multiplication
+    sub     C1, BB0
+    ret
+ENDF __mulqihi3
+#endif /* L_mulqihi3 */
+
 #if defined (L_mulhi3)
-#define	r_arg1L	r24		/* multiplier Low */
-#define	r_arg1H	r25		/* multiplier High */
-#define	r_arg2L	r22		/* multiplicand Low */
-#define	r_arg2H	r23		/* multiplicand High */
-#define r_resL	__tmp_reg__	/* result Low */
-#define r_resH  r21		/* result High */
-
+;;; R25:R24 = R23:R22 * R25:R24
+;;; (C1:C0) = (A1:A0) * (B1:B0)
+;;; Clobbers: __tmp_reg__, R21..R23
 DEFUN __mulhi3
-	clr	r_resH		; clear result
-	clr	r_resL		; clear result
-__mulhi3_loop:
-	sbrs	r_arg1L,0
-	rjmp	__mulhi3_skip1
-	add	r_resL,r_arg2L	; result + multiplicand
-	adc	r_resH,r_arg2H
-__mulhi3_skip1:	
-	add	r_arg2L,r_arg2L	; shift multiplicand
-	adc	r_arg2H,r_arg2H
 
-	cp	r_arg2L,__zero_reg__
-	cpc	r_arg2H,__zero_reg__
-	breq	__mulhi3_exit	; while multiplicand != 0
+    ;; Clear result
+    clr     CC0
+    clr     CC1
+    rjmp 3f
+1:
+    ;; Bit n of A is 1  -->  C += B << n
+    add     CC0, B0
+    adc     CC1, B1
+2:
+    lsl     B0
+    rol     B1
+3:
+    ;; If B == 0 we are ready
+    wsubi   B0, 0
+    breq 9f
 
-	lsr	r_arg1H		; gets LSB of multiplier
-	ror	r_arg1L
-	sbiw	r_arg1L,0
-	brne	__mulhi3_loop	; exit if multiplier = 0
-__mulhi3_exit:
-	mov	r_arg1H,r_resH	; result to return register
-	mov	r_arg1L,r_resL
-	ret
-ENDF __mulhi3
+    ;; Carry = n-th bit of A
+    lsr     A1
+    ror     A0
+    ;; If bit n of A is set, then go add  B * 2^n  to  C
+    brcs 1b
 
-#undef r_arg1L
-#undef r_arg1H
-#undef r_arg2L
-#undef r_arg2H
-#undef r_resL 	
-#undef r_resH 
+    ;; Carry = 0  -->  The ROR above acts like  CP A0, 0
+    ;; Thus, it is sufficient to CPC the high part to test A against 0
+    cpc     A1, __zero_reg__
+    ;; Only proceed if A != 0
+    brne    2b
+9:
+    ;; Move Result into place
+    mov     C0, CC0
+    mov     C1, CC1
+    ret
+ENDF  __mulhi3
+#endif /* L_mulhi3 */
 
-#endif /* defined (L_mulhi3) */
+#undef A0
+#undef A1
+#undef B0
+#undef BB0
+#undef B1
+#undef C0
+#undef C1
+#undef CC0
+#undef CC1
+
+
+#define A0 22
+#define A1 A0+1
+#define A2 A0+2
+#define A3 A0+3
+
+#define B0 18
+#define B1 B0+1
+#define B2 B0+2
+#define B3 B0+3
+
+#define CC0 26
+#define CC1 CC0+1
+#define CC2 30
+#define CC3 CC2+1
+
+#define C0 22
+#define C1 C0+1
+#define C2 C0+2
+#define C3 C0+3
 
 /*******************************************************
     Widening Multiplication  32 = 16 x 16  without MUL
 *******************************************************/
 
-#if defined (L_mulhisi3)
-DEFUN __mulhisi3
-;;; FIXME: This is dead code (noone calls it)
-    mov_l   r18, r24
-    mov_h   r19, r25
-    clr     r24
-    sbrc    r23, 7
-    dec     r24
-    mov     r25, r24
-    clr     r20
-    sbrc    r19, 7
-    dec     r20
-    mov     r21, r20
-    XJMP    __mulsi3
-ENDF __mulhisi3
-#endif /* defined (L_mulhisi3) */
-
 #if defined (L_umulhisi3)
 DEFUN __umulhisi3
-;;; FIXME: This is dead code (noone calls it)
-    mov_l   r18, r24
-    mov_h   r19, r25
-    clr     r24
-    clr     r25
-    mov_l   r20, r24
-    mov_h   r21, r25
+    wmov    B0, 24
+    ;; Zero-extend B
+    clr     B2
+    clr     B3
+    ;; Zero-extend A
+    wmov    A2, B2
     XJMP    __mulsi3
 ENDF __umulhisi3
-#endif /* defined (L_umulhisi3) */
+#endif /* L_umulhisi3 */
 
-#if defined (L_mulsi3)
+#if defined (L_mulhisi3)
+DEFUN __mulhisi3
+    wmov    B0, 24
+    ;; Sign-extend B
+    lsl     r25
+    sbc     B2, B2
+    mov     B3, B2
+#ifdef __AVR_ERRATA_SKIP_JMP_CALL__
+    ;; Sign-extend A
+    clr     A2
+    sbrc    A1, 7
+    com     A2
+    mov     A3, A2
+    XJMP __mulsi3
+#else /*  no __AVR_ERRATA_SKIP_JMP_CALL__ */
+    ;; Zero-extend A and __mulsi3 will run at least twice as fast
+    ;; compared to a sign-extended A.
+    clr     A2
+    clr     A3
+    sbrs    A1, 7
+    XJMP __mulsi3
+    ;; If  A < 0  then perform the  B * 0xffff.... before the
+    ;; very multiplication by initializing the high part of the
+    ;; result CC with -B.
+    wmov    CC2, A2
+    sub     CC2, B0
+    sbc     CC3, B1
+    XJMP __mulsi3_helper
+#endif /*  __AVR_ERRATA_SKIP_JMP_CALL__ */
+ENDF __mulhisi3
+#endif /* L_mulhisi3 */
+
+
 /*******************************************************
     Multiplication  32 x 32  without MUL
 *******************************************************/
-#define r_arg1L  r22		/* multiplier Low */
-#define r_arg1H  r23
-#define	r_arg1HL r24
-#define	r_arg1HH r25		/* multiplier High */
 
-#define	r_arg2L  r18		/* multiplicand Low */
-#define	r_arg2H  r19	
-#define	r_arg2HL r20
-#define	r_arg2HH r21		/* multiplicand High */
-	
-#define r_resL	 r26		/* result Low */
-#define r_resH   r27
-#define r_resHL	 r30
-#define r_resHH  r31		/* result High */
-
+#if defined (L_mulsi3)
 DEFUN __mulsi3
-	clr	r_resHH		; clear result
-	clr	r_resHL		; clear result
-	clr	r_resH		; clear result
-	clr	r_resL		; clear result
-__mulsi3_loop:
-	sbrs	r_arg1L,0
-	rjmp	__mulsi3_skip1
-	add	r_resL,r_arg2L		; result + multiplicand
-	adc	r_resH,r_arg2H
-	adc	r_resHL,r_arg2HL
-	adc	r_resHH,r_arg2HH
-__mulsi3_skip1:
-	add	r_arg2L,r_arg2L		; shift multiplicand
-	adc	r_arg2H,r_arg2H
-	adc	r_arg2HL,r_arg2HL
-	adc	r_arg2HH,r_arg2HH
-	
-	lsr	r_arg1HH	; gets LSB of multiplier
-	ror	r_arg1HL
-	ror	r_arg1H
-	ror	r_arg1L
-	brne	__mulsi3_loop
-	sbiw	r_arg1HL,0
-	cpc	r_arg1H,r_arg1L
-	brne	__mulsi3_loop		; exit if multiplier = 0
-__mulsi3_exit:
-	mov_h	r_arg1HH,r_resHH	; result to return register
-	mov_l	r_arg1HL,r_resHL
-	mov_h	r_arg1H,r_resH
-	mov_l	r_arg1L,r_resL
-	ret
-ENDF __mulsi3
+#if defined (__AVR_TINY__)
+    in     r26, __SP_L__ ; safe to use X, as it is CC0/CC1
+    in     r27, __SP_H__
+    subi   r26, lo8(-3)   ; Add 3 to point past return address
+    sbci   r27, hi8(-3)
+    push   B0    ; save callee saved regs
+    push   B1
+    ld     B0, X+   ; load from caller stack
+    ld     B1, X+
+    ld     B2, X+
+    ld     B3, X
+#endif
+    ;; Clear result
+    clr     CC2
+    clr     CC3
+    ;; FALLTHRU
+ENDF  __mulsi3
 
-#undef r_arg1L 
-#undef r_arg1H 
-#undef r_arg1HL
-#undef r_arg1HH
-             
-#undef r_arg2L 
-#undef r_arg2H 
-#undef r_arg2HL
-#undef r_arg2HH
-             
-#undef r_resL  
-#undef r_resH  
-#undef r_resHL 
-#undef r_resHH 
+DEFUN __mulsi3_helper
+    clr     CC0
+    clr     CC1
+    rjmp 3f
 
-#endif /* defined (L_mulsi3) */
+1:  ;; If bit n of A is set, then add  B * 2^n  to the result in CC
+    ;; CC += B
+    add  CC0,B0  $  adc  CC1,B1  $  adc  CC2,B2  $  adc  CC3,B3
+
+2:  ;; B <<= 1
+    lsl  B0      $  rol  B1      $  rol  B2      $  rol  B3
+
+3:  ;; A >>= 1:  Carry = n-th bit of A
+    lsr  A3      $  ror  A2      $  ror  A1      $  ror  A0
+
+    brcs 1b
+    ;; Only continue if  A != 0
+    sbci    A1, 0
+    brne 2b
+    wsubi   A2, 0
+    brne 2b
+
+    ;; All bits of A are consumed:  Copy result to return register C
+    wmov    C0, CC0
+    wmov    C2, CC2
+#if defined (__AVR_TINY__)
+    pop     B1      ; restore callee saved regs
+    pop     B0 
+#endif  /* defined (__AVR_TINY__) */
+
+    ret
+ENDF __mulsi3_helper
+#endif /* L_mulsi3 */
+
+#undef A0
+#undef A1
+#undef A2
+#undef A3
+#undef B0
+#undef B1
+#undef B2
+#undef B3
+#undef C0
+#undef C1
+#undef C2
+#undef C3
+#undef CC0
+#undef CC1
+#undef CC2
+#undef CC3
 
 #endif /* !defined (__AVR_HAVE_MUL__) */
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-#if defined (__AVR_HAVE_MUL__)    
+#if defined (__AVR_HAVE_MUL__)
 #define A0 26
 #define B0 18
 #define C0 22
@@ -314,9 +518,9 @@ ENDF __mulsi3
 #define C3 C0+3
 
 /*******************************************************
-    Widening Multiplication  32 = 16 x 16
+    Widening Multiplication  32 = 16 x 16  with MUL
 *******************************************************/
-                              
+
 #if defined (L_mulhisi3)
 ;;; R25:R22 = (signed long) R27:R26 * (signed long) R19:R18
 ;;; C3:C0   = (signed long) A1:A0   * (signed long) B1:B0
@@ -362,7 +566,17 @@ DEFUN __umulhisi3
     mul     A1, B1
     movw    C2, r0
     mul     A0, B1
+#ifdef __AVR_HAVE_JMP_CALL__
+    ;; This function is used by many other routines, often multiple times.
+    ;; Therefore, if the flash size is not too limited, avoid the RCALL
+    ;; and inverst 6 Bytes to speed things up.
+    add     C1, r0
+    adc     C2, r1
+    clr     __zero_reg__
+    adc     C3, __zero_reg__
+#else
     rcall   1f
+#endif
     mul     A1, B0
 1:  add     C1, r0
     adc     C2, r1
@@ -373,7 +587,7 @@ ENDF __umulhisi3
 #endif /* L_umulhisi3 */
 
 /*******************************************************
-    Widening Multiplication  32 = 16 x 32
+    Widening Multiplication  32 = 16 x 32  with MUL
 *******************************************************/
 
 #if defined (L_mulshisi3)
@@ -391,7 +605,7 @@ DEFUN __mulshisi3
     XJMP    __muluhisi3
     ;; FALLTHRU
 ENDF __mulshisi3
-    
+
 ;;; R25:R22 = (one-extended long) R27:R26 * R21:R18
 ;;; (C3:C0) = (one-extended long) A1:A0   * B3:B0
 ;;; Clobbers: __tmp_reg__
@@ -423,7 +637,7 @@ ENDF __muluhisi3
 #endif /* L_muluhisi3 */
 
 /*******************************************************
-    Multiplication  32 x 32
+    Multiplication  32 x 32  with MUL
 *******************************************************/
 
 #if defined (L_mulsi3)
@@ -466,7 +680,7 @@ ENDF __mulsi3
 #endif /* __AVR_HAVE_MUL__ */
 
 /*******************************************************
-       Multiplication 24 x 24
+       Multiplication 24 x 24 with MUL
 *******************************************************/
 
 #if defined (L_mulpsi3)
@@ -512,9 +726,12 @@ ENDF __mulpsi3
 #undef C0
 
 #else /* !HAVE_MUL */
-
 ;; C[0..2]: Expand Result
+#if defined (__AVR_TINY__)
+#define C0  16
+#else
 #define C0  0
+#endif /* defined (__AVR_TINY__) */
 #define C1  C0+1
 #define C2  21
 
@@ -522,32 +739,47 @@ ENDF __mulpsi3
 ;; Clobbers: __tmp_reg__, R18, R19, R20, R21
 
 DEFUN __mulpsi3
+#if defined (__AVR_TINY__)
+    in r26,__SP_L__ 
+    in r27,__SP_H__
+    subi r26, lo8(-3)   ; Add 3 to point past return address
+    sbci r27, hi8(-3)
+    push B0    ; save callee saved regs
+    push B1
+    ld B0,X+   ; load from caller stack 
+    ld B1,X+
+    ld B2,X+
+#endif /* defined (__AVR_TINY__) */
 
     ;; C[] = 0
     clr     __tmp_reg__
     clr     C2
-    
+
 0:  ;; Shift N-th Bit of B[] into Carry.  N = 24 - Loop
     LSR  B2     $  ror  B1     $  ror  B0
-    
+
     ;; If the N-th Bit of B[] was set...
     brcc    1f
-    
+
     ;; ...then add A[] * 2^N to the Result C[]
     ADD  C0,A0  $  adc  C1,A1  $  adc  C2,A2
-    
+
 1:  ;; Multiply A[] by 2
     LSL  A0     $  rol  A1     $  rol  A2
-    
+
     ;; Loop until B[] is 0
     subi B0,0   $  sbci B1,0   $  sbci B2,0
     brne    0b
-    
+
     ;; Copy C[] to the return Register A[]
     wmov    A0, C0
     mov     A2, C2
 
     clr     __zero_reg__
+#if defined (__AVR_TINY__)
+    pop B1
+    pop B0
+#endif /* (__AVR_TINY__) */
     ret
 ENDF __mulpsi3
 
@@ -616,8 +848,6 @@ ENDF __mulsqipsi3
        Multiplication 64 x 64
 *******************************************************/
 
-#if defined (L_muldi3)
-
 ;; A[] = A[] * B[]
 
 ;; A[0..7]: In: Multiplicand
@@ -641,8 +871,8 @@ ENDF __mulsqipsi3
 #define B6  B0+6
 #define B7  B0+7
 
+#ifndef __AVR_TINY__
 #if defined (__AVR_HAVE_MUL__)
-
 ;; Define C[] for convenience
 ;; Notice that parts of C[] overlap A[] respective B[]
 #define C0  16
@@ -653,6 +883,8 @@ ENDF __mulsqipsi3
 #define C5  C4+1
 #define C6  C4+2
 #define C7  C4+3
+
+#if defined (L_muldi3)
 
 ;; A[]     *= B[]
 ;; R25:R18 *= R17:R10
@@ -698,7 +930,7 @@ DEFUN __muldi3
 
     wmov    26, B2
     ;; 0 * 1
-    rcall   __muldi3_6
+    XCALL   __muldi3_6
 
     pop     A0
     pop     A1
@@ -709,7 +941,7 @@ DEFUN __muldi3
     pop     r26
     pop     r27
     ;; 1 * 0
-    rcall   __muldi3_6
+    XCALL   __muldi3_6
 
     pop     A0
     pop     A1
@@ -726,13 +958,17 @@ DEFUN __muldi3
     wmov    A4, C4
     wmov    A6, C6
 
-    clr     __zero_reg__
     pop     r16
     pop     r17
     pop     r28
     pop     r29
     ret
+ENDF __muldi3
+#endif /* L_muldi3 */
 
+#if defined (L_muldi3_6)
+;; A helper for some 64-bit multiplications with MUL available
+DEFUN __muldi3_6
 __muldi3_6:
     XCALL   __umulhisi3
     add     C2, 22
@@ -742,7 +978,8 @@ __muldi3_6:
     brcc    0f
     adiw    C6, 1
 0:  ret
-ENDF __muldi3
+ENDF __muldi3_6
+#endif /* L_muldi3_6 */
 
 #undef C7
 #undef C6
@@ -754,6 +991,8 @@ ENDF __muldi3
 #undef C0
 
 #else /* !HAVE_MUL */
+
+#if defined (L_muldi3)
 
 #define C0  26
 #define C1  C0+1
@@ -832,7 +1071,9 @@ ENDF __muldi3
 #undef C1
 #undef C0
 
+#endif /* L_muldi3 */
 #endif /* HAVE_MUL */
+#endif /* if not __AVR_TINY__ */
 
 #undef B7
 #undef B6
@@ -852,8 +1093,241 @@ ENDF __muldi3
 #undef A1
 #undef A0
 
-#endif /* L_muldi3 */
+/*******************************************************
+   Widening Multiplication 64 = 32 x 32  with  MUL
+*******************************************************/
 
+#if defined (__AVR_HAVE_MUL__)
+#define A0 r22
+#define A1 r23 
+#define A2 r24
+#define A3 r25
+ 
+#define B0 r18
+#define B1 r19
+#define B2 r20
+#define B3 r21
+ 
+#define C0  18
+#define C1  C0+1
+#define C2  20
+#define C3  C2+1
+#define C4  28
+#define C5  C4+1
+#define C6  C4+2
+#define C7  C4+3
+
+#if defined (L_umulsidi3)
+
+;; Unsigned widening 64 = 32 * 32 Multiplication with MUL
+
+;; R18[8] = R22[4] * R18[4]
+;;
+;; Ordinary ABI Function, but additionally sets
+;; X = R20[2] = B2[2]
+;; Z = R22[2] = A0[2]
+DEFUN __umulsidi3
+    clt
+    ;; FALLTHRU
+ENDF  __umulsidi3
+    ;; T = sign (A)
+DEFUN __umulsidi3_helper
+    push    29  $  push    28 ; Y
+    wmov    30, A2
+    ;; Counting in Words, we have to perform 4 Multiplications
+    ;; 0 * 0
+    wmov    26, A0
+    XCALL __umulhisi3
+    push    23  $  push    22 ; C0
+    wmov    28, B0
+    wmov    18, B2
+    wmov    C2, 24
+    push    27  $  push    26 ; A0
+    push    19  $  push    18 ; B2
+    ;;
+    ;;  18  20  22  24  26  28  30  |  B2, B3, A0, A1, C0, C1, Y
+    ;;  B2  C2  --  --  --  B0  A2
+    ;; 1 * 1
+    wmov    26, 30      ; A2
+    XCALL __umulhisi3
+    ;; Sign-extend A.  T holds the sign of A
+    brtc    0f
+    ;; Subtract B from the high part of the result
+    sub     22, 28
+    sbc     23, 29
+    sbc     24, 18
+    sbc     25, 19
+0:  wmov    18, 28      ;; B0
+    wmov    C4, 22
+    wmov    C6, 24
+    ;;
+    ;;  18  20  22  24  26  28  30  |  B2, B3, A0, A1, C0, C1, Y
+    ;;  B0  C2  --  --  A2  C4  C6
+    ;;
+    ;; 1 * 0
+    XCALL __muldi3_6
+    ;; 0 * 1
+    pop     26  $   pop 27  ;; B2
+    pop     18  $   pop 19  ;; A0
+    XCALL __muldi3_6
+
+    ;; Move result C into place and save A0 in Z
+    wmov    22, C4
+    wmov    24, C6
+    wmov    30, 18 ; A0
+    pop     C0  $   pop C1
+
+    ;; Epilogue
+    pop     28  $   pop 29  ;; Y
+    ret
+ENDF __umulsidi3_helper
+#endif /* L_umulsidi3 */
+
+
+#if defined (L_mulsidi3)
+
+;; Signed widening 64 = 32 * 32 Multiplication
+;;
+;; R18[8] = R22[4] * R18[4]
+;; Ordinary ABI Function
+DEFUN __mulsidi3
+    bst     A3, 7
+    sbrs    B3, 7           ; Enhanced core has no skip bug
+    XJMP __umulsidi3_helper
+
+    ;; B needs sign-extension
+    push    A3
+    push    A2
+    XCALL __umulsidi3_helper
+    ;; A0 survived in Z
+    sub     r22, r30
+    sbc     r23, r31
+    pop     r26
+    pop     r27
+    sbc     r24, r26
+    sbc     r25, r27
+    ret
+ENDF __mulsidi3
+#endif /* L_mulsidi3 */
+
+#undef A0
+#undef A1
+#undef A2
+#undef A3
+#undef B0
+#undef B1
+#undef B2
+#undef B3
+#undef C0
+#undef C1
+#undef C2
+#undef C3
+#undef C4
+#undef C5
+#undef C6
+#undef C7
+#endif /* HAVE_MUL */
+
+/**********************************************************
+    Widening Multiplication 64 = 32 x 32  without  MUL
+**********************************************************/
+#ifndef __AVR_TINY__ /* if not __AVR_TINY__ */
+#if defined (L_mulsidi3) && !defined (__AVR_HAVE_MUL__)
+#define A0 18
+#define A1 A0+1
+#define A2 A0+2
+#define A3 A0+3
+#define A4 A0+4
+#define A5 A0+5
+#define A6 A0+6
+#define A7 A0+7
+
+#define B0 10
+#define B1 B0+1
+#define B2 B0+2
+#define B3 B0+3
+#define B4 B0+4
+#define B5 B0+5
+#define B6 B0+6
+#define B7 B0+7
+
+#define AA0 22
+#define AA1 AA0+1
+#define AA2 AA0+2
+#define AA3 AA0+3
+
+#define BB0 18
+#define BB1 BB0+1
+#define BB2 BB0+2
+#define BB3 BB0+3
+
+#define Mask r30
+
+;; Signed / Unsigned widening 64 = 32 * 32 Multiplication without MUL
+;;
+;; R18[8] = R22[4] * R18[4]
+;; Ordinary ABI Function
+DEFUN __mulsidi3
+    set
+    skip
+    ;; FALLTHRU
+ENDF  __mulsidi3
+
+DEFUN __umulsidi3
+    clt     ; skipped
+    ;; Save 10 Registers: R10..R17, R28, R29
+    do_prologue_saves 10
+    ldi     Mask, 0xff
+    bld     Mask, 7
+    ;; Move B into place...
+    wmov    B0, BB0
+    wmov    B2, BB2
+    ;; ...and extend it
+    and     BB3, Mask
+    lsl     BB3
+    sbc     B4, B4
+    mov     B5, B4
+    wmov    B6, B4
+    ;; Move A into place...
+    wmov    A0, AA0
+    wmov    A2, AA2
+    ;; ...and extend it
+    and     AA3, Mask
+    lsl     AA3
+    sbc     A4, A4
+    mov     A5, A4
+    wmov    A6, A4
+    XCALL   __muldi3
+    do_epilogue_restores 10
+ENDF __umulsidi3
+
+#undef A0
+#undef A1
+#undef A2
+#undef A3
+#undef A4
+#undef A5
+#undef A6
+#undef A7
+#undef B0
+#undef B1
+#undef B2
+#undef B3
+#undef B4
+#undef B5
+#undef B6
+#undef B7
+#undef AA0
+#undef AA1
+#undef AA2
+#undef AA3
+#undef BB0
+#undef BB1
+#undef BB2
+#undef BB3
+#undef Mask
+#endif /* L_mulsidi3 && !HAVE_MUL */
+#endif /* if not __AVR_TINY__ */
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 	
 
@@ -881,7 +1355,7 @@ __udivmodqi4_ep:
 	rol	r_arg1		; shift dividend (with CARRY)
 	dec	r_cnt		; decrement loop counter
 	brne	__udivmodqi4_loop
-	com	r_arg1		; complement result 
+	com	r_arg1		; complement result
 				; because C flag was complemented in loop
 	ret
 ENDF __udivmodqi4
@@ -991,14 +1465,14 @@ __divmodhi4_exit:
 ENDF __divmodhi4
 #endif /* defined (L_divmodhi4) */
 
-#undef r_remH  
-#undef r_remL  
-             
-#undef r_arg1H 
-#undef r_arg1L 
-             
-#undef r_arg2H 
-#undef r_arg2L 
+#undef r_remH
+#undef r_remL
+
+#undef r_arg1H
+#undef r_arg1L
+
+#undef r_arg2H
+#undef r_arg2L
              	
 #undef r_cnt   	
 
@@ -1025,7 +1499,7 @@ ENDF __divmodhi4
 #define r_cnt   21
 
 #if defined (L_udivmodpsi4)
-;; R24:R22 = R24:R22  udiv  R20:R18
+;; R24:R22 = R24:R24  udiv  R20:R18
 ;; R20:R18 = R24:R22  umod  R20:R18
 ;; Clobbers: R21, R25, R26
 
@@ -1213,7 +1687,7 @@ DEFUN __divmodsi4
     bst     r_arg1HH,7          ; store sign of dividend
     brtc    0f
     com     __tmp_reg__         ; r0.7 is sign of result
-    rcall   __divmodsi4_neg1    ; dividend negative: negate
+    XCALL   __negsi2            ; dividend negative: negate
 0:
     sbrc    r_arg2HH,7
     rcall   __divmodsi4_neg2    ; divisor negative: negate
@@ -1221,16 +1695,7 @@ DEFUN __divmodsi4
     sbrc    __tmp_reg__, 7      ; correct quotient sign
     rcall   __divmodsi4_neg2
     brtc    __divmodsi4_exit    ; correct remainder sign
-__divmodsi4_neg1:
-    ;; correct dividend/remainder sign
-    com     r_arg1HH
-    com     r_arg1HL
-    com     r_arg1H
-    neg     r_arg1L
-    sbci    r_arg1H, 0xff
-    sbci    r_arg1HL,0xff
-    sbci    r_arg1HH,0xff
-    ret
+    XJMP    __negsi2
 __divmodsi4_neg2:
     ;; correct divisor/quotient sign
     com     r_arg2HH
@@ -1245,7 +1710,34 @@ __divmodsi4_exit:
 ENDF __divmodsi4
 #endif /* defined (L_divmodsi4) */
 
+#if defined (L_negsi2)
+;; (set (reg:SI 22)
+;;      (neg:SI (reg:SI 22)))
+;; Sets the V flag for signed overflow tests
+DEFUN __negsi2
+    NEG4    22
+    ret
+ENDF __negsi2
+#endif /* L_negsi2 */
 
+#undef r_remHH
+#undef r_remHL
+#undef r_remH
+#undef r_remL
+#undef r_arg1HH
+#undef r_arg1HL
+#undef r_arg1H
+#undef r_arg1L
+#undef r_arg2HH
+#undef r_arg2HL
+#undef r_arg2H
+#undef r_arg2L
+#undef r_cnt
+
+/* *di routines use registers below R19 and won't work with tiny arch
+   right now. */
+
+#if !defined (__AVR_TINY__)
 /*******************************************************
        Division 64 / 64
        Modulo   64 % 64
@@ -1258,7 +1750,7 @@ ENDF __divmodsi4
 
 #if defined (__AVR_HAVE_JMP_CALL__)
 #   define SPEED_DIV 8
-#elif defined (__AVR_HAVE_MOVW__) && !defined (__AVR_HAVE_8BIT_SP__)
+#elif defined (__AVR_HAVE_MOVW__) && defined (__AVR_HAVE_SPH__)
 #   define SPEED_DIV 16
 #else
 #   define SPEED_DIV 0
@@ -1366,8 +1858,8 @@ DEFUN __udivmod64
 
 1:  ;; Compare shifted Devidend against Divisor
     ;; If -- even after Shifting -- it is smaller...
-    CP  A7,B0  $  cpc C0,B1  $  cpc C1,B2  $  cpc C2,B3  
-    cpc C3,B4  $  cpc C4,B5  $  cpc C5,B6  $  cpc C6,B7  
+    CP  A7,B0  $  cpc C0,B1  $  cpc C1,B2  $  cpc C2,B3
+    cpc C3,B4  $  cpc C4,B5  $  cpc C5,B6  $  cpc C6,B7
     brcc    2f
 
     ;; ...then we can subtract it.  Thus, it is legal to shift left
@@ -1461,7 +1953,7 @@ DEFUN __udivmod64
 
 ENDF __udivmod64
 #endif /* L_udivmod64 */
-    
+
 
 #if defined (L_divdi3)
 
@@ -1487,18 +1979,14 @@ DEFUN  __divdi3_moddi3
     brmi    0f
     ;; Both Signs are 0:  the following Complexitiy is not needed
     XJMP    __udivdi3_umoddi3
-#endif /* SPEED_DIV */    
+#endif /* SPEED_DIV */
 
 0:  ;; The Prologue
     ;; Save 12 Registers:  Y, 17...8
-    ;; No Frame needed (X = 0)
-    clr r26
-    clr r27
-    ldi r30, lo8(gs(1f))
-    ldi r31, hi8(gs(1f))
-    XJMP __prologue_saves__ + ((18 - 12) * 2)
+    ;; No Frame needed
+    do_prologue_saves 12
 
-1:  ;; SS.7 will contain the Sign of the Quotient  (A.sign * B.sign)
+    ;; SS.7 will contain the Sign of the Quotient  (A.sign * B.sign)
     ;; SS.6 will contain the Sign of the Remainder (A.sign)
     mov     SS, A7
     asr     SS
@@ -1510,7 +1998,7 @@ DEFUN  __divdi3_moddi3
 #else
     brpl    21f
 #endif /* SPEED_DIV */
-   
+
     XCALL   __negdi2
 
     ;; Adjust Divisor's Sign and SS.7 as needed
@@ -1538,23 +2026,16 @@ DEFUN  __divdi3_moddi3
 #endif /* __AVR_HAVE_JMP_CALL__ */
     XCALL   __negdi2
 
-4:  ;; Epilogue: Restore the Z = 12 Registers and return
-    in r28, __SP_L__
-#if defined (__AVR_HAVE_8BIT_SP__)
-    clr r29
-#else
-    in r29, __SP_H__
-#endif /* #SP = 8/16 */
-    ldi r30, 12
-    XJMP __epilogue_restores__ + ((18 - 12) * 2)
+4:  ;; Epilogue: Restore 12 Registers and return
+    do_epilogue_restores 12
 
 ENDF __divdi3_moddi3
+
+#endif /* L_divdi3 */
 
 #undef R_cnt
 #undef SS
 #undef NN
-
-#endif /* L_divdi3 */
 
 .section .text.libgcc, "ax", @progbits
 
@@ -1564,6 +2045,8 @@ ENDF __divdi3_moddi3
 ;; (set (reg:DI 18)
 ;;      (plus:DI (reg:DI 18)
 ;;               (reg:DI 10)))
+;; Sets the V flag for signed overflow tests
+;; Sets the C flag for unsigned overflow tests
 DEFUN __adddi3
     ADD A0,B0  $  adc A1,B1  $  adc A2,B2  $  adc A3,B3
     adc A4,B4  $  adc A5,B5  $  adc A6,B6  $  adc A7,B7
@@ -1575,6 +2058,8 @@ ENDF __adddi3
 ;; (set (reg:DI 18)
 ;;      (plus:DI (reg:DI 18)
 ;;               (sign_extend:SI (reg:QI 26))))
+;; Sets the V flag for signed overflow tests
+;; Sets the C flag for unsigned overflow tests provided 0 <= R26 < 128
 DEFUN __adddi3_s8
     clr     TT
     sbrc    r26, 7
@@ -1589,6 +2074,8 @@ ENDF __adddi3_s8
 ;; (set (reg:DI 18)
 ;;      (minus:DI (reg:DI 18)
 ;;                (reg:DI 10)))
+;; Sets the V flag for signed overflow tests
+;; Sets the C flag for unsigned overflow tests
 DEFUN __subdi3
     SUB A0,B0  $  sbc A1,B1  $  sbc A2,B2  $  sbc A3,B3
     sbc A4,B4  $  sbc A5,B5  $  sbc A6,B6  $  sbc A7,B7
@@ -1622,6 +2109,9 @@ ENDF __cmpdi2_s8
 #endif /* L_cmpdi2_s8 */
 
 #if defined (L_negdi2)
+;; (set (reg:DI 18)
+;;      (neg:DI (reg:DI 18)))
+;; Sets the V flag for signed overflow tests
 DEFUN __negdi2
 
     com  A4    $  com  A5    $  com  A6    $  com  A7
@@ -1663,12 +2153,15 @@ ENDF __negdi2
 #undef A1
 #undef A0
 
+#endif /* !defined (__AVR_TINY__) */
+
 
 .section .text.libgcc.prologue, "ax", @progbits
-    
+
 /**********************************
  * This is a prologue subroutine
  **********************************/
+#if !defined (__AVR_TINY__)
 #if defined (L_prologue)
 
 ;; This function does not clobber T-flag; 64-bit division relies on it
@@ -1691,7 +2184,7 @@ DEFUN __prologue_saves__
 	push r17
 	push r28
 	push r29
-#if defined (__AVR_HAVE_8BIT_SP__)
+#if !defined (__AVR_HAVE_SPH__)
 	in	r28,__SP_L__
 	sub	r28,r26
 	out	__SP_L__,r28
@@ -1715,11 +2208,7 @@ DEFUN __prologue_saves__
 	out	__SP_L__,r28
 #endif /* #SP = 8/16 */
 
-#if defined (__AVR_HAVE_EIJMP_EICALL__)
-	eijmp
-#else
-	ijmp
-#endif
+	XIJMP
 
 ENDF __prologue_saves__
 #endif /* defined (L_prologue) */
@@ -1747,7 +2236,7 @@ DEFUN __epilogue_restores__
 	ldd	r16,Y+4
 	ldd	r17,Y+3
 	ldd	r26,Y+2
-#if defined (__AVR_HAVE_8BIT_SP__)
+#if !defined (__AVR_HAVE_SPH__)
 	ldd	r29,Y+1
 	add	r28,r30
 	out	__SP_L__,r28
@@ -1774,6 +2263,7 @@ DEFUN __epilogue_restores__
 	ret
 ENDF __epilogue_restores__
 #endif /* defined (L_epilogue) */
+#endif /* !defined (__AVR_TINY__) */
 
 #ifdef L_exit
 	.section .fini9,"ax",@progbits
@@ -1800,40 +2290,82 @@ _cleanup:
 
 
 .section .text.libgcc, "ax", @progbits
-    
-#ifdef L_tablejump
+
+#ifdef L_tablejump2
 DEFUN __tablejump2__
-	lsl	r30
-	rol	r31
-    ;; FALLTHRU
-ENDF __tablejump2__
-
-DEFUN __tablejump__
-#if defined (__AVR_HAVE_LPMX__)
-	lpm __tmp_reg__, Z+
-	lpm r31, Z
-	mov r30, __tmp_reg__
+    lsl     r30
+    rol     r31
 #if defined (__AVR_HAVE_EIJMP_EICALL__)
-	eijmp
+    ;; Word address of gs() jumptable entry in R24:Z
+    rol     r24
+    out     __RAMPZ__, r24
+#elif defined (__AVR_HAVE_ELPM__)
+    ;; Word address of jumptable entry in Z
+    clr     __tmp_reg__
+    rol     __tmp_reg__
+    out     __RAMPZ__, __tmp_reg__
+#endif
+
+    ;; Read word address from jumptable and jump
+
+#if defined (__AVR_HAVE_ELPMX__)
+    elpm    __tmp_reg__, Z+
+    elpm    r31, Z
+    mov     r30, __tmp_reg__
+#ifdef __AVR_HAVE_RAMPD__
+    ;; Reset RAMPZ to 0 so that EBI devices don't read garbage from RAM
+    out     __RAMPZ__, __zero_reg__
+#endif /* RAMPD */
+    XIJMP
+#elif defined (__AVR_HAVE_ELPM__)
+    elpm
+    push    r0
+    adiw    r30, 1
+    elpm
+    push    r0
+    ret
+#elif defined (__AVR_HAVE_LPMX__)
+    lpm     __tmp_reg__, Z+
+    lpm     r31, Z
+    mov     r30, __tmp_reg__
+    ijmp
+#elif defined (__AVR_TINY__)
+    wsubi 30, -(__AVR_TINY_PM_BASE_ADDRESS__) ; Add PM offset to Z
+    ld __tmp_reg__, Z+
+    ld r31, Z   ; Use ld instead of lpm to load Z
+    mov r30, __tmp_reg__    
+    ijmp
 #else
-	ijmp
+    lpm
+    push    r0
+    adiw    r30, 1
+    lpm
+    push    r0
+    ret
 #endif
+ENDF __tablejump2__
+#endif /* L_tablejump2 */
 
-#else /* !HAVE_LPMX */
-	lpm
-	adiw r30, 1
-	push r0
-	lpm
-	push r0
-#if defined (__AVR_HAVE_EIJMP_EICALL__)
-	in   __tmp_reg__, __EIND__
-	push __tmp_reg__
+#if defined(__AVR_TINY__)
+#ifdef L_copy_data
+        .section .init4,"ax",@progbits
+        .global __do_copy_data
+__do_copy_data:
+        ldi     r18, hi8(__data_end)
+        ldi     r26, lo8(__data_start)
+        ldi     r27, hi8(__data_start)
+        ldi     r30, lo8(__data_load_start + __AVR_TINY_PM_BASE_ADDRESS__)
+        ldi     r31, hi8(__data_load_start + __AVR_TINY_PM_BASE_ADDRESS__)
+        rjmp    .L__do_copy_data_start
+.L__do_copy_data_loop:
+        ld      r19, z+
+        st      X+, r19
+.L__do_copy_data_start:
+        cpi     r26, lo8(__data_end)
+        cpc     r27, r18
+        brne    .L__do_copy_data_loop
 #endif
-	ret
-#endif /* !HAVE_LPMX */
-ENDF __tablejump__
-#endif /* defined (L_tablejump) */
-
+#else
 #ifdef L_copy_data
 	.section .init4,"ax",@progbits
 DEFUN __do_copy_data
@@ -1893,15 +2425,20 @@ DEFUN __do_copy_data
 	cpc	r27, r17
 	brne	.L__do_copy_data_loop
 #endif /* !defined(__AVR_HAVE_ELPMX__) && !defined(__AVR_HAVE_ELPM__) */
+#if defined (__AVR_HAVE_ELPM__) && defined (__AVR_HAVE_RAMPD__)
+	;; Reset RAMPZ to 0 so that EBI devices don't read garbage from RAM
+	out	__RAMPZ__, __zero_reg__
+#endif /* ELPM && RAMPD */
 ENDF __do_copy_data
 #endif /* L_copy_data */
+#endif /* !defined (__AVR_TINY__) */
 
 /* __do_clear_bss is only necessary if there is anything in .bss section.  */
 
 #ifdef L_clear_bss
 	.section .init4,"ax",@progbits
 DEFUN __do_clear_bss
-	ldi	r17, hi8(__bss_end)
+	ldi	r18, hi8(__bss_end)
 	ldi	r26, lo8(__bss_start)
 	ldi	r27, hi8(__bss_start)
 	rjmp	.do_clear_bss_start
@@ -1909,7 +2446,7 @@ DEFUN __do_clear_bss
 	st	X+, __zero_reg__
 .do_clear_bss_start:
 	cpi	r26, lo8(__bss_end)
-	cpc	r27, r17
+	cpc	r27, r18
 	brne	.do_clear_bss_loop
 ENDF __do_clear_bss
 #endif /* L_clear_bss */
@@ -1917,117 +2454,79 @@ ENDF __do_clear_bss
 /* __do_global_ctors and __do_global_dtors are only necessary
    if there are any constructors/destructors.  */
 
+#if defined(__AVR_TINY__)
+#define cdtors_tst_reg r18
+#else
+#define cdtors_tst_reg r17
+#endif
+
 #ifdef L_ctors
 	.section .init6,"ax",@progbits
 DEFUN __do_global_ctors
-#if defined(__AVR_HAVE_RAMPZ__)
-	ldi	r17, hi8(__ctors_start)
-	ldi	r28, lo8(__ctors_end)
-	ldi	r29, hi8(__ctors_end)
-	ldi	r16, hh8(__ctors_end)
-	rjmp	.L__do_global_ctors_start
+    ldi     cdtors_tst_reg, pm_hi8(__ctors_start)
+    ldi     r28, pm_lo8(__ctors_end)
+    ldi     r29, pm_hi8(__ctors_end)
+#ifdef __AVR_HAVE_EIJMP_EICALL__
+    ldi     r16, pm_hh8(__ctors_end)
+#endif /* HAVE_EIJMP */
+    rjmp    .L__do_global_ctors_start
 .L__do_global_ctors_loop:
-	sbiw	r28, 2
-	sbc     r16, __zero_reg__
-	mov_h	r31, r29
-	mov_l	r30, r28
-	out     __RAMPZ__, r16
-	XCALL	__tablejump_elpm__
+    wsubi   28, 1
+#ifdef __AVR_HAVE_EIJMP_EICALL__
+    sbc     r16, __zero_reg__
+    mov     r24, r16
+#endif /* HAVE_EIJMP */
+    mov_h   r31, r29
+    mov_l   r30, r28
+    XCALL   __tablejump2__
 .L__do_global_ctors_start:
-	cpi	r28, lo8(__ctors_start)
-	cpc	r29, r17
-	ldi	r24, hh8(__ctors_start)
-	cpc	r16, r24
-	brne	.L__do_global_ctors_loop
-#else
-	ldi	r17, hi8(__ctors_start)
-	ldi	r28, lo8(__ctors_end)
-	ldi	r29, hi8(__ctors_end)
-	rjmp	.L__do_global_ctors_start
-.L__do_global_ctors_loop:
-	sbiw	r28, 2
-	mov_h	r31, r29
-	mov_l	r30, r28
-	XCALL	__tablejump__
-.L__do_global_ctors_start:
-	cpi	r28, lo8(__ctors_start)
-	cpc	r29, r17
-	brne	.L__do_global_ctors_loop
-#endif /* defined(__AVR_HAVE_RAMPZ__) */
+    cpi     r28, pm_lo8(__ctors_start)
+    cpc     r29, cdtors_tst_reg
+#ifdef __AVR_HAVE_EIJMP_EICALL__
+    ldi     r24, pm_hh8(__ctors_start)
+    cpc     r16, r24
+#endif /* HAVE_EIJMP */
+    brne    .L__do_global_ctors_loop
 ENDF __do_global_ctors
 #endif /* L_ctors */
 
 #ifdef L_dtors
 	.section .fini6,"ax",@progbits
 DEFUN __do_global_dtors
-#if defined(__AVR_HAVE_RAMPZ__)
-	ldi	r17, hi8(__dtors_end)
-	ldi	r28, lo8(__dtors_start)
-	ldi	r29, hi8(__dtors_start)
-	ldi	r16, hh8(__dtors_start)
-	rjmp	.L__do_global_dtors_start
+    ldi     cdtors_tst_reg, pm_hi8(__dtors_end)
+    ldi     r28, pm_lo8(__dtors_start)
+    ldi     r29, pm_hi8(__dtors_start)
+#ifdef __AVR_HAVE_EIJMP_EICALL__
+    ldi     r16, pm_hh8(__dtors_start)
+#endif /* HAVE_EIJMP */
+    rjmp    .L__do_global_dtors_start
 .L__do_global_dtors_loop:
-	sbiw	r28, 2
-	sbc     r16, __zero_reg__
-	mov_h	r31, r29
-	mov_l	r30, r28
-	out     __RAMPZ__, r16
-	XCALL	__tablejump_elpm__
+#ifdef __AVR_HAVE_EIJMP_EICALL__
+    mov     r24, r16
+#endif /* HAVE_EIJMP */
+    mov_h   r31, r29
+    mov_l   r30, r28
+    XCALL   __tablejump2__
+    waddi   28, 1
+#ifdef __AVR_HAVE_EIJMP_EICALL__
+    adc     r16, __zero_reg__
+#endif /* HAVE_EIJMP */
 .L__do_global_dtors_start:
-	cpi	r28, lo8(__dtors_end)
-	cpc	r29, r17
-	ldi	r24, hh8(__dtors_end)
-	cpc	r16, r24
-	brne	.L__do_global_dtors_loop
-#else
-	ldi	r17, hi8(__dtors_end)
-	ldi	r28, lo8(__dtors_start)
-	ldi	r29, hi8(__dtors_start)
-	rjmp	.L__do_global_dtors_start
-.L__do_global_dtors_loop:
-	mov_h	r31, r29
-	mov_l	r30, r28
-	XCALL	__tablejump__
-	adiw	r28, 2
-.L__do_global_dtors_start:
-	cpi	r28, lo8(__dtors_end)
-	cpc	r29, r17
-	brne	.L__do_global_dtors_loop
-#endif /* defined(__AVR_HAVE_RAMPZ__) */
+    cpi     r28, pm_lo8(__dtors_end)
+    cpc     r29, cdtors_tst_reg
+#ifdef __AVR_HAVE_EIJMP_EICALL__
+    ldi     r24, pm_hh8(__dtors_end)
+    cpc     r16, r24
+#endif /* HAVE_EIJMP */
+    brne    .L__do_global_dtors_loop
 ENDF __do_global_dtors
 #endif /* L_dtors */
 
+#undef cdtors_tst_reg
+
 .section .text.libgcc, "ax", @progbits
-    
-#ifdef L_tablejump_elpm
-DEFUN __tablejump_elpm__
-#if defined (__AVR_HAVE_ELPM__)
-#if defined (__AVR_HAVE_LPMX__)
-	elpm	__tmp_reg__, Z+
-	elpm	r31, Z
-	mov	r30, __tmp_reg__
-#if defined (__AVR_HAVE_EIJMP_EICALL__)
-	eijmp
-#else
-	ijmp
-#endif
 
-#else
-	elpm
-	adiw	r30, 1
-	push	r0
-	elpm
-	push	r0
-#if defined (__AVR_HAVE_EIJMP_EICALL__)
-	in      __tmp_reg__, __EIND__
-	push    __tmp_reg__
-#endif
-	ret
-#endif
-#endif /* defined (__AVR_HAVE_ELPM__) */
-ENDF __tablejump_elpm__
-#endif /* defined (L_tablejump_elpm) */
-
+#if !defined (__AVR_TINY__)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Loading n bytes from Flash; n = 3,4
 ;; R22... = Flash[Z]
@@ -2073,7 +2572,9 @@ ENDF __load_4
 #endif /* L_load_4 */
 
 #endif /* L_load_3 || L_load_3 */
+#endif /* !defined (__AVR_TINY__) */
 
+#if !defined (__AVR_TINY__)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Loading n bytes from Flash or RAM;  n = 1,2,3,4
 ;; R22... = Flash[R21:Z] or RAM[Z] depending on R21.7
@@ -2114,11 +2615,18 @@ ENDF __load_4
     adiw    r30, 1
 .endif
 #endif
+#if defined (__AVR_HAVE_ELPM__) && defined (__AVR_HAVE_RAMPD__)
+.if \dest == D0+\n-1
+    ;; Reset RAMPZ to 0 so that EBI devices don't read garbage from RAM
+    out     __RAMPZ__, __zero_reg__
+.endif
+#endif
 .endm ; .xload
 
 #if defined (L_xload_1)
 DEFUN __xload_1
-#if defined (__AVR_HAVE_LPMX__) && !defined (__AVR_HAVE_RAMPZ__)
+#if defined (__AVR_HAVE_LPMX__) && !defined (__AVR_HAVE_ELPM__)
+    sbrc    HHI8, 7
     ld      D0, Z
     sbrs    HHI8, 7
     lpm     D0, Z
@@ -2126,14 +2634,14 @@ DEFUN __xload_1
 #else
     sbrc    HHI8, 7
     rjmp    1f
-#if defined (__AVR_HAVE_RAMPZ__)
+#if defined (__AVR_HAVE_ELPM__)
     out     __RAMPZ__, HHI8
-#endif /* __AVR_HAVE_RAMPZ__ */
+#endif /* __AVR_HAVE_ELPM__ */
     .xload  D0, 1
     ret
 1:  ld      D0, Z
     ret
-#endif /* LPMx && ! RAMPZ */
+#endif /* LPMx && ! ELPM */
 ENDF __xload_1
 #endif /* L_xload_1 */
 
@@ -2141,9 +2649,9 @@ ENDF __xload_1
 DEFUN __xload_2
     sbrc    HHI8, 7
     rjmp    1f
-#if defined (__AVR_HAVE_RAMPZ__)
+#if defined (__AVR_HAVE_ELPM__)
     out     __RAMPZ__, HHI8
-#endif /* __AVR_HAVE_RAMPZ__ */
+#endif /* __AVR_HAVE_ELPM__ */
     .xload  D0, 2
     .xload  D1, 2
     ret
@@ -2157,9 +2665,9 @@ ENDF __xload_2
 DEFUN __xload_3
     sbrc    HHI8, 7
     rjmp    1f
-#if defined (__AVR_HAVE_RAMPZ__)
+#if defined (__AVR_HAVE_ELPM__)
     out     __RAMPZ__, HHI8
-#endif /* __AVR_HAVE_RAMPZ__ */
+#endif /* __AVR_HAVE_ELPM__ */
     .xload  D0, 3
     .xload  D1, 3
     .xload  D2, 3
@@ -2175,9 +2683,9 @@ ENDF __xload_3
 DEFUN __xload_4
     sbrc    HHI8, 7
     rjmp    1f
-#if defined (__AVR_HAVE_RAMPZ__)
+#if defined (__AVR_HAVE_ELPM__)
     out     __RAMPZ__, HHI8
-#endif /* __AVR_HAVE_RAMPZ__ */
+#endif /* __AVR_HAVE_ELPM__ */
     .xload  D0, 4
     .xload  D1, 4
     .xload  D2, 4
@@ -2192,7 +2700,9 @@ ENDF __xload_4
 #endif /* L_xload_4 */
 
 #endif /* L_xload_{1|2|3|4} */
+#endif /* if !defined (__AVR_TINY__) */
 
+#if !defined (__AVR_TINY__)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; memcopy from Address Space __pgmx to RAM
 ;; R23:Z = Source Address
@@ -2219,7 +2729,7 @@ DEFUN __movmemx_hi
 
 ;; Read from Flash
 
-#if defined (__AVR_HAVE_RAMPZ__)
+#if defined (__AVR_HAVE_ELPM__)
     out     __RAMPZ__, HHI8
 #endif
 
@@ -2243,6 +2753,10 @@ DEFUN __movmemx_hi
     st      X+, r0
     sbiw    LOOP, 1
     brne    0b
+#if defined (__AVR_HAVE_ELPM__) && defined (__AVR_HAVE_RAMPD__)
+    ;; Reset RAMPZ to 0 so that EBI devices don't read garbage from RAM
+    out	__RAMPZ__, __zero_reg__
+#endif /* ELPM && RAMPD */
     ret
 
 ;; Read from RAM
@@ -2252,7 +2766,7 @@ DEFUN __movmemx_hi
     ;; and store that Byte to RAM Destination
     st      X+, r0
     sbiw    LOOP, 1
-    brne    0b
+    brne    1b
     ret
 ENDF __movmemx_hi
 
@@ -2260,6 +2774,7 @@ ENDF __movmemx_hi
 #undef LOOP
 
 #endif /* L_movmemx */
+#endif /* !defined (__AVR_TINY__) */ 
 
 
 .section .text.libgcc.builtins, "ax", @progbits
@@ -2323,7 +2838,7 @@ DEFUN __loop_ffsqi2
     brcc __loop_ffsqi2
     mov  r24, r26
     clr  r25
-    ret    
+    ret
 ENDF __loop_ffsqi2
 #endif /* defined (L_loop_ffsqi2) */
 
@@ -2425,7 +2940,7 @@ ENDF __clzhi2
 
 
 /**********************************
- * Parity 
+ * Parity
  **********************************/
 
 #if defined (L_paritydi2)
@@ -2541,20 +3056,20 @@ ENDF __popcountdi2
 DEFUN __popcountqi2
     mov  __tmp_reg__, r24
     andi r24, 1
-    lsr  __tmp_reg__    
-    lsr  __tmp_reg__    
+    lsr  __tmp_reg__
+    lsr  __tmp_reg__
     adc  r24, __zero_reg__
-    lsr  __tmp_reg__    
+    lsr  __tmp_reg__
     adc  r24, __zero_reg__
-    lsr  __tmp_reg__    
+    lsr  __tmp_reg__
     adc  r24, __zero_reg__
-    lsr  __tmp_reg__    
+    lsr  __tmp_reg__
     adc  r24, __zero_reg__
-    lsr  __tmp_reg__    
+    lsr  __tmp_reg__
     adc  r24, __zero_reg__
-    lsr  __tmp_reg__    
-    adc  r24, __tmp_reg__    
-    ret    
+    lsr  __tmp_reg__
+    adc  r24, __tmp_reg__
+    ret
 ENDF __popcountqi2
 #endif /* defined (L_popcountqi2) */
 
@@ -2598,90 +3113,117 @@ ENDF __bswapdi2
  **********************************/
 
 #if defined (L_ashrdi3)
+
+#define SS __zero_reg__
+
 ;; Arithmetic shift right
 ;; r25:r18 = ashr64 (r25:r18, r17:r16)
 DEFUN __ashrdi3
-    push r16
-    andi r16, 63
-    breq 2f
-1:  asr  r25
-    ror  r24
-    ror  r23
-    ror  r22
-    ror  r21
-    ror  r20
-    ror  r19
-    ror  r18
-    dec  r16
-    brne 1b
-2:  pop  r16
-    ret
-ENDF __ashrdi3
-#endif /* defined (L_ashrdi3) */
+    sbrc    r25, 7
+    com     SS
+    ;; FALLTHRU
+ENDF  __ashrdi3
 
-#if defined (L_lshrdi3)
 ;; Logic shift right
 ;; r25:r18 = lshr64 (r25:r18, r17:r16)
 DEFUN __lshrdi3
-    push r16
-    andi r16, 63
-    breq 2f
-1:  lsr  r25
-    ror  r24
-    ror  r23
-    ror  r22
-    ror  r21
-    ror  r20
-    ror  r19
-    ror  r18
-    dec  r16
-    brne 1b
-2:  pop  r16
+    ;; Signs are in SS (zero_reg)
+    mov     __tmp_reg__, r16
+0:  cpi     r16, 8
+    brlo 2f
+    subi    r16, 8
+    mov     r18, r19
+    mov     r19, r20
+    mov     r20, r21
+    mov     r21, r22
+    mov     r22, r23
+    mov     r23, r24
+    mov     r24, r25
+    mov     r25, SS
+    rjmp 0b
+1:  asr     SS
+    ror     r25
+    ror     r24
+    ror     r23
+    ror     r22
+    ror     r21
+    ror     r20
+    ror     r19
+    ror     r18
+2:  dec     r16
+    brpl 1b
+    clr     __zero_reg__
+    mov     r16, __tmp_reg__
     ret
 ENDF __lshrdi3
-#endif /* defined (L_lshrdi3) */
+
+#undef SS
+
+#endif /* defined (L_ashrdi3) */
 
 #if defined (L_ashldi3)
 ;; Shift left
 ;; r25:r18 = ashl64 (r25:r18, r17:r16)
+;; This function does not clobber T.
 DEFUN __ashldi3
-    push r16
-    andi r16, 63
-    breq 2f
-1:  lsl  r18
-    rol  r19
-    rol  r20
-    rol  r21
-    rol  r22
-    rol  r23
-    rol  r24
-    rol  r25
-    dec  r16
-    brne 1b
-2:  pop  r16
+    mov     __tmp_reg__, r16
+0:  cpi     r16, 8
+    brlo 2f
+    mov     r25, r24
+    mov     r24, r23
+    mov     r23, r22
+    mov     r22, r21
+    mov     r21, r20
+    mov     r20, r19
+    mov     r19, r18
+    clr     r18
+    subi    r16, 8
+    rjmp 0b
+1:  lsl     r18
+    rol     r19
+    rol     r20
+    rol     r21
+    rol     r22
+    rol     r23
+    rol     r24
+    rol     r25
+2:  dec     r16
+    brpl 1b
+    mov     r16, __tmp_reg__
     ret
 ENDF __ashldi3
 #endif /* defined (L_ashldi3) */
 
 #if defined (L_rotldi3)
-;; Shift left
+;; Rotate left
 ;; r25:r18 = rotl64 (r25:r18, r17:r16)
 DEFUN __rotldi3
-    push r16
-    andi r16, 63
-    breq 2f
-1:  lsl  r18
-    rol  r19
-    rol  r20
-    rol  r21
-    rol  r22
-    rol  r23
-    rol  r24
-    rol  r25
-    adc  r18, __zero_reg__
-    dec  r16
-    brne 1b
-2:  pop  r16
+    push    r16
+0:  cpi     r16, 8
+    brlo 2f
+    subi    r16, 8
+    mov     __tmp_reg__, r25
+    mov     r25, r24
+    mov     r24, r23
+    mov     r23, r22
+    mov     r22, r21
+    mov     r21, r20
+    mov     r20, r19
+    mov     r19, r18
+    mov     r18, __tmp_reg__
+    rjmp 0b
+1:  lsl     r18
+    rol     r19
+    rol     r20
+    rol     r21
+    rol     r22
+    rol     r23
+    rol     r24
+    rol     r25
+    adc     r18, __zero_reg__
+2:  dec     r16
+    brpl 1b
+    pop     r16
     ret
 ENDF __rotldi3
 #endif /* defined (L_rotldi3) */
@@ -2689,10 +3231,10 @@ ENDF __rotldi3
 
 .section .text.libgcc.fmul, "ax", @progbits
 
-/***********************************************************/    
+/***********************************************************/
 ;;; Softmul versions of FMUL, FMULS and FMULSU to implement
 ;;; __builtin_avr_fmul* if !AVR_HAVE_MUL
-/***********************************************************/    
+/***********************************************************/
 
 #define A1 24
 #define B1 25
@@ -2738,9 +3280,7 @@ DEFUN __fmulsu_exit
     XJMP  __fmul
 1:  XCALL __fmul
     ;; C = -C iff A0.7 = 1
-    com  C1
-    neg  C0
-    sbci C1, -1
+    NEG2 C0
     ret
 ENDF __fmulsu_exit
 #endif /* L_fmulsu */
@@ -2775,3 +3315,5 @@ ENDF __fmul
 #undef B1
 #undef C0
 #undef C1
+
+#include "lib1funcs-fixed.S"

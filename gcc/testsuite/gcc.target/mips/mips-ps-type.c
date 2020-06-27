@@ -1,20 +1,21 @@
 /* Test v2sf calculations.  The nmadd and nmsub patterns need
    -ffinite-math-only.  */
 /* { dg-do compile } */ 
-/* { dg-options "-O2 -mpaired-single -mgp64 -ffinite-math-only" } */
-/* { dg-final { scan-assembler "cvt.ps.s" } } */ 
-/* { dg-final { scan-assembler "mov.ps" } } */ 
-/* { dg-final { scan-assembler "ldc1" } } */ 
-/* { dg-final { scan-assembler "sdc1" } } */ 
-/* { dg-final { scan-assembler "add.ps" } } */ 
-/* { dg-final { scan-assembler "sub.ps" } } */ 
-/* { dg-final { scan-assembler "neg.ps" } } */ 
-/* { dg-final { scan-assembler "mul.ps" } } */ 
-/* { dg-final { scan-assembler "madd.ps" } } */ 
-/* { dg-final { scan-assembler "msub.ps" } } */ 
-/* { dg-final { scan-assembler "nmadd.ps" } } */ 
-/* { dg-final { scan-assembler "nmsub.ps" } } */ 
-/* { dg-final { scan-assembler "mov(n|z).ps" } } */ 
+/* { dg-options "-mpaired-single -mmadd4 -mgp64 -ffinite-math-only forbid_cpu=octeon.*" } */
+/* { dg-skip-if "nmadd and nmsub need combine" { *-*-* } { "-O0" } { "" } } */
+/* { dg-final { scan-assembler "\tcvt.ps.s\t" } } */
+/* { dg-final { scan-assembler "\tmov.ps\t" } } */
+/* { dg-final { scan-assembler "\tldc1\t" } } */
+/* { dg-final { scan-assembler "\tsdc1\t" } } */
+/* { dg-final { scan-assembler "\tadd.ps\t" } } */
+/* { dg-final { scan-assembler "\tsub.ps\t" } } */
+/* { dg-final { scan-assembler "\tneg.ps\t" } } */
+/* { dg-final { scan-assembler "\tmul.ps\t" } } */
+/* { dg-final { scan-assembler "\tmadd.ps\t" } } */
+/* { dg-final { scan-assembler "\tmsub.ps\t" } } */
+/* { dg-final { scan-assembler "\tnmadd.ps\t" } } */
+/* { dg-final { scan-assembler "\tnmsub.ps\t" } } */
+/* { dg-final { scan-assembler "\tmov(n|z).ps\t" } } */
 
 typedef float v2sf __attribute__ ((vector_size(8)));
 
@@ -29,6 +30,11 @@ NOMIPS16 v2sf init (float a, float b)
 /* Move between registers */
 NOMIPS16 v2sf move (v2sf a)
 {
+  register v2sf b __asm__("$f0") = a;
+  register v2sf c __asm__("$f2");
+  __asm__ __volatile__ ("" : "+f" (b));
+  c = b;
+  __asm__ __volatile__ ("" : : "f" (c));
   return a;
 }
 
@@ -95,7 +101,7 @@ NOMIPS16 v2sf nmsub (v2sf a, v2sf b, v2sf c)
 /* Conditional Move */ 
 NOMIPS16 v2sf cond_move1 (v2sf a, v2sf b, long i)
 {
-  if (i > 0)
+  if (i != 0)
     return a;
   else
     return b;
@@ -104,7 +110,7 @@ NOMIPS16 v2sf cond_move1 (v2sf a, v2sf b, long i)
 /* Conditional Move */ 
 NOMIPS16 v2sf cond_move2 (v2sf a, v2sf b, int i)
 {
-  if (i > 0)
+  if (i != 0)
     return a;
   else
     return b;

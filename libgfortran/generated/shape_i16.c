@@ -1,8 +1,8 @@
 /* Implementation of the SHAPE intrinsic
-   Copyright 2002, 2006, 2007, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2002-2017 Free Software Foundation, Inc.
    Contributed by Paul Brook <paul@nowt.org>
 
-This file is part of the GNU Fortran 95 runtime library (libgfortran).
+This file is part of the GNU Fortran runtime library (libgfortran).
 
 Libgfortran is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public
@@ -24,19 +24,17 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 <http://www.gnu.org/licenses/>.  */
 
 #include "libgfortran.h"
-#include <stdlib.h>
-#include <assert.h>
 
 
 #if defined (HAVE_GFC_INTEGER_16)
 
 extern void shape_16 (gfc_array_i16 * const restrict ret, 
-	const gfc_array_i16 * const restrict array);
+	const array_t * const restrict array);
 export_proto(shape_16);
 
 void
 shape_16 (gfc_array_i16 * const restrict ret, 
-	const gfc_array_i16 * const restrict array)
+	const array_t * const restrict array)
 {
   int n;
   index_type stride;
@@ -45,11 +43,11 @@ shape_16 (gfc_array_i16 * const restrict ret,
 
   rank = GFC_DESCRIPTOR_RANK (array);
 
-  if (ret->data == NULL)
+  if (ret->base_addr == NULL)
     {
       GFC_DIMENSION_SET(ret->dim[0], 0, rank - 1, 1);
       ret->offset = 0;
-      ret->data = internal_malloc_size (sizeof (GFC_INTEGER_16) * rank);
+      ret->base_addr = xmallocarray (rank, sizeof (GFC_INTEGER_16));
     }
 
   stride = GFC_DESCRIPTOR_STRIDE(ret,0);
@@ -60,7 +58,7 @@ shape_16 (gfc_array_i16 * const restrict ret,
   for (n = 0; n < rank; n++)
     {
       extent = GFC_DESCRIPTOR_EXTENT(array,n);
-      ret->data[n * stride] = extent > 0 ? extent : 0 ;
+      ret->base_addr[n * stride] = extent > 0 ? extent : 0 ;
     }
 }
 

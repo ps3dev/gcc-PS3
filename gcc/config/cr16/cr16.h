@@ -1,5 +1,5 @@
 /* Definitions of target machine for GNU compiler, for CR16.
-   Copyright (C) 2012 Free Software Foundation, Inc.
+   Copyright (C) 2012-2017 Free Software Foundation, Inc.
    Contributed by KPIT Cummins Infosystems Limited.
 
    This file is part of GCC.
@@ -114,7 +114,7 @@ while (0)
      && ((ALIGN) < BITS_PER_WORD))               \
      ? (BITS_PER_WORD) : (ALIGN))
 
-/* In CR16 strings are word-aligne; strcpy from constants will be faster.  */
+/* In CR16 strings are word-aligned; strcpy from constants will be faster.  */
 #define CONSTANT_ALIGNMENT(CONSTANT, ALIGN)                            \
   (((TREE_CODE (CONSTANT) == STRING_CST) && ((ALIGN) < BITS_PER_WORD)) \
      ? (BITS_PER_WORD) : (ALIGN))
@@ -238,7 +238,7 @@ while (0)
 #define EH_RETURN_STACKADJ_RTX 		gen_rtx_REG (Pmode, 4)
 
 #define EH_RETURN_HANDLER_RTX \
-  gen_rtx_MEM (Pmode, plus_constant (arg_pointer_rtx, -4))
+  gen_rtx_MEM (Pmode, plus_constant (Pmode, arg_pointer_rtx, -4))
 
 #define INCOMING_RETURN_ADDR_RTX	gen_rtx_RA
 
@@ -368,7 +368,7 @@ enum reg_class
        && GET_CODE (XEXP ((XEXP (OP, 0)), 1)) == CONST_INT))
 
 /* Stack layout and calling conventions.  */
-#define STACK_GROWS_DOWNWARD
+#define STACK_GROWS_DOWNWARD 1
 
 #define STARTING_FRAME_OFFSET   0
 
@@ -460,10 +460,6 @@ struct cumulative_args
 #define REG_OK_FOR_INDEX_P(X)   1
 #endif /* not REG_OK_STRICT.  */
 
-/* Go to LABEL if ADDR (a legitimate address expression) has 
-   an effect that depends on the machine mode it is used for.  */
-#define GO_IF_MODE_DEPENDENT_ADDRESS(ADDR, LABEL)
-
 /* Assume best case (branch predicted).  */
 #define BRANCH_COST(speed_p, predictable_p)       2
 
@@ -471,7 +467,7 @@ struct cumulative_args
 
 /* It is as good or better to call a constant function address than to
    call an address kept in a register.  */
-#define NO_FUNCTION_CSE
+#define NO_FUNCTION_CSE 1
 
 /* Dividing the output into sections.  */
 

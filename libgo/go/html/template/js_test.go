@@ -138,7 +138,7 @@ func TestJSValEscaper(t *testing.T) {
 		// Newlines.
 		{"\r\n\u2028\u2029", `"\r\n\u2028\u2029"`},
 		// "\v" == "v" on IE 6 so use "\x0b" instead.
-		{"\t\x0b", `"\u0009\u000b"`},
+		{"\t\x0b", `"\t\u000b"`},
 		{struct{ X, Y int }{1, 2}, `{"X":1,"Y":2}`},
 		{[]interface{}{}, "[]"},
 		{[]interface{}{42, "foo", nil}, `[42,"foo",null]`},
@@ -328,6 +328,25 @@ func TestEscapersOnLower7AndSelectHighCodepoints(t *testing.T) {
 		if s := buf.String(); s != test.escaped {
 			t.Errorf("%s rune-wise: want\n\t%q\ngot\n\t%q", test.name, test.escaped, s)
 			continue
+		}
+	}
+}
+
+func TestIsJsMimeType(t *testing.T) {
+	tests := []struct {
+		in  string
+		out bool
+	}{
+		{"application/javascript;version=1.8", true},
+		{"application/javascript;version=1.8;foo=bar", true},
+		{"application/javascript/version=1.8", false},
+		{"text/javascript", true},
+		{"application/json", true},
+	}
+
+	for _, test := range tests {
+		if isJSType(test.in) != test.out {
+			t.Errorf("isJSType(%q) = %v, want %v", test.in, !test.out, test.out)
 		}
 	}
 }

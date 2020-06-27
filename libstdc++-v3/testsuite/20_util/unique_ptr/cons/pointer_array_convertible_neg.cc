@@ -1,7 +1,6 @@
-// { dg-do compile }
-// { dg-options "-std=gnu++0x" }
+// { dg-do compile { target c++11 } }
 
-// Copyright (C) 2008, 2009 Free Software Foundation
+// Copyright (C) 2008-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -29,13 +28,13 @@ struct B : A
   virtual ~B() { }
 };
 
-// 20.4.5.1 unique_ptr constructors [unique.ptr.cons]
+// 20.7.1.3.1 unique_ptr constructors [unique.ptr.runtime.ctor]
 
 // Construction from pointer of derived type
 void
 test01()
 {
-  std::unique_ptr<B[]> B_from_A(new A[3]); //{ dg-error "invalid conversion from" }
+  std::unique_ptr<B[]> B_from_A(new A[3]); //{ dg-error "" }
 }
 
 // { dg-prune-output "include" }

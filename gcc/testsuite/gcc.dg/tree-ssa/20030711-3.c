@@ -31,6 +31,7 @@ union tree_node
 {
   struct tree_decl decl;
 };
+int make_decl_rtl (tree, void *);
 long
 get_alias_set (t)
      tree t;
@@ -58,4 +59,3 @@ get_alias_set (t)
 /* There should be one load of alias.  */
 /* { dg-final { scan-tree-dump-times "->alias" 1 "dom2"} } */
 
-/* { dg-final { cleanup-tree-dump "dom2" } } */

@@ -1,6 +1,5 @@
 /* Process source files and output type information.
-   Copyright (C) 2002, 2003, 2004, 2007, 2008, 2010, 2011 
-   Free Software Foundation, Inc.
+   Copyright (C) 2002-2017 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -20,6 +19,10 @@
 
 #ifndef GCC_GENGTYPE_H
 #define GCC_GENGTYPE_H
+
+#define obstack_chunk_alloc    xmalloc
+#define obstack_chunk_free     free
+#define OBSTACK_CHUNK_SIZE     0
 
 /* Sets of accepted source languages like C, C++, Ada... are
    represented by a bitmap.  */
@@ -121,15 +124,25 @@ extern struct fileloc lexer_line;
    gengtype.c & in gengtype-state.c files.  */
 extern pair_p typedefs;
 extern type_p structures;
-extern type_p param_structs;
 extern pair_p variables;
 
+/* An enum for distinguishing GGC vs PCH.  */
 
+enum write_types_kinds
+{
+  WTK_GGC,
+  WTK_PCH,
+
+  NUM_WTK
+};
 
 /* Discrimating kind of types we can understand.  */
 
 enum typekind {
   TYPE_NONE=0,          /* Never used, so zeroed memory is invalid.  */
+  TYPE_UNDEFINED,	/* We have not yet seen a definition for this type.
+			   If a type is still undefined when generating code,
+			   an error will be generated.  */
   TYPE_SCALAR,          /* Scalar types like char.  */
   TYPE_STRING,          /* The string type.  */
   TYPE_STRUCT,          /* Type for GTY-ed structs.  */
@@ -139,11 +152,9 @@ enum typekind {
   TYPE_LANG_STRUCT,     /* GCC front-end language specific structs.
                            Various languages may have homonymous but
                            different structs.  */
-  TYPE_PARAM_STRUCT     /* Type for parametrized structs, e.g. hash_t
-                           hash-tables, ...  See (param_is, use_param,
-                           param1_is, param2_is,... use_param1,
-                           use_param_2,... use_params) GTY
-                           options.  */
+  TYPE_USER_STRUCT	/* User defined type.  Walkers and markers for
+			   this type are assumed to be provided by the
+			   user.  */
 };
 
 /* Discriminating kind for options.  */
@@ -229,20 +240,16 @@ enum gc_used_enum {
   GC_POINTED_TO
 };
 
-/* We can have at most ten type parameters in parameterized structures.  */
-#define NUM_PARAM 10
-
 /* Our type structure describes all types handled by gengtype.  */
 struct type {
   /* Discriminating kind, cannot be TYPE_NONE.  */
   enum typekind kind;
 
   /* For top-level structs or unions, the 'next' field links the
-     global list 'structures' or 'param_structs'; for lang_structs,
-     their homonymous structs are linked using this 'next' field.  The
-     homonymous list starts at the s.lang_struct field of the
-     lang_struct.  See the new_structure function for details.  This is
-     tricky!  */
+     global list 'structures'; for lang_structs, their homonymous structs are
+     linked using this 'next' field.  The homonymous list starts at the
+     s.lang_struct field of the lang_struct.  See the new_structure function
+     for details.  This is tricky!  */
   type_p next;
 
   /* State number used when writing & reading the persistent state.  A
@@ -270,7 +277,7 @@ struct type {
     /* when TYPE_STRUCT or TYPE_UNION or TYPE_LANG_STRUCT, we have an
        aggregate type containing fields: */
     struct {
-      const char *tag;          /* the aggragate tag, if any.  */
+      const char *tag;          /* the aggregate tag, if any.  */
       struct fileloc line;      /* the source location.  */
       pair_p fields;            /* the linked list of fields.  */
       options_p opt;            /* the GTY options if any.  */
@@ -282,6 +289,21 @@ struct type {
          field the original TYPE_LANG_STRUCT type.  This is a dirty
          trick, see the new_structure function for details.  */
       type_p lang_struct;
+
+      type_p base_class; /* the parent class, if any.  */
+
+      /* The following two fields are not serialized in state files, and
+	 are instead reconstructed on load.  */
+
+      /* The head of a singly-linked list of immediate descendents in
+	 the inheritance hierarchy.  */
+      type_p first_subclass;
+      /* The next in that list.  */
+      type_p next_sibling_class;
+
+      /* Have we already written ggc/pch user func for ptr to this?
+	 (in write_user_func_for_structure_ptr).  */
+      bool wrote_user_func_for_ptr[NUM_WTK];
     } s;
 
     /* when TYPE_SCALAR: */
@@ -292,15 +314,6 @@ struct type {
       type_p p;                 /* The array component type.  */
       const char *len;          /* The string if any giving its length.  */
     } a;
-
-    /* When TYPE_PARAM_STRUCT for (param_is, use_param, param1_is,
-       param2_is, ... use_param1, use_param_2, ... use_params) GTY
-       options.  */
-    struct {
-      type_p stru;              /* The generic GTY-ed type.  */
-      type_p param[NUM_PARAM];  /* The actual parameter types.  */
-      struct fileloc line;      /* The source location.  */
-    } param_struct;
 
   } u;
 };
@@ -315,19 +328,27 @@ extern struct type scalar_char;
 
 /* Test if a type is a union, either a plain one or a language
    specific one.  */
-#define UNION_P(x)                                      \
-    ((x)->kind == TYPE_UNION ||                         \
-     ((x)->kind == TYPE_LANG_STRUCT                     \
-      && (x)->u.s.lang_struct->kind == TYPE_UNION))
+#define UNION_P(x)					\
+    ((x)->kind == TYPE_UNION				\
+     || ((x)->kind == TYPE_LANG_STRUCT			\
+         && (x)->u.s.lang_struct->kind == TYPE_UNION))
 
 /* Test if a type is a union or a structure, perhaps a language
    specific one.  */
-#define UNION_OR_STRUCT_P(x)			\
-    ((x)->kind == TYPE_UNION 			\
-     || (x)->kind == TYPE_STRUCT		\
-     || (x)->kind == TYPE_LANG_STRUCT)
+static inline bool
+union_or_struct_p (enum typekind kind)
+{
+  return (kind == TYPE_UNION
+	  || kind == TYPE_STRUCT
+          || kind == TYPE_LANG_STRUCT
+	  || kind == TYPE_USER_STRUCT);
+}
 
-
+static inline bool
+union_or_struct_p (const_type_p x)
+{
+  return union_or_struct_p (x->kind);
+}
 
 /* Give the file location of a type, if any. */
 static inline struct fileloc* 
@@ -335,10 +356,8 @@ type_fileloc (type_p t)
 {
   if (!t) 
     return NULL;
-  if (UNION_OR_STRUCT_P(t))
+  if (union_or_struct_p (t))
     return &t->u.s.line;
-  if  (t->kind == TYPE_PARAM_STRUCT)
-    return &t->u.param_struct.line;
   return NULL;
 }
 
@@ -399,17 +418,16 @@ void write_state (const char* path);
 extern void error_at_line
 (const struct fileloc *pos, const char *msg, ...) ATTRIBUTE_PRINTF_2;
 
-/* Like asprintf, but calls fatal() on out of memory.  */
-extern char *xasprintf (const char *, ...) ATTRIBUTE_PRINTF_1;
-
 /* Constructor routines for types.  */
 extern void do_typedef (const char *s, type_p t, struct fileloc *pos);
 extern void do_scalar_typedef (const char *s, struct fileloc *pos);
 extern type_p resolve_typedef (const char *s, struct fileloc *pos);
-extern type_p new_structure (const char *name, int isunion,
+extern void add_subclass (type_p base, type_p subclass);
+extern type_p new_structure (const char *name, enum typekind kind,
 			     struct fileloc *pos, pair_p fields,
-			     options_p o);
-extern type_p find_structure (const char *s, int isunion);
+			     options_p o, type_p base);
+type_p create_user_defined_type (const char *, struct fileloc *);
+extern type_p find_structure (const char *s, enum typekind kind);
 extern type_p create_scalar_type (const char *name);
 extern type_p create_pointer (type_p t);
 extern type_p create_array (type_p t, const char *len);
@@ -420,10 +438,6 @@ extern pair_p nreverse_pairs (pair_p list);
 extern type_p adjust_field_type (type_p, options_p);
 extern void note_variable (const char *s, type_p t, options_p o,
 			   struct fileloc *pos);
-extern void note_def_vec (const char *type_name, bool is_scalar,
-			  struct fileloc *pos);
-extern void note_def_vec_alloc (const char *type, const char *astrat,
-				struct fileloc *pos);
 
 /* Lexer and parser routines.  */
 extern int yylex (const char **yylval);
@@ -433,40 +447,36 @@ extern void parse_file (const char *name);
 extern bool hit_error;
 
 /* Token codes.  */
-enum
-  {
-    EOF_TOKEN = 0,
+enum gty_token
+{
+  EOF_TOKEN = 0,
 
-    /* Per standard convention, codes in the range (0, UCHAR_MAX]
-       represent single characters with those character codes.  */
+  /* Per standard convention, codes in the range (0, UCHAR_MAX]
+     represent single characters with those character codes.  */
+  CHAR_TOKEN_OFFSET = UCHAR_MAX + 1,
+  GTY_TOKEN = CHAR_TOKEN_OFFSET,
+  TYPEDEF,
+  EXTERN,
+  STATIC,
+  UNION,
+  STRUCT,
+  ENUM,
+  ELLIPSIS,
+  PTR_ALIAS,
+  NESTED_PTR,
+  USER_GTY,
+  NUM,
+  SCALAR,
+  ID,
+  STRING,
+  CHAR,
+  ARRAY,
+  IGNORABLE_CXX_KEYWORD,
 
-    CHAR_TOKEN_OFFSET = UCHAR_MAX + 1,
-    GTY_TOKEN = CHAR_TOKEN_OFFSET,
-    TYPEDEF,
-    EXTERN,
-    STATIC,
-    UNION,
-    STRUCT,
-    ENUM,
-    VEC_TOKEN,
-    DEFVEC_OP,
-    DEFVEC_I,
-    DEFVEC_ALLOC,
-    ELLIPSIS,
-    PTR_ALIAS,
-    NESTED_PTR,
-    PARAM_IS,
-    NUM,
-    SCALAR,
-    ID,
-    STRING,
-    CHAR,
-    ARRAY,
-
-    /* print_token assumes that any token >= FIRST_TOKEN_WITH_VALUE may have
-       a meaningful value to be printed.  */
-    FIRST_TOKEN_WITH_VALUE = PARAM_IS
-  };
+  /* print_token assumes that any token >= FIRST_TOKEN_WITH_VALUE may have
+     a meaningful value to be printed.  */
+  FIRST_TOKEN_WITH_VALUE = USER_GTY
+};
 
 
 /* Level for verbose messages, e.g. output file generation...  */
@@ -482,16 +492,19 @@ extern int do_dump;		/* (-d) program argument. */
    gengtype source code).  Only useful to debug gengtype itself.  */
 extern int do_debug;		/* (-D) program argument. */
 
-#if ENABLE_CHECKING
 #define DBGPRINTF(Fmt,...) do {if (do_debug)				\
       fprintf (stderr, "%s:%d: " Fmt "\n",				\
 	       lbasename (__FILE__),__LINE__, ##__VA_ARGS__);} while (0)
 void dbgprint_count_type_at (const char *, int, const char *, type_p);
 #define DBGPRINT_COUNT_TYPE(Msg,Ty) do {if (do_debug)			\
       dbgprint_count_type_at (__FILE__, __LINE__, Msg, Ty);}while (0)
-#else
-#define DBGPRINTF(Fmt,...) do {/*nodbgrintf*/} while (0)
-#define DBGPRINT_COUNT_TYPE(Msg,Ty) do{/*nodbgprint_count_type*/}while (0)
-#endif /*ENABLE_CHECKING */
+
+#define FOR_ALL_INHERITED_FIELDS(TYPE, FIELD_VAR) \
+  for (type_p sub = (TYPE); sub; sub = sub->u.s.base_class) \
+    for (FIELD_VAR = sub->u.s.fields; FIELD_VAR; FIELD_VAR = FIELD_VAR->next)
+
+extern bool
+opts_have (options_p opts, const char *str);
+
 
 #endif

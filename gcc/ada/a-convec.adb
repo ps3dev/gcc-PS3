@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2004-2012, Free Software Foundation, Inc.         --
+--          Copyright (C) 2004-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -34,311 +34,63 @@ with System; use type System.Address;
 
 package body Ada.Containers.Vectors is
 
+   pragma Warnings (Off, "variable ""Busy*"" is not referenced");
+   pragma Warnings (Off, "variable ""Lock*"" is not referenced");
+   --  See comment in Ada.Containers.Helpers
+
    procedure Free is
      new Ada.Unchecked_Deallocation (Elements_Type, Elements_Access);
 
-   type Iterator is new Limited_Controlled and
-     Vector_Iterator_Interfaces.Reversible_Iterator with
-   record
-      Container : Vector_Access;
-      Index     : Index_Type'Base;
-   end record;
-
-   overriding procedure Finalize (Object : in out Iterator);
-
-   overriding function First (Object : Iterator) return Cursor;
-   overriding function Last  (Object : Iterator) return Cursor;
-
-   overriding function Next
-     (Object   : Iterator;
-      Position : Cursor) return Cursor;
-
-   overriding function Previous
-     (Object   : Iterator;
-      Position : Cursor) return Cursor;
+   procedure Append_Slow_Path
+     (Container : in out Vector;
+      New_Item  : Element_Type;
+      Count     : Count_Type);
+   --  This is the slow path for Append. This is split out to minimize the size
+   --  of Append, because we have Inline (Append).
 
    ---------
    -- "&" --
    ---------
 
+   --  We decide that the capacity of the result of "&" is the minimum needed
+   --  -- the sum of the lengths of the vector parameters. We could decide to
+   --  make it larger, but we have no basis for knowing how much larger, so we
+   --  just allocate the minimum amount of storage.
+
    function "&" (Left, Right : Vector) return Vector is
-      LN   : constant Count_Type := Length (Left);
-      RN   : constant Count_Type := Length (Right);
-      N    : Count_Type'Base;  -- length of result
-      J    : Count_Type'Base;  -- for computing intermediate index values
-      Last : Index_Type'Base;  -- Last index of result
-
    begin
-      --  We decide that the capacity of the result is the sum of the lengths
-      --  of the vector parameters. We could decide to make it larger, but we
-      --  have no basis for knowing how much larger, so we just allocate the
-      --  minimum amount of storage.
-
-      --  Here we handle the easy cases first, when one of the vector
-      --  parameters is empty. (We say "easy" because there's nothing to
-      --  compute, that can potentially overflow.)
-
-      if LN = 0 then
-         if RN = 0 then
-            return Empty_Vector;
-         end if;
-
-         declare
-            RE : Elements_Array renames
-                   Right.Elements.EA (Index_Type'First .. Right.Last);
-
-            Elements : constant Elements_Access :=
-                         new Elements_Type'(Right.Last, RE);
-
-         begin
-            return (Controlled with Elements, Right.Last, 0, 0);
-         end;
-      end if;
-
-      if RN = 0 then
-         declare
-            LE : Elements_Array renames
-                   Left.Elements.EA (Index_Type'First .. Left.Last);
-
-            Elements : constant Elements_Access :=
-                         new Elements_Type'(Left.Last, LE);
-
-         begin
-            return (Controlled with Elements, Left.Last, 0, 0);
-         end;
-
-      end if;
-
-      --  Neither of the vector parameters is empty, so must compute the length
-      --  of the result vector and its last index. (This is the harder case,
-      --  because our computations must avoid overflow.)
-
-      --  There are two constraints we need to satisfy. The first constraint is
-      --  that a container cannot have more than Count_Type'Last elements, so
-      --  we must check the sum of the combined lengths. Note that we cannot
-      --  simply add the lengths, because of the possibility of overflow.
-
-      if LN > Count_Type'Last - RN then
-         raise Constraint_Error with "new length is out of range";
-      end if;
-
-      --  It is now safe compute the length of the new vector, without fear of
-      --  overflow.
-
-      N := LN + RN;
-
-      --  The second constraint is that the new Last index value cannot
-      --  exceed Index_Type'Last. We use the wider of Index_Type'Base and
-      --  Count_Type'Base as the type for intermediate values.
-
-      if Index_Type'Base'Last >= Count_Type'Pos (Count_Type'Last) then
-
-         --  We perform a two-part test. First we determine whether the
-         --  computed Last value lies in the base range of the type, and then
-         --  determine whether it lies in the range of the index (sub)type.
-
-         --  Last must satisfy this relation:
-         --    First + Length - 1 <= Last
-         --  We regroup terms:
-         --    First - 1 <= Last - Length
-         --  Which can rewrite as:
-         --    No_Index <= Last - Length
-
-         if Index_Type'Base'Last - Index_Type'Base (N) < No_Index then
-            raise Constraint_Error with "new length is out of range";
-         end if;
-
-         --  We now know that the computed value of Last is within the base
-         --  range of the type, so it is safe to compute its value:
-
-         Last := No_Index + Index_Type'Base (N);
-
-         --  Finally we test whether the value is within the range of the
-         --  generic actual index subtype:
-
-         if Last > Index_Type'Last then
-            raise Constraint_Error with "new length is out of range";
-         end if;
-
-      elsif Index_Type'First <= 0 then
-
-         --  Here we can compute Last directly, in the normal way. We know that
-         --  No_Index is less than 0, so there is no danger of overflow when
-         --  adding the (positive) value of length.
-
-         J := Count_Type'Base (No_Index) + N;  -- Last
-
-         if J > Count_Type'Base (Index_Type'Last) then
-            raise Constraint_Error with "new length is out of range";
-         end if;
-
-         --  We know that the computed value (having type Count_Type) of Last
-         --  is within the range of the generic actual index subtype, so it is
-         --  safe to convert to Index_Type:
-
-         Last := Index_Type'Base (J);
-
-      else
-         --  Here Index_Type'First (and Index_Type'Last) is positive, so we
-         --  must test the length indirectly (by working backwards from the
-         --  largest possible value of Last), in order to prevent overflow.
-
-         J := Count_Type'Base (Index_Type'Last) - N;  -- No_Index
-
-         if J < Count_Type'Base (No_Index) then
-            raise Constraint_Error with "new length is out of range";
-         end if;
-
-         --  We have determined that the result length would not create a Last
-         --  index value outside of the range of Index_Type, so we can now
-         --  safely compute its value.
-
-         Last := Index_Type'Base (Count_Type'Base (No_Index) + N);
-      end if;
-
-      declare
-         LE : Elements_Array renames
-                Left.Elements.EA (Index_Type'First .. Left.Last);
-
-         RE : Elements_Array renames
-                Right.Elements.EA (Index_Type'First .. Right.Last);
-
-         Elements : constant Elements_Access :=
-                      new Elements_Type'(Last, LE & RE);
-
-      begin
-         return (Controlled with Elements, Last, 0, 0);
-      end;
+      return Result : Vector do
+         Reserve_Capacity (Result, Length (Left) + Length (Right));
+         Append (Result, Left);
+         Append (Result, Right);
+      end return;
    end "&";
 
    function "&" (Left  : Vector; Right : Element_Type) return Vector is
    begin
-      --  We decide that the capacity of the result is the sum of the lengths
-      --  of the parameters. We could decide to make it larger, but we have no
-      --  basis for knowing how much larger, so we just allocate the minimum
-      --  amount of storage.
-
-      --  Handle easy case first, when the vector parameter (Left) is empty
-
-      if Left.Is_Empty then
-         declare
-            Elements : constant Elements_Access :=
-                         new Elements_Type'
-                               (Last => Index_Type'First,
-                                EA   => (others => Right));
-
-         begin
-            return (Controlled with Elements, Index_Type'First, 0, 0);
-         end;
-      end if;
-
-      --  The vector parameter is not empty, so we must compute the length of
-      --  the result vector and its last index, but in such a way that overflow
-      --  is avoided. We must satisfy two constraints: the new length cannot
-      --  exceed Count_Type'Last, and the new Last index cannot exceed
-      --  Index_Type'Last.
-
-      if Left.Length = Count_Type'Last then
-         raise Constraint_Error with "new length is out of range";
-      end if;
-
-      if Left.Last >= Index_Type'Last then
-         raise Constraint_Error with "new length is out of range";
-      end if;
-
-      declare
-         Last : constant Index_Type := Left.Last + 1;
-
-         LE : Elements_Array renames
-           Left.Elements.EA (Index_Type'First .. Left.Last);
-
-         Elements : constant Elements_Access :=
-                      new Elements_Type'(Last => Last, EA => LE & Right);
-
-      begin
-         return (Controlled with Elements, Last, 0, 0);
-      end;
+      return Result : Vector do
+         Reserve_Capacity (Result, Length (Left) + 1);
+         Append (Result, Left);
+         Append (Result, Right);
+      end return;
    end "&";
 
    function "&" (Left  : Element_Type; Right : Vector) return Vector is
    begin
-      --  We decide that the capacity of the result is the sum of the lengths
-      --  of the parameters. We could decide to make it larger, but we have no
-      --  basis for knowing how much larger, so we just allocate the minimum
-      --  amount of storage.
-
-      --  Handle easy case first, when the vector parameter (Right) is empty
-
-      if Right.Is_Empty then
-         declare
-            Elements : constant Elements_Access :=
-                         new Elements_Type'
-                               (Last => Index_Type'First,
-                                EA   => (others => Left));
-
-         begin
-            return (Controlled with Elements, Index_Type'First, 0, 0);
-         end;
-      end if;
-
-      --  The vector parameter is not empty, so we must compute the length of
-      --  the result vector and its last index, but in such a way that overflow
-      --  is avoided. We must satisfy two constraints: the new length cannot
-      --  exceed Count_Type'Last, and the new Last index cannot exceed
-      --  Index_Type'Last.
-
-      if Right.Length = Count_Type'Last then
-         raise Constraint_Error with "new length is out of range";
-      end if;
-
-      if Right.Last >= Index_Type'Last then
-         raise Constraint_Error with "new length is out of range";
-      end if;
-
-      declare
-         Last : constant Index_Type := Right.Last + 1;
-
-         RE : Elements_Array renames
-                Right.Elements.EA (Index_Type'First .. Right.Last);
-
-         Elements : constant Elements_Access :=
-                      new Elements_Type'
-                        (Last => Last,
-                         EA   => Left & RE);
-
-      begin
-         return (Controlled with Elements, Last, 0, 0);
-      end;
+      return Result : Vector do
+         Reserve_Capacity (Result, 1 + Length (Right));
+         Append (Result, Left);
+         Append (Result, Right);
+      end return;
    end "&";
 
    function "&" (Left, Right : Element_Type) return Vector is
    begin
-      --  We decide that the capacity of the result is the sum of the lengths
-      --  of the parameters. We could decide to make it larger, but we have no
-      --  basis for knowing how much larger, so we just allocate the minimum
-      --  amount of storage.
-
-      --  We must compute the length of the result vector and its last index,
-      --  but in such a way that overflow is avoided. We must satisfy two
-      --  constraints: the new length cannot exceed Count_Type'Last (here, we
-      --  know that that condition is satisfied), and the new Last index cannot
-      --  exceed Index_Type'Last.
-
-      if Index_Type'First >= Index_Type'Last then
-         raise Constraint_Error with "new length is out of range";
-      end if;
-
-      declare
-         Last : constant Index_Type := Index_Type'First + 1;
-
-         Elements : constant Elements_Access :=
-                      new Elements_Type'
-                            (Last => Last,
-                             EA   => (Left, Right));
-
-      begin
-         return (Controlled with Elements, Last, 0, 0);
-      end;
+      return Result : Vector do
+         Reserve_Capacity (Result, 1 + 1);
+         Append (Result, Left);
+         Append (Result, Right);
+      end return;
    end "&";
 
    ---------
@@ -347,19 +99,27 @@ package body Ada.Containers.Vectors is
 
    overriding function "=" (Left, Right : Vector) return Boolean is
    begin
-      if Left'Address = Right'Address then
-         return True;
-      end if;
-
       if Left.Last /= Right.Last then
          return False;
       end if;
 
-      for J in Index_Type range Index_Type'First .. Left.Last loop
-         if Left.Elements.EA (J) /= Right.Elements.EA (J) then
-            return False;
-         end if;
-      end loop;
+      if Left.Length = 0 then
+         return True;
+      end if;
+
+      declare
+         --  Per AI05-0022, the container implementation is required to detect
+         --  element tampering by a generic actual subprogram.
+
+         Lock_Left : With_Lock (Left.TC'Unrestricted_Access);
+         Lock_Right : With_Lock (Right.TC'Unrestricted_Access);
+      begin
+         for J in Index_Type range Index_Type'First .. Left.Last loop
+            if Left.Elements.EA (J) /= Right.Elements.EA (J) then
+               return False;
+            end if;
+         end loop;
+      end;
 
       return True;
    end "=";
@@ -370,6 +130,12 @@ package body Ada.Containers.Vectors is
 
    procedure Adjust (Container : in out Vector) is
    begin
+      --  If the counts are nonzero, execution is technically erroneous, but
+      --  it seems friendly to allow things like concurrent "=" on shared
+      --  constants.
+
+      Zero_Counts (Container.TC);
+
       if Container.Last = No_Index then
          Container.Elements := null;
          return;
@@ -382,8 +148,6 @@ package body Ada.Containers.Vectors is
 
       begin
          Container.Elements := null;
-         Container.Busy := 0;
-         Container.Lock := 0;
 
          --  Note: it may seem that the following assignment to Container.Last
          --  is useless, since we assign it to L below. However this code is
@@ -396,20 +160,6 @@ package body Ada.Containers.Vectors is
       end;
    end Adjust;
 
-   procedure Adjust (Control : in out Reference_Control_Type) is
-   begin
-      if Control.Container /= null then
-         declare
-            C : Vector renames Control.Container.all;
-            B : Natural renames C.Busy;
-            L : Natural renames C.Lock;
-         begin
-            B := B + 1;
-            L := L + 1;
-         end;
-      end if;
-   end Adjust;
-
    ------------
    -- Append --
    ------------
@@ -418,16 +168,11 @@ package body Ada.Containers.Vectors is
    begin
       if Is_Empty (New_Item) then
          return;
-      end if;
-
-      if Container.Last = Index_Type'Last then
+      elsif Checks and then Container.Last = Index_Type'Last then
          raise Constraint_Error with "vector is already at its maximum length";
+      else
+         Insert (Container, Container.Last + 1, New_Item);
       end if;
-
-      Insert
-        (Container,
-         Container.Last + 1,
-         New_Item);
    end Append;
 
    procedure Append
@@ -436,20 +181,50 @@ package body Ada.Containers.Vectors is
       Count     : Count_Type := 1)
    is
    begin
+      --  In the general case, we pass the buck to Insert, but for efficiency,
+      --  we check for the usual case where Count = 1 and the vector has enough
+      --  room for at least one more element.
+
+      if Count = 1
+        and then Container.Elements /= null
+        and then Container.Last /= Container.Elements.Last
+      then
+         TC_Check (Container.TC);
+
+         --  Increment Container.Last after assigning the New_Item, so we
+         --  leave the Container unmodified in case Finalize/Adjust raises
+         --  an exception.
+
+         declare
+            New_Last : constant Index_Type := Container.Last + 1;
+         begin
+            Container.Elements.EA (New_Last) := New_Item;
+            Container.Last := New_Last;
+         end;
+
+      else
+         Append_Slow_Path (Container, New_Item, Count);
+      end if;
+   end Append;
+
+   ----------------------
+   -- Append_Slow_Path --
+   ----------------------
+
+   procedure Append_Slow_Path
+     (Container : in out Vector;
+      New_Item  : Element_Type;
+      Count     : Count_Type)
+   is
+   begin
       if Count = 0 then
          return;
-      end if;
-
-      if Container.Last = Index_Type'Last then
+      elsif Checks and then Container.Last = Index_Type'Last then
          raise Constraint_Error with "vector is already at its maximum length";
+      else
+         Insert (Container, Container.Last + 1, New_Item, Count);
       end if;
-
-      Insert
-        (Container,
-         Container.Last + 1,
-         New_Item,
-         Count);
-   end Append;
+   end Append_Slow_Path;
 
    ------------
    -- Assign --
@@ -459,10 +234,10 @@ package body Ada.Containers.Vectors is
    begin
       if Target'Address = Source'Address then
          return;
+      else
+         Target.Clear;
+         Target.Append (Source);
       end if;
-
-      Target.Clear;
-      Target.Append (Source);
    end Assign;
 
    --------------
@@ -484,12 +259,8 @@ package body Ada.Containers.Vectors is
 
    procedure Clear (Container : in out Vector) is
    begin
-      if Container.Busy > 0 then
-         raise Program_Error with
-           "attempt to tamper with cursors (vector is busy)";
-      else
-         Container.Last := No_Index;
-      end if;
+      TC_Check (Container.TC);
+      Container.Last := No_Index;
    end Clear;
 
    ------------------------
@@ -501,31 +272,29 @@ package body Ada.Containers.Vectors is
       Position  : Cursor) return Constant_Reference_Type
    is
    begin
-      if Position.Container = null then
-         raise Constraint_Error with "Position cursor has no element";
-      end if;
+      if Checks then
+         if Position.Container = null then
+            raise Constraint_Error with "Position cursor has no element";
+         end if;
 
-      if Position.Container /= Container'Unrestricted_Access then
-         raise Program_Error with "Position cursor denotes wrong container";
-      end if;
+         if Position.Container /= Container'Unrestricted_Access then
+            raise Program_Error with "Position cursor denotes wrong container";
+         end if;
 
-      if Position.Index > Position.Container.Last then
-         raise Constraint_Error with "Position cursor is out of range";
+         if Position.Index > Position.Container.Last then
+            raise Constraint_Error with "Position cursor is out of range";
+         end if;
       end if;
 
       declare
-         C : Vector renames Position.Container.all;
-         B : Natural renames C.Busy;
-         L : Natural renames C.Lock;
+         TC : constant Tamper_Counts_Access :=
+           Container.TC'Unrestricted_Access;
       begin
          return R : constant Constant_Reference_Type :=
-                      (Element =>
-                         Container.Elements.EA (Position.Index)'Access,
-                       Control =>
-                         (Controlled with Container'Unrestricted_Access))
+           (Element => Container.Elements.EA (Position.Index)'Access,
+            Control => (Controlled with TC))
          do
-            B := B + 1;
-            L := L + 1;
+            Lock (TC.all);
          end return;
       end;
    end Constant_Reference;
@@ -535,24 +304,21 @@ package body Ada.Containers.Vectors is
       Index     : Index_Type) return Constant_Reference_Type
    is
    begin
-      if Index > Container.Last then
+      if Checks and then Index > Container.Last then
          raise Constraint_Error with "Index is out of range";
-      else
-         declare
-            C : Vector renames Container'Unrestricted_Access.all;
-            B : Natural renames C.Busy;
-            L : Natural renames C.Lock;
-         begin
-            return R : constant Constant_Reference_Type :=
-                         (Element => Container.Elements.EA (Index)'Access,
-                          Control =>
-                            (Controlled with Container'Unrestricted_Access))
-            do
-               B := B + 1;
-               L := L + 1;
-            end return;
-         end;
       end if;
+
+      declare
+         TC : constant Tamper_Counts_Access :=
+           Container.TC'Unrestricted_Access;
+      begin
+         return R : constant Constant_Reference_Type :=
+           (Element => Container.Elements.EA (Index)'Access,
+            Control => (Controlled with TC))
+         do
+            Lock (TC.all);
+         end return;
+      end;
    end Constant_Reference;
 
    --------------
@@ -578,15 +344,16 @@ package body Ada.Containers.Vectors is
       C : Count_Type;
 
    begin
-      if Capacity = 0 then
-         C := Source.Length;
-
-      elsif Capacity >= Source.Length then
+      if Capacity >= Source.Length then
          C := Capacity;
 
       else
-         raise Capacity_Error
-           with "Requested capacity is less than Source length";
+         C := Source.Length;
+
+         if Checks and then Capacity /= 0 then
+            raise Capacity_Error with
+              "Requested capacity is less than Source length";
+         end if;
       end if;
 
       return Target : Vector do
@@ -627,7 +394,7 @@ package body Ada.Containers.Vectors is
       --  in the base range that immediately precede and immediately follow the
       --  values in the Index_Type.)
 
-      if Index < Index_Type'First then
+      if Checks and then Index < Index_Type'First then
          raise Constraint_Error with "Index is out of range (too small)";
       end if;
 
@@ -639,11 +406,11 @@ package body Ada.Containers.Vectors is
       --  algorithm, so that case is treated as a proper error.)
 
       if Index > Old_Last then
-         if Index > Old_Last + 1 then
+         if Checks and then Index > Old_Last + 1 then
             raise Constraint_Error with "Index is out of range (too large)";
+         else
+            return;
          end if;
-
-         return;
       end if;
 
       --  Here and elsewhere we treat deleting 0 items from the container as a
@@ -659,10 +426,7 @@ package body Ada.Containers.Vectors is
       --  the count on exit. Delete checks the count to determine whether it is
       --  being called while the associated callback procedure is executing.
 
-      if Container.Busy > 0 then
-         raise Program_Error with
-           "attempt to tamper with cursors (vector is busy)";
-      end if;
+      TC_Check (Container.TC);
 
       --  We first calculate what's available for deletion starting at
       --  Index. Here and elsewhere we use the wider of Index_Type'Base and
@@ -671,7 +435,6 @@ package body Ada.Containers.Vectors is
 
       if Count_Type'Base'Last >= Index_Type'Pos (Index_Type'Base'Last) then
          Count2 := Count_Type'Base (Old_Last) - Count_Type'Base (Index) + 1;
-
       else
          Count2 := Count_Type'Base (Old_Last - Index + 1);
       end if;
@@ -686,18 +449,17 @@ package body Ada.Containers.Vectors is
          return;
       end if;
 
-      --  There are some elements aren't being deleted (the requested count was
-      --  less than the available count), so we must slide them down to
-      --  Index. We first calculate the index values of the respective array
+      --  There are some elements that aren't being deleted (the requested
+      --  count was less than the available count), so we must slide them down
+      --  to Index. We first calculate the index values of the respective array
       --  slices, using the wider of Index_Type'Base and Count_Type'Base as the
       --  type for intermediate calculations. For the elements that slide down,
       --  index value New_Last is the last index value of their new home, and
       --  index value J is the first index of their old home.
 
-      if Index_Type'Base'Last >= Count_Type'Pos (Count_Type'Last) then
+      if Index_Type'Base'Last >= Count_Type_Last then
          New_Last := Old_Last - Index_Type'Base (Count);
          J := Index + Index_Type'Base (Count);
-
       else
          New_Last := Index_Type'Base (Count_Type'Base (Old_Last) - Count);
          J := Index_Type'Base (Count_Type'Base (Index) + Count);
@@ -711,7 +473,6 @@ package body Ada.Containers.Vectors is
 
       declare
          EA : Elements_Array renames Container.Elements.EA;
-
       begin
          EA (Index .. New_Last) := EA (J .. Old_Last);
          Container.Last := New_Last;
@@ -723,19 +484,17 @@ package body Ada.Containers.Vectors is
       Position  : in out Cursor;
       Count     : Count_Type := 1)
    is
-      pragma Warnings (Off, Position);
-
    begin
-      if Position.Container = null then
-         raise Constraint_Error with "Position cursor has no element";
-      end if;
+      if Checks then
+         if Position.Container = null then
+            raise Constraint_Error with "Position cursor has no element";
 
-      if Position.Container /= Container'Unrestricted_Access then
-         raise Program_Error with "Position cursor denotes wrong container";
-      end if;
+         elsif Position.Container /= Container'Unrestricted_Access then
+            raise Program_Error with "Position cursor denotes wrong container";
 
-      if Position.Index > Container.Last then
-         raise Program_Error with "Position index is out of range";
+         elsif Position.Index > Container.Last then
+            raise Program_Error with "Position index is out of range";
+         end if;
       end if;
 
       Delete (Container, Position.Index, Count);
@@ -753,14 +512,14 @@ package body Ada.Containers.Vectors is
    begin
       if Count = 0 then
          return;
-      end if;
 
-      if Count >= Length (Container) then
+      elsif Count >= Length (Container) then
          Clear (Container);
          return;
-      end if;
 
-      Delete (Container, Index_Type'First, Count);
+      else
+         Delete (Container, Index_Type'First, Count);
+      end if;
    end Delete_First;
 
    -----------------
@@ -788,10 +547,7 @@ package body Ada.Containers.Vectors is
       --  it is being called while the associated callback procedure is
       --  executing.
 
-      if Container.Busy > 0 then
-         raise Program_Error with
-           "attempt to tamper with cursors (vector is busy)";
-      end if;
+      TC_Check (Container.TC);
 
       --  There is no restriction on how large Count can be when deleting
       --  items. If it is equal or greater than the current length, then this
@@ -806,7 +562,7 @@ package body Ada.Containers.Vectors is
       if Count >= Container.Length then
          Container.Last := No_Index;
 
-      elsif Index_Type'Base'Last >= Count_Type'Pos (Count_Type'Last) then
+      elsif Index_Type'Base'Last >= Count_Type_Last then
          Container.Last := Container.Last - Index_Type'Base (Count);
 
       else
@@ -824,7 +580,7 @@ package body Ada.Containers.Vectors is
       Index     : Index_Type) return Element_Type
    is
    begin
-      if Index > Container.Last then
+      if Checks and then Index > Container.Last then
          raise Constraint_Error with "Index is out of range";
       end if;
 
@@ -833,13 +589,15 @@ package body Ada.Containers.Vectors is
 
    function Element (Position : Cursor) return Element_Type is
    begin
-      if Position.Container = null then
-         raise Constraint_Error with "Position cursor has no element";
-      elsif Position.Index > Position.Container.Last then
-         raise Constraint_Error with "Position cursor is out of range";
-      else
-         return Position.Container.Elements.EA (Position.Index);
+      if Checks then
+         if Position.Container = null then
+            raise Constraint_Error with "Position cursor has no element";
+         elsif Position.Index > Position.Container.Last then
+            raise Constraint_Error with "Position cursor is out of range";
+         end if;
       end if;
+
+      return Position.Container.Elements.EA (Position.Index);
    end Element;
 
    --------------
@@ -850,36 +608,17 @@ package body Ada.Containers.Vectors is
       X : Elements_Access := Container.Elements;
 
    begin
-      if Container.Busy > 0 then
-         raise Program_Error with
-           "attempt to tamper with cursors (vector is busy)";
-      end if;
-
       Container.Elements := null;
       Container.Last := No_Index;
+
       Free (X);
+
+      TC_Check (Container.TC);
    end Finalize;
 
    procedure Finalize (Object : in out Iterator) is
-      B : Natural renames Object.Container.Busy;
    begin
-      B := B - 1;
-   end Finalize;
-
-   procedure Finalize (Control : in out Reference_Control_Type) is
-   begin
-      if Control.Container /= null then
-         declare
-            C : Vector renames Control.Container.all;
-            B : Natural renames C.Busy;
-            L : Natural renames C.Lock;
-         begin
-            B := B - 1;
-            L := L - 1;
-         end;
-
-         Control.Container := null;
-      end if;
+      Unbusy (Object.Container.TC);
    end Finalize;
 
    ----------
@@ -892,7 +631,7 @@ package body Ada.Containers.Vectors is
       Position  : Cursor := No_Element) return Cursor
    is
    begin
-      if Position.Container /= null then
+      if Checks and then Position.Container /= null then
          if Position.Container /= Container'Unrestricted_Access then
             raise Program_Error with "Position cursor denotes wrong container";
          end if;
@@ -902,13 +641,20 @@ package body Ada.Containers.Vectors is
          end if;
       end if;
 
-      for J in Position.Index .. Container.Last loop
-         if Container.Elements.EA (J) = Item then
-            return (Container'Unrestricted_Access, J);
-         end if;
-      end loop;
+      --  Per AI05-0022, the container implementation is required to detect
+      --  element tampering by a generic actual subprogram.
 
-      return No_Element;
+      declare
+         Lock : With_Lock (Container.TC'Unrestricted_Access);
+      begin
+         for J in Position.Index .. Container.Last loop
+            if Container.Elements.EA (J) = Item then
+               return Cursor'(Container'Unrestricted_Access, J);
+            end if;
+         end loop;
+
+         return No_Element;
+      end;
    end Find;
 
    ----------------
@@ -920,6 +666,10 @@ package body Ada.Containers.Vectors is
       Item      : Element_Type;
       Index     : Index_Type := Index_Type'First) return Extended_Index
    is
+      --  Per AI05-0022, the container implementation is required to detect
+      --  element tampering by a generic actual subprogram.
+
+      Lock : With_Lock (Container.TC'Unrestricted_Access);
    begin
       for Indx in Index .. Container.Last loop
          if Container.Elements.EA (Indx) = Item then
@@ -938,9 +688,9 @@ package body Ada.Containers.Vectors is
    begin
       if Is_Empty (Container) then
          return No_Element;
-      else
-         return (Container'Unrestricted_Access, Index_Type'First);
       end if;
+
+      return (Container'Unrestricted_Access, Index_Type'First);
    end First;
 
    function First (Object : Iterator) return Cursor is
@@ -972,7 +722,7 @@ package body Ada.Containers.Vectors is
 
    function First_Element (Container : Vector) return Element_Type is
    begin
-      if Container.Last = No_Index then
+      if Checks and then Container.Last = No_Index then
          raise Constraint_Error with "Container is empty";
       else
          return Container.Elements.EA (Index_Type'First);
@@ -1005,17 +755,21 @@ package body Ada.Containers.Vectors is
             return True;
          end if;
 
+         --  Per AI05-0022, the container implementation is required to detect
+         --  element tampering by a generic actual subprogram.
+
          declare
-            EA : Elements_Array renames Container.Elements.EA;
+            Lock : With_Lock (Container.TC'Unrestricted_Access);
+            EA   : Elements_Array renames Container.Elements.EA;
          begin
             for J in Index_Type'First .. Container.Last - 1 loop
                if EA (J + 1) < EA (J) then
                   return False;
                end if;
             end loop;
-         end;
 
-         return True;
+            return True;
+         end;
       end Is_Sorted;
 
       -----------
@@ -1039,7 +793,7 @@ package body Ada.Containers.Vectors is
             return;
          end if;
 
-         if Target'Address = Source'Address then
+         if Checks and then Target'Address = Source'Address then
             raise Program_Error with
               "Target and Source denote same non-empty container";
          end if;
@@ -1049,30 +803,32 @@ package body Ada.Containers.Vectors is
             return;
          end if;
 
-         if Source.Busy > 0 then
-            raise Program_Error with
-              "attempt to tamper with cursors (vector is busy)";
-         end if;
+         TC_Check (Source.TC);
 
          Target.Set_Length (Length (Target) + Length (Source));
+
+         --  Per AI05-0022, the container implementation is required to detect
+         --  element tampering by a generic actual subprogram.
 
          declare
             TA : Elements_Array renames Target.Elements.EA;
             SA : Elements_Array renames Source.Elements.EA;
 
+            Lock_Target : With_Lock (Target.TC'Unchecked_Access);
+            Lock_Source : With_Lock (Source.TC'Unchecked_Access);
          begin
             J := Target.Last;
             while Source.Last >= Index_Type'First loop
                pragma Assert (Source.Last <= Index_Type'First
-                                or else not (SA (Source.Last) <
-                                             SA (Source.Last - 1)));
+                               or else not (SA (Source.Last) <
+                                            SA (Source.Last - 1)));
 
                if I < Index_Type'First then
                   TA (Index_Type'First .. J) :=
                     SA (Index_Type'First .. Source.Last);
 
                   Source.Last := No_Index;
-                  return;
+                  exit;
                end if;
 
                pragma Assert (I <= Index_Type'First
@@ -1120,15 +876,29 @@ package body Ada.Containers.Vectors is
          --  an artifact of our array-based implementation. Logically Sort
          --  requires a check for cursor tampering.
 
-         if Container.Busy > 0 then
-            raise Program_Error with
-              "attempt to tamper with cursors (vector is busy)";
-         end if;
+         TC_Check (Container.TC);
 
-         Sort (Container.Elements.EA (Index_Type'First .. Container.Last));
+         --  Per AI05-0022, the container implementation is required to detect
+         --  element tampering by a generic actual subprogram.
+
+         declare
+            Lock : With_Lock (Container.TC'Unchecked_Access);
+         begin
+            Sort (Container.Elements.EA (Index_Type'First .. Container.Last));
+         end;
       end Sort;
 
    end Generic_Sorting;
+
+   ------------------------
+   -- Get_Element_Access --
+   ------------------------
+
+   function Get_Element_Access
+     (Position : Cursor) return not null Element_Access is
+   begin
+      return Position.Container.Elements.EA (Position.Index)'Access;
+   end Get_Element_Access;
 
    -----------------
    -- Has_Element --
@@ -1163,33 +933,33 @@ package body Ada.Containers.Vectors is
       Dst          : Elements_Access;  -- new, expanded internal array
 
    begin
-      --  As a precondition on the generic actual Index_Type, the base type
-      --  must include Index_Type'Pred (Index_Type'First); this is the value
-      --  that Container.Last assumes when the vector is empty. However, we do
-      --  not allow that as the value for Index when specifying where the new
-      --  items should be inserted, so we must manually check. (That the user
-      --  is allowed to specify the value at all here is a consequence of the
-      --  declaration of the Extended_Index subtype, which includes the values
-      --  in the base range that immediately precede and immediately follow the
-      --  values in the Index_Type.)
+      if Checks then
+         --  As a precondition on the generic actual Index_Type, the base type
+         --  must include Index_Type'Pred (Index_Type'First); this is the value
+         --  that Container.Last assumes when the vector is empty. However, we
+         --  do not allow that as the value for Index when specifying where the
+         --  new items should be inserted, so we must manually check. (That the
+         --  user is allowed to specify the value at all here is a consequence
+         --  of the declaration of the Extended_Index subtype, which includes
+         --  the values in the base range that immediately precede and
+         --  immediately follow the values in the Index_Type.)
 
-      if Before < Index_Type'First then
-         raise Constraint_Error with
-           "Before index is out of range (too small)";
-      end if;
+         if Before < Index_Type'First then
+            raise Constraint_Error with
+              "Before index is out of range (too small)";
+         end if;
 
-      --  We do allow a value greater than Container.Last to be specified as
-      --  the Index, but only if it's immediately greater. This allows for the
-      --  case of appending items to the back end of the vector. (It is assumed
-      --  that specifying an index value greater than Last + 1 indicates some
-      --  deeper flaw in the caller's algorithm, so that case is treated as a
-      --  proper error.)
+         --  We do allow a value greater than Container.Last to be specified as
+         --  the Index, but only if it's immediately greater. This allows for
+         --  the case of appending items to the back end of the vector. (It is
+         --  assumed that specifying an index value greater than Last + 1
+         --  indicates some deeper flaw in the caller's algorithm, so that case
+         --  is treated as a proper error.)
 
-      if Before > Container.Last
-        and then Before > Container.Last + 1
-      then
-         raise Constraint_Error with
-           "Before index is out of range (too large)";
+         if Before > Container.Last + 1 then
+            raise Constraint_Error with
+              "Before index is out of range (too large)";
+         end if;
       end if;
 
       --  We treat inserting 0 items into the container as a no-op, even when
@@ -1205,7 +975,7 @@ package body Ada.Containers.Vectors is
       --  Note: we cannot simply add these values, because of the possibility
       --  of overflow.
 
-      if Old_Length > Count_Type'Last - Count then
+      if Checks and then Old_Length > Count_Type'Last - Count then
          raise Constraint_Error with "Count is out of range";
       end if;
 
@@ -1220,7 +990,7 @@ package body Ada.Containers.Vectors is
       --  compare the new length to the maximum length. If the new length is
       --  acceptable, then we compute the new last index from that.
 
-      if Index_Type'Base'Last >= Count_Type'Pos (Count_Type'Last) then
+      if Index_Type'Base'Last >= Count_Type_Last then
 
          --  We have to handle the case when there might be more values in the
          --  range of Index_Type than in the range of Count_Type.
@@ -1255,7 +1025,20 @@ package body Ada.Containers.Vectors is
             --  worry about if No_Index were less than 0, but that case is
             --  handled above).
 
-            Max_Length := Count_Type'Base (Index_Type'Last - No_Index);
+            if Index_Type'Last - No_Index >= Count_Type_Last then
+               --  We have determined that range of Index_Type has at least as
+               --  many values as in Count_Type, so Count_Type'Last is the
+               --  maximum number of items that are allowed.
+
+               Max_Length := Count_Type'Last;
+
+            else
+               --  The range of Index_Type has fewer values than in Count_Type,
+               --  so the maximum number of items is computed from the range of
+               --  the Index_Type.
+
+               Max_Length := Count_Type'Base (Index_Type'Last - No_Index);
+            end if;
          end if;
 
       elsif Index_Type'First <= 0 then
@@ -1299,7 +1082,7 @@ package body Ada.Containers.Vectors is
       --  an internal array with a last index value greater than
       --  Index_Type'Last, with no way to index those elements).
 
-      if New_Length > Max_Length then
+      if Checks and then New_Length > Max_Length then
          raise Constraint_Error with "Count is out of range";
       end if;
 
@@ -1307,7 +1090,7 @@ package body Ada.Containers.Vectors is
       --  insertion.  Use the wider of Index_Type'Base and Count_Type'Base to
       --  compute its value from the New_Length.
 
-      if Index_Type'Base'Last >= Count_Type'Pos (Count_Type'Last) then
+      if Index_Type'Base'Last >= Count_Type_Last then
          New_Last := No_Index + Index_Type'Base (New_Length);
       else
          New_Last := Index_Type'Base (Count_Type'Base (No_Index) + New_Length);
@@ -1344,10 +1127,7 @@ package body Ada.Containers.Vectors is
       --  exit. Insert checks the count to determine whether it is being called
       --  while the associated callback procedure is executing.
 
-      if Container.Busy > 0 then
-         raise Program_Error with
-           "attempt to tamper with cursors (vector is busy)";
-      end if;
+      TC_Check (Container.TC);
 
       --  An internal array has already been allocated, so we must determine
       --  whether there is enough unused storage for the new items.
@@ -1375,9 +1155,8 @@ package body Ada.Containers.Vectors is
                --  new home. We use the wider of Index_Type'Base and
                --  Count_Type'Base as the type for intermediate index values.
 
-               if Index_Type'Base'Last >= Count_Type'Pos (Count_Type'Last) then
+               if Index_Type'Base'Last >= Count_Type_Last then
                   Index := Before + Index_Type'Base (Count);
-
                else
                   Index := Index_Type'Base (Count_Type'Base (Before) + Count);
                end if;
@@ -1405,9 +1184,9 @@ package body Ada.Containers.Vectors is
          if New_Capacity > Count_Type'Last / 2 then
             New_Capacity := Count_Type'Last;
             exit;
+         else
+            New_Capacity := 2 * New_Capacity;
          end if;
-
-         New_Capacity := 2 * New_Capacity;
       end loop;
 
       if New_Capacity > Max_Length then
@@ -1422,9 +1201,8 @@ package body Ada.Containers.Vectors is
       --  We have computed the length of the new internal array (and this is
       --  what "vector capacity" means), so use that to compute its last index.
 
-      if Index_Type'Base'Last >= Count_Type'Pos (Count_Type'Last) then
+      if Index_Type'Base'Last >= Count_Type_Last then
          Dst_Last := No_Index + Index_Type'Base (New_Capacity);
-
       else
          Dst_Last :=
            Index_Type'Base (Count_Type'Base (No_Index) + New_Capacity);
@@ -1456,9 +1234,8 @@ package body Ada.Containers.Vectors is
             --  The new items are being inserted before some existing elements,
             --  so we must slide the existing elements up to their new home.
 
-            if Index_Type'Base'Last >= Count_Type'Pos (Count_Type'Last) then
+            if Index_Type'Base'Last >= Count_Type_Last then
                Index := Before + Index_Type'Base (Count);
-
             else
                Index := Index_Type'Base (Count_Type'Base (Before) + Count);
             end if;
@@ -1478,6 +1255,7 @@ package body Ada.Containers.Vectors is
 
       declare
          X : Elements_Access := Container.Elements;
+
       begin
          --  We first isolate the old internal array, removing it from the
          --  container and replacing it with the new internal array, before we
@@ -1519,9 +1297,8 @@ package body Ada.Containers.Vectors is
       --  We calculate the last index value of the destination slice using the
       --  wider of Index_Type'Base and count_Type'Base.
 
-      if Index_Type'Base'Last >= Count_Type'Pos (Count_Type'Last) then
+      if Index_Type'Base'Last >= Count_Type_Last then
          J := (Before - 1) + Index_Type'Base (N);
-
       else
          J := Index_Type'Base (Count_Type'Base (Before - 1) + N);
       end if;
@@ -1552,7 +1329,7 @@ package body Ada.Containers.Vectors is
            Index_Type'First .. L;
 
          Src : Elements_Array renames
-           Container.Elements.EA (Src_Index_Subtype);
+                 Container.Elements.EA (Src_Index_Subtype);
 
          K : Index_Type'Base;
 
@@ -1563,9 +1340,8 @@ package body Ada.Containers.Vectors is
          --  equals Index_Type'First, then this first source slice will be
          --  empty, which is harmless.)
 
-         if Index_Type'Base'Last >= Count_Type'Pos (Count_Type'Last) then
+         if Index_Type'Base'Last >= Count_Type_Last then
             K := L + Index_Type'Base (Src'Length);
-
          else
             K := Index_Type'Base (Count_Type'Base (L) + Src'Length);
          end if;
@@ -1597,7 +1373,7 @@ package body Ada.Containers.Vectors is
            F .. Container.Last;
 
          Src : Elements_Array renames
-           Container.Elements.EA (Src_Index_Subtype);
+                 Container.Elements.EA (Src_Index_Subtype);
 
          K : Index_Type'Base;
 
@@ -1607,9 +1383,8 @@ package body Ada.Containers.Vectors is
          --  destination that receives this slice of the source. (For the
          --  reasons given above, this slice is guaranteed to be non-empty.)
 
-         if Index_Type'Base'Last >= Count_Type'Pos (Count_Type'Last) then
+         if Index_Type'Base'Last >= Count_Type_Last then
             K := F - Index_Type'Base (Src'Length);
-
          else
             K := Index_Type'Base (Count_Type'Base (F) - Src'Length);
          end if;
@@ -1626,7 +1401,7 @@ package body Ada.Containers.Vectors is
       Index : Index_Type'Base;
 
    begin
-      if Before.Container /= null
+      if Checks and then Before.Container /= null
         and then Before.Container /= Container'Unrestricted_Access
       then
          raise Program_Error with "Before cursor denotes wrong container";
@@ -1636,10 +1411,8 @@ package body Ada.Containers.Vectors is
          return;
       end if;
 
-      if Before.Container = null
-        or else Before.Index > Container.Last
-      then
-         if Container.Last = Index_Type'Last then
+      if Before.Container = null or else Before.Index > Container.Last then
+         if Checks and then Container.Last = Index_Type'Last then
             raise Constraint_Error with
               "vector is already at its maximum length";
          end if;
@@ -1662,16 +1435,14 @@ package body Ada.Containers.Vectors is
       Index : Index_Type'Base;
 
    begin
-      if Before.Container /= null
+      if Checks and then Before.Container /= null
         and then Before.Container /= Container'Unrestricted_Access
       then
          raise Program_Error with "Before cursor denotes wrong container";
       end if;
 
       if Is_Empty (New_Item) then
-         if Before.Container = null
-           or else Before.Index > Container.Last
-         then
+         if Before.Container = null or else Before.Index > Container.Last then
             Position := No_Element;
          else
             Position := (Container'Unrestricted_Access, Before.Index);
@@ -1680,10 +1451,8 @@ package body Ada.Containers.Vectors is
          return;
       end if;
 
-      if Before.Container = null
-        or else Before.Index > Container.Last
-      then
-         if Container.Last = Index_Type'Last then
+      if Before.Container = null or else Before.Index > Container.Last then
+         if Checks and then Container.Last = Index_Type'Last then
             raise Constraint_Error with
               "vector is already at its maximum length";
          end if;
@@ -1708,7 +1477,7 @@ package body Ada.Containers.Vectors is
       Index : Index_Type'Base;
 
    begin
-      if Before.Container /= null
+      if Checks and then Before.Container /= null
         and then Before.Container /= Container'Unrestricted_Access
       then
          raise Program_Error with "Before cursor denotes wrong container";
@@ -1718,10 +1487,8 @@ package body Ada.Containers.Vectors is
          return;
       end if;
 
-      if Before.Container = null
-        or else Before.Index > Container.Last
-      then
-         if Container.Last = Index_Type'Last then
+      if Before.Container = null or else Before.Index > Container.Last then
+         if Checks and then Container.Last = Index_Type'Last then
             raise Constraint_Error with
               "vector is already at its maximum length";
          else
@@ -1745,16 +1512,14 @@ package body Ada.Containers.Vectors is
       Index : Index_Type'Base;
 
    begin
-      if Before.Container /= null
+      if Checks and then Before.Container /= null
         and then Before.Container /= Container'Unrestricted_Access
       then
          raise Program_Error with "Before cursor denotes wrong container";
       end if;
 
       if Count = 0 then
-         if Before.Container = null
-           or else Before.Index > Container.Last
-         then
+         if Before.Container = null or else Before.Index > Container.Last then
             Position := No_Element;
          else
             Position := (Container'Unrestricted_Access, Before.Index);
@@ -1763,10 +1528,8 @@ package body Ada.Containers.Vectors is
          return;
       end if;
 
-      if Before.Container = null
-        or else Before.Index > Container.Last
-      then
-         if Container.Last = Index_Type'Last then
+      if Before.Container = null or else Before.Index > Container.Last then
+         if Checks and then Container.Last = Index_Type'Last then
             raise Constraint_Error with
               "vector is already at its maximum length";
          end if;
@@ -1802,7 +1565,6 @@ package body Ada.Containers.Vectors is
    is
       New_Item : Element_Type;  -- Default-initialized value
       pragma Warnings (Off, New_Item);
-
    begin
       Insert (Container, Before, New_Item, Position, Count);
    end Insert;
@@ -1830,33 +1592,33 @@ package body Ada.Containers.Vectors is
       Dst          : Elements_Access;  -- new, expanded internal array
 
    begin
-      --  As a precondition on the generic actual Index_Type, the base type
-      --  must include Index_Type'Pred (Index_Type'First); this is the value
-      --  that Container.Last assumes when the vector is empty. However, we do
-      --  not allow that as the value for Index when specifying where the new
-      --  items should be inserted, so we must manually check. (That the user
-      --  is allowed to specify the value at all here is a consequence of the
-      --  declaration of the Extended_Index subtype, which includes the values
-      --  in the base range that immediately precede and immediately follow the
-      --  values in the Index_Type.)
+      if Checks then
+         --  As a precondition on the generic actual Index_Type, the base type
+         --  must include Index_Type'Pred (Index_Type'First); this is the value
+         --  that Container.Last assumes when the vector is empty. However, we
+         --  do not allow that as the value for Index when specifying where the
+         --  new items should be inserted, so we must manually check. (That the
+         --  user is allowed to specify the value at all here is a consequence
+         --  of the declaration of the Extended_Index subtype, which includes
+         --  the values in the base range that immediately precede and
+         --  immediately follow the values in the Index_Type.)
 
-      if Before < Index_Type'First then
-         raise Constraint_Error with
-           "Before index is out of range (too small)";
-      end if;
+         if Before < Index_Type'First then
+            raise Constraint_Error with
+              "Before index is out of range (too small)";
+         end if;
 
-      --  We do allow a value greater than Container.Last to be specified as
-      --  the Index, but only if it's immediately greater. This allows for the
-      --  case of appending items to the back end of the vector. (It is assumed
-      --  that specifying an index value greater than Last + 1 indicates some
-      --  deeper flaw in the caller's algorithm, so that case is treated as a
-      --  proper error.)
+         --  We do allow a value greater than Container.Last to be specified as
+         --  the Index, but only if it's immediately greater. This allows for
+         --  the case of appending items to the back end of the vector. (It is
+         --  assumed that specifying an index value greater than Last + 1
+         --  indicates some deeper flaw in the caller's algorithm, so that case
+         --  is treated as a proper error.)
 
-      if Before > Container.Last
-        and then Before > Container.Last + 1
-      then
-         raise Constraint_Error with
-           "Before index is out of range (too large)";
+         if Before > Container.Last + 1 then
+            raise Constraint_Error with
+              "Before index is out of range (too large)";
+         end if;
       end if;
 
       --  We treat inserting 0 items into the container as a no-op, even when
@@ -1872,7 +1634,7 @@ package body Ada.Containers.Vectors is
       --  Note: we cannot simply add these values, because of the possibility
       --  of overflow.
 
-      if Old_Length > Count_Type'Last - Count then
+      if Checks and then Old_Length > Count_Type'Last - Count then
          raise Constraint_Error with "Count is out of range";
       end if;
 
@@ -1887,8 +1649,7 @@ package body Ada.Containers.Vectors is
       --  compare the new length to the maximum length. If the new length is
       --  acceptable, then we compute the new last index from that.
 
-      if Index_Type'Base'Last >= Count_Type'Pos (Count_Type'Last) then
-
+      if Index_Type'Base'Last >= Count_Type_Last then
          --  We have to handle the case when there might be more values in the
          --  range of Index_Type than in the range of Count_Type.
 
@@ -1922,7 +1683,20 @@ package body Ada.Containers.Vectors is
             --  worry about if No_Index were less than 0, but that case is
             --  handled above).
 
-            Max_Length := Count_Type'Base (Index_Type'Last - No_Index);
+            if Index_Type'Last - No_Index >= Count_Type_Last then
+               --  We have determined that range of Index_Type has at least as
+               --  many values as in Count_Type, so Count_Type'Last is the
+               --  maximum number of items that are allowed.
+
+               Max_Length := Count_Type'Last;
+
+            else
+               --  The range of Index_Type has fewer values than in Count_Type,
+               --  so the maximum number of items is computed from the range of
+               --  the Index_Type.
+
+               Max_Length := Count_Type'Base (Index_Type'Last - No_Index);
+            end if;
          end if;
 
       elsif Index_Type'First <= 0 then
@@ -1966,7 +1740,7 @@ package body Ada.Containers.Vectors is
       --  an internal array with a last index value greater than
       --  Index_Type'Last, with no way to index those elements).
 
-      if New_Length > Max_Length then
+      if Checks and then New_Length > Max_Length then
          raise Constraint_Error with "Count is out of range";
       end if;
 
@@ -1974,9 +1748,8 @@ package body Ada.Containers.Vectors is
       --  insertion.  Use the wider of Index_Type'Base and Count_Type'Base to
       --  compute its value from the New_Length.
 
-      if Index_Type'Base'Last >= Count_Type'Pos (Count_Type'Last) then
+      if Index_Type'Base'Last >= Count_Type_Last then
          New_Last := No_Index + Index_Type'Base (New_Length);
-
       else
          New_Last := Index_Type'Base (Count_Type'Base (No_Index) + New_Length);
       end if;
@@ -2011,10 +1784,7 @@ package body Ada.Containers.Vectors is
       --  exit. Insert checks the count to determine whether it is being called
       --  while the associated callback procedure is executing.
 
-      if Container.Busy > 0 then
-         raise Program_Error with
-           "attempt to tamper with cursors (vector is busy)";
-      end if;
+      TC_Check (Container.TC);
 
       --  An internal array has already been allocated, so we must determine
       --  whether there is enough unused storage for the new items.
@@ -2036,7 +1806,7 @@ package body Ada.Containers.Vectors is
                --  home. We use the wider of Index_Type'Base and
                --  Count_Type'Base as the type for intermediate index values.
 
-               if Index_Type'Base'Last >= Count_Type'Pos (Count_Type'Last) then
+               if Index_Type'Base'Last >= Count_Type_Last then
                   Index := Before + Index_Type'Base (Count);
 
                else
@@ -2082,9 +1852,8 @@ package body Ada.Containers.Vectors is
       --  We have computed the length of the new internal array (and this is
       --  what "vector capacity" means), so use that to compute its last index.
 
-      if Index_Type'Base'Last >= Count_Type'Pos (Count_Type'Last) then
+      if Index_Type'Base'Last >= Count_Type_Last then
          Dst_Last := No_Index + Index_Type'Base (New_Capacity);
-
       else
          Dst_Last :=
            Index_Type'Base (Count_Type'Base (No_Index) + New_Capacity);
@@ -2114,9 +1883,8 @@ package body Ada.Containers.Vectors is
             --  The space is being inserted before some existing elements, so
             --  we must slide the existing elements up to their new home.
 
-            if Index_Type'Base'Last >= Count_Type'Pos (Count_Type'Last) then
+            if Index_Type'Base'Last >= Count_Type_Last then
                Index := Before + Index_Type'Base (Count);
-
             else
                Index := Index_Type'Base (Count_Type'Base (Before) + Count);
             end if;
@@ -2162,16 +1930,14 @@ package body Ada.Containers.Vectors is
       Index : Index_Type'Base;
 
    begin
-      if Before.Container /= null
+      if Checks and then Before.Container /= null
         and then Before.Container /= Container'Unrestricted_Access
       then
          raise Program_Error with "Before cursor denotes wrong container";
       end if;
 
       if Count = 0 then
-         if Before.Container = null
-           or else Before.Index > Container.Last
-         then
+         if Before.Container = null or else Before.Index > Container.Last then
             Position := No_Element;
          else
             Position := (Container'Unrestricted_Access, Before.Index);
@@ -2180,10 +1946,8 @@ package body Ada.Containers.Vectors is
          return;
       end if;
 
-      if Before.Container = null
-        or else Before.Index > Container.Last
-      then
-         if Container.Last = Index_Type'Last then
+      if Before.Container = null or else Before.Index > Container.Last then
+         if Checks and then Container.Last = Index_Type'Last then
             raise Constraint_Error with
               "vector is already at its maximum length";
          else
@@ -2194,7 +1958,7 @@ package body Ada.Containers.Vectors is
          Index := Before.Index;
       end if;
 
-      Insert_Space (Container, Index, Count => Count);
+      Insert_Space (Container, Index, Count);
 
       Position := (Container'Unrestricted_Access, Index);
    end Insert_Space;
@@ -2216,22 +1980,11 @@ package body Ada.Containers.Vectors is
      (Container : Vector;
       Process   : not null access procedure (Position : Cursor))
    is
-      B : Natural renames Container'Unrestricted_Access.all.Busy;
-
+      Busy : With_Busy (Container.TC'Unrestricted_Access);
    begin
-      B := B + 1;
-
-      begin
-         for Indx in Index_Type'First .. Container.Last loop
-            Process (Cursor'(Container'Unrestricted_Access, Indx));
-         end loop;
-      exception
-         when others =>
-            B := B - 1;
-            raise;
-      end;
-
-      B := B - 1;
+      for Indx in Index_Type'First .. Container.Last loop
+         Process (Cursor'(Container'Unrestricted_Access, Indx));
+      end loop;
    end Iterate;
 
    function Iterate
@@ -2239,8 +1992,6 @@ package body Ada.Containers.Vectors is
       return Vector_Iterator_Interfaces.Reversible_Iterator'Class
    is
       V : constant Vector_Access := Container'Unrestricted_Access;
-      B : Natural renames V.Busy;
-
    begin
       --  The value of its Index component influences the behavior of the First
       --  and Last selector functions of the iterator object. When the Index
@@ -2257,18 +2008,16 @@ package body Ada.Containers.Vectors is
                        Container => V,
                        Index     => No_Index)
       do
-         B := B + 1;
+         Busy (Container.TC'Unrestricted_Access.all);
       end return;
    end Iterate;
 
    function Iterate
      (Container : Vector;
       Start     : Cursor)
-      return Vector_Iterator_Interfaces.Reversible_Iterator'class
+      return Vector_Iterator_Interfaces.Reversible_Iterator'Class
    is
       V : constant Vector_Access := Container'Unrestricted_Access;
-      B : Natural renames V.Busy;
-
    begin
       --  It was formerly the case that when Start = No_Element, the partial
       --  iterator was defined to behave the same as for a complete iterator,
@@ -2281,19 +2030,21 @@ package body Ada.Containers.Vectors is
       --  however, that it is not possible to use a partial iterator to specify
       --  an empty sequence of items.
 
-      if Start.Container = null then
-         raise Constraint_Error with
-           "Start position for iterator equals No_Element";
-      end if;
+      if Checks then
+         if Start.Container = null then
+            raise Constraint_Error with
+              "Start position for iterator equals No_Element";
+         end if;
 
-      if Start.Container /= V then
-         raise Program_Error with
-           "Start cursor of Iterate designates wrong vector";
-      end if;
+         if Start.Container /= V then
+            raise Program_Error with
+              "Start cursor of Iterate designates wrong vector";
+         end if;
 
-      if Start.Index > V.Last then
-         raise Constraint_Error with
-           "Start position for iterator equals No_Element";
+         if Start.Index > V.Last then
+            raise Constraint_Error with
+              "Start position for iterator equals No_Element";
+         end if;
       end if;
 
       --  The value of its Index component influences the behavior of the First
@@ -2310,7 +2061,7 @@ package body Ada.Containers.Vectors is
                        Container => V,
                        Index     => Start.Index)
       do
-         B := B + 1;
+         Busy (Container.TC'Unrestricted_Access.all);
       end return;
    end Iterate;
 
@@ -2355,7 +2106,7 @@ package body Ada.Containers.Vectors is
 
    function Last_Element (Container : Vector) return Element_Type is
    begin
-      if Container.Last = No_Index then
+      if Checks and then Container.Last = No_Index then
          raise Constraint_Error with "Container is empty";
       else
          return Container.Elements.EA (Container.Last);
@@ -2418,15 +2169,8 @@ package body Ada.Containers.Vectors is
          return;
       end if;
 
-      if Target.Busy > 0 then
-         raise Program_Error with
-           "attempt to tamper with cursors (Target is busy)";
-      end if;
-
-      if Source.Busy > 0 then
-         raise Program_Error with
-           "attempt to tamper with cursors (Source is busy)";
-      end if;
+      TC_Check (Target.TC);
+      TC_Check (Source.TC);
 
       declare
          Target_Elements : constant Elements_Access := Target.Elements;
@@ -2458,14 +2202,12 @@ package body Ada.Containers.Vectors is
    begin
       if Position.Container = null then
          return No_Element;
-      end if;
-
-      if Position.Container /= Object.Container then
+      elsif Checks and then Position.Container /= Object.Container then
          raise Program_Error with
            "Position cursor of Next designates wrong vector";
+      else
+         return Next (Position);
       end if;
-
-      return Next (Position);
    end Next;
 
    procedure Next (Position : in out Cursor) is
@@ -2494,10 +2236,7 @@ package body Ada.Containers.Vectors is
       Count     : Count_Type := 1)
    is
    begin
-      Insert (Container,
-              Index_Type'First,
-              New_Item,
-              Count);
+      Insert (Container, Index_Type'First, New_Item, Count);
    end Prepend;
 
    --------------
@@ -2519,14 +2258,12 @@ package body Ada.Containers.Vectors is
    begin
       if Position.Container = null then
          return No_Element;
-      end if;
-
-      if Position.Container /= Object.Container then
+      elsif Checks and then Position.Container /= Object.Container then
          raise Program_Error with
            "Position cursor of Previous designates wrong vector";
+      else
+         return Previous (Position);
       end if;
-
-      return Previous (Position);
    end Previous;
 
    procedure Previous (Position : in out Cursor) is
@@ -2540,6 +2277,20 @@ package body Ada.Containers.Vectors is
       end if;
    end Previous;
 
+   ----------------------
+   -- Pseudo_Reference --
+   ----------------------
+
+   function Pseudo_Reference
+     (Container : aliased Vector'Class) return Reference_Control_Type
+   is
+      TC : constant Tamper_Counts_Access := Container.TC'Unrestricted_Access;
+   begin
+      return R : constant Reference_Control_Type := (Controlled with TC) do
+         Lock (TC.all);
+      end return;
+   end Pseudo_Reference;
+
    -------------------
    -- Query_Element --
    -------------------
@@ -2549,29 +2300,15 @@ package body Ada.Containers.Vectors is
       Index     : Index_Type;
       Process   : not null access procedure (Element : Element_Type))
    is
+      Lock : With_Lock (Container.TC'Unrestricted_Access);
       V : Vector renames Container'Unrestricted_Access.all;
-      B : Natural renames V.Busy;
-      L : Natural renames V.Lock;
 
    begin
-      if Index > Container.Last then
+      if Checks and then Index > Container.Last then
          raise Constraint_Error with "Index is out of range";
       end if;
 
-      B := B + 1;
-      L := L + 1;
-
-      begin
-         Process (V.Elements.EA (Index));
-      exception
-         when others =>
-            L := L - 1;
-            B := B - 1;
-            raise;
-      end;
-
-      L := L - 1;
-      B := B - 1;
+      Process (V.Elements.EA (Index));
    end Query_Element;
 
    procedure Query_Element
@@ -2579,11 +2316,11 @@ package body Ada.Containers.Vectors is
       Process  : not null access procedure (Element : Element_Type))
    is
    begin
-      if Position.Container = null then
+      if Checks and then Position.Container = null then
          raise Constraint_Error with "Position cursor has no element";
+      else
+         Query_Element (Position.Container.all, Position.Index, Process);
       end if;
-
-      Query_Element (Position.Container.all, Position.Index, Process);
    end Query_Element;
 
    ----------
@@ -2646,30 +2383,29 @@ package body Ada.Containers.Vectors is
       Position  : Cursor) return Reference_Type
    is
    begin
-      if Position.Container = null then
-         raise Constraint_Error with "Position cursor has no element";
-      end if;
+      if Checks then
+         if Position.Container = null then
+            raise Constraint_Error with "Position cursor has no element";
+         end if;
 
-      if Position.Container /= Container'Unrestricted_Access then
-         raise Program_Error with "Position cursor denotes wrong container";
-      end if;
+         if Position.Container /= Container'Unrestricted_Access then
+            raise Program_Error with "Position cursor denotes wrong container";
+         end if;
 
-      if Position.Index > Position.Container.Last then
-         raise Constraint_Error with "Position cursor is out of range";
+         if Position.Index > Position.Container.Last then
+            raise Constraint_Error with "Position cursor is out of range";
+         end if;
       end if;
 
       declare
-         C : Vector renames Position.Container.all;
-         B : Natural renames C.Busy;
-         L : Natural renames C.Lock;
+         TC : constant Tamper_Counts_Access :=
+           Container.TC'Unrestricted_Access;
       begin
          return R : constant Reference_Type :=
-                      (Element =>
-                         Container.Elements.EA (Position.Index)'Access,
-                       Control => (Controlled with Position.Container))
+           (Element => Container.Elements.EA (Position.Index)'Access,
+            Control => (Controlled with TC))
          do
-            B := B + 1;
-            L := L + 1;
+            Lock (TC.all);
          end return;
       end;
    end Reference;
@@ -2679,24 +2415,21 @@ package body Ada.Containers.Vectors is
       Index     : Index_Type) return Reference_Type
    is
    begin
-      if Index > Container.Last then
+      if Checks and then Index > Container.Last then
          raise Constraint_Error with "Index is out of range";
-      else
-         declare
-            C : Vector renames Container'Unrestricted_Access.all;
-            B : Natural renames C.Busy;
-            L : Natural renames C.Lock;
-         begin
-            return R : constant Reference_Type :=
-                         (Element => Container.Elements.EA (Index)'Access,
-                          Control =>
-                            (Controlled with Container'Unrestricted_Access))
-            do
-               B := B + 1;
-               L := L + 1;
-            end return;
-         end;
       end if;
+
+      declare
+         TC : constant Tamper_Counts_Access :=
+           Container.TC'Unrestricted_Access;
+      begin
+         return R : constant Reference_Type :=
+           (Element => Container.Elements.EA (Index)'Access,
+            Control => (Controlled with TC))
+         do
+            Lock (TC.all);
+         end return;
+      end;
    end Reference;
 
    ---------------------
@@ -2709,15 +2442,11 @@ package body Ada.Containers.Vectors is
       New_Item  : Element_Type)
    is
    begin
-      if Index > Container.Last then
+      if Checks and then Index > Container.Last then
          raise Constraint_Error with "Index is out of range";
       end if;
 
-      if Container.Lock > 0 then
-         raise Program_Error with
-           "attempt to tamper with elements (vector is locked)";
-      end if;
-
+      TE_Check (Container.TC);
       Container.Elements.EA (Index) := New_Item;
    end Replace_Element;
 
@@ -2727,23 +2456,19 @@ package body Ada.Containers.Vectors is
       New_Item  : Element_Type)
    is
    begin
-      if Position.Container = null then
-         raise Constraint_Error with "Position cursor has no element";
+      if Checks then
+         if Position.Container = null then
+            raise Constraint_Error with "Position cursor has no element";
+
+         elsif Position.Container /= Container'Unrestricted_Access then
+            raise Program_Error with "Position cursor denotes wrong container";
+
+         elsif Position.Index > Container.Last then
+            raise Constraint_Error with "Position cursor is out of range";
+         end if;
       end if;
 
-      if Position.Container /= Container'Unrestricted_Access then
-         raise Program_Error with "Position cursor denotes wrong container";
-      end if;
-
-      if Position.Index > Container.Last then
-         raise Constraint_Error with "Position cursor is out of range";
-      end if;
-
-      if Container.Lock > 0 then
-         raise Program_Error with
-           "attempt to tamper with elements (vector is locked)";
-      end if;
-
+      TE_Check (Container.TC);
       Container.Elements.EA (Position.Index) := New_Item;
    end Replace_Element;
 
@@ -2806,10 +2531,7 @@ package body Ada.Containers.Vectors is
             --  so this is the best we can do with respect to minimizing
             --  storage).
 
-            if Container.Busy > 0 then
-               raise Program_Error with
-                 "attempt to tamper with cursors (vector is busy)";
-            end if;
+            TC_Check (Container.TC);
 
             declare
                subtype Src_Index_Subtype is Index_Type'Base range
@@ -2853,7 +2575,7 @@ package body Ada.Containers.Vectors is
       --  the Last index value of the new internal array, in a way that avoids
       --  any possibility of overflow.
 
-      if Index_Type'Base'Last >= Count_Type'Pos (Count_Type'Last) then
+      if Index_Type'Base'Last >= Count_Type_Last then
 
          --  We perform a two-part test. First we determine whether the
          --  computed Last value lies in the base range of the type, and then
@@ -2866,7 +2588,9 @@ package body Ada.Containers.Vectors is
          --  Which can rewrite as:
          --    No_Index <= Last - Length
 
-         if Index_Type'Base'Last - Index_Type'Base (Capacity) < No_Index then
+         if Checks and then
+           Index_Type'Base'Last - Index_Type'Base (Capacity) < No_Index
+         then
             raise Constraint_Error with "Capacity is out of range";
          end if;
 
@@ -2878,7 +2602,7 @@ package body Ada.Containers.Vectors is
          --  Finally we test whether the value is within the range of the
          --  generic actual index subtype:
 
-         if Last > Index_Type'Last then
+         if Checks and then Last > Index_Type'Last then
             raise Constraint_Error with "Capacity is out of range";
          end if;
 
@@ -2890,7 +2614,7 @@ package body Ada.Containers.Vectors is
 
          Index := Count_Type'Base (No_Index) + Capacity;  -- Last
 
-         if Index > Count_Type'Base (Index_Type'Last) then
+         if Checks and then Index > Count_Type'Base (Index_Type'Last) then
             raise Constraint_Error with "Capacity is out of range";
          end if;
 
@@ -2907,7 +2631,7 @@ package body Ada.Containers.Vectors is
 
          Index := Count_Type'Base (Index_Type'Last) - Capacity;  -- No_Index
 
-         if Index < Count_Type'Base (No_Index) then
+         if Checks and then Index < Count_Type'Base (No_Index) then
             raise Constraint_Error with "Capacity is out of range";
          end if;
 
@@ -2946,10 +2670,7 @@ package body Ada.Containers.Vectors is
             --  new internal array having a length that exactly matches the
             --  number of items in the container.
 
-            if Container.Busy > 0 then
-               raise Program_Error with
-                 "attempt to tamper with cursors (vector is busy)";
-            end if;
+            TC_Check (Container.TC);
 
             declare
                subtype Src_Index_Subtype is Index_Type'Base range
@@ -3006,10 +2727,7 @@ package body Ada.Containers.Vectors is
       --  number of active elements in the container.) We must check whether
       --  the container is busy before doing anything else.
 
-      if Container.Busy > 0 then
-         raise Program_Error with
-           "attempt to tamper with cursors (vector is busy)";
-      end if;
+      TC_Check (Container.TC);
 
       --  We now allocate a new internal array, having a length different from
       --  its current value.
@@ -3081,10 +2799,7 @@ package body Ada.Containers.Vectors is
       --  implementation. Logically Reverse_Elements requires a check for
       --  cursor tampering.
 
-      if Container.Busy > 0 then
-         raise Program_Error with
-           "attempt to tamper with cursors (vector is busy)";
-      end if;
+      TC_Check (Container.TC);
 
       declare
          K : Index_Type;
@@ -3120,7 +2835,7 @@ package body Ada.Containers.Vectors is
       Last : Index_Type'Base;
 
    begin
-      if Position.Container /= null
+      if Checks and then Position.Container /= null
         and then Position.Container /= Container'Unrestricted_Access
       then
          raise Program_Error with "Position cursor denotes wrong container";
@@ -3131,13 +2846,20 @@ package body Ada.Containers.Vectors is
          then Container.Last
          else Position.Index);
 
-      for Indx in reverse Index_Type'First .. Last loop
-         if Container.Elements.EA (Indx) = Item then
-            return (Container'Unrestricted_Access, Indx);
-         end if;
-      end loop;
+      --  Per AI05-0022, the container implementation is required to detect
+      --  element tampering by a generic actual subprogram.
 
-      return No_Element;
+      declare
+         Lock : With_Lock (Container.TC'Unrestricted_Access);
+      begin
+         for Indx in reverse Index_Type'First .. Last loop
+            if Container.Elements.EA (Indx) = Item then
+               return Cursor'(Container'Unrestricted_Access, Indx);
+            end if;
+         end loop;
+
+         return No_Element;
+      end;
    end Reverse_Find;
 
    ------------------------
@@ -3149,8 +2871,13 @@ package body Ada.Containers.Vectors is
       Item      : Element_Type;
       Index     : Index_Type := Index_Type'Last) return Extended_Index
    is
+      --  Per AI05-0022, the container implementation is required to detect
+      --  element tampering by a generic actual subprogram.
+
+      Lock : With_Lock (Container.TC'Unrestricted_Access);
+
       Last : constant Index_Type'Base :=
-               Index_Type'Min (Container.Last, Index);
+        Index_Type'Min (Container.Last, Index);
 
    begin
       for Indx in reverse Index_Type'First .. Last loop
@@ -3170,23 +2897,11 @@ package body Ada.Containers.Vectors is
      (Container : Vector;
       Process   : not null access procedure (Position : Cursor))
    is
-      V : Vector renames Container'Unrestricted_Access.all;
-      B : Natural renames V.Busy;
-
+      Busy : With_Busy (Container.TC'Unrestricted_Access);
    begin
-      B := B + 1;
-
-      begin
-         for Indx in reverse Index_Type'First .. Container.Last loop
-            Process (Cursor'(Container'Unrestricted_Access, Indx));
-         end loop;
-      exception
-         when others =>
-            B := B - 1;
-            raise;
-      end;
-
-      B := B - 1;
+      for Indx in reverse Index_Type'First .. Container.Last loop
+         Process (Cursor'(Container'Unrestricted_Access, Indx));
+      end loop;
    end Reverse_Iterate;
 
    ----------------
@@ -3199,7 +2914,7 @@ package body Ada.Containers.Vectors is
    begin
       --  Set_Length allows the user to set the length explicitly, instead
       --  of implicitly as a side-effect of deletion or insertion. If the
-      --  requested length is less then the current length, this is equivalent
+      --  requested length is less than the current length, this is equivalent
       --  to deleting items from the back end of the vector. If the requested
       --  length is greater than the current length, then this is equivalent
       --  to inserting "space" (nonce items) at the end.
@@ -3207,7 +2922,7 @@ package body Ada.Containers.Vectors is
       if Count >= 0 then
          Container.Delete_Last (Count);
 
-      elsif Container.Last >= Index_Type'Last then
+      elsif Checks and then Container.Last >= Index_Type'Last then
          raise Constraint_Error with "vector is already at its maximum length";
 
       else
@@ -3221,22 +2936,21 @@ package body Ada.Containers.Vectors is
 
    procedure Swap (Container : in out Vector; I, J : Index_Type) is
    begin
-      if I > Container.Last then
-         raise Constraint_Error with "I index is out of range";
-      end if;
+      if Checks then
+         if I > Container.Last then
+            raise Constraint_Error with "I index is out of range";
+         end if;
 
-      if J > Container.Last then
-         raise Constraint_Error with "J index is out of range";
+         if J > Container.Last then
+            raise Constraint_Error with "J index is out of range";
+         end if;
       end if;
 
       if I = J then
          return;
       end if;
 
-      if Container.Lock > 0 then
-         raise Program_Error with
-           "attempt to tamper with elements (vector is locked)";
-      end if;
+      TE_Check (Container.TC);
 
       declare
          EI_Copy : constant Element_Type := Container.Elements.EA (I);
@@ -3248,20 +2962,19 @@ package body Ada.Containers.Vectors is
 
    procedure Swap (Container : in out Vector; I, J : Cursor) is
    begin
-      if I.Container = null then
-         raise Constraint_Error with "I cursor has no element";
-      end if;
+      if Checks then
+         if I.Container = null then
+            raise Constraint_Error with "I cursor has no element";
 
-      if J.Container = null then
-         raise Constraint_Error with "J cursor has no element";
-      end if;
+         elsif J.Container = null then
+            raise Constraint_Error with "J cursor has no element";
 
-      if I.Container /= Container'Unrestricted_Access then
-         raise Program_Error with "I cursor denotes wrong container";
-      end if;
+         elsif I.Container /= Container'Unrestricted_Access then
+            raise Program_Error with "I cursor denotes wrong container";
 
-      if J.Container /= Container'Unrestricted_Access then
-         raise Program_Error with "J cursor denotes wrong container";
+         elsif J.Container /= Container'Unrestricted_Access then
+            raise Program_Error with "J cursor denotes wrong container";
+         end if;
       end if;
 
       Swap (Container, I.Index, J.Index);
@@ -3291,13 +3004,11 @@ package body Ada.Containers.Vectors is
    begin
       if Position.Container = null then
          return No_Index;
-      end if;
-
-      if Position.Index <= Position.Container.Last then
+      elsif Position.Index <= Position.Container.Last then
          return Position.Index;
+      else
+         return No_Index;
       end if;
-
-      return No_Index;
    end To_Index;
 
    ---------------
@@ -3321,7 +3032,7 @@ package body Ada.Containers.Vectors is
       --  index).  We must therefore check whether the specified Length would
       --  create a Last index value greater than Index_Type'Last.
 
-      if Index_Type'Base'Last >= Count_Type'Pos (Count_Type'Last) then
+      if Index_Type'Base'Last >= Count_Type_Last then
 
          --  We perform a two-part test. First we determine whether the
          --  computed Last value lies in the base range of the type, and then
@@ -3334,7 +3045,9 @@ package body Ada.Containers.Vectors is
          --  Which can rewrite as:
          --    No_Index <= Last - Length
 
-         if Index_Type'Base'Last - Index_Type'Base (Length) < No_Index then
+         if Checks and then
+           Index_Type'Base'Last - Index_Type'Base (Length) < No_Index
+         then
             raise Constraint_Error with "Length is out of range";
          end if;
 
@@ -3346,7 +3059,7 @@ package body Ada.Containers.Vectors is
          --  Finally we test whether the value is within the range of the
          --  generic actual index subtype:
 
-         if Last > Index_Type'Last then
+         if Checks and then Last > Index_Type'Last then
             raise Constraint_Error with "Length is out of range";
          end if;
 
@@ -3358,7 +3071,7 @@ package body Ada.Containers.Vectors is
 
          Index := Count_Type'Base (No_Index) + Length;  -- Last
 
-         if Index > Count_Type'Base (Index_Type'Last) then
+         if Checks and then Index > Count_Type'Base (Index_Type'Last) then
             raise Constraint_Error with "Length is out of range";
          end if;
 
@@ -3375,7 +3088,7 @@ package body Ada.Containers.Vectors is
 
          Index := Count_Type'Base (Index_Type'Last) - Length;  -- No_Index
 
-         if Index < Count_Type'Base (No_Index) then
+         if Checks and then Index < Count_Type'Base (No_Index) then
             raise Constraint_Error with "Length is out of range";
          end if;
 
@@ -3388,7 +3101,7 @@ package body Ada.Containers.Vectors is
 
       Elements := new Elements_Type (Last);
 
-      return Vector'(Controlled with Elements, Last, 0, 0);
+      return Vector'(Controlled with Elements, Last, TC => <>);
    end To_Vector;
 
    function To_Vector
@@ -3411,7 +3124,7 @@ package body Ada.Containers.Vectors is
       --  index). We must therefore check whether the specified Length would
       --  create a Last index value greater than Index_Type'Last.
 
-      if Index_Type'Base'Last >= Count_Type'Pos (Count_Type'Last) then
+      if Index_Type'Base'Last >= Count_Type_Last then
 
          --  We perform a two-part test. First we determine whether the
          --  computed Last value lies in the base range of the type, and then
@@ -3424,7 +3137,9 @@ package body Ada.Containers.Vectors is
          --  Which can rewrite as:
          --    No_Index <= Last - Length
 
-         if Index_Type'Base'Last - Index_Type'Base (Length) < No_Index then
+         if Checks and then
+           Index_Type'Base'Last - Index_Type'Base (Length) < No_Index
+         then
             raise Constraint_Error with "Length is out of range";
          end if;
 
@@ -3436,7 +3151,7 @@ package body Ada.Containers.Vectors is
          --  Finally we test whether the value is within the range of the
          --  generic actual index subtype:
 
-         if Last > Index_Type'Last then
+         if Checks and then Last > Index_Type'Last then
             raise Constraint_Error with "Length is out of range";
          end if;
 
@@ -3448,7 +3163,7 @@ package body Ada.Containers.Vectors is
 
          Index := Count_Type'Base (No_Index) + Length;  -- same value as V.Last
 
-         if Index > Count_Type'Base (Index_Type'Last) then
+         if Checks and then Index > Count_Type'Base (Index_Type'Last) then
             raise Constraint_Error with "Length is out of range";
          end if;
 
@@ -3465,7 +3180,7 @@ package body Ada.Containers.Vectors is
 
          Index := Count_Type'Base (Index_Type'Last) - Length;  -- No_Index
 
-         if Index < Count_Type'Base (No_Index) then
+         if Checks and then Index < Count_Type'Base (No_Index) then
             raise Constraint_Error with "Length is out of range";
          end if;
 
@@ -3478,7 +3193,7 @@ package body Ada.Containers.Vectors is
 
       Elements := new Elements_Type'(Last, EA => (others => New_Item));
 
-      return Vector'(Controlled with Elements, Last, 0, 0);
+      return (Controlled with Elements, Last, TC => <>);
    end To_Vector;
 
    --------------------
@@ -3490,28 +3205,13 @@ package body Ada.Containers.Vectors is
       Index     : Index_Type;
       Process   : not null access procedure (Element : in out Element_Type))
    is
-      B : Natural renames Container.Busy;
-      L : Natural renames Container.Lock;
-
+      Lock : With_Lock (Container.TC'Unchecked_Access);
    begin
-      if Index > Container.Last then
+      if Checks and then Index > Container.Last then
          raise Constraint_Error with "Index is out of range";
       end if;
 
-      B := B + 1;
-      L := L + 1;
-
-      begin
-         Process (Container.Elements.EA (Index));
-      exception
-         when others =>
-            L := L - 1;
-            B := B - 1;
-            raise;
-      end;
-
-      L := L - 1;
-      B := B - 1;
+      Process (Container.Elements.EA (Index));
    end Update_Element;
 
    procedure Update_Element
@@ -3520,13 +3220,15 @@ package body Ada.Containers.Vectors is
       Process   : not null access procedure (Element : in out Element_Type))
    is
    begin
-      if Position.Container = null then
-         raise Constraint_Error with "Position cursor has no element";
-      elsif Position.Container /= Container'Unrestricted_Access then
-         raise Program_Error with "Position cursor denotes wrong container";
-      else
-         Update_Element (Container, Position.Index, Process);
+      if Checks then
+         if Position.Container = null then
+            raise Constraint_Error with "Position cursor has no element";
+         elsif Position.Container /= Container'Unrestricted_Access then
+            raise Program_Error with "Position cursor denotes wrong container";
+         end if;
       end if;
+
+      Update_Element (Container, Position.Index, Process);
    end Update_Element;
 
    -----------

@@ -1,9 +1,9 @@
 `/* Specific implementation of the UNPACK intrinsic
-   Copyright 2008, 2009 Free Software Foundation, Inc.
+   Copyright (C) 2008-2017 Free Software Foundation, Inc.
    Contributed by Thomas Koenig <tkoenig@gcc.gnu.org>, based on
    unpack_generic.c by Paul Brook <paul@nowt.org>.
 
-This file is part of the GNU Fortran 95 runtime library (libgfortran).
+This file is part of the GNU Fortran runtime library (libgfortran).
 
 Libgfortran is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public
@@ -25,8 +25,6 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 <http://www.gnu.org/licenses/>.  */
 
 #include "libgfortran.h"
-#include <stdlib.h>
-#include <assert.h>
 #include <string.h>'
 
 include(iparm.m4)dnl
@@ -62,7 +60,7 @@ unpack0_'rtype_code` ('rtype` *ret, const 'rtype` *vector,
 
   empty = 0;
 
-  mptr = mask->data;
+  mptr = mask->base_addr;
 
   /* Use the same loop for all logical types, by using GFC_LOGICAL_1
      and using shifting to address size and endian issues.  */
@@ -82,7 +80,7 @@ unpack0_'rtype_code` ('rtype` *ret, const 'rtype` *vector,
   else
     runtime_error ("Funny sized logical array");
 
-  if (ret->data == NULL)
+  if (ret->base_addr == NULL)
     {
       /* The front end has signalled that we need to populate the
 	 return array descriptor.  */
@@ -100,11 +98,13 @@ unpack0_'rtype_code` ('rtype` *ret, const 'rtype` *vector,
 	  rs *= extent[n];
 	}
       ret->offset = 0;
-      ret->data = internal_malloc_size (rs * sizeof ('rtype_name`));
+      ret->base_addr = xmallocarray (rs, sizeof ('rtype_name`));
     }
   else
     {
       dim = GFC_DESCRIPTOR_RANK (ret);
+      /* Initialize to avoid -Wmaybe-uninitialized complaints.  */
+      rstride[0] = 1;
       for (n = 0; n < dim; n++)
 	{
 	  count[n] = 0;
@@ -128,8 +128,8 @@ unpack0_'rtype_code` ('rtype` *ret, const 'rtype` *vector,
     vstride0 = 1;
   rstride0 = rstride[0];
   mstride0 = mstride[0];
-  rptr = ret->data;
-  vptr = vector->data;
+  rptr = ret->base_addr;
+  vptr = vector->base_addr;
 
   while (rptr)
     {
@@ -206,7 +206,7 @@ unpack1_'rtype_code` ('rtype` *ret, const 'rtype` *vector,
 
   empty = 0;
 
-  mptr = mask->data;
+  mptr = mask->base_addr;
 
   /* Use the same loop for all logical types, by using GFC_LOGICAL_1
      and using shifting to address size and endian issues.  */
@@ -226,7 +226,7 @@ unpack1_'rtype_code` ('rtype` *ret, const 'rtype` *vector,
   else
     runtime_error ("Funny sized logical array");
 
-  if (ret->data == NULL)
+  if (ret->base_addr == NULL)
     {
       /* The front end has signalled that we need to populate the
 	 return array descriptor.  */
@@ -245,11 +245,13 @@ unpack1_'rtype_code` ('rtype` *ret, const 'rtype` *vector,
 	  rs *= extent[n];
 	}
       ret->offset = 0;
-      ret->data = internal_malloc_size (rs * sizeof ('rtype_name`));
+      ret->base_addr = xmallocarray (rs, sizeof ('rtype_name`));
     }
   else
     {
       dim = GFC_DESCRIPTOR_RANK (ret);
+      /* Initialize to avoid -Wmaybe-uninitialized complaints.  */
+      rstride[0] = 1;
       for (n = 0; n < dim; n++)
 	{
 	  count[n] = 0;
@@ -277,9 +279,9 @@ unpack1_'rtype_code` ('rtype` *ret, const 'rtype` *vector,
   rstride0 = rstride[0];
   fstride0 = fstride[0];
   mstride0 = mstride[0];
-  rptr = ret->data;
-  fptr = field->data;
-  vptr = vector->data;
+  rptr = ret->base_addr;
+  fptr = field->base_addr;
+  vptr = vector->base_addr;
 
   while (rptr)
     {

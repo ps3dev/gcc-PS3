@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -29,18 +29,7 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
---  This version of Ada.Exceptions is a full Ada 95 version, and Ada 2005
---  features such as the additional definitions of Exception_Name returning
---  Wide_[Wide_]String.
-
---  It is used for building the compiler and the basic tools, since these
---  builds may be done with bootstrap compilers that cannot handle these
---  additions. The full version of Ada.Exceptions can be found in the files
---  a-except-2005.ads/adb, and is used for all other builds where full Ada
---  2005 functionality is required. In particular, it is used for building
---  run times on all targets.
-
-pragma Compiler_Unit;
+pragma Compiler_Unit_Warning;
 
 pragma Style_Checks (All_Checks);
 --  No subprogram ordering check, due to logical grouping
@@ -88,12 +77,13 @@ package body Ada.Exceptions is
 
    package Exception_Data is
 
-      ---------------------------------
-      -- Exception messages routines --
-      ---------------------------------
+      -----------------------------------
+      -- Exception Message Subprograms --
+      -----------------------------------
 
       procedure Set_Exception_C_Msg
-        (Id     : Exception_Id;
+        (Excep  : EOA;
+         Id     : Exception_Id;
          Msg1   : System.Address;
          Line   : Integer        := 0;
          Column : Integer        := 0;
@@ -107,79 +97,64 @@ package body Ada.Exceptions is
       --  additional null terminated string is added to the message.
 
       procedure Set_Exception_Msg
-        (Id      : Exception_Id;
+        (Excep   : EOA;
+         Id      : Exception_Id;
          Message : String);
       --  This routine is called to setup the exception referenced by the
       --  Current_Excep field in the TSD to contain the indicated Id value and
       --  message. Message is a string which is generated as the exception
       --  message.
 
-      --------------------------------------
-      -- Exception information subprogram --
-      --------------------------------------
+      ---------------------------------------
+      -- Exception Information Subprograms --
+      ---------------------------------------
 
-      function Exception_Information (X : Exception_Occurrence) return String;
-      --  The format of the exception information is as follows:
+      function Untailored_Exception_Information
+        (X : Exception_Occurrence) return String;
+      --  This is used by Stream_Attributes.EO_To_String to convert an
+      --  Exception_Occurrence to a String for the stream attributes.
+      --  String_To_EO understands the format, as documented here.
       --
-      --    Exception_Name: <exception name> (as in Exception_Name)
-      --    Message: <message> (only if Exception_Message is empty)
-      --    PID=nnnn (only if != 0)
+      --  The format of the string is as follows:
+      --
+      --    raised <exception name> : <message>
+      --    (" : <message>" is present only if Exception_Message is not empty)
+      --    PID=nnnn (only if nonzero)
       --    Call stack traceback locations:  (only if at least one location)
       --    <0xyyyyyyyy 0xyyyyyyyy ...>      (is recorded)
       --
-      --  The lines are separated by a ASCII.LF character
-      --
-      --  The nnnn is the partition Id given as decimal digits
-      --
+      --  The lines are separated by a ASCII.LF character.
+      --  The nnnn is the partition Id given as decimal digits.
       --  The 0x... line represents traceback program counter locations, in
-      --  execution order with the first one being the exception location. It
-      --  is present only
+      --  execution order with the first one being the exception location.
       --
-      --  The Exception_Name and Message lines are omitted in the abort signal
-      --  case, since this is not really an exception.
-
+      --  The Exception_Name and Message lines are omitted in the abort
+      --  signal case, since this is not really an exception.
+      --
       --  Note: If the format of the generated string is changed, please note
       --  that an equivalent modification to the routine String_To_EO must be
       --  made to preserve proper functioning of the stream attributes.
 
-      ---------------------------------------
-      -- Exception backtracing subprograms --
-      ---------------------------------------
-
-      --  What is automatically output when exception tracing is on is the
-      --  usual exception information with the call chain backtrace possibly
-      --  tailored by a backtrace decorator. Modifying Exception_Information
-      --  itself is not a good idea because the decorated output is completely
-      --  out of control and would break all our code related to the streaming
-      --  of exceptions.  We then provide an alternative function to compute
-      --  the possibly tailored output, which is equivalent if no decorator is
-      --  currently set:
-
-      function Tailored_Exception_Information
-        (X : Exception_Occurrence) return String;
-      --  Exception information to be output in the case of automatic tracing
-      --  requested through GNAT.Exception_Traces.
+      function Exception_Information (X : Exception_Occurrence) return String;
+      --  This is the implementation of Ada.Exceptions.Exception_Information,
+      --  as defined in the Ada RM.
       --
-      --  This is the same as Exception_Information if no backtrace decorator
-      --  is currently in place. Otherwise, this is Exception_Information with
-      --  the call chain raw addresses replaced by the result of a call to the
-      --  current decorator provided with the call chain addresses.
-
-      pragma Export
-        (Ada, Tailored_Exception_Information,
-           "__gnat_tailored_exception_information");
-      --  This is currently used by System.Tasking.Stages
+      --  If no traceback decorator (see GNAT.Exception_Traces) is currently
+      --  in place, this is the same as Untailored_Exception_Information.
+      --  Otherwise, the decorator is used to produce a symbolic traceback
+      --  instead of hexadecimal addresses.
+      --
+      --  Note that unlike Untailored_Exception_Information, there is no need
+      --  to keep the output of Exception_Information stable for streaming
+      --  purposes, and in fact the output differs across platforms.
 
    end Exception_Data;
 
    package Exception_Traces is
 
-      use Exception_Data;
-      --  Imports Tailored_Exception_Information
-
-      ----------------------------------------------
-      -- Run-Time Exception Notification Routines --
-      ----------------------------------------------
+      -------------------------------------------------
+      -- Run-Time Exception Notification Subprograms --
+      -------------------------------------------------
 
       --  These subprograms provide a common run-time interface to trigger the
       --  actions required when an exception is about to be propagated (e.g.
@@ -187,19 +162,19 @@ package body Ada.Exceptions is
       --  exported to be usable by the Ada exception handling personality
       --  routine when the GCC 3 mechanism is used.
 
-      procedure Notify_Handled_Exception;
+      procedure Notify_Handled_Exception (Excep : EOA);
       pragma Export
         (C, Notify_Handled_Exception, "__gnat_notify_handled_exception");
       --  This routine is called for a handled occurrence is about to be
       --  propagated.
 
-      procedure Notify_Unhandled_Exception;
+      procedure Notify_Unhandled_Exception (Excep : EOA);
       pragma Export
         (C, Notify_Unhandled_Exception, "__gnat_notify_unhandled_exception");
       --  This routine is called when an unhandled occurrence is about to be
       --  propagated.
 
-      procedure Unhandled_Exception_Terminate;
+      procedure Unhandled_Exception_Terminate (Excep : EOA);
       pragma No_Return (Unhandled_Exception_Terminate);
       --  This procedure is called to terminate program execution following an
       --  unhandled exception. The exception information, including traceback
@@ -211,9 +186,9 @@ package body Ada.Exceptions is
 
    package Stream_Attributes is
 
-      --------------------------------
-      -- Stream attributes routines --
-      --------------------------------
+      ----------------------------------
+      -- Stream Attribute Subprograms --
+      ----------------------------------
 
       function EId_To_String (X : Exception_Id) return String;
       function String_To_EId (S : String) return Exception_Id;
@@ -236,7 +211,8 @@ package body Ada.Exceptions is
    --  about it.
 
    procedure Raise_Exception_No_Defer
-      (E : Exception_Id; Message : String := "");
+      (E       : Exception_Id;
+       Message : String := "");
    pragma Export
     (Ada, Raise_Exception_No_Defer,
      "ada__exceptions__raise_exception_no_defer");
@@ -350,14 +326,223 @@ package body Ada.Exceptions is
    --  caller task. Target is expected to be a pointer to the fixed TSD
    --  occurrence for this task.
 
-   -----------------------------
-   -- Run-Time Check Routines --
-   -----------------------------
+   --------------------------------
+   -- Run-Time Check Subprograms --
+   --------------------------------
 
-   --  Routines to a specific exception with a reason message attached. The
-   --  parameters are the file name and line number in each case. The names are
-   --  keyed to the codes defined in types.ads and a-types.h (for example, the
-   --  name Rcheck_05 refers to the Reason RT_Exception_Code'Val (5)).
+   --  These subprograms raise a specific exception with a reason message
+   --  attached. The parameters are the file name and line number in each
+   --  case. The names are defined by Exp_Ch11.Get_RT_Exception_Name.
+
+   --  Note on ordering of these subprograms. Normally in the Ada.Exceptions
+   --  units we do not care about the ordering of entries for Rcheck
+   --  subprograms, and the normal approach is to keep them in the same
+   --  order as declarations in Types.
+
+   --  This section is an IMPORTANT EXCEPTION. It is required by the .Net
+   --  runtime that the routine Rcheck_PE_Finalize_Raise_Exception is at the
+   --  end of the list (for reasons that are documented in the exceptmsg.awk
+   --  script which takes care of generating the required exception data).
+
+   procedure Rcheck_CE_Access_Check                   -- 00
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_CE_Null_Access_Parameter          -- 01
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_CE_Discriminant_Check             -- 02
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_CE_Divide_By_Zero                 -- 03
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_CE_Explicit_Raise                 -- 04
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_CE_Index_Check                    -- 05
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_CE_Invalid_Data                   -- 06
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_CE_Length_Check                   -- 07
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_CE_Null_Exception_Id              -- 08
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_CE_Null_Not_Allowed               -- 09
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_CE_Overflow_Check                 -- 10
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_CE_Partition_Check                -- 11
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_CE_Range_Check                    -- 12
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_CE_Tag_Check                      -- 13
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_PE_Access_Before_Elaboration      -- 14
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_PE_Accessibility_Check            -- 15
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_PE_Address_Of_Intrinsic           -- 16
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_PE_Aliased_Parameters             -- 17
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_PE_All_Guards_Closed              -- 18
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_PE_Bad_Predicated_Generic_Type    -- 19
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_PE_Current_Task_In_Entry_Body     -- 20
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_PE_Duplicated_Entry_Address       -- 21
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_PE_Explicit_Raise                 -- 22
+     (File : System.Address; Line : Integer);
+
+   procedure Rcheck_PE_Implicit_Return                -- 24
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_PE_Misaligned_Address_Value       -- 25
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_PE_Missing_Return                 -- 26
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_PE_Overlaid_Controlled_Object     -- 27
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_PE_Potentially_Blocking_Operation -- 28
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_PE_Stubbed_Subprogram_Called      -- 29
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_PE_Unchecked_Union_Restriction    -- 30
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_PE_Non_Transportable_Actual       -- 31
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_SE_Empty_Storage_Pool             -- 32
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_SE_Explicit_Raise                 -- 33
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_SE_Infinite_Recursion             -- 34
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_SE_Object_Too_Large               -- 35
+     (File : System.Address; Line : Integer);
+   procedure Rcheck_PE_Stream_Operation_Not_Allowed   -- 36
+     (File : System.Address; Line : Integer);
+
+   procedure Rcheck_PE_Finalize_Raised_Exception      -- 23
+     (File : System.Address; Line : Integer);
+   --  This routine is separated out because it has quite different behavior
+   --  from the others. This is the "finalize/adjust raised exception". This
+   --  subprogram is always called with abort deferred, unlike all other
+   --  Rcheck_* subprograms, it needs to call Raise_Exception_No_Defer.
+
+   pragma Export (C, Rcheck_CE_Access_Check,
+                  "__gnat_rcheck_CE_Access_Check");
+   pragma Export (C, Rcheck_CE_Null_Access_Parameter,
+                  "__gnat_rcheck_CE_Null_Access_Parameter");
+   pragma Export (C, Rcheck_CE_Discriminant_Check,
+                  "__gnat_rcheck_CE_Discriminant_Check");
+   pragma Export (C, Rcheck_CE_Divide_By_Zero,
+                  "__gnat_rcheck_CE_Divide_By_Zero");
+   pragma Export (C, Rcheck_CE_Explicit_Raise,
+                  "__gnat_rcheck_CE_Explicit_Raise");
+   pragma Export (C, Rcheck_CE_Index_Check,
+                  "__gnat_rcheck_CE_Index_Check");
+   pragma Export (C, Rcheck_CE_Invalid_Data,
+                  "__gnat_rcheck_CE_Invalid_Data");
+   pragma Export (C, Rcheck_CE_Length_Check,
+                  "__gnat_rcheck_CE_Length_Check");
+   pragma Export (C, Rcheck_CE_Null_Exception_Id,
+                  "__gnat_rcheck_CE_Null_Exception_Id");
+   pragma Export (C, Rcheck_CE_Null_Not_Allowed,
+                  "__gnat_rcheck_CE_Null_Not_Allowed");
+   pragma Export (C, Rcheck_CE_Overflow_Check,
+                  "__gnat_rcheck_CE_Overflow_Check");
+   pragma Export (C, Rcheck_CE_Partition_Check,
+                  "__gnat_rcheck_CE_Partition_Check");
+   pragma Export (C, Rcheck_CE_Range_Check,
+                  "__gnat_rcheck_CE_Range_Check");
+   pragma Export (C, Rcheck_CE_Tag_Check,
+                  "__gnat_rcheck_CE_Tag_Check");
+   pragma Export (C, Rcheck_PE_Access_Before_Elaboration,
+                  "__gnat_rcheck_PE_Access_Before_Elaboration");
+   pragma Export (C, Rcheck_PE_Accessibility_Check,
+                  "__gnat_rcheck_PE_Accessibility_Check");
+   pragma Export (C, Rcheck_PE_Address_Of_Intrinsic,
+                  "__gnat_rcheck_PE_Address_Of_Intrinsic");
+   pragma Export (C, Rcheck_PE_Aliased_Parameters,
+                  "__gnat_rcheck_PE_Aliased_Parameters");
+   pragma Export (C, Rcheck_PE_All_Guards_Closed,
+                  "__gnat_rcheck_PE_All_Guards_Closed");
+   pragma Export (C, Rcheck_PE_Bad_Predicated_Generic_Type,
+                  "__gnat_rcheck_PE_Bad_Predicated_Generic_Type");
+   pragma Export (C, Rcheck_PE_Current_Task_In_Entry_Body,
+                  "__gnat_rcheck_PE_Current_Task_In_Entry_Body");
+   pragma Export (C, Rcheck_PE_Duplicated_Entry_Address,
+                  "__gnat_rcheck_PE_Duplicated_Entry_Address");
+   pragma Export (C, Rcheck_PE_Explicit_Raise,
+                  "__gnat_rcheck_PE_Explicit_Raise");
+   pragma Export (C, Rcheck_PE_Finalize_Raised_Exception,
+                  "__gnat_rcheck_PE_Finalize_Raised_Exception");
+   pragma Export (C, Rcheck_PE_Implicit_Return,
+                  "__gnat_rcheck_PE_Implicit_Return");
+   pragma Export (C, Rcheck_PE_Misaligned_Address_Value,
+                  "__gnat_rcheck_PE_Misaligned_Address_Value");
+   pragma Export (C, Rcheck_PE_Missing_Return,
+                  "__gnat_rcheck_PE_Missing_Return");
+   pragma Export (C, Rcheck_PE_Non_Transportable_Actual,
+                  "__gnat_rcheck_PE_Non_Transportable_Actual");
+   pragma Export (C, Rcheck_PE_Overlaid_Controlled_Object,
+                  "__gnat_rcheck_PE_Overlaid_Controlled_Object");
+   pragma Export (C, Rcheck_PE_Potentially_Blocking_Operation,
+                  "__gnat_rcheck_PE_Potentially_Blocking_Operation");
+   pragma Export (C, Rcheck_PE_Stream_Operation_Not_Allowed,
+                  "__gnat_rcheck_PE_Stream_Operation_Not_Allowed");
+   pragma Export (C, Rcheck_PE_Stubbed_Subprogram_Called,
+                  "__gnat_rcheck_PE_Stubbed_Subprogram_Called");
+   pragma Export (C, Rcheck_PE_Unchecked_Union_Restriction,
+                  "__gnat_rcheck_PE_Unchecked_Union_Restriction");
+   pragma Export (C, Rcheck_SE_Empty_Storage_Pool,
+                  "__gnat_rcheck_SE_Empty_Storage_Pool");
+   pragma Export (C, Rcheck_SE_Explicit_Raise,
+                  "__gnat_rcheck_SE_Explicit_Raise");
+   pragma Export (C, Rcheck_SE_Infinite_Recursion,
+                  "__gnat_rcheck_SE_Infinite_Recursion");
+   pragma Export (C, Rcheck_SE_Object_Too_Large,
+                  "__gnat_rcheck_SE_Object_Too_Large");
+
+   --  None of these procedures ever returns (they raise an exception). By
+   --  using pragma No_Return, we ensure that any junk code after the call,
+   --  such as normal return epilogue stuff, can be eliminated).
+
+   pragma No_Return (Rcheck_CE_Access_Check);
+   pragma No_Return (Rcheck_CE_Null_Access_Parameter);
+   pragma No_Return (Rcheck_CE_Discriminant_Check);
+   pragma No_Return (Rcheck_CE_Divide_By_Zero);
+   pragma No_Return (Rcheck_CE_Explicit_Raise);
+   pragma No_Return (Rcheck_CE_Index_Check);
+   pragma No_Return (Rcheck_CE_Invalid_Data);
+   pragma No_Return (Rcheck_CE_Length_Check);
+   pragma No_Return (Rcheck_CE_Null_Exception_Id);
+   pragma No_Return (Rcheck_CE_Null_Not_Allowed);
+   pragma No_Return (Rcheck_CE_Overflow_Check);
+   pragma No_Return (Rcheck_CE_Partition_Check);
+   pragma No_Return (Rcheck_CE_Range_Check);
+   pragma No_Return (Rcheck_CE_Tag_Check);
+   pragma No_Return (Rcheck_PE_Access_Before_Elaboration);
+   pragma No_Return (Rcheck_PE_Accessibility_Check);
+   pragma No_Return (Rcheck_PE_Address_Of_Intrinsic);
+   pragma No_Return (Rcheck_PE_Aliased_Parameters);
+   pragma No_Return (Rcheck_PE_All_Guards_Closed);
+   pragma No_Return (Rcheck_PE_Bad_Predicated_Generic_Type);
+   pragma No_Return (Rcheck_PE_Current_Task_In_Entry_Body);
+   pragma No_Return (Rcheck_PE_Duplicated_Entry_Address);
+   pragma No_Return (Rcheck_PE_Explicit_Raise);
+   pragma No_Return (Rcheck_PE_Implicit_Return);
+   pragma No_Return (Rcheck_PE_Misaligned_Address_Value);
+   pragma No_Return (Rcheck_PE_Missing_Return);
+   pragma No_Return (Rcheck_PE_Overlaid_Controlled_Object);
+   pragma No_Return (Rcheck_PE_Non_Transportable_Actual);
+   pragma No_Return (Rcheck_PE_Potentially_Blocking_Operation);
+   pragma No_Return (Rcheck_PE_Stream_Operation_Not_Allowed);
+   pragma No_Return (Rcheck_PE_Stubbed_Subprogram_Called);
+   pragma No_Return (Rcheck_PE_Unchecked_Union_Restriction);
+   pragma No_Return (Rcheck_PE_Finalize_Raised_Exception);
+   pragma No_Return (Rcheck_SE_Empty_Storage_Pool);
+   pragma No_Return (Rcheck_SE_Explicit_Raise);
+   pragma No_Return (Rcheck_SE_Infinite_Recursion);
+   pragma No_Return (Rcheck_SE_Object_Too_Large);
+
+   --  For compatibility with previous version of GNAT, to preserve bootstrap
 
    procedure Rcheck_00 (File : System.Address; Line : Integer);
    procedure Rcheck_01 (File : System.Address; Line : Integer);
@@ -381,6 +566,7 @@ package body Ada.Exceptions is
    procedure Rcheck_19 (File : System.Address; Line : Integer);
    procedure Rcheck_20 (File : System.Address; Line : Integer);
    procedure Rcheck_21 (File : System.Address; Line : Integer);
+   procedure Rcheck_22 (File : System.Address; Line : Integer);
    procedure Rcheck_23 (File : System.Address; Line : Integer);
    procedure Rcheck_24 (File : System.Address; Line : Integer);
    procedure Rcheck_25 (File : System.Address; Line : Integer);
@@ -393,14 +579,8 @@ package body Ada.Exceptions is
    procedure Rcheck_32 (File : System.Address; Line : Integer);
    procedure Rcheck_33 (File : System.Address; Line : Integer);
    procedure Rcheck_34 (File : System.Address; Line : Integer);
-
-   procedure Rcheck_22 (File : System.Address; Line : Integer);
-   --  This routine is separated out because it has quite different behavior
-   --  from the others. This is the "finalize/adjust raised exception". This
-   --  subprogram is always called with abort deferred, unlike all other
-   --  Rcheck_* routines, it needs to call Raise_Exception_No_Defer.
-   --
-   --  It should probably have a distinguished name ???
+   procedure Rcheck_35 (File : System.Address; Line : Integer);
+   procedure Rcheck_36 (File : System.Address; Line : Integer);
 
    pragma Export (C, Rcheck_00, "__gnat_rcheck_00");
    pragma Export (C, Rcheck_01, "__gnat_rcheck_01");
@@ -437,10 +617,12 @@ package body Ada.Exceptions is
    pragma Export (C, Rcheck_32, "__gnat_rcheck_32");
    pragma Export (C, Rcheck_33, "__gnat_rcheck_33");
    pragma Export (C, Rcheck_34, "__gnat_rcheck_34");
+   pragma Export (C, Rcheck_35, "__gnat_rcheck_35");
+   pragma Export (C, Rcheck_36, "__gnat_rcheck_36");
 
-   --  None of these procedures ever returns (they raise an exception!). By
+   --  None of these procedures ever returns (they raise an exception). By
    --  using pragma No_Return, we ensure that any junk code after the call,
-   --  such as normal return epilog stuff, can be eliminated).
+   --  such as normal return epilogue stuff, can be eliminated).
 
    pragma No_Return (Rcheck_00);
    pragma No_Return (Rcheck_01);
@@ -476,6 +658,8 @@ package body Ada.Exceptions is
    pragma No_Return (Rcheck_32);
    pragma No_Return (Rcheck_33);
    pragma No_Return (Rcheck_34);
+   pragma No_Return (Rcheck_35);
+   pragma No_Return (Rcheck_36);
 
    ---------------------------------------------
    -- Reason Strings for Run-Time Check Calls --
@@ -504,27 +688,29 @@ package body Ada.Exceptions is
    Rmsg_15 : constant String := "accessibility check failed"       & NUL;
    Rmsg_16 : constant String := "attempt to take address of"       &
                                 " intrinsic subprogram"            & NUL;
-   Rmsg_17 : constant String := "all guards closed"                & NUL;
-   Rmsg_18 : constant String := "improper use of generic subtype"  &
+   Rmsg_17 : constant String := "aliased parameters"               & NUL;
+   Rmsg_18 : constant String := "all guards closed"                & NUL;
+   Rmsg_19 : constant String := "improper use of generic subtype"  &
                                 " with predicate"                  & NUL;
-   Rmsg_19 : constant String := "Current_Task referenced in entry" &
+   Rmsg_20 : constant String := "Current_Task referenced in entry" &
                                 " body"                            & NUL;
-   Rmsg_20 : constant String := "duplicated entry address"         & NUL;
-   Rmsg_21 : constant String := "explicit raise"                   & NUL;
-   Rmsg_22 : constant String := "finalize/adjust raised exception" & NUL;
-   Rmsg_23 : constant String := "implicit return with No_Return"   & NUL;
-   Rmsg_24 : constant String := "misaligned address value"         & NUL;
-   Rmsg_25 : constant String := "missing return"                   & NUL;
-   Rmsg_26 : constant String := "overlaid controlled object"       & NUL;
-   Rmsg_27 : constant String := "potentially blocking operation"   & NUL;
-   Rmsg_28 : constant String := "stubbed subprogram called"        & NUL;
-   Rmsg_29 : constant String := "unchecked union restriction"      & NUL;
-   Rmsg_30 : constant String := "actual/returned class-wide"       &
+   Rmsg_21 : constant String := "duplicated entry address"         & NUL;
+   Rmsg_22 : constant String := "explicit raise"                   & NUL;
+   Rmsg_23 : constant String := "finalize/adjust raised exception" & NUL;
+   Rmsg_24 : constant String := "implicit return with No_Return"   & NUL;
+   Rmsg_25 : constant String := "misaligned address value"         & NUL;
+   Rmsg_26 : constant String := "missing return"                   & NUL;
+   Rmsg_27 : constant String := "overlaid controlled object"       & NUL;
+   Rmsg_28 : constant String := "potentially blocking operation"   & NUL;
+   Rmsg_29 : constant String := "stubbed subprogram called"        & NUL;
+   Rmsg_30 : constant String := "unchecked union restriction"      & NUL;
+   Rmsg_31 : constant String := "actual/returned class-wide"       &
                                 " value not transportable"         & NUL;
-   Rmsg_31 : constant String := "empty storage pool"               & NUL;
-   Rmsg_32 : constant String := "explicit raise"                   & NUL;
-   Rmsg_33 : constant String := "infinite recursion"               & NUL;
-   Rmsg_34 : constant String := "object too large"                 & NUL;
+   Rmsg_32 : constant String := "empty storage pool"               & NUL;
+   Rmsg_33 : constant String := "explicit raise"                   & NUL;
+   Rmsg_34 : constant String := "infinite recursion"               & NUL;
+   Rmsg_35 : constant String := "object too large"                 & NUL;
+   Rmsg_36 : constant String := "stream operation not allowed"     & NUL;
 
    -----------------------
    -- Polling Interface --
@@ -541,15 +727,6 @@ package body Ada.Exceptions is
    --  The actual polling routine is separate, so that it can easily be
    --  replaced with a target dependent version.
 
-   ------------------------------
-   -- Current_Target_Exception --
-   ------------------------------
-
-   function Current_Target_Exception return Exception_Occurrence is
-   begin
-      return Null_Occurrence;
-   end Current_Target_Exception;
-
    -------------------
    -- EId_To_String --
    -------------------
@@ -562,7 +739,7 @@ package body Ada.Exceptions is
    ------------------
 
    --  We use the null string to represent the null occurrence, otherwise we
-   --  output the Exception_Information string for the occurrence.
+   --  output the Untailored_Exception_Information string for the occurrence.
 
    function EO_To_String (X : Exception_Occurrence) return String
      renames Stream_Attributes.EO_To_String;
@@ -594,9 +771,9 @@ package body Ada.Exceptions is
    begin
       if X.Id = Null_Id then
          raise Constraint_Error;
+      else
+         return Exception_Data.Exception_Information (X);
       end if;
-
-      return Exception_Data.Exception_Information (X);
    end Exception_Information;
 
    -----------------------
@@ -711,14 +888,14 @@ package body Ada.Exceptions is
       if Jumpbuf_Ptr /= Null_Address then
          if not Excep.Exception_Raised then
             Excep.Exception_Raised := True;
-            Exception_Traces.Notify_Handled_Exception;
+            Exception_Traces.Notify_Handled_Exception (Excep);
          end if;
 
          builtin_longjmp (Jumpbuf_Ptr, 1);
 
       else
-         Exception_Traces.Notify_Unhandled_Exception;
-         Exception_Traces.Unhandled_Exception_Terminate;
+         Exception_Traces.Notify_Unhandled_Exception (Excep);
+         Exception_Traces.Unhandled_Exception_Terminate (Excep);
       end if;
    end Process_Raise_Exception;
 
@@ -769,10 +946,10 @@ package body Ada.Exceptions is
       --  the parameter value in a local variable, and add a pragma Volatile to
       --  make sure it is spilled. The pragma Warnings (Off) is needed because
       --  the compiler knows that Id is not referenced and that this use of
-      --  pragma Volatile is peculiar!
+      --  pragma Volatile is peculiar.
 
    begin
-      Debug_Raise_Exception (E => SSL.Exception_Data_Ptr (E));
+      Debug_Raise_Exception (E => SSL.Exception_Data_Ptr (E), Message => "");
       Process_Raise_Exception (E);
    end Raise_Current_Excep;
 
@@ -784,8 +961,8 @@ package body Ada.Exceptions is
      (E       : Exception_Id;
       Message : String := "")
    is
-      EF : Exception_Id := E;
-
+      EF    : Exception_Id := E;
+      Excep : constant EOA := Get_Current_Excep.all;
    begin
       --  Raise CE if E = Null_ID (AI-446)
 
@@ -795,7 +972,7 @@ package body Ada.Exceptions is
 
       --  Go ahead and raise appropriate exception
 
-      Exception_Data.Set_Exception_Msg (EF, Message);
+      Exception_Data.Set_Exception_Msg (Excep, EF, Message);
       Abort_Defer.all;
       Raise_Current_Excep (EF);
    end Raise_Exception;
@@ -808,8 +985,9 @@ package body Ada.Exceptions is
      (E       : Exception_Id;
       Message : String := "")
    is
+      Excep : constant EOA := Get_Current_Excep.all;
    begin
-      Exception_Data.Set_Exception_Msg (E, Message);
+      Exception_Data.Set_Exception_Msg (Excep, E, Message);
       Abort_Defer.all;
       Raise_Current_Excep (E);
    end Raise_Exception_Always;
@@ -822,8 +1000,9 @@ package body Ada.Exceptions is
      (E       : Exception_Id;
       Message : String := "")
    is
+      Excep : constant EOA := Get_Current_Excep.all;
    begin
-      Exception_Data.Set_Exception_Msg (E, Message);
+      Exception_Data.Set_Exception_Msg (Excep, E, Message);
 
       --  Do not call Abort_Defer.all, as specified by the spec
 
@@ -840,10 +1019,9 @@ package body Ada.Exceptions is
       Prefix             : constant String := "adjust/finalize raised ";
       Orig_Msg           : constant String := Exception_Message (X);
       Orig_Prefix_Length : constant Natural :=
-                             Integer'Min (Prefix'Length, Orig_Msg'Length);
+        Integer'Min (Prefix'Length, Orig_Msg'Length);
       Orig_Prefix        : String renames Orig_Msg
-                            (Orig_Msg'First ..
-                             Orig_Msg'First + Orig_Prefix_Length - 1);
+        (Orig_Msg'First ..  Orig_Msg'First + Orig_Prefix_Length - 1);
    begin
       --  Message already has proper prefix, just re-reraise
 
@@ -883,8 +1061,9 @@ package body Ada.Exceptions is
      (E : Exception_Id;
       M : System.Address)
    is
+      Excep : constant EOA := Get_Current_Excep.all;
    begin
-      Exception_Data.Set_Exception_C_Msg (E, M);
+      Exception_Data.Set_Exception_C_Msg (Excep, E, M);
       Abort_Defer.all;
       Process_Raise_Exception (E);
    end Raise_From_Signal_Handler;
@@ -953,8 +1132,9 @@ package body Ada.Exceptions is
       L : Integer;
       M : System.Address := System.Null_Address)
    is
+      Excep : constant EOA := Get_Current_Excep.all;
    begin
-      Exception_Data.Set_Exception_C_Msg (E, F, L, Msg2 => M);
+      Exception_Data.Set_Exception_C_Msg (Excep, E, F, L, Msg2 => M);
       Abort_Defer.all;
       Raise_Current_Excep (E);
    end Raise_With_Location_And_Msg;
@@ -975,193 +1155,354 @@ package body Ada.Exceptions is
       Raise_Current_Excep (E);
    end Raise_With_Msg;
 
-   --------------------------------------
-   -- Calls to Run-Time Check Routines --
-   --------------------------------------
+   -----------------------------------------
+   -- Calls to Run-Time Check Subprograms --
+   -----------------------------------------
 
-   procedure Rcheck_00 (File : System.Address; Line : Integer) is
+   procedure Rcheck_CE_Access_Check
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Constraint_Error_Msg (File, Line, Rmsg_00'Address);
-   end Rcheck_00;
+   end Rcheck_CE_Access_Check;
 
-   procedure Rcheck_01 (File : System.Address; Line : Integer) is
+   procedure Rcheck_CE_Null_Access_Parameter
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Constraint_Error_Msg (File, Line, Rmsg_01'Address);
-   end Rcheck_01;
+   end Rcheck_CE_Null_Access_Parameter;
 
-   procedure Rcheck_02 (File : System.Address; Line : Integer) is
+   procedure Rcheck_CE_Discriminant_Check
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Constraint_Error_Msg (File, Line, Rmsg_02'Address);
-   end Rcheck_02;
+   end Rcheck_CE_Discriminant_Check;
 
-   procedure Rcheck_03 (File : System.Address; Line : Integer) is
+   procedure Rcheck_CE_Divide_By_Zero
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Constraint_Error_Msg (File, Line, Rmsg_03'Address);
-   end Rcheck_03;
+   end Rcheck_CE_Divide_By_Zero;
 
-   procedure Rcheck_04 (File : System.Address; Line : Integer) is
+   procedure Rcheck_CE_Explicit_Raise
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Constraint_Error_Msg (File, Line, Rmsg_04'Address);
-   end Rcheck_04;
+   end Rcheck_CE_Explicit_Raise;
 
-   procedure Rcheck_05 (File : System.Address; Line : Integer) is
+   procedure Rcheck_CE_Index_Check
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Constraint_Error_Msg (File, Line, Rmsg_05'Address);
-   end Rcheck_05;
+   end Rcheck_CE_Index_Check;
 
-   procedure Rcheck_06 (File : System.Address; Line : Integer) is
+   procedure Rcheck_CE_Invalid_Data
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Constraint_Error_Msg (File, Line, Rmsg_06'Address);
-   end Rcheck_06;
+   end Rcheck_CE_Invalid_Data;
 
-   procedure Rcheck_07 (File : System.Address; Line : Integer) is
+   procedure Rcheck_CE_Length_Check
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Constraint_Error_Msg (File, Line, Rmsg_07'Address);
-   end Rcheck_07;
+   end Rcheck_CE_Length_Check;
 
-   procedure Rcheck_08 (File : System.Address; Line : Integer) is
+   procedure Rcheck_CE_Null_Exception_Id
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Constraint_Error_Msg (File, Line, Rmsg_08'Address);
-   end Rcheck_08;
+   end Rcheck_CE_Null_Exception_Id;
 
-   procedure Rcheck_09 (File : System.Address; Line : Integer) is
+   procedure Rcheck_CE_Null_Not_Allowed
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Constraint_Error_Msg (File, Line, Rmsg_09'Address);
-   end Rcheck_09;
+   end Rcheck_CE_Null_Not_Allowed;
 
-   procedure Rcheck_10 (File : System.Address; Line : Integer) is
+   procedure Rcheck_CE_Overflow_Check
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Constraint_Error_Msg (File, Line, Rmsg_10'Address);
-   end Rcheck_10;
+   end Rcheck_CE_Overflow_Check;
 
-   procedure Rcheck_11 (File : System.Address; Line : Integer) is
+   procedure Rcheck_CE_Partition_Check
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Constraint_Error_Msg (File, Line, Rmsg_11'Address);
-   end Rcheck_11;
+   end Rcheck_CE_Partition_Check;
 
-   procedure Rcheck_12 (File : System.Address; Line : Integer) is
+   procedure Rcheck_CE_Range_Check
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Constraint_Error_Msg (File, Line, Rmsg_12'Address);
-   end Rcheck_12;
+   end Rcheck_CE_Range_Check;
 
-   procedure Rcheck_13 (File : System.Address; Line : Integer) is
+   procedure Rcheck_CE_Tag_Check
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Constraint_Error_Msg (File, Line, Rmsg_13'Address);
-   end Rcheck_13;
+   end Rcheck_CE_Tag_Check;
 
-   procedure Rcheck_14 (File : System.Address; Line : Integer) is
+   procedure Rcheck_PE_Access_Before_Elaboration
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Program_Error_Msg (File, Line, Rmsg_14'Address);
-   end Rcheck_14;
+   end Rcheck_PE_Access_Before_Elaboration;
 
-   procedure Rcheck_15 (File : System.Address; Line : Integer) is
+   procedure Rcheck_PE_Accessibility_Check
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Program_Error_Msg (File, Line, Rmsg_15'Address);
-   end Rcheck_15;
+   end Rcheck_PE_Accessibility_Check;
 
-   procedure Rcheck_16 (File : System.Address; Line : Integer) is
+   procedure Rcheck_PE_Address_Of_Intrinsic
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Program_Error_Msg (File, Line, Rmsg_16'Address);
-   end Rcheck_16;
+   end Rcheck_PE_Address_Of_Intrinsic;
 
-   procedure Rcheck_17 (File : System.Address; Line : Integer) is
+   procedure Rcheck_PE_Aliased_Parameters
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Program_Error_Msg (File, Line, Rmsg_17'Address);
-   end Rcheck_17;
+   end Rcheck_PE_Aliased_Parameters;
 
-   procedure Rcheck_18 (File : System.Address; Line : Integer) is
+   procedure Rcheck_PE_All_Guards_Closed
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Program_Error_Msg (File, Line, Rmsg_18'Address);
-   end Rcheck_18;
+   end Rcheck_PE_All_Guards_Closed;
 
-   procedure Rcheck_19 (File : System.Address; Line : Integer) is
+   procedure Rcheck_PE_Bad_Predicated_Generic_Type
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Program_Error_Msg (File, Line, Rmsg_19'Address);
-   end Rcheck_19;
+   end Rcheck_PE_Bad_Predicated_Generic_Type;
 
-   procedure Rcheck_20 (File : System.Address; Line : Integer) is
+   procedure Rcheck_PE_Current_Task_In_Entry_Body
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Program_Error_Msg (File, Line, Rmsg_20'Address);
-   end Rcheck_20;
+   end Rcheck_PE_Current_Task_In_Entry_Body;
 
-   procedure Rcheck_21 (File : System.Address; Line : Integer) is
+   procedure Rcheck_PE_Duplicated_Entry_Address
+     (File : System.Address; Line : Integer)
+   is
    begin
       Raise_Program_Error_Msg (File, Line, Rmsg_21'Address);
-   end Rcheck_21;
+   end Rcheck_PE_Duplicated_Entry_Address;
 
-   procedure Rcheck_22 (File : System.Address; Line : Integer) is
-      E : constant Exception_Id := Program_Error_Def'Access;
+   procedure Rcheck_PE_Explicit_Raise
+     (File : System.Address; Line : Integer)
+   is
+   begin
+      Raise_Program_Error_Msg (File, Line, Rmsg_22'Address);
+   end Rcheck_PE_Explicit_Raise;
+
+   procedure Rcheck_PE_Implicit_Return
+     (File : System.Address; Line : Integer)
+   is
+   begin
+      Raise_Program_Error_Msg (File, Line, Rmsg_24'Address);
+   end Rcheck_PE_Implicit_Return;
+
+   procedure Rcheck_PE_Misaligned_Address_Value
+     (File : System.Address; Line : Integer)
+   is
+   begin
+      Raise_Program_Error_Msg (File, Line, Rmsg_25'Address);
+   end Rcheck_PE_Misaligned_Address_Value;
+
+   procedure Rcheck_PE_Missing_Return
+     (File : System.Address; Line : Integer)
+   is
+   begin
+      Raise_Program_Error_Msg (File, Line, Rmsg_26'Address);
+   end Rcheck_PE_Missing_Return;
+
+   procedure Rcheck_PE_Overlaid_Controlled_Object
+     (File : System.Address; Line : Integer)
+   is
+   begin
+      Raise_Program_Error_Msg (File, Line, Rmsg_27'Address);
+   end Rcheck_PE_Overlaid_Controlled_Object;
+
+   procedure Rcheck_PE_Potentially_Blocking_Operation
+     (File : System.Address; Line : Integer)
+   is
+   begin
+      Raise_Program_Error_Msg (File, Line, Rmsg_28'Address);
+   end Rcheck_PE_Potentially_Blocking_Operation;
+
+   procedure Rcheck_PE_Stubbed_Subprogram_Called
+     (File : System.Address; Line : Integer)
+   is
+   begin
+      Raise_Program_Error_Msg (File, Line, Rmsg_29'Address);
+   end Rcheck_PE_Stubbed_Subprogram_Called;
+
+   procedure Rcheck_PE_Unchecked_Union_Restriction
+     (File : System.Address; Line : Integer)
+   is
+   begin
+      Raise_Program_Error_Msg (File, Line, Rmsg_30'Address);
+   end Rcheck_PE_Unchecked_Union_Restriction;
+
+   procedure Rcheck_PE_Non_Transportable_Actual
+     (File : System.Address; Line : Integer)
+   is
+   begin
+      Raise_Program_Error_Msg (File, Line, Rmsg_31'Address);
+   end Rcheck_PE_Non_Transportable_Actual;
+
+   procedure Rcheck_SE_Empty_Storage_Pool
+     (File : System.Address; Line : Integer)
+   is
+   begin
+      Raise_Storage_Error_Msg (File, Line, Rmsg_32'Address);
+   end Rcheck_SE_Empty_Storage_Pool;
+
+   procedure Rcheck_SE_Explicit_Raise
+     (File : System.Address; Line : Integer)
+   is
+   begin
+      Raise_Storage_Error_Msg (File, Line, Rmsg_33'Address);
+   end Rcheck_SE_Explicit_Raise;
+
+   procedure Rcheck_SE_Infinite_Recursion
+     (File : System.Address; Line : Integer)
+   is
+   begin
+      Raise_Storage_Error_Msg (File, Line, Rmsg_34'Address);
+   end Rcheck_SE_Infinite_Recursion;
+
+   procedure Rcheck_SE_Object_Too_Large
+     (File : System.Address; Line : Integer)
+   is
+   begin
+      Raise_Storage_Error_Msg (File, Line, Rmsg_35'Address);
+   end Rcheck_SE_Object_Too_Large;
+
+   procedure Rcheck_PE_Stream_Operation_Not_Allowed
+     (File : System.Address; Line : Integer)
+   is
+   begin
+      Raise_Program_Error_Msg (File, Line, Rmsg_36'Address);
+   end Rcheck_PE_Stream_Operation_Not_Allowed;
+
+   procedure Rcheck_PE_Finalize_Raised_Exception
+     (File : System.Address; Line : Integer)
+   is
+      E     : constant Exception_Id := Program_Error_Def'Access;
+      Excep : constant EOA := Get_Current_Excep.all;
 
    begin
       --  This is "finalize/adjust raised exception". This subprogram is always
-      --  called with abort deferred, unlike all other Rcheck_* routines, it
-      --  needs to call Raise_Exception_No_Defer.
+      --  called with abort deferred, unlike all other Rcheck_* subprograms,
+      --  itneeds to call Raise_Exception_No_Defer.
 
       --  This is consistent with Raise_From_Controlled_Operation
 
-      Exception_Data.Set_Exception_C_Msg (E, File, Line, 0, Rmsg_22'Address);
+      Exception_Data.Set_Exception_C_Msg (Excep, E, File, Line, 0,
+                                          Rmsg_23'Address);
       Raise_Current_Excep (E);
-   end Rcheck_22;
+   end Rcheck_PE_Finalize_Raised_Exception;
 
-   procedure Rcheck_23 (File : System.Address; Line : Integer) is
-   begin
-      Raise_Program_Error_Msg (File, Line, Rmsg_23'Address);
-   end Rcheck_23;
-
-   procedure Rcheck_24 (File : System.Address; Line : Integer) is
-   begin
-      Raise_Program_Error_Msg (File, Line, Rmsg_24'Address);
-   end Rcheck_24;
-
-   procedure Rcheck_25 (File : System.Address; Line : Integer) is
-   begin
-      Raise_Program_Error_Msg (File, Line, Rmsg_25'Address);
-   end Rcheck_25;
-
-   procedure Rcheck_26 (File : System.Address; Line : Integer) is
-   begin
-      Raise_Program_Error_Msg (File, Line, Rmsg_26'Address);
-   end Rcheck_26;
-
-   procedure Rcheck_27 (File : System.Address; Line : Integer) is
-   begin
-      Raise_Program_Error_Msg (File, Line, Rmsg_27'Address);
-   end Rcheck_27;
-
-   procedure Rcheck_28 (File : System.Address; Line : Integer) is
-   begin
-      Raise_Program_Error_Msg (File, Line, Rmsg_28'Address);
-   end Rcheck_28;
-
-   procedure Rcheck_29 (File : System.Address; Line : Integer) is
-   begin
-      Raise_Program_Error_Msg (File, Line, Rmsg_29'Address);
-   end Rcheck_29;
-
-   procedure Rcheck_30 (File : System.Address; Line : Integer) is
-   begin
-      Raise_Program_Error_Msg (File, Line, Rmsg_30'Address);
-   end Rcheck_30;
-
-   procedure Rcheck_31 (File : System.Address; Line : Integer) is
-   begin
-      Raise_Storage_Error_Msg (File, Line, Rmsg_31'Address);
-   end Rcheck_31;
-
-   procedure Rcheck_32 (File : System.Address; Line : Integer) is
-   begin
-      Raise_Storage_Error_Msg (File, Line, Rmsg_32'Address);
-   end Rcheck_32;
-
-   procedure Rcheck_33 (File : System.Address; Line : Integer) is
-   begin
-      Raise_Storage_Error_Msg (File, Line, Rmsg_33'Address);
-   end Rcheck_33;
-
-   procedure Rcheck_34 (File : System.Address; Line : Integer) is
-   begin
-      Raise_Storage_Error_Msg (File, Line, Rmsg_34'Address);
-   end Rcheck_34;
+   procedure Rcheck_00 (File : System.Address; Line : Integer)
+     renames Rcheck_CE_Access_Check;
+   procedure Rcheck_01 (File : System.Address; Line : Integer)
+     renames Rcheck_CE_Null_Access_Parameter;
+   procedure Rcheck_02 (File : System.Address; Line : Integer)
+     renames Rcheck_CE_Discriminant_Check;
+   procedure Rcheck_03 (File : System.Address; Line : Integer)
+     renames Rcheck_CE_Divide_By_Zero;
+   procedure Rcheck_04 (File : System.Address; Line : Integer)
+     renames Rcheck_CE_Explicit_Raise;
+   procedure Rcheck_05 (File : System.Address; Line : Integer)
+     renames Rcheck_CE_Index_Check;
+   procedure Rcheck_06 (File : System.Address; Line : Integer)
+     renames Rcheck_CE_Invalid_Data;
+   procedure Rcheck_07 (File : System.Address; Line : Integer)
+     renames Rcheck_CE_Length_Check;
+   procedure Rcheck_08 (File : System.Address; Line : Integer)
+     renames Rcheck_CE_Null_Exception_Id;
+   procedure Rcheck_09 (File : System.Address; Line : Integer)
+     renames Rcheck_CE_Null_Not_Allowed;
+   procedure Rcheck_10 (File : System.Address; Line : Integer)
+     renames Rcheck_CE_Overflow_Check;
+   procedure Rcheck_11 (File : System.Address; Line : Integer)
+     renames Rcheck_CE_Partition_Check;
+   procedure Rcheck_12 (File : System.Address; Line : Integer)
+     renames Rcheck_CE_Range_Check;
+   procedure Rcheck_13 (File : System.Address; Line : Integer)
+     renames Rcheck_CE_Tag_Check;
+   procedure Rcheck_14 (File : System.Address; Line : Integer)
+     renames Rcheck_PE_Access_Before_Elaboration;
+   procedure Rcheck_15 (File : System.Address; Line : Integer)
+     renames Rcheck_PE_Accessibility_Check;
+   procedure Rcheck_16 (File : System.Address; Line : Integer)
+     renames Rcheck_PE_Address_Of_Intrinsic;
+   procedure Rcheck_17 (File : System.Address; Line : Integer)
+     renames Rcheck_PE_Aliased_Parameters;
+   procedure Rcheck_18 (File : System.Address; Line : Integer)
+     renames Rcheck_PE_All_Guards_Closed;
+   procedure Rcheck_19 (File : System.Address; Line : Integer)
+     renames Rcheck_PE_Bad_Predicated_Generic_Type;
+   procedure Rcheck_20 (File : System.Address; Line : Integer)
+     renames Rcheck_PE_Current_Task_In_Entry_Body;
+   procedure Rcheck_21 (File : System.Address; Line : Integer)
+     renames Rcheck_PE_Duplicated_Entry_Address;
+   procedure Rcheck_22 (File : System.Address; Line : Integer)
+     renames Rcheck_PE_Explicit_Raise;
+   procedure Rcheck_23 (File : System.Address; Line : Integer)
+     renames Rcheck_PE_Finalize_Raised_Exception;
+   procedure Rcheck_24 (File : System.Address; Line : Integer)
+     renames Rcheck_PE_Implicit_Return;
+   procedure Rcheck_25 (File : System.Address; Line : Integer)
+     renames Rcheck_PE_Misaligned_Address_Value;
+   procedure Rcheck_26 (File : System.Address; Line : Integer)
+     renames Rcheck_PE_Missing_Return;
+   procedure Rcheck_27 (File : System.Address; Line : Integer)
+     renames Rcheck_PE_Overlaid_Controlled_Object;
+   procedure Rcheck_28 (File : System.Address; Line : Integer)
+     renames Rcheck_PE_Potentially_Blocking_Operation;
+   procedure Rcheck_29 (File : System.Address; Line : Integer)
+     renames Rcheck_PE_Stubbed_Subprogram_Called;
+   procedure Rcheck_30 (File : System.Address; Line : Integer)
+     renames Rcheck_PE_Unchecked_Union_Restriction;
+   procedure Rcheck_31 (File : System.Address; Line : Integer)
+     renames Rcheck_PE_Non_Transportable_Actual;
+   procedure Rcheck_32 (File : System.Address; Line : Integer)
+     renames Rcheck_SE_Empty_Storage_Pool;
+   procedure Rcheck_33 (File : System.Address; Line : Integer)
+     renames Rcheck_SE_Explicit_Raise;
+   procedure Rcheck_34 (File : System.Address; Line : Integer)
+     renames Rcheck_SE_Infinite_Recursion;
+   procedure Rcheck_35 (File : System.Address; Line : Integer)
+     renames Rcheck_SE_Object_Too_Large;
+   procedure Rcheck_36 (File : System.Address; Line : Integer)
+     renames Rcheck_PE_Stream_Operation_Not_Allowed;
 
    -------------
    -- Reraise --
@@ -1174,6 +1515,19 @@ package body Ada.Exceptions is
       Abort_Defer.all;
       Raise_Current_Excep (Excep.Id);
    end Reraise;
+
+   --------------------------------------
+   -- Reraise_Library_Exception_If_Any --
+   --------------------------------------
+
+   procedure Reraise_Library_Exception_If_Any is
+      LE : Exception_Occurrence;
+   begin
+      if Library_Exception_Set then
+         LE := Library_Exception;
+         Raise_From_Controlled_Operation (LE);
+      end if;
+   end Reraise_Library_Exception_If_Any;
 
    ------------------------
    -- Reraise_Occurrence --

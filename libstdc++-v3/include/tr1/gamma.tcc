@@ -1,7 +1,6 @@
 // Special functions -*- C++ -*-
 
-// Copyright (C) 2006, 2007, 2008, 2009, 2010
-// Free Software Foundation, Inc.
+// Copyright (C) 2006-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -47,12 +46,19 @@
 #ifndef _GLIBCXX_TR1_GAMMA_TCC
 #define _GLIBCXX_TR1_GAMMA_TCC 1
 
-#include "special_function_util.h"
+#include <tr1/special_function_util.h>
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
+#if _GLIBCXX_USE_STD_SPEC_FUNCS
+# define _GLIBCXX_MATH_NS ::std
+#elif defined(_GLIBCXX_TR1_CMATH)
 namespace tr1
 {
+# define _GLIBCXX_MATH_NS ::std::tr1
+#else
+# error do not include this header directly, use <cmath> or <tr1/cmath>
+#endif
   // Implementation-space details.
   namespace __detail
   {
@@ -68,7 +74,8 @@ namespace tr1
      *   @return  The Bernoulli number of order n.
      */
     template <typename _Tp>
-    _Tp __bernoulli_series(unsigned int __n)
+    _Tp
+    __bernoulli_series(unsigned int __n)
     {
 
       static const _Tp __num[28] = {
@@ -131,10 +138,8 @@ namespace tr1
      */
     template<typename _Tp>
     inline _Tp
-    __bernoulli(const int __n)
-    {
-      return __bernoulli_series<_Tp>(__n);
-    }
+    __bernoulli(int __n)
+    { return __bernoulli_series<_Tp>(__n); }
 
 
     /**
@@ -147,7 +152,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __log_gamma_bernoulli(const _Tp __x)
+    __log_gamma_bernoulli(_Tp __x)
     {
       _Tp __lg = (__x - _Tp(0.5L)) * std::log(__x) - __x
                + _Tp(0.5L) * std::log(_Tp(2)
@@ -175,7 +180,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __log_gamma_lanczos(const _Tp __x)
+    __log_gamma_lanczos(_Tp __x)
     {
       const _Tp __xm1 = __x - _Tp(1);
 
@@ -219,7 +224,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __log_gamma(const _Tp __x)
+    __log_gamma(_Tp __x)
     {
       if (__x > _Tp(0.5L))
         return __log_gamma_lanczos(__x);
@@ -246,7 +251,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __log_gamma_sign(const _Tp __x)
+    __log_gamma_sign(_Tp __x)
     {
       if (__x > _Tp(0))
         return _Tp(1);
@@ -277,16 +282,16 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __log_bincoef(const unsigned int __n, const unsigned int __k)
+    __log_bincoef(unsigned int __n, unsigned int __k)
     {
       //  Max e exponent before overflow.
       static const _Tp __max_bincoeff
                       = std::numeric_limits<_Tp>::max_exponent10
                       * std::log(_Tp(10)) - _Tp(1);
 #if _GLIBCXX_USE_C99_MATH_TR1
-      _Tp __coeff =  std::tr1::lgamma(_Tp(1 + __n))
-                  - std::tr1::lgamma(_Tp(1 + __k))
-                  - std::tr1::lgamma(_Tp(1 + __n - __k));
+      _Tp __coeff =  _GLIBCXX_MATH_NS::lgamma(_Tp(1 + __n))
+                  - _GLIBCXX_MATH_NS::lgamma(_Tp(1 + __k))
+                  - _GLIBCXX_MATH_NS::lgamma(_Tp(1 + __n - __k));
 #else
       _Tp __coeff =  __log_gamma(_Tp(1 + __n))
                   - __log_gamma(_Tp(1 + __k))
@@ -308,7 +313,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __bincoef(const unsigned int __n, const unsigned int __k)
+    __bincoef(unsigned int __n, unsigned int __k)
     {
       //  Max e exponent before overflow.
       static const _Tp __max_bincoeff
@@ -331,10 +336,8 @@ namespace tr1
      */
     template<typename _Tp>
     inline _Tp
-    __gamma(const _Tp __x)
-    {
-      return std::exp(__log_gamma(__x));
-    }
+    __gamma(_Tp __x)
+    { return std::exp(__log_gamma(__x)); }
 
 
     /**
@@ -352,7 +355,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __psi_series(const _Tp __x)
+    __psi_series(_Tp __x)
     {
       _Tp __sum = -__numeric_constants<_Tp>::__gamma_e() - _Tp(1) / __x;
       const unsigned int __max_iter = 100000;
@@ -382,7 +385,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __psi_asymp(const _Tp __x)
+    __psi_asymp(_Tp __x)
     {
       _Tp __sum = std::log(__x) - _Tp(0.5L) / __x;
       const _Tp __xx = __x * __x;
@@ -413,7 +416,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __psi(const _Tp __x)
+    __psi(_Tp __x)
     {
       const int __n = static_cast<int>(__x + 0.5L);
       const _Tp __eps = _Tp(4) * std::numeric_limits<_Tp>::epsilon();
@@ -442,7 +445,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __psi(const unsigned int __n, const _Tp __x)
+    __psi(unsigned int __n, _Tp __x)
     {
       if (__x <= _Tp(0))
         std::__throw_domain_error(__N("Argument out of range "
@@ -453,7 +456,7 @@ namespace tr1
         {
           const _Tp __hzeta = __hurwitz_zeta(_Tp(__n + 1), __x);
 #if _GLIBCXX_USE_C99_MATH_TR1
-          const _Tp __ln_nfact = std::tr1::lgamma(_Tp(__n + 1));
+          const _Tp __ln_nfact = _GLIBCXX_MATH_NS::lgamma(_Tp(__n + 1));
 #else
           const _Tp __ln_nfact = __log_gamma(_Tp(__n + 1));
 #endif
@@ -465,9 +468,12 @@ namespace tr1
     }
 
   _GLIBCXX_END_NAMESPACE_VERSION
-  } // namespace std::tr1::__detail
-}
-}
+  } // namespace __detail
+#undef _GLIBCXX_MATH_NS
+#if ! _GLIBCXX_USE_STD_SPEC_FUNCS && defined(_GLIBCXX_TR1_CMATH)
+} // namespace tr1
+#endif
+} // namespace std
 
 #endif // _GLIBCXX_TR1_GAMMA_TCC
 

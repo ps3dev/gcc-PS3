@@ -1,5 +1,5 @@
 /* Language-dependent trees for LTO.
-   Copyright 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2009-2017 Free Software Foundation, Inc.
    Contributed by CodeSourcery, Inc.
 
 This file is part of GCC.
@@ -21,8 +21,6 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef GCC_LTO_TREE_H
 #define GCC_LTO_TREE_H
 
-#include "plugin-api.h"
-
 struct GTY(()) lang_identifier
 {
   struct tree_identifier base;
@@ -33,7 +31,7 @@ struct GTY(()) lang_decl
   int dummy;  /* Added because ggc does not like empty structs.  */
 };
 
-struct GTY((variable_size)) lang_type
+struct GTY(()) lang_type
 {
   int dummy;  /* Added because ggc does not like empty structs.  */
 };
@@ -48,7 +46,7 @@ enum lto_tree_node_structure_enum {
 };
 
 union GTY((desc ("lto_tree_node_structure (&%h)"),
-	  chain_next ("CODE_CONTAINS_STRUCT (TREE_CODE (&%h.generic), TS_COMMON) ? ((union lang_tree_node *) TREE_CHAIN (&%h.generic)) : NULL")))
+	  chain_next ("CODE_CONTAINS_STRUCT (TREE_CODE (&%h.generic), TS_TYPE_COMMON) ? ((union lang_tree_node *) %h.generic.type_common.next_variant) : CODE_CONTAINS_STRUCT (TREE_CODE (&%h.generic), TS_COMMON) ? ((union lang_tree_node *) %h.generic.common.chain) : NULL")))
     lang_tree_node
 {
   union tree_node GTY ((tag ("TS_LTO_GENERIC"),

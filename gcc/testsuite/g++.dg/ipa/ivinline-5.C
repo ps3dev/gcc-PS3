@@ -1,6 +1,6 @@
 /* Verify that virtual call inlining does not pick a wrong method when
    there is a user defined ancestor in an object.  */
-/* { dg-do run } */
+/* { dg-do run { target nonpic } } */
 /* { dg-options "-O3 -fdump-ipa-inline -fno-early-inlining -fno-ipa-cp"  } */
 
 extern "C" void abort (void);
@@ -52,4 +52,3 @@ int main (int argc, char *argv[])
 
 /* { dg-final { scan-ipa-dump "A::foo\[^\\n\]*inline copy in int main"  "inline"  } } */
 /* { dg-final { scan-ipa-dump "B::foo\[^\\n\]*inline copy in int main"  "inline"  } } */
-/* { dg-final { cleanup-ipa-dump "inline" } } */

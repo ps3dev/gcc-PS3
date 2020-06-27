@@ -1,6 +1,5 @@
 /* Solaris support needed only by C/C++ frontends.
-   Copyright (C) 2004, 2005, 2007, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 2004-2017 Free Software Foundation, Inc.
    Contributed by CodeSourcery, LLC.
 
 This file is part of GCC.
@@ -22,16 +21,15 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tree.h"
 #include "tm.h"
-#include "tm_p.h"
+#include "c-family/c-common.h"
+#include "stringpool.h"
+#include "attribs.h"
 
 #include "c-family/c-format.h"
 #include "intl.h"
 
-#include "cpplib.h"
 #include "c-family/c-pragma.h"
-#include "c-family/c-common.h"
 
 /* cmn_err only accepts "l" and "ll".  */
 static const format_length_info cmn_err_length_specs[] =
@@ -85,7 +83,7 @@ solaris_pragma_align (cpp_reader *pfile ATTRIBUTE_UNUSED)
 {
   tree t, x;
   enum cpp_ttype ttype;
-  HOST_WIDE_INT low;
+  unsigned HOST_WIDE_INT low;
 
   if (pragma_lex (&x) != CPP_NUMBER
       || pragma_lex (&t) != CPP_OPEN_PAREN)
@@ -95,7 +93,7 @@ solaris_pragma_align (cpp_reader *pfile ATTRIBUTE_UNUSED)
     }
 
   low = TREE_INT_CST_LOW (x);
-  if (TREE_INT_CST_HIGH (x) != 0
+  if (!tree_fits_uhwi_p (x)
       || (low != 1 && low != 2 && low != 4 && low != 8 && low != 16
 	  && low != 32 && low != 64 && low != 128))
     {

@@ -7,7 +7,7 @@
 --                                 B o d y                                  --
 --                                                                          --
 --             Copyright (C) 1991-1994, Florida State University            --
---                     Copyright (C) 1995-2010, AdaCore                     --
+--                     Copyright (C) 1995-2015, AdaCore                     --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -31,8 +31,11 @@
 ------------------------------------------------------------------------------
 
 with System.Tasking;
+with Unchecked_Conversion;
 
-package body Ada.Real_Time is
+package body Ada.Real_Time with
+  SPARK_Mode => Off
+is
 
    ---------
    -- "*" --
@@ -114,13 +117,37 @@ package body Ada.Real_Time is
 
    function "/" (Left, Right : Time_Span) return Integer is
       pragma Unsuppress (Overflow_Check);
+      pragma Unsuppress (Division_Check);
+
+      --  RM D.8 (27) specifies the effects of operators on Time_Span, and
+      --  rounding of the division operator in particular, to be the same as
+      --  effects on integer types. To get the correct rounding we first
+      --  convert Time_Span to its root type Duration, which is represented as
+      --  a 64-bit signed integer, and then use integer division.
+
+      type Duration_Rep is range -(2 ** 63) .. +((2 ** 63 - 1));
+
+      function To_Integer is
+        new Unchecked_Conversion (Duration, Duration_Rep);
    begin
-      return Integer (Duration (Left) / Duration (Right));
+      return Integer
+               (To_Integer (Duration (Left)) / To_Integer (Duration (Right)));
    end "/";
 
    function "/" (Left : Time_Span; Right : Integer) return Time_Span is
       pragma Unsuppress (Overflow_Check);
+      pragma Unsuppress (Division_Check);
    begin
+      --  Even though checks are unsuppressed, we need an explicit check for
+      --  the case of largest negative integer divided by minus one, since
+      --  some library routines we use fail to catch this case. This will be
+      --  fixed at the compiler level in the future, at which point this test
+      --  can be removed.
+
+      if Left = Time_Span_First and then Right = -1 then
+         raise Constraint_Error with "overflow";
+      end if;
+
       return Time_Span (Duration (Left) / Right);
    end "/";
 
@@ -215,8 +242,120 @@ package body Ada.Real_Time is
    -------------
 
    function Time_Of (SC : Seconds_Count; TS : Time_Span) return Time is
+      pragma Suppress (Overflow_Check);
+      pragma Suppress (Range_Check);
+      --  We do all our own checks for this function
+
+      --  This is not such a simple case, since TS is already 64 bits, and
+      --  so we can't just promote everything to a wider type to ensure proper
+      --  testing for overflow. The situation is that Seconds_Count is a MUCH
+      --  wider type than Time_Span and Time (both of which have the underlying
+      --  type Duration).
+
+      --         <------------------- Seconds_Count -------------------->
+      --                            <-- Duration -->
+
+      --  Now it is possible for an SC value outside the Duration range to
+      --  be "brought back into range" by an appropriate TS value, but there
+      --  are also clearly SC values that are completely out of range. Note
+      --  that the above diagram is wildly out of scale, the difference in
+      --  ranges is much greater than shown.
+
+      --  We can't just go generating out of range Duration values to test for
+      --  overflow, since Duration is a full range type, so we follow the steps
+      --  shown below.
+
+      SC_Lo : constant Seconds_Count :=
+                Seconds_Count (Duration (Time_Span_First) + Duration'(0.5));
+      SC_Hi : constant Seconds_Count :=
+                Seconds_Count (Duration (Time_Span_Last)  - Duration'(0.5));
+      --  These are the maximum values of the seconds (integer) part of the
+      --  Duration range. Used to compute and check the seconds in the result.
+
+      TS_SC : Seconds_Count;
+      --  Seconds part of input value
+
+      TS_Fraction : Duration;
+      --  Fractional part of input value, may be negative
+
+      Result_SC : Seconds_Count;
+      --  Seconds value for result
+
+      Fudge : constant Seconds_Count := 10;
+      --  Fudge value used to do end point checks far from end point
+
+      FudgeD : constant Duration := Duration (Fudge);
+      --  Fudge value as Duration
+
+      Fudged_Result : Duration;
+      --  Result fudged up or down by FudgeD
+
+      procedure Out_Of_Range;
+      pragma No_Return (Out_Of_Range);
+      --  Raise exception for result out of range
+
+      ------------------
+      -- Out_Of_Range --
+      ------------------
+
+      procedure Out_Of_Range is
+      begin
+         raise Constraint_Error with
+           "result for Ada.Real_Time.Time_Of is out of range";
+      end Out_Of_Range;
+
+   --  Start of processing for Time_Of
+
    begin
-      return Time (SC) + TS;
+      --  If SC is so far out of range that there is no possibility of the
+      --  addition of TS getting it back in range, raise an exception right
+      --  away. That way we don't have to worry about SC values overflowing.
+
+      if SC < 3 * SC_Lo or else SC > 3 * SC_Hi then
+         Out_Of_Range;
+      end if;
+
+      --  Decompose input TS value
+
+      TS_SC := Seconds_Count (Duration (TS));
+      TS_Fraction := Duration (TS) - Duration (TS_SC);
+
+      --  Compute result seconds. If clearly out of range, raise error now
+
+      Result_SC := SC + TS_SC;
+
+      if Result_SC < (SC_Lo - 1) or else Result_SC > (SC_Hi + 1) then
+         Out_Of_Range;
+      end if;
+
+      --  Now the result is simply Result_SC + TS_Fraction, but we can't just
+      --  go computing that since it might be out of range. So what we do is
+      --  to compute a value fudged down or up by 10.0 (arbitrary value, but
+      --  that will do fine), and check that fudged value, and if in range
+      --  unfudge it and return the result.
+
+      --  Fudge positive result down, and check high bound
+
+      if Result_SC > 0 then
+         Fudged_Result := Duration (Result_SC - Fudge) + TS_Fraction;
+
+         if Fudged_Result <= Duration'Last - FudgeD then
+            return Time (Fudged_Result + FudgeD);
+         else
+            Out_Of_Range;
+         end if;
+
+      --  Same for negative values of seconds, fudge up and check low bound
+
+      else
+         Fudged_Result := Duration (Result_SC + Fudge) + TS_Fraction;
+
+         if Fudged_Result >= Duration'First + FudgeD then
+            return Time (Fudged_Result - FudgeD);
+         else
+            Out_Of_Range;
+         end if;
+      end if;
    end Time_Of;
 
    -----------------

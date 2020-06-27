@@ -1,4 +1,4 @@
-/* go-caller.c -- runtime.Caller and runtime.FuncForPC for Go.
+/* go-caller.c -- look up function/file/line/entry info
 
    Copyright 2009 The Go Authors. All rights reserved.
    Use of this source code is governed by a BSD-style
@@ -7,63 +7,156 @@
 /* Implement runtime.Caller.  */
 
 #include <stdint.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include "backtrace.h"
 
 #include "runtime.h"
-#include "go-string.h"
 
 /* Get the function name, file name, and line number for a PC value.
-   We use the DWARF debug information to get this.  Rather than write
-   a whole new library in C, we use the existing Go library.
-   Unfortunately, the Go library is only available if the debug/elf
-   package is imported (we use debug/elf for both ELF and Mach-O, in
-   this case).  We arrange for the debug/elf package to register
-   itself, and tweak the various packages that need this information
-   to import debug/elf where possible.  */
+   We use the backtrace library to get this.  */
 
-/* The function that returns function/file/line information.  */
+/* Data structure to gather file/line information.  */
 
-typedef _Bool (*infofn_type) (uintptr_t, struct __go_string *,
-			      struct __go_string *, int *);
-static infofn_type infofn;
-
-/* The function that returns the value of a symbol, used to get the
-   entry address of a function.  */
-
-typedef _Bool (*symvalfn_type) (struct __go_string, uintptr_t *);
-static symvalfn_type symvalfn;
-
-/* This is called by debug/elf to register the function that returns
-   function/file/line information.  */
-
-void RegisterDebugLookup (infofn_type, symvalfn_type)
-  __asm__ ("libgo_runtime.runtime.RegisterDebugLookup");
-
-void
-RegisterDebugLookup (infofn_type pi, symvalfn_type ps)
+struct caller
 {
-  infofn = pi;
-  symvalfn = ps;
+  String fn;
+  String file;
+  intgo line;
+  intgo index;
+};
+
+/* Collect file/line information for a PC value.  If this is called
+   more than once, due to inlined functions, we use the last call, as
+   that is usually the most useful one.  */
+
+static int
+callback (void *data, uintptr_t pc __attribute__ ((unused)),
+	  const char *filename, int lineno, const char *function)
+{
+  struct caller *c = (struct caller *) data;
+
+  /* The libbacktrace library says that these strings might disappear,
+     but with the current implementation they won't.  We can't easily
+     allocate memory here, so for now assume that we can save a
+     pointer to the strings.  */
+  c->fn = runtime_gostringnocopy ((const byte *) function);
+  c->file = runtime_gostringnocopy ((const byte *) filename);
+  c->line = lineno;
+
+  if (c->index == 0)
+    return 1;
+
+  if (c->index > 0)
+    --c->index;
+
+  return 0;
 }
 
-/* Return function/file/line information for PC.  */
+/* The error callback for backtrace_pcinfo and backtrace_syminfo.  */
 
-_Bool
-__go_file_line (uintptr_t pc, struct __go_string *fn, struct __go_string *file,
-		int *line)
+static void
+error_callback (void *data __attribute__ ((unused)),
+		const char *msg, int errnum)
 {
-  if (infofn == NULL)
-    return 0;
-  return infofn (pc, fn, file, line);
+  if (errnum == -1)
+    return;
+  if (errnum > 0)
+    runtime_printf ("%s errno %d\n", msg, errnum);
+  runtime_throw (msg);
 }
 
-/* Return the value of a symbol.  */
+/* The backtrace library state.  */
+
+static void *back_state;
+
+/* A lock to control creating back_state.  */
+
+static Lock back_state_lock;
+
+/* The program arguments.  */
+
+extern Slice runtime_get_args(void);
+
+/* Fetch back_state, creating it if necessary.  */
+
+struct backtrace_state *
+__go_get_backtrace_state ()
+{
+  runtime_lock (&back_state_lock);
+  if (back_state == NULL)
+    {
+      Slice args;
+      const char *filename;
+      struct stat s;
+
+      args = runtime_get_args();
+      filename = NULL;
+      if (args.__count > 0)
+	filename = (const char*)((String*)args.__values)[0].str;
+
+      /* If there is no '/' in FILENAME, it was found on PATH, and
+	 might not be the same as the file with the same name in the
+	 current directory.  */
+      if (filename != NULL && __builtin_strchr (filename, '/') == NULL)
+	filename = NULL;
+
+      /* If the file is small, then it's not the real executable.
+	 This is specifically to deal with Docker, which uses a bogus
+	 argv[0] (http://gcc.gnu.org/PR61895).  It would be nice to
+	 have a better check for whether this file is the real
+	 executable.  */
+      if (stat (filename, &s) < 0 || s.st_size < 1024)
+	filename = NULL;
+
+      back_state = backtrace_create_state (filename, 1, error_callback, NULL);
+    }
+  runtime_unlock (&back_state_lock);
+  return back_state;
+}
+
+/* Return function/file/line information for PC.  The index parameter
+   is the entry on the stack of inlined functions; -1 means the last
+   one.  */
 
 _Bool
-__go_symbol_value (struct __go_string sym, uintptr_t *val)
+__go_file_line (uintptr pc, int index, String *fn, String *file, intgo *line)
 {
-  if (symvalfn == NULL)
-    return 0;
-  return symvalfn (sym, val);
+  struct caller c;
+
+  runtime_memclr (&c, sizeof c);
+  c.index = index;
+  backtrace_pcinfo (__go_get_backtrace_state (), pc, callback,
+		    error_callback, &c);
+  *fn = c.fn;
+  *file = c.file;
+  *line = c.line;
+  return c.file.len > 0;
+}
+
+/* Collect symbol information.  */
+
+static void
+syminfo_callback (void *data, uintptr_t pc __attribute__ ((unused)),
+		  const char *symname __attribute__ ((unused)),
+		  uintptr_t address, uintptr_t size __attribute__ ((unused)))
+{
+  uintptr_t *pval = (uintptr_t *) data;
+
+  *pval = address;
+}
+
+/* Set *VAL to the value of the symbol for PC.  */
+
+static _Bool
+__go_symbol_value (uintptr_t pc, uintptr_t *val)
+{
+  *val = 0;
+  backtrace_syminfo (__go_get_backtrace_state (), pc, syminfo_callback,
+		     error_callback, val);
+  return *val != 0;
 }
 
 /* The values returned by runtime.Caller.  */
@@ -71,14 +164,12 @@ __go_symbol_value (struct __go_string sym, uintptr_t *val)
 struct caller_ret
 {
   uintptr_t pc;
-  struct __go_string file;
-  int line;
+  String file;
+  intgo line;
   _Bool ok;
 };
 
-struct caller_ret Caller (int n) asm ("libgo_runtime.runtime.Caller");
-
-Func *FuncForPC (uintptr_t) asm ("libgo_runtime.runtime.FuncForPC");
+struct caller_ret Caller (int n) __asm__ (GOSYM_PREFIX "runtime.Caller");
 
 /* Implement runtime.Caller.  */
 
@@ -86,61 +177,54 @@ struct caller_ret
 Caller (int skip)
 {
   struct caller_ret ret;
-  uintptr pc;
+  Location loc;
   int32 n;
-  struct __go_string fn;
 
   runtime_memclr (&ret, sizeof ret);
-  n = runtime_callers (skip + 1, &pc, 1);
-  if (n < 1)
+  n = runtime_callers (skip + 1, &loc, 1, false);
+  if (n < 1 || loc.pc == 0)
     return ret;
-  ret.pc = pc;
-  ret.ok = __go_file_line (pc, &fn, &ret.file, &ret.line);
+  ret.pc = loc.pc;
+  ret.file = loc.filename;
+  ret.line = loc.lineno;
+  ret.ok = 1;
   return ret;
 }
 
-/* Implement runtime.FuncForPC.  */
+/* Look up the function name, file name, and line number for a PC.  */
 
-Func *
-FuncForPC (uintptr_t pc)
+struct funcfileline_return
 {
-  Func *ret;
-  struct __go_string fn;
-  struct __go_string file;
-  int line;
-  uintptr_t val;
-
-  if (!__go_file_line (pc, &fn, &file, &line))
-    return NULL;
-  if (!__go_symbol_value (fn, &val))
-    return NULL;
-
-  ret = (Func *) runtime_malloc (sizeof (*ret));
-  ret->name = fn;
-  ret->entry = val;
-  return ret;
-}
-
-/* Look up the file and line information for a PC within a
-   function.  */
-
-struct funcline_go_return
-{
-  struct __go_string retfile;
-  int retline;
+  String retfn;
+  String retfile;
+  intgo retline;
 };
 
-struct funcline_go_return
-runtime_funcline_go (Func *f, uintptr targetpc)
-  __asm__ ("libgo_runtime.runtime.funcline_go");
+struct funcfileline_return
+runtime_funcfileline (uintptr targetpc, int32 index)
+  __asm__ (GOSYM_PREFIX "runtime.funcfileline");
 
-struct funcline_go_return
-runtime_funcline_go (Func *f __attribute__((unused)), uintptr targetpc)
+struct funcfileline_return
+runtime_funcfileline (uintptr targetpc, int32 index)
 {
-  struct funcline_go_return ret;
-  struct __go_string fn;
+  struct funcfileline_return ret;
 
-  if (!__go_file_line (targetpc, &fn, &ret.retfile,  &ret.retline))
+  if (!__go_file_line (targetpc, index, &ret.retfn, &ret.retfile,
+		       &ret.retline))
     runtime_memclr (&ret, sizeof ret);
   return ret;
+}
+
+/* Return the entry point of a function.  */
+uintptr runtime_funcentry(uintptr)
+  __asm__ (GOSYM_PREFIX "runtime.funcentry");
+
+uintptr
+runtime_funcentry (uintptr pc)
+{
+  uintptr val;
+
+  if (!__go_symbol_value (pc, &val))
+    return 0;
+  return val;
 }

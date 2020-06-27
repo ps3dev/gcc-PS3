@@ -1,5 +1,5 @@
 /* Implementation of the CHMOD intrinsic.
-   Copyright (C) 2006, 2007, 2009, 2012 Free Software Foundation, Inc.
+   Copyright (C) 2006-2017 Free Software Foundation, Inc.
    Contributed by François-Xavier Coudert <coudert@clipper.ens.fr>
 
 This file is part of the GNU Fortran runtime library (libgfortran).
@@ -27,8 +27,6 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 
 #if defined(HAVE_SYS_STAT_H)
 
-#include <stdbool.h>
-#include <string.h>	/* For memcpy. */
 #include <sys/stat.h>	/* For stat, chmod and umask.  */
 
 
@@ -62,46 +60,30 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
    A return value of 0 indicates success, -1 an error of chmod() while 1
    indicates a mode parsing error.  */
 
-extern int chmod_func (char *, char *, gfc_charlen_type, gfc_charlen_type);
-export_proto(chmod_func);
 
-int
-chmod_func (char *name, char *mode, gfc_charlen_type name_len,
-	    gfc_charlen_type mode_len)
+static int
+chmod_internal (char *file, char *mode, gfc_charlen_type mode_len)
 {
-  char * file;
   int i;
   bool ugo[3];
   bool rwxXstugo[9];
   int set_mode, part;
-  bool is_dir, honor_umask, continue_clause = false;
+  bool honor_umask, continue_clause = false;
+#ifndef __MINGW32__
+  bool is_dir;
+#endif
   mode_t mode_mask, file_mode, new_mode;
   struct stat stat_buf;
-
-  /* Trim trailing spaces of the file name.  */
-  while (name_len > 0 && name[name_len - 1] == ' ')
-    name_len--;
-
-  /* Make a null terminated copy of the file name.  */
-  file = gfc_alloca (name_len + 1);
-  memcpy (file, name, name_len);
-  file[name_len] = '\0';
 
   if (mode_len == 0)
     return 1;
 
   if (mode[0] >= '0' && mode[0] <= '9')
     {
-#ifdef __MINGW32__
-      unsigned mode;
-      if (sscanf (mode, "%o", &mode) != 1)
+      unsigned fmode;
+      if (sscanf (mode, "%o", &fmode) != 1)
 	return 1;
-      file_mode = (mode_t) mode;
-#else
-      if (sscanf (mode, "%o", &file_mode) != 1)
-	return 1;
-#endif
-      return chmod (file, file_mode);
+      return chmod (file, (mode_t) fmode);
     }
 
   /* Read the current file mode. */
@@ -109,7 +91,9 @@ chmod_func (char *name, char *mode, gfc_charlen_type name_len,
     return 1;
 
   file_mode = stat_buf.st_mode & ~S_IFMT;
+#ifndef __MINGW32__
   is_dir = stat_buf.st_mode & S_IFDIR;
+#endif
 
 #ifdef HAVE_UMASK
   /* Obtain the umask without distroying the setting.  */
@@ -141,7 +125,6 @@ chmod_func (char *name, char *mode, gfc_charlen_type name_len,
       rwxXstugo[6] = false;
       rwxXstugo[7] = false;
       rwxXstugo[8] = false;
-      rwxXstugo[9] = false;
       part = 0;
       set_mode = -1;
       for (; i < mode_len; i++)
@@ -460,17 +443,19 @@ clause_done:
 	if ((ugo[2] || honor_umask) && !rwxXstugo[8])
 	  file_mode = (file_mode & ~(S_IROTH | S_IWOTH | S_IXOTH))
 		      | (new_mode & (S_IROTH | S_IWOTH | S_IXOTH));
+#ifndef __VXWORKS__
 	if (is_dir && rwxXstugo[5])
 	  file_mode |= S_ISVTX;
 	else if (!is_dir)
 	  file_mode &= ~S_ISVTX;
+#endif
 #endif
       }
     else if (set_mode == 2)
       {
 	/* Clear '-'.  */
 	file_mode &= ~new_mode;
-#ifndef __MINGW32__
+#if !defined( __MINGW32__) && !defined (__VXWORKS__)
 	if (rwxXstugo[5] || !is_dir)
 	  file_mode &= ~S_ISVTX;
 #endif
@@ -478,7 +463,7 @@ clause_done:
     else if (set_mode == 3)
       {
 	file_mode |= new_mode;
-#ifndef __MINGW32__
+#if !defined (__MINGW32__) && !defined (__VXWORKS__)
 	if (rwxXstugo[5] && is_dir)
 	  file_mode |= S_ISVTX;
 	else if (!is_dir)
@@ -488,6 +473,20 @@ clause_done:
   }
 
   return chmod (file, file_mode);
+}
+
+
+extern int chmod_func (char *, char *, gfc_charlen_type, gfc_charlen_type);
+export_proto(chmod_func);
+
+int
+chmod_func (char *name, char *mode, gfc_charlen_type name_len,
+	    gfc_charlen_type mode_len)
+{
+  char *cname = fc_strdup (name, name_len);
+  int ret = chmod_internal (cname, mode, mode_len);
+  free (cname);
+  return ret;
 }
 
 

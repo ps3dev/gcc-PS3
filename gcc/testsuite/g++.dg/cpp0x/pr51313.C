@@ -1,5 +1,5 @@
 // PR c++/51313
-// { dg-options "-std=c++0x" }
+// { dg-do compile { target c++11 } }
 
 class ostream;
 
@@ -14,5 +14,5 @@ extern ostream cout;
 
 int main()
 {
-  cout << isdigit(0);
+  cout << isdigit(0);  // { dg-error "invalid conversion" }
 }

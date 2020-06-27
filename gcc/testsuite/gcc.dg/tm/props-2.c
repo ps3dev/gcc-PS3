@@ -6,8 +6,9 @@
 int global;
 int george;
 
-extern crap() __attribute__((transaction_unsafe));
+extern void crap() __attribute__((transaction_unsafe));
 
+void
 foo(){
     __transaction_relaxed {
 	global++;
@@ -17,4 +18,3 @@ foo(){
 }
 
 /* { dg-final { scan-ipa-dump-times "GTMA_MAY_ENTER_IRREVOCABLE" 1 "tmipa" } } */
-/* { dg-final { cleanup-ipa-dump "tmipa" } } */

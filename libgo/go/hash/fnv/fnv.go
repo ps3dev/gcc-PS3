@@ -4,7 +4,8 @@
 
 // Package fnv implements FNV-1 and FNV-1a, non-cryptographic hash functions
 // created by Glenn Fowler, Landon Curt Noll, and Phong Vo.
-// See http://isthe.com/chongo/tech/comp/fnv/.
+// See
+// https://en.wikipedia.org/wiki/Fowler-Noll-Vo_hash_function.
 package fnv
 
 import (
@@ -26,24 +27,28 @@ const (
 )
 
 // New32 returns a new 32-bit FNV-1 hash.Hash.
+// Its Sum method will lay the value out in big-endian byte order.
 func New32() hash.Hash32 {
 	var s sum32 = offset32
 	return &s
 }
 
 // New32a returns a new 32-bit FNV-1a hash.Hash.
+// Its Sum method will lay the value out in big-endian byte order.
 func New32a() hash.Hash32 {
 	var s sum32a = offset32
 	return &s
 }
 
 // New64 returns a new 64-bit FNV-1 hash.Hash.
+// Its Sum method will lay the value out in big-endian byte order.
 func New64() hash.Hash64 {
 	var s sum64 = offset64
 	return &s
 }
 
 // New64a returns a new 64-bit FNV-1a hash.Hash.
+// Its Sum method will lay the value out in big-endian byte order.
 func New64a() hash.Hash64 {
 	var s sum64a = offset64
 	return &s
@@ -111,44 +116,20 @@ func (s *sum64a) BlockSize() int { return 1 }
 
 func (s *sum32) Sum(in []byte) []byte {
 	v := uint32(*s)
-	in = append(in, byte(v>>24))
-	in = append(in, byte(v>>16))
-	in = append(in, byte(v>>8))
-	in = append(in, byte(v))
-	return in
+	return append(in, byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
 }
 
 func (s *sum32a) Sum(in []byte) []byte {
 	v := uint32(*s)
-	in = append(in, byte(v>>24))
-	in = append(in, byte(v>>16))
-	in = append(in, byte(v>>8))
-	in = append(in, byte(v))
-	return in
+	return append(in, byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
 }
 
 func (s *sum64) Sum(in []byte) []byte {
 	v := uint64(*s)
-	in = append(in, byte(v>>56))
-	in = append(in, byte(v>>48))
-	in = append(in, byte(v>>40))
-	in = append(in, byte(v>>32))
-	in = append(in, byte(v>>24))
-	in = append(in, byte(v>>16))
-	in = append(in, byte(v>>8))
-	in = append(in, byte(v))
-	return in
+	return append(in, byte(v>>56), byte(v>>48), byte(v>>40), byte(v>>32), byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
 }
 
 func (s *sum64a) Sum(in []byte) []byte {
 	v := uint64(*s)
-	in = append(in, byte(v>>56))
-	in = append(in, byte(v>>48))
-	in = append(in, byte(v>>40))
-	in = append(in, byte(v>>32))
-	in = append(in, byte(v>>24))
-	in = append(in, byte(v>>16))
-	in = append(in, byte(v>>8))
-	in = append(in, byte(v))
-	return in
+	return append(in, byte(v>>56), byte(v>>48), byte(v>>40), byte(v>>32), byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
 }

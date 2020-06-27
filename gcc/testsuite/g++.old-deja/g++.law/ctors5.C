@@ -15,7 +15,7 @@ class X	      // { dg-message "7:X::X|candidate expects" } implicit constructor
 };
 
 class Y // { dg-error "1:new types may not be defined in a return type" "err" }
-        // { dg-message "1:\\(perhaps a semicolon is missing after the definition of 'Y'\\)" "note" { target *-*-* } 17 }
+        // { dg-message "1:\\(perhaps a semicolon is missing after the definition of 'Y'\\)" "note" { target *-*-* } .-1 }
 {
   private:
     X xx;
@@ -23,7 +23,7 @@ class Y // { dg-error "1:new types may not be defined in a return type" "err" }
     Y();
 }
 X::X( int xi ) // { dg-error "14:return type specification for constructor invalid" "err" }
-// { dg-message "1:X::X|candidate expects" "match candidate text" { target *-*-* } 25 }
+// { dg-message "1:X::X|candidate expects" "match candidate text" { target *-*-* } .-1 }
 {
     x = xi;
 }
@@ -31,7 +31,6 @@ X::X( int xi ) // { dg-error "14:return type specification for constructor inval
 const X X::x0( 0 );
 
 Y::Y() // { dg-error "6:no matching function for call to 'X::X\\(\\)'" }
-// { dg-message "candidate" "candidate note" { target *-*-* } 33 }
 {
     xx = X::x0;
 }

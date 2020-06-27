@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2004-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 2004-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -31,31 +31,29 @@
 
 with Ada.Calendar;               use Ada.Calendar;
 with Ada.Calendar.Formatting;    use Ada.Calendar.Formatting;
-with Ada.Directories.Validity;   use Ada.Directories.Validity;
-with Ada.Strings.Maps;           use Ada.Strings.Maps;
-with Ada.Strings.Fixed;
-with Ada.Strings.Unbounded;      use Ada.Strings.Unbounded;
-with Ada.Unchecked_Conversion;
-with Ada.Unchecked_Deallocation;
 with Ada.Characters.Handling;    use Ada.Characters.Handling;
+with Ada.Directories.Validity;   use Ada.Directories.Validity;
+with Ada.Strings.Fixed;
+with Ada.Strings.Maps;           use Ada.Strings.Maps;
+with Ada.Strings.Unbounded;      use Ada.Strings.Unbounded;
+with Ada.Unchecked_Deallocation;
 
-with System.CRTL;         use System.CRTL;
-with System.OS_Constants; use System.OS_Constants;
-with System.OS_Lib;       use System.OS_Lib;
-with System.Regexp;       use System.Regexp;
-with System.File_IO;      use System.File_IO;
-with System;              use System;
+with System;                 use System;
+with System.CRTL;            use System.CRTL;
+with System.File_Attributes; use System.File_Attributes;
+with System.File_IO;         use System.File_IO;
+with System.OS_Constants;    use System.OS_Constants;
+with System.OS_Lib;          use System.OS_Lib;
+with System.Regexp;          use System.Regexp;
 
 package body Ada.Directories is
-
-   Filename_Max : constant Integer := 1024;
-   --  1024 is the value of FILENAME_MAX in stdio.h
 
    type Dir_Type_Value is new Address;
    --  This is the low-level address directory structure as returned by the C
    --  opendir routine.
 
    No_Dir : constant Dir_Type_Value := Dir_Type_Value (Null_Address);
+   --  Null directory value
 
    Dir_Separator : constant Character;
    pragma Import (C, Dir_Separator, "__gnat_dir_separator");
@@ -210,35 +208,31 @@ package body Ada.Directories is
 
       else
          declare
-            --  We need to resolve links because of A.16(47), since we must not
-            --  return alternative names for files.
-
-            Norm    : constant String := Normalize_Pathname (Name);
             Last_DS : constant Natural :=
-                        Strings.Fixed.Index
-                          (Name, Dir_Seps, Going => Strings.Backward);
+              Strings.Fixed.Index (Name, Dir_Seps, Going => Strings.Backward);
 
          begin
             if Last_DS = 0 then
 
-               --  There is no directory separator, returns current working
-               --  directory.
+               --  There is no directory separator, returns "." representing
+               --  the current working directory.
 
-               return Current_Directory;
+               return ".";
 
             --  If Name indicates a root directory, raise Use_Error, because
             --  it has no containing directory.
 
-            elsif Norm = "/"
+            elsif Name = "/"
               or else
                 (Windows
-                 and then
-                   (Norm = "\"
-                    or else
-                      (Norm'Length = 3
-                        and then Norm (Norm'Last - 1 .. Norm'Last) = ":\"
-                        and then (Norm (Norm'First) in 'a' .. 'z'
-                                   or else Norm (Norm'First) in 'A' .. 'Z'))))
+                  and then
+                  (Name = "\"
+                      or else
+                        (Name'Length = 3
+                          and then Name (Name'Last - 1 .. Name'Last) = ":\"
+                          and then (Name (Name'First) in 'a' .. 'z'
+                                     or else
+                                       Name (Name'First) in 'A' .. 'Z'))))
             then
                raise Use_Error with
                  "directory """ & Name & """ has no containing directory";
@@ -272,15 +266,10 @@ package body Ada.Directories is
                      Last := Last - 1;
                   end loop;
 
-                  --  Special case of current directory, identified by "."
-
-                  if Last = 1 and then Result (1) = '.' then
-                     return Current_Directory;
-
                   --  Special case of "..": the current directory may be a root
                   --  directory.
 
-                  elsif Last = 2 and then Result (1 .. 2) = ".." then
+                  if Last = 2 and then Result (1 .. 2) = ".." then
                      return Containing_Directory (Current_Directory);
 
                   else
@@ -349,16 +338,12 @@ package body Ada.Directories is
 
                if V1 = 0 then
                   Mode := Overwrite;
-
                elsif Formstr (V1 .. V2) = "copy" then
                   Mode := Copy;
-
                elsif Formstr (V1 .. V2) = "overwrite" then
                   Mode := Overwrite;
-
                elsif Formstr (V1 .. V2) = "append" then
                   Mode := Append;
-
                else
                   raise Use_Error with "invalid Form";
                end if;
@@ -367,16 +352,12 @@ package body Ada.Directories is
 
                if V1 = 0 then
                   Preserve := None;
-
                elsif Formstr (V1 .. V2) = "timestamps" then
                   Preserve := Time_Stamps;
-
                elsif Formstr (V1 .. V2) = "all_attributes" then
                   Preserve := Full;
-
                elsif Formstr (V1 .. V2) = "no_attributes" then
                   Preserve := None;
-
                else
                   raise Use_Error with "invalid Form";
                end if;
@@ -401,12 +382,7 @@ package body Ada.Directories is
      (New_Directory : String;
       Form          : String := "")
    is
-      pragma Unreferenced (Form);
-
       C_Dir_Name : constant String := New_Directory & ASCII.NUL;
-
-      function mkdir (Dir_Name : String) return Integer;
-      pragma Import (C, mkdir, "__gnat_mkdir");
 
    begin
       --  First, the invalid case
@@ -416,10 +392,34 @@ package body Ada.Directories is
            "invalid new directory path name """ & New_Directory & '"';
 
       else
-         if mkdir (C_Dir_Name) /= 0 then
-            raise Use_Error with
-              "creation of new directory """ & New_Directory & """ failed";
-         end if;
+         --  Acquire setting of encoding parameter
+
+         declare
+            Formstr : constant String := To_Lower (Form);
+
+            Encoding : CRTL.Filename_Encoding;
+            --  Filename encoding specified into the form parameter
+
+            V1, V2 : Natural;
+
+         begin
+            Form_Parameter (Formstr, "encoding", V1, V2);
+
+            if V1 = 0 then
+               Encoding := CRTL.Unspecified;
+            elsif Formstr (V1 .. V2) = "utf8" then
+               Encoding := CRTL.UTF8;
+            elsif Formstr (V1 .. V2) = "8bits" then
+               Encoding := CRTL.ASCII_8bits;
+            else
+               raise Use_Error with "invalid Form";
+            end if;
+
+            if CRTL.mkdir (C_Dir_Name, Encoding) /= 0 then
+               raise Use_Error with
+                 "creation of new directory """ & New_Directory & """ failed";
+            end if;
+         end;
       end if;
    end Create_Directory;
 
@@ -431,8 +431,6 @@ package body Ada.Directories is
      (New_Directory : String;
       Form          : String := "")
    is
-      pragma Unreferenced (Form);
-
       New_Dir : String (1 .. New_Directory'Length + 1);
       Last    : Positive := 1;
       Start   : Positive := 1;
@@ -483,17 +481,33 @@ package body Ada.Directories is
 
                --  No need to create the directory if it already exists
 
-               if Is_Directory (New_Dir (1 .. Last)) then
-                  null;
+               if not Is_Directory (New_Dir (1 .. Last)) then
+                  begin
+                     Create_Directory
+                       (New_Directory => New_Dir (1 .. Last), Form => Form);
 
-               --  It is an error if a file with such a name already exists
+                  exception
+                     when Use_Error =>
+                        if File_Exists (New_Dir (1 .. Last)) then
 
-               elsif Is_Regular_File (New_Dir (1 .. Last)) then
-                  raise Use_Error with
-                    "file """ & New_Dir (1 .. Last) & """ already exists";
+                           --  A file with such a name already exists. If it is
+                           --  a directory, then it was apparently just created
+                           --  by another process or thread, and all is well.
+                           --  If it is of some other kind, report an error.
 
-               else
-                  Create_Directory (New_Directory => New_Dir (1 .. Last));
+                           if not Is_Directory (New_Dir (1 .. Last)) then
+                              raise Use_Error with
+                                "file """ & New_Dir (1 .. Last) &
+                                  """ already exists and is not a directory";
+                           end if;
+
+                        else
+                           --  Create_Directory failed for some other reason:
+                           --  propagate the exception.
+
+                           raise;
+                        end if;
+                  end;
                end if;
             end if;
          end loop;
@@ -514,18 +528,10 @@ package body Ada.Directories is
    begin
       Local_Get_Current_Dir (Buffer'Address, Path_Len'Address);
 
-      declare
-         --  We need to resolve links because of A.16(47), since we must not
-         --  return alternative names for files
-         Cur : constant String := Normalize_Pathname (Buffer (1 .. Path_Len));
+      --  We need to resolve links because of RM A.16(47), which requires
+      --  that we not return alternative names for files.
 
-      begin
-         if Cur'Length > 1 and then Cur (Cur'Last) = Dir_Separator then
-            return Cur (1 .. Cur'Last - 1);
-         else
-            return Cur;
-         end if;
-      end;
+      return Normalize_Pathname (Buffer (1 .. Path_Len));
    end Current_Directory;
 
    ----------------------
@@ -543,10 +549,11 @@ package body Ada.Directories is
       elsif not Is_Directory (Directory) then
          raise Name_Error with '"' & Directory & """ not a directory";
 
+      --  Do the deletion, checking for error
+
       else
          declare
             C_Dir_Name : constant String := Directory & ASCII.NUL;
-
          begin
             if rmdir (C_Dir_Name) /= 0 then
                raise Use_Error with
@@ -569,7 +576,9 @@ package body Ada.Directories is
       if not Is_Valid_Path_Name (Name) then
          raise Name_Error with "invalid path name """ & Name & '"';
 
-      elsif not Is_Regular_File (Name) then
+      elsif not Is_Regular_File (Name)
+        and then not Is_Symbolic_Link (Name)
+      then
          raise Name_Error with "file """ & Name & """ does not exist";
 
       else
@@ -588,7 +597,6 @@ package body Ada.Directories is
    -----------------
 
    procedure Delete_Tree (Directory : String) is
-      Current_Dir : constant String := Current_Directory;
       Search      : Search_Type;
       Dir_Ent     : Directory_Entry_Type;
    begin
@@ -602,28 +610,33 @@ package body Ada.Directories is
          raise Name_Error with '"' & Directory & """ not a directory";
 
       else
-         Set_Directory (Directory);
-         Start_Search (Search, Directory => ".", Pattern => "");
 
+         --  We used to change the current directory to Directory here,
+         --  allowing the use of a local Simple_Name for all references. This
+         --  turned out unfriendly to multitasking programs, where tasks
+         --  running in parallel of this Delete_Tree could see their current
+         --  directory change unpredictably. We now resort to Full_Name
+         --  computations to reach files and subdirs instead.
+
+         Start_Search (Search, Directory => Directory, Pattern => "");
          while More_Entries (Search) loop
             Get_Next_Entry (Search, Dir_Ent);
 
             declare
-               File_Name : constant String := Simple_Name (Dir_Ent);
+               Fname : constant String := Full_Name   (Dir_Ent);
+               Sname : constant String := Simple_Name (Dir_Ent);
 
             begin
-               if OS_Lib.Is_Directory (File_Name) then
-                  if File_Name /= "." and then File_Name /= ".." then
-                     Delete_Tree (File_Name);
+               if OS_Lib.Is_Directory (Fname) then
+                  if Sname /= "." and then Sname /= ".." then
+                     Delete_Tree (Fname);
                   end if;
-
                else
-                  Delete_File (File_Name);
+                  Delete_File (Fname);
                end if;
             end;
          end loop;
 
-         Set_Directory (Current_Dir);
          End_Search (Search);
 
          declare
@@ -702,7 +715,7 @@ package body Ada.Directories is
    ----------------------
 
    procedure Fetch_Next_Entry (Search : Search_Type) is
-      Name : String (1 .. 255);
+      Name : String (1 .. NAME_MAX);
       Last : Natural;
 
       Kind : File_Kind := Ordinary_File;
@@ -711,9 +724,7 @@ package body Ada.Directories is
       Filename_Addr : Address;
       Filename_Len  : aliased Integer;
 
-      Buffer : array (0 .. Filename_Max + 12) of Character;
-      --  12 is the size of the dirent structure (see dirent.h), without the
-      --  field for the filename.
+      Buffer : array (1 .. SIZEOF_struct_dirent_alloc) of Character;
 
       function readdir_gnat
         (Directory : Address;
@@ -738,45 +749,61 @@ package body Ada.Directories is
             exit;
          end if;
 
+         if Filename_Len > Name'Length then
+            raise Use_Error with "file name too long";
+         end if;
+
          declare
-            subtype Path_String is String (1 .. Filename_Len);
-            type    Path_String_Access is access Path_String;
-
-            function Address_To_Access is new
-              Ada.Unchecked_Conversion
-                (Source => Address,
-                 Target => Path_String_Access);
-
-            Path_Access : constant Path_String_Access :=
-                            Address_To_Access (Filename_Addr);
+            subtype Name_String is String (1 .. Filename_Len);
+            Dent_Name : Name_String;
+            for Dent_Name'Address use Filename_Addr;
+            pragma Import (Ada, Dent_Name);
 
          begin
             Last := Filename_Len;
-            Name (1 .. Last) := Path_Access.all;
+            Name (1 .. Last) := Dent_Name;
          end;
 
          --  Check if the entry matches the pattern
 
          if Match (Name (1 .. Last), Search.Value.Pattern) then
             declare
-               Full_Name : constant String :=
-                             Compose
-                               (To_String
-                                  (Search.Value.Name), Name (1 .. Last));
-               Found     : Boolean := False;
+               C_Full_Name : constant String :=
+                               Compose (To_String (Search.Value.Name),
+                                        Name (1 .. Last)) & ASCII.NUL;
+               Full_Name   : String renames
+                               C_Full_Name
+                                 (C_Full_Name'First .. C_Full_Name'Last - 1);
+               Found       : Boolean := False;
+               Attr        : aliased File_Attributes;
+               Exists      : Integer;
+               Error       : Integer;
 
             begin
-               if File_Exists (Full_Name) then
+               Reset_Attributes (Attr'Access);
+               Exists := File_Exists_Attr (C_Full_Name'Address, Attr'Access);
+               Error  := Error_Attributes (Attr'Access);
+
+               if Error /= 0 then
+                  raise Use_Error
+                    with Full_Name & ": " & Errno_Message (Err => Error);
+               end if;
+
+               if Exists = 1 then
 
                   --  Now check if the file kind matches the filter
 
-                  if Is_Regular_File (Full_Name) then
+                  if Is_Regular_File_Attr
+                       (C_Full_Name'Address, Attr'Access) = 1
+                  then
                      if Search.Value.Filter (Ordinary_File) then
                         Kind := Ordinary_File;
                         Found := True;
                      end if;
 
-                  elsif Is_Directory (Full_Name) then
+                  elsif Is_Directory_Attr
+                          (C_Full_Name'Address, Attr'Access) = 1
+                  then
                      if Search.Value.Filter (Directory) then
                         Kind := Directory;
                         Found := True;
@@ -817,7 +844,7 @@ package body Ada.Directories is
    begin
       C_Name (1 .. Name'Length) := Name;
       C_Name (C_Name'Last) := ASCII.NUL;
-      return C_File_Exists (C_Name (1)'Address) = 1;
+      return C_File_Exists (C_Name'Address) = 1;
    end File_Exists;
 
    --------------
@@ -855,8 +882,8 @@ package body Ada.Directories is
          --  Use System.OS_Lib.Normalize_Pathname
 
          declare
-            --  We need to resolve links because of A.16(47), since we must not
-            --  return alternative names for files.
+            --  We need to resolve links because of (RM A.16(47)), which says
+            --  we must not return alternative names for files.
 
             Value : constant String := Normalize_Pathname (Name);
             subtype Result is String (1 .. Value'Length);
@@ -926,6 +953,8 @@ package body Ada.Directories is
       if not File_Exists (Name) then
          raise Name_Error with "file """ & Name & """ does not exist";
 
+      --  If OK, return appropriate kind
+
       elsif Is_Regular_File (Name) then
          return Ordinary_File;
 
@@ -963,7 +992,6 @@ package body Ada.Directories is
       Hour   : Hour_Type;
       Minute : Minute_Type;
       Second : Second_Type;
-      Result : Time;
 
    begin
       --  First, the invalid cases
@@ -980,25 +1008,11 @@ package body Ada.Directories is
 
          GM_Split (Date, Year, Month, Day, Hour, Minute, Second);
 
-         --  On OpenVMS, the resulting time value must be in the local time
-         --  zone. Ada.Calendar.Time_Of is exactly what we need. Note that
-         --  in both cases, the sub seconds are set to zero (0.0) because the
-         --  time stamp does not store them in its value.
-
-         if OpenVMS then
-            Result :=
-              Ada.Calendar.Time_Of
-                (Year, Month, Day, Seconds_Of (Hour, Minute, Second, 0.0));
-
-         --  On Unix and Windows, the result must be in GMT. Ada.Calendar.
+         --  The result must be in GMT. Ada.Calendar.
          --  Formatting.Time_Of with default time zone of zero (0) is the
          --  routine of choice.
 
-         else
-            Result := Time_Of (Year, Month, Day, Hour, Minute, Second, 0.0);
-         end if;
-
-         return Result;
+         return Time_Of (Year, Month, Day, Hour, Minute, Second, 0.0);
       end if;
    end Modification_Time;
 
@@ -1065,9 +1079,9 @@ package body Ada.Directories is
            "new name """ & New_Name
            & """ designates a file that already exists";
 
-      else
-         --  Do actual rename using System.OS_Lib.Rename_File
+      --  Do actual rename using System.OS_Lib.Rename_File
 
+      else
          Rename_File (Old_Name, New_Name, Success);
 
          if not Success then
@@ -1106,7 +1120,6 @@ package body Ada.Directories is
 
    begin
       Start_Search (Srch, Directory, Pattern, Filter);
-
       while More_Entries (Srch) loop
          Get_Next_Entry (Srch, Directory_Entry);
          Process (Directory_Entry);
@@ -1151,8 +1164,7 @@ package body Ada.Directories is
 
       function Simple_Name_Internal (Path : String) return String is
          Cut_Start : Natural :=
-                       Strings.Fixed.Index
-                         (Path, Dir_Seps, Going => Strings.Backward);
+           Strings.Fixed.Index (Path, Dir_Seps, Going => Strings.Backward);
          Cut_End   : Natural;
 
       begin
@@ -1168,7 +1180,7 @@ package body Ada.Directories is
             BN : constant String := Path (Cut_Start .. Cut_End);
 
             Has_Drive_Letter : constant Boolean :=
-                                 OS_Lib.Path_Separator /= ':';
+              OS_Lib.Path_Separator /= ':';
             --  If Path separator is not ':' then we are on a DOS based OS
             --  where this character is used as a drive letter separator.
 
@@ -1233,7 +1245,7 @@ package body Ada.Directories is
    function Size (Name : String) return File_Size is
       C_Name : String (1 .. Name'Length + 1);
 
-      function C_Size (Name : Address) return Long_Integer;
+      function C_Size (Name : Address) return int64;
       pragma Import (C, C_Size, "__gnat_named_file_length");
 
    begin

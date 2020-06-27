@@ -1,6 +1,5 @@
-/* Loop unrolling and peeling.
-   Copyright (C) 2002, 2003, 2004, 2005, 2007, 2008, 2010, 2011
-   Free Software Foundation, Inc.
+/* Loop unrolling.
+   Copyright (C) 2002-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -21,22 +20,25 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
-#include "rtl.h"
-#include "hard-reg-set.h"
-#include "obstack.h"
-#include "basic-block.h"
-#include "cfgloop.h"
-#include "cfglayout.h"
-#include "params.h"
-#include "output.h"
-#include "expr.h"
-#include "hashtab.h"
-#include "recog.h"
+#include "backend.h"
 #include "target.h"
+#include "rtl.h"
+#include "tree.h"
+#include "cfghooks.h"
+#include "memmodel.h"
+#include "optabs.h"
+#include "emit-rtl.h"
+#include "recog.h"
+#include "profile.h"
+#include "cfgrtl.h"
+#include "cfgloop.h"
+#include "params.h"
+#include "dojump.h"
+#include "expr.h"
+#include "dumpfile.h"
 
-/* This pass performs loop unrolling and peeling.  We only perform these
-   optimizations on innermost loops (with single exception) because
+/* This pass performs loop unrolling.  We only perform this
+   optimization on innermost loops (with single exception) because
    the impact on performance is greatest here, and we want to avoid
    unnecessary code size growth.  The gain is caused by greater sequentiality
    of code, better code to optimize for further passes and in some cases
@@ -45,12 +47,6 @@ along with GCC; see the file COPYING3.  If not see
 
    What we do:
 
-   -- complete peeling of once-rolling loops; this is the above mentioned
-      exception, as this causes loop to be cancelled completely and
-      does not cause code growth
-   -- complete peeling of loops that roll (small) constant times.
-   -- simple peeling of first iterations of loops that do not roll much
-      (according to profile feedback)
    -- unrolling of loops that roll constant times; this is almost always
       win, as we get rid of exit condition tests.
    -- unrolling of loops that roll number of times that we can compute
@@ -63,7 +59,7 @@ along with GCC; see the file COPYING3.  If not see
    appropriate function below.
 
    There is a lot of parameters (defined and described in params.def) that
-   control how much we unroll/peel.
+   control how much we unroll.
 
    ??? A great problem is that we don't have a good way how to determine
    how many times we should unroll the loop; the experiments I have made
@@ -74,25 +70,21 @@ along with GCC; see the file COPYING3.  If not see
 
 struct iv_to_split
 {
-  rtx insn;		/* The insn in that the induction variable occurs.  */
+  rtx_insn *insn;	/* The insn in that the induction variable occurs.  */
+  rtx orig_var;		/* The variable (register) for the IV before split.  */
   rtx base_var;		/* The variable on that the values in the further
 			   iterations are based.  */
   rtx step;		/* Step of the induction variable.  */
   struct iv_to_split *next; /* Next entry in walking order.  */
-  unsigned n_loc;
-  unsigned loc[3];	/* Location where the definition of the induction
-			   variable occurs in the insn.  For example if
-			   N_LOC is 2, the expression is located at
-			   XEXP (XEXP (single_set, loc[0]), loc[1]).  */
 };
 
 /* Information about accumulators to expand.  */
 
 struct var_to_expand
 {
-  rtx insn;		           /* The insn in that the variable expansion occurs.  */
+  rtx_insn *insn;	           /* The insn in that the variable expansion occurs.  */
   rtx reg;                         /* The accumulator which is expanded.  */
-  VEC(rtx,heap) *var_expansions;   /* The copies of the accumulator which is expanded.  */
+  vec<rtx> var_expansions;   /* The copies of the accumulator which is expanded.  */
   struct var_to_expand *next;	   /* Next entry in walking order.  */
   enum rtx_code op;                /* The type of the accumulation - addition, subtraction
                                       or multiplication.  */
@@ -101,22 +93,68 @@ struct var_to_expand
                                       the accumulator.  If REUSE_EXPANSION is 0 reuse
                                       the original accumulator.  Else use
                                       var_expansions[REUSE_EXPANSION - 1].  */
-  unsigned accum_pos;              /* The position in which the accumulator is placed in
-                                      the insn src.  For example in x = x + something
-                                      accum_pos is 0 while in x = something + x accum_pos
-                                      is 1.  */
 };
+
+/* Hashtable helper for iv_to_split.  */
+
+struct iv_split_hasher : free_ptr_hash <iv_to_split>
+{
+  static inline hashval_t hash (const iv_to_split *);
+  static inline bool equal (const iv_to_split *, const iv_to_split *);
+};
+
+
+/* A hash function for information about insns to split.  */
+
+inline hashval_t
+iv_split_hasher::hash (const iv_to_split *ivts)
+{
+  return (hashval_t) INSN_UID (ivts->insn);
+}
+
+/* An equality functions for information about insns to split.  */
+
+inline bool
+iv_split_hasher::equal (const iv_to_split *i1, const iv_to_split *i2)
+{
+  return i1->insn == i2->insn;
+}
+
+/* Hashtable helper for iv_to_split.  */
+
+struct var_expand_hasher : free_ptr_hash <var_to_expand>
+{
+  static inline hashval_t hash (const var_to_expand *);
+  static inline bool equal (const var_to_expand *, const var_to_expand *);
+};
+
+/* Return a hash for VES.  */
+
+inline hashval_t
+var_expand_hasher::hash (const var_to_expand *ves)
+{
+  return (hashval_t) INSN_UID (ves->insn);
+}
+
+/* Return true if I1 and I2 refer to the same instruction.  */
+
+inline bool
+var_expand_hasher::equal (const var_to_expand *i1, const var_to_expand *i2)
+{
+  return i1->insn == i2->insn;
+}
 
 /* Information about optimization applied in
    the unrolled loop.  */
 
 struct opt_info
 {
-  htab_t insns_to_split;           /* A hashtable of insns to split.  */
+  hash_table<iv_split_hasher> *insns_to_split; /* A hashtable of insns to
+						  split.  */
   struct iv_to_split *iv_to_split_head; /* The first iv to split.  */
   struct iv_to_split **iv_to_split_tail; /* Pointer to the tail of the list.  */
-  htab_t insns_with_var_to_expand; /* A hashtable of insns with accumulators
-                                      to expand.  */
+  hash_table<var_expand_hasher> *insns_with_var_to_expand; /* A hashtable of
+					insns with accumulators to expand.  */
   struct var_to_expand *var_to_expand_head; /* The first var to expand.  */
   struct var_to_expand **var_to_expand_tail; /* Pointer to the tail of the list.  */
   unsigned first_new_block;        /* The first basic block that was
@@ -125,157 +163,70 @@ struct opt_info
   basic_block loop_preheader;      /* The loop preheader basic block.  */
 };
 
-static void decide_unrolling_and_peeling (int);
-static void peel_loops_completely (int);
-static void decide_peel_simple (struct loop *, int);
-static void decide_peel_once_rolling (struct loop *, int);
-static void decide_peel_completely (struct loop *, int);
 static void decide_unroll_stupid (struct loop *, int);
 static void decide_unroll_constant_iterations (struct loop *, int);
 static void decide_unroll_runtime_iterations (struct loop *, int);
-static void peel_loop_simple (struct loop *);
-static void peel_loop_completely (struct loop *);
 static void unroll_loop_stupid (struct loop *);
+static void decide_unrolling (int);
 static void unroll_loop_constant_iterations (struct loop *);
 static void unroll_loop_runtime_iterations (struct loop *);
 static struct opt_info *analyze_insns_in_loop (struct loop *);
 static void opt_info_start_duplication (struct opt_info *);
 static void apply_opt_in_copies (struct opt_info *, unsigned, bool, bool);
 static void free_opt_info (struct opt_info *);
-static struct var_to_expand *analyze_insn_to_expand_var (struct loop*, rtx);
+static struct var_to_expand *analyze_insn_to_expand_var (struct loop*, rtx_insn *);
 static bool referenced_in_one_insn_in_loop_p (struct loop *, rtx, int *);
-static struct iv_to_split *analyze_iv_to_split_insn (rtx);
-static void expand_var_during_unrolling (struct var_to_expand *, rtx);
+static struct iv_to_split *analyze_iv_to_split_insn (rtx_insn *);
+static void expand_var_during_unrolling (struct var_to_expand *, rtx_insn *);
 static void insert_var_expansion_initialization (struct var_to_expand *,
 						 basic_block);
 static void combine_var_copies_in_loop_exit (struct var_to_expand *,
 					     basic_block);
 static rtx get_expansion (struct var_to_expand *);
 
-/* Unroll and/or peel (depending on FLAGS) LOOPS.  */
-void
-unroll_and_peel_loops (int flags)
+/* Emit a message summarizing the unroll that will be
+   performed for LOOP, along with the loop's location LOCUS, if
+   appropriate given the dump or -fopt-info settings.  */
+
+static void
+report_unroll (struct loop *loop, location_t locus)
+{
+  int report_flags = MSG_OPTIMIZED_LOCATIONS | TDF_RTL | TDF_DETAILS;
+
+  if (loop->lpt_decision.decision == LPT_NONE)
+    return;
+
+  if (!dump_enabled_p ())
+    return;
+
+  dump_printf_loc (report_flags, locus,
+                   "loop unrolled %d times",
+                   loop->lpt_decision.times);
+  if (profile_info)
+    dump_printf (report_flags,
+                 " (header execution count %d)",
+                 (int)loop->header->count);
+
+  dump_printf (report_flags, "\n");
+}
+
+/* Decide whether unroll loops and how much.  */
+static void
+decide_unrolling (int flags)
 {
   struct loop *loop;
-  bool check;
-  loop_iterator li;
-
-  /* First perform complete loop peeling (it is almost surely a win,
-     and affects parameters for further decision a lot).  */
-  peel_loops_completely (flags);
-
-  /* Now decide rest of unrolling and peeling.  */
-  decide_unrolling_and_peeling (flags);
 
   /* Scan the loops, inner ones first.  */
-  FOR_EACH_LOOP (li, loop, LI_FROM_INNERMOST)
-    {
-      check = true;
-      /* And perform the appropriate transformations.  */
-      switch (loop->lpt_decision.decision)
-	{
-	case LPT_PEEL_COMPLETELY:
-	  /* Already done.  */
-	  gcc_unreachable ();
-	case LPT_PEEL_SIMPLE:
-	  peel_loop_simple (loop);
-	  break;
-	case LPT_UNROLL_CONSTANT:
-	  unroll_loop_constant_iterations (loop);
-	  break;
-	case LPT_UNROLL_RUNTIME:
-	  unroll_loop_runtime_iterations (loop);
-	  break;
-	case LPT_UNROLL_STUPID:
-	  unroll_loop_stupid (loop);
-	  break;
-	case LPT_NONE:
-	  check = false;
-	  break;
-	default:
-	  gcc_unreachable ();
-	}
-      if (check)
-	{
-#ifdef ENABLE_CHECKING
-	  verify_dominators (CDI_DOMINATORS);
-	  verify_loop_structure ();
-#endif
-	}
-    }
-
-  iv_analysis_done ();
-}
-
-/* Check whether exit of the LOOP is at the end of loop body.  */
-
-static bool
-loop_exit_at_end_p (struct loop *loop)
-{
-  struct niter_desc *desc = get_simple_loop_desc (loop);
-  rtx insn;
-
-  if (desc->in_edge->dest != loop->latch)
-    return false;
-
-  /* Check that the latch is empty.  */
-  FOR_BB_INSNS (loop->latch, insn)
-    {
-      if (INSN_P (insn))
-	return false;
-    }
-
-  return true;
-}
-
-/* Depending on FLAGS, check whether to peel loops completely and do so.  */
-static void
-peel_loops_completely (int flags)
-{
-  struct loop *loop;
-  loop_iterator li;
-
-  /* Scan the loops, the inner ones first.  */
-  FOR_EACH_LOOP (li, loop, LI_FROM_INNERMOST)
+  FOR_EACH_LOOP (loop, LI_FROM_INNERMOST)
     {
       loop->lpt_decision.decision = LPT_NONE;
+      location_t locus = get_loop_location (loop);
 
-      if (dump_file)
-	fprintf (dump_file,
-		 "\n;; *** Considering loop %d for complete peeling ***\n",
-		 loop->num);
-
-      loop->ninsns = num_loop_insns (loop);
-
-      decide_peel_once_rolling (loop, flags);
-      if (loop->lpt_decision.decision == LPT_NONE)
-	decide_peel_completely (loop, flags);
-
-      if (loop->lpt_decision.decision == LPT_PEEL_COMPLETELY)
-	{
-	  peel_loop_completely (loop);
-#ifdef ENABLE_CHECKING
-	  verify_dominators (CDI_DOMINATORS);
-	  verify_loop_structure ();
-#endif
-	}
-    }
-}
-
-/* Decide whether unroll or peel loops (depending on FLAGS) and how much.  */
-static void
-decide_unrolling_and_peeling (int flags)
-{
-  struct loop *loop;
-  loop_iterator li;
-
-  /* Scan the loops, inner ones first.  */
-  FOR_EACH_LOOP (li, loop, LI_FROM_INNERMOST)
-    {
-      loop->lpt_decision.decision = LPT_NONE;
-
-      if (dump_file)
-	fprintf (dump_file, "\n;; *** Considering loop %d ***\n", loop->num);
+      if (dump_enabled_p ())
+	dump_printf_loc (TDF_RTL, locus,
+                         ";; *** Considering loop %d at BB %d for "
+                         "unrolling ***\n",
+                         loop->num, loop->header->index);
 
       /* Do not peel cold areas.  */
       if (optimize_loop_for_size_p (loop))
@@ -313,208 +264,77 @@ decide_unrolling_and_peeling (int flags)
 	decide_unroll_runtime_iterations (loop, flags);
       if (loop->lpt_decision.decision == LPT_NONE)
 	decide_unroll_stupid (loop, flags);
-      if (loop->lpt_decision.decision == LPT_NONE)
-	decide_peel_simple (loop, flags);
+
+      report_unroll (loop, locus);
     }
 }
 
-/* Decide whether the LOOP is once rolling and suitable for complete
-   peeling.  */
-static void
-decide_peel_once_rolling (struct loop *loop, int flags ATTRIBUTE_UNUSED)
+/* Unroll LOOPS.  */
+void
+unroll_loops (int flags)
 {
-  struct niter_desc *desc;
+  struct loop *loop;
+  bool changed = false;
 
-  if (dump_file)
-    fprintf (dump_file, "\n;; Considering peeling once rolling loop\n");
+  /* Now decide rest of unrolling.  */
+  decide_unrolling (flags);
 
-  /* Is the loop small enough?  */
-  if ((unsigned) PARAM_VALUE (PARAM_MAX_ONCE_PEELED_INSNS) < loop->ninsns)
+  /* Scan the loops, inner ones first.  */
+  FOR_EACH_LOOP (loop, LI_FROM_INNERMOST)
     {
-      if (dump_file)
-	fprintf (dump_file, ";; Not considering loop, is too big\n");
-      return;
-    }
-
-  /* Check for simple loops.  */
-  desc = get_simple_loop_desc (loop);
-
-  /* Check number of iterations.  */
-  if (!desc->simple_p
-      || desc->assumptions
-      || desc->infinite
-      || !desc->const_iter
-      || desc->niter != 0)
-    {
-      if (dump_file)
-	fprintf (dump_file,
-		 ";; Unable to prove that the loop rolls exactly once\n");
-      return;
-    }
-
-  /* Success.  */
-  if (dump_file)
-    fprintf (dump_file, ";; Decided to peel exactly once rolling loop\n");
-  loop->lpt_decision.decision = LPT_PEEL_COMPLETELY;
-}
-
-/* Decide whether the LOOP is suitable for complete peeling.  */
-static void
-decide_peel_completely (struct loop *loop, int flags ATTRIBUTE_UNUSED)
-{
-  unsigned npeel;
-  struct niter_desc *desc;
-
-  if (dump_file)
-    fprintf (dump_file, "\n;; Considering peeling completely\n");
-
-  /* Skip non-innermost loops.  */
-  if (loop->inner)
-    {
-      if (dump_file)
-	fprintf (dump_file, ";; Not considering loop, is not innermost\n");
-      return;
-    }
-
-  /* Do not peel cold areas.  */
-  if (optimize_loop_for_size_p (loop))
-    {
-      if (dump_file)
-	fprintf (dump_file, ";; Not considering loop, cold area\n");
-      return;
-    }
-
-  /* Can the loop be manipulated?  */
-  if (!can_duplicate_loop_p (loop))
-    {
-      if (dump_file)
-	fprintf (dump_file,
-		 ";; Not considering loop, cannot duplicate\n");
-      return;
-    }
-
-  /* npeel = number of iterations to peel.  */
-  npeel = PARAM_VALUE (PARAM_MAX_COMPLETELY_PEELED_INSNS) / loop->ninsns;
-  if (npeel > (unsigned) PARAM_VALUE (PARAM_MAX_COMPLETELY_PEEL_TIMES))
-    npeel = PARAM_VALUE (PARAM_MAX_COMPLETELY_PEEL_TIMES);
-
-  /* Is the loop small enough?  */
-  if (!npeel)
-    {
-      if (dump_file)
-	fprintf (dump_file, ";; Not considering loop, is too big\n");
-      return;
-    }
-
-  /* Check for simple loops.  */
-  desc = get_simple_loop_desc (loop);
-
-  /* Check number of iterations.  */
-  if (!desc->simple_p
-      || desc->assumptions
-      || !desc->const_iter
-      || desc->infinite)
-    {
-      if (dump_file)
-	fprintf (dump_file,
-		 ";; Unable to prove that the loop iterates constant times\n");
-      return;
-    }
-
-  if (desc->niter > npeel - 1)
-    {
-      if (dump_file)
+      /* And perform the appropriate transformations.  */
+      switch (loop->lpt_decision.decision)
 	{
-	  fprintf (dump_file,
-		   ";; Not peeling loop completely, rolls too much (");
-	  fprintf (dump_file, HOST_WIDEST_INT_PRINT_DEC, desc->niter);
-	  fprintf (dump_file, " iterations > %d [maximum peelings])\n", npeel);
+	case LPT_UNROLL_CONSTANT:
+	  unroll_loop_constant_iterations (loop);
+	  changed = true;
+	  break;
+	case LPT_UNROLL_RUNTIME:
+	  unroll_loop_runtime_iterations (loop);
+	  changed = true;
+	  break;
+	case LPT_UNROLL_STUPID:
+	  unroll_loop_stupid (loop);
+	  changed = true;
+	  break;
+	case LPT_NONE:
+	  break;
+	default:
+	  gcc_unreachable ();
 	}
-      return;
     }
 
-  /* Success.  */
-  if (dump_file)
-    fprintf (dump_file, ";; Decided to peel loop completely\n");
-  loop->lpt_decision.decision = LPT_PEEL_COMPLETELY;
+    if (changed)
+      {
+	calculate_dominance_info (CDI_DOMINATORS);
+	fix_loop_structure (NULL);
+      }
+
+  iv_analysis_done ();
 }
 
-/* Peel all iterations of LOOP, remove exit edges and cancel the loop
-   completely.  The transformation done:
+/* Check whether exit of the LOOP is at the end of loop body.  */
 
-   for (i = 0; i < 4; i++)
-     body;
-
-   ==>
-
-   i = 0;
-   body; i++;
-   body; i++;
-   body; i++;
-   body; i++;
-   */
-static void
-peel_loop_completely (struct loop *loop)
+static bool
+loop_exit_at_end_p (struct loop *loop)
 {
-  sbitmap wont_exit;
-  unsigned HOST_WIDE_INT npeel;
-  unsigned i;
-  VEC (edge, heap) *remove_edges;
-  edge ein;
   struct niter_desc *desc = get_simple_loop_desc (loop);
-  struct opt_info *opt_info = NULL;
+  rtx_insn *insn;
 
-  npeel = desc->niter;
+  /* We should never have conditional in latch block.  */
+  gcc_assert (desc->in_edge->dest != loop->header);
 
-  if (npeel)
+  if (desc->in_edge->dest != loop->latch)
+    return false;
+
+  /* Check that the latch is empty.  */
+  FOR_BB_INSNS (loop->latch, insn)
     {
-      bool ok;
-
-      wont_exit = sbitmap_alloc (npeel + 1);
-      sbitmap_ones (wont_exit);
-      RESET_BIT (wont_exit, 0);
-      if (desc->noloop_assumptions)
-	RESET_BIT (wont_exit, 1);
-
-      remove_edges = NULL;
-
-      if (flag_split_ivs_in_unroller)
-        opt_info = analyze_insns_in_loop (loop);
-
-      opt_info_start_duplication (opt_info);
-      ok = duplicate_loop_to_header_edge (loop, loop_preheader_edge (loop),
-					  npeel,
-					  wont_exit, desc->out_edge,
-					  &remove_edges,
-					  DLTHE_FLAG_UPDATE_FREQ
-					  | DLTHE_FLAG_COMPLETTE_PEEL
-					  | (opt_info
-					     ? DLTHE_RECORD_COPY_NUMBER : 0));
-      gcc_assert (ok);
-
-      free (wont_exit);
-
-      if (opt_info)
- 	{
- 	  apply_opt_in_copies (opt_info, npeel, false, true);
- 	  free_opt_info (opt_info);
- 	}
-
-      /* Remove the exit edges.  */
-      FOR_EACH_VEC_ELT (edge, remove_edges, i, ein)
-	remove_path (ein);
-      VEC_free (edge, heap, remove_edges);
+      if (INSN_P (insn) && active_insn_p (insn))
+	return false;
     }
 
-  ein = desc->in_edge;
-  free_simple_loop_desc (loop);
-
-  /* Now remove the unreachable part of the last iteration and cancel
-     the loop.  */
-  remove_path (ein);
-
-  if (dump_file)
-    fprintf (dump_file, ";; Peeled loop completely, %d times\n", (int) npeel);
+  return true;
 }
 
 /* Decide whether to unroll LOOP iterating constant number of times
@@ -525,6 +345,7 @@ decide_unroll_constant_iterations (struct loop *loop, int flags)
 {
   unsigned nunroll, nunroll_by_av, best_copies, best_unroll = 0, n_copies, i;
   struct niter_desc *desc;
+  widest_int iterations;
 
   if (!(flags & UAP_UNROLL))
     {
@@ -547,6 +368,9 @@ decide_unroll_constant_iterations (struct loop *loop, int flags)
   if (nunroll > (unsigned) PARAM_VALUE (PARAM_MAX_UNROLL_TIMES))
     nunroll = PARAM_VALUE (PARAM_MAX_UNROLL_TIMES);
 
+  if (targetm.loop_unroll_adjust)
+    nunroll = targetm.loop_unroll_adjust (nunroll, loop);
+
   /* Skip big loops.  */
   if (nunroll <= 1)
     {
@@ -567,8 +391,14 @@ decide_unroll_constant_iterations (struct loop *loop, int flags)
       return;
     }
 
-  /* Check whether the loop rolls enough to consider.  */
-  if (desc->niter < 2 * nunroll)
+  /* Check whether the loop rolls enough to consider.  
+     Consult also loop bounds and profile; in the case the loop has more
+     than one exit it may well loop less than determined maximal number
+     of iterations.  */
+  if (desc->niter < 2 * nunroll
+      || ((get_estimated_loop_iterations (loop, &iterations)
+	   || get_likely_max_loop_iterations (loop, &iterations))
+	  && wi::ltu_p (iterations, 2 * nunroll)))
     {
       if (dump_file)
 	fprintf (dump_file, ";; Not unrolling loop, doesn't roll\n");
@@ -604,26 +434,17 @@ decide_unroll_constant_iterations (struct loop *loop, int flags)
 	}
     }
 
-  if (dump_file)
-    fprintf (dump_file, ";; max_unroll %d (%d copies, initial %d).\n",
-	     best_unroll + 1, best_copies, nunroll);
-
   loop->lpt_decision.decision = LPT_UNROLL_CONSTANT;
   loop->lpt_decision.times = best_unroll;
-
-  if (dump_file)
-    fprintf (dump_file,
-	     ";; Decided to unroll the constant times rolling loop, %d times.\n",
-	     loop->lpt_decision.times);
 }
 
-/* Unroll LOOP with constant number of iterations LOOP->LPT_DECISION.TIMES + 1
-   times.  The transformation does this:
+/* Unroll LOOP with constant number of iterations LOOP->LPT_DECISION.TIMES times.
+   The transformation does this:
 
    for (i = 0; i < 102; i++)
      body;
 
-   ==>
+   ==>  (LOOP->LPT_DECISION.TIMES == 3)
 
    i = 0;
    body; i++;
@@ -641,9 +462,7 @@ unroll_loop_constant_iterations (struct loop *loop)
 {
   unsigned HOST_WIDE_INT niter;
   unsigned exit_mod;
-  sbitmap wont_exit;
   unsigned i;
-  VEC (edge, heap) *remove_edges;
   edge e;
   unsigned max_unroll = loop->lpt_decision.times;
   struct niter_desc *desc = get_simple_loop_desc (loop);
@@ -658,10 +477,10 @@ unroll_loop_constant_iterations (struct loop *loop)
 
   exit_mod = niter % (max_unroll + 1);
 
-  wont_exit = sbitmap_alloc (max_unroll + 1);
-  sbitmap_ones (wont_exit);
+  auto_sbitmap wont_exit (max_unroll + 1);
+  bitmap_ones (wont_exit);
 
-  remove_edges = NULL;
+  auto_vec<edge> remove_edges;
   if (flag_split_ivs_in_unroller
       || flag_variable_expansion_in_unroller)
     opt_info = analyze_insns_in_loop (loop);
@@ -673,12 +492,12 @@ unroll_loop_constant_iterations (struct loop *loop)
 	 of exit condition have continuous body after unrolling.  */
 
       if (dump_file)
-	fprintf (dump_file, ";; Condition on beginning of loop.\n");
+	fprintf (dump_file, ";; Condition at beginning of loop.\n");
 
       /* Peel exit_mod iterations.  */
-      RESET_BIT (wont_exit, 0);
+      bitmap_clear_bit (wont_exit, 0);
       if (desc->noloop_assumptions)
-	RESET_BIT (wont_exit, 1);
+	bitmap_clear_bit (wont_exit, 1);
 
       if (exit_mod)
 	{
@@ -698,10 +517,20 @@ unroll_loop_constant_iterations (struct loop *loop)
 
 	  desc->noloop_assumptions = NULL_RTX;
 	  desc->niter -= exit_mod;
-	  desc->niter_max -= exit_mod;
+	  loop->nb_iterations_upper_bound -= exit_mod;
+	  if (loop->any_estimate
+	      && wi::leu_p (exit_mod, loop->nb_iterations_estimate))
+	    loop->nb_iterations_estimate -= exit_mod;
+	  else
+	    loop->any_estimate = false;
+	  if (loop->any_likely_upper_bound
+	      && wi::leu_p (exit_mod, loop->nb_iterations_likely_upper_bound))
+	    loop->nb_iterations_likely_upper_bound -= exit_mod;
+	  else
+	    loop->any_likely_upper_bound = false;
 	}
 
-      SET_BIT (wont_exit, 1);
+      bitmap_set_bit (wont_exit, 1);
     }
   else
     {
@@ -709,7 +538,7 @@ unroll_loop_constant_iterations (struct loop *loop)
 	 the loop tests the condition at the end of loop body.  */
 
       if (dump_file)
-	fprintf (dump_file, ";; Condition on end of loop.\n");
+	fprintf (dump_file, ";; Condition at end of loop.\n");
 
       /* We know that niter >= max_unroll + 2; so we do not need to care of
 	 case when we would exit before reaching the loop.  So just peel
@@ -717,9 +546,9 @@ unroll_loop_constant_iterations (struct loop *loop)
       if (exit_mod != max_unroll
 	  || desc->noloop_assumptions)
 	{
-	  RESET_BIT (wont_exit, 0);
+	  bitmap_clear_bit (wont_exit, 0);
 	  if (desc->noloop_assumptions)
-	    RESET_BIT (wont_exit, 1);
+	    bitmap_clear_bit (wont_exit, 1);
 
           opt_info_start_duplication (opt_info);
 	  ok = duplicate_loop_to_header_edge (loop, loop_preheader_edge (loop),
@@ -736,14 +565,24 @@ unroll_loop_constant_iterations (struct loop *loop)
   	    apply_opt_in_copies (opt_info, exit_mod + 1, false, false);
 
 	  desc->niter -= exit_mod + 1;
-	  desc->niter_max -= exit_mod + 1;
+	  loop->nb_iterations_upper_bound -= exit_mod + 1;
+	  if (loop->any_estimate
+	      && wi::leu_p (exit_mod + 1, loop->nb_iterations_estimate))
+	    loop->nb_iterations_estimate -= exit_mod + 1;
+	  else
+	    loop->any_estimate = false;
+	  if (loop->any_likely_upper_bound
+	      && wi::leu_p (exit_mod + 1, loop->nb_iterations_likely_upper_bound))
+	    loop->nb_iterations_likely_upper_bound -= exit_mod + 1;
+	  else
+	    loop->any_likely_upper_bound = false;
 	  desc->noloop_assumptions = NULL_RTX;
 
-	  SET_BIT (wont_exit, 0);
-	  SET_BIT (wont_exit, 1);
+	  bitmap_set_bit (wont_exit, 0);
+	  bitmap_set_bit (wont_exit, 1);
 	}
 
-      RESET_BIT (wont_exit, max_unroll);
+      bitmap_clear_bit (wont_exit, max_unroll);
     }
 
   /* Now unroll the loop.  */
@@ -765,8 +604,6 @@ unroll_loop_constant_iterations (struct loop *loop)
       free_opt_info (opt_info);
     }
 
-  free (wont_exit);
-
   if (exit_at_end)
     {
       basic_block exit_block = get_bb_copy (desc->in_edge->src);
@@ -785,13 +622,19 @@ unroll_loop_constant_iterations (struct loop *loop)
     }
 
   desc->niter /= max_unroll + 1;
-  desc->niter_max /= max_unroll + 1;
+  loop->nb_iterations_upper_bound
+    = wi::udiv_trunc (loop->nb_iterations_upper_bound, max_unroll + 1);
+  if (loop->any_estimate)
+    loop->nb_iterations_estimate
+      = wi::udiv_trunc (loop->nb_iterations_estimate, max_unroll + 1);
+  if (loop->any_likely_upper_bound)
+    loop->nb_iterations_likely_upper_bound
+      = wi::udiv_trunc (loop->nb_iterations_likely_upper_bound, max_unroll + 1);
   desc->niter_expr = GEN_INT (desc->niter);
 
   /* Remove the edges.  */
-  FOR_EACH_VEC_ELT (edge, remove_edges, i, e)
+  FOR_EACH_VEC_ELT (remove_edges, i, e)
     remove_path (e);
-  VEC_free (edge, heap, remove_edges);
 
   if (dump_file)
     fprintf (dump_file,
@@ -806,6 +649,7 @@ decide_unroll_runtime_iterations (struct loop *loop, int flags)
 {
   unsigned nunroll, nunroll_by_av, i;
   struct niter_desc *desc;
+  widest_int iterations;
 
   if (!(flags & UAP_UNROLL))
     {
@@ -858,8 +702,10 @@ decide_unroll_runtime_iterations (struct loop *loop, int flags)
       return;
     }
 
-  /* If we have profile feedback, check whether the loop rolls.  */
-  if (loop->header->count && expected_loop_iterations (loop) < 2 * nunroll)
+  /* Check whether the loop rolls.  */
+  if ((get_estimated_loop_iterations (loop, &iterations)
+       || get_likely_max_loop_iterations (loop, &iterations))
+      && wi::ltu_p (iterations, 2 * nunroll))
     {
       if (dump_file)
 	fprintf (dump_file, ";; Not unrolling loop, doesn't roll\n");
@@ -873,12 +719,6 @@ decide_unroll_runtime_iterations (struct loop *loop, int flags)
 
   loop->lpt_decision.decision = LPT_UNROLL_RUNTIME;
   loop->lpt_decision.times = i - 1;
-
-  if (dump_file)
-    fprintf (dump_file,
-	     ";; Decided to unroll the runtime computable "
-	     "times rolling loop, %d times.\n",
-	     loop->lpt_decision.times);
 }
 
 /* Splits edge E and inserts the sequence of instructions INSNS on it, and
@@ -886,7 +726,7 @@ decide_unroll_runtime_iterations (struct loop *loop, int flags)
    and NULL is returned instead.  */
 
 basic_block
-split_edge_and_insert (edge e, rtx insns)
+split_edge_and_insert (edge e, rtx_insn *insns)
 {
   basic_block bb;
 
@@ -900,7 +740,7 @@ split_edge_and_insert (edge e, rtx insns)
      CFG.  For this purpose we used to set the BB_SUPERBLOCK flag on BB
      and call break_superblocks when going out of cfglayout mode.  But it
      turns out that this never happens; and that if it does ever happen,
-     the TODO_verify_flow at the end of the RTL loop passes would fail.
+     the verify_flow_info at the end of the RTL loop passes would fail.
 
      There are two reasons why we expected we could have control flow insns
      in INSNS.  The first is when a comparison has to be done in parts, and
@@ -928,14 +768,67 @@ split_edge_and_insert (edge e, rtx insns)
   return bb;
 }
 
-/* Unroll LOOP for that we are able to count number of iterations in runtime
-   LOOP->LPT_DECISION.TIMES + 1 times.  The transformation does this (with some
+/* Prepare a sequence comparing OP0 with OP1 using COMP and jumping to LABEL if
+   true, with probability PROB.  If CINSN is not NULL, it is the insn to copy
+   in order to create a jump.  */
+
+static rtx_insn *
+compare_and_jump_seq (rtx op0, rtx op1, enum rtx_code comp,
+		      rtx_code_label *label, int prob, rtx_insn *cinsn)
+{
+  rtx_insn *seq;
+  rtx_jump_insn *jump;
+  rtx cond;
+  machine_mode mode;
+
+  mode = GET_MODE (op0);
+  if (mode == VOIDmode)
+    mode = GET_MODE (op1);
+
+  start_sequence ();
+  if (GET_MODE_CLASS (mode) == MODE_CC)
+    {
+      /* A hack -- there seems to be no easy generic way how to make a
+	 conditional jump from a ccmode comparison.  */
+      gcc_assert (cinsn);
+      cond = XEXP (SET_SRC (pc_set (cinsn)), 0);
+      gcc_assert (GET_CODE (cond) == comp);
+      gcc_assert (rtx_equal_p (op0, XEXP (cond, 0)));
+      gcc_assert (rtx_equal_p (op1, XEXP (cond, 1)));
+      emit_jump_insn (copy_insn (PATTERN (cinsn)));
+      jump = as_a <rtx_jump_insn *> (get_last_insn ());
+      JUMP_LABEL (jump) = JUMP_LABEL (cinsn);
+      LABEL_NUSES (JUMP_LABEL (jump))++;
+      redirect_jump (jump, label, 0);
+    }
+  else
+    {
+      gcc_assert (!cinsn);
+
+      op0 = force_operand (op0, NULL_RTX);
+      op1 = force_operand (op1, NULL_RTX);
+      do_compare_rtx_and_jump (op0, op1, comp, 0,
+			       mode, NULL_RTX, NULL, label, -1);
+      jump = as_a <rtx_jump_insn *> (get_last_insn ());
+      jump->set_jump_target (label);
+      LABEL_NUSES (label)++;
+    }
+  add_int_reg_note (jump, REG_BR_PROB, prob);
+
+  seq = get_insns ();
+  end_sequence ();
+
+  return seq;
+}
+
+/* Unroll LOOP for which we are able to count number of iterations in runtime
+   LOOP->LPT_DECISION.TIMES times.  The transformation does this (with some
    extra care for case n < 0):
 
    for (i = 0; i < n; i++)
      body;
 
-   ==>
+   ==>  (LOOP->LPT_DECISION.TIMES == 3)
 
    i = 0;
    mod = n % 4;
@@ -962,14 +855,13 @@ split_edge_and_insert (edge e, rtx insns)
 static void
 unroll_loop_runtime_iterations (struct loop *loop)
 {
-  rtx old_niter, niter, init_code, branch_code, tmp;
+  rtx old_niter, niter, tmp;
+  rtx_insn *init_code, *branch_code;
   unsigned i, j, p;
-  basic_block preheader, *body, swtch, ezc_swtch;
-  VEC (basic_block, heap) *dom_bbs;
-  sbitmap wont_exit;
-  int may_exit_copy;
+  basic_block preheader, *body, swtch, ezc_swtch = NULL;
+  int may_exit_copy, iter_freq, new_freq;
+  gcov_type iter_count, new_count;
   unsigned n_peel;
-  VEC (edge, heap) *remove_edges;
   edge e;
   bool extra_zero_check, last_may_exit;
   unsigned max_unroll = loop->lpt_decision.times;
@@ -983,20 +875,20 @@ unroll_loop_runtime_iterations (struct loop *loop)
     opt_info = analyze_insns_in_loop (loop);
 
   /* Remember blocks whose dominators will have to be updated.  */
-  dom_bbs = NULL;
+  auto_vec<basic_block> dom_bbs;
 
   body = get_loop_body (loop);
   for (i = 0; i < loop->num_nodes; i++)
     {
-      VEC (basic_block, heap) *ldom;
+      vec<basic_block> ldom;
       basic_block bb;
 
       ldom = get_dominated_by (CDI_DOMINATORS, body[i]);
-      FOR_EACH_VEC_ELT (basic_block, ldom, j, bb)
+      FOR_EACH_VEC_ELT (ldom, j, bb)
 	if (!flow_bb_inside_loop_p (loop, bb))
-	  VEC_safe_push (basic_block, heap, dom_bbs, bb);
+	  dom_bbs.safe_push (bb);
 
-      VEC_free (basic_block, heap, ldom);
+      ldom.release ();
     }
   free (body);
 
@@ -1026,12 +918,22 @@ unroll_loop_runtime_iterations (struct loop *loop)
   if (tmp != niter)
     emit_move_insn (niter, tmp);
 
+  /* For loops that exit at end and whose number of iterations is reliable,
+     add one to niter to account for first pass through loop body before
+     reaching exit test. */
+  if (exit_at_end && !desc->noloop_assumptions)
+    {
+      niter = expand_simple_binop (desc->mode, PLUS,
+				   niter, const1_rtx,
+				   NULL_RTX, 0, OPTAB_LIB_WIDEN);
+      old_niter = niter;
+    }
+
   /* Count modulo by ANDing it with max_unroll; we use the fact that
      the number of unrollings is a power of two, and thus this is correct
      even if there is overflow in the computation.  */
   niter = expand_simple_binop (desc->mode, AND,
-			       niter,
-			       GEN_INT (max_unroll),
+			       niter, gen_int_mode (max_unroll, desc->mode),
 			       NULL_RTX, 0, OPTAB_LIB_WIDEN);
 
   init_code = get_insns ();
@@ -1041,34 +943,44 @@ unroll_loop_runtime_iterations (struct loop *loop)
   /* Precondition the loop.  */
   split_edge_and_insert (loop_preheader_edge (loop), init_code);
 
-  remove_edges = NULL;
+  auto_vec<edge> remove_edges;
 
-  wont_exit = sbitmap_alloc (max_unroll + 2);
+  auto_sbitmap wont_exit (max_unroll + 2);
 
-  /* Peel the first copy of loop body (almost always we must leave exit test
-     here; the only exception is when we have extra zero check and the number
-     of iterations is reliable.  Also record the place of (possible) extra
-     zero check.  */
-  sbitmap_zero (wont_exit);
-  if (extra_zero_check
-      && !desc->noloop_assumptions)
-    SET_BIT (wont_exit, 1);
-  ezc_swtch = loop_preheader_edge (loop)->src;
-  ok = duplicate_loop_to_header_edge (loop, loop_preheader_edge (loop),
-				      1, wont_exit, desc->out_edge,
-				      &remove_edges,
-				      DLTHE_FLAG_UPDATE_FREQ);
-  gcc_assert (ok);
+  if (extra_zero_check || desc->noloop_assumptions)
+    {
+      /* Peel the first copy of loop body.  Leave the exit test if the number
+	 of iterations is not reliable.  Also record the place of the extra zero
+	 check.  */
+      bitmap_clear (wont_exit);
+      if (!desc->noloop_assumptions)
+	bitmap_set_bit (wont_exit, 1);
+      ezc_swtch = loop_preheader_edge (loop)->src;
+      ok = duplicate_loop_to_header_edge (loop, loop_preheader_edge (loop),
+					  1, wont_exit, desc->out_edge,
+					  &remove_edges,
+					  DLTHE_FLAG_UPDATE_FREQ);
+      gcc_assert (ok);
+    }
 
   /* Record the place where switch will be built for preconditioning.  */
   swtch = split_edge (loop_preheader_edge (loop));
 
+  /* Compute frequency/count increments for each switch block and initialize
+     innermost switch block.  Switch blocks and peeled loop copies are built
+     from innermost outward.  */
+  iter_freq = new_freq = swtch->frequency / (max_unroll + 1);
+  iter_count = new_count = swtch->count / (max_unroll + 1);
+  swtch->frequency = new_freq;
+  swtch->count = new_count;
+  single_succ_edge (swtch)->count = new_count;
+
   for (i = 0; i < n_peel; i++)
     {
       /* Peel the copy.  */
-      sbitmap_zero (wont_exit);
+      bitmap_clear (wont_exit);
       if (i != n_peel - 1 || !last_may_exit)
-	SET_BIT (wont_exit, 1);
+	bitmap_set_bit (wont_exit, 1);
       ok = duplicate_loop_to_header_edge (loop, loop_preheader_edge (loop),
 					  1, wont_exit, desc->out_edge,
 					  &remove_edges,
@@ -1080,9 +992,13 @@ unroll_loop_runtime_iterations (struct loop *loop)
       p = REG_BR_PROB_BASE / (i + 2);
 
       preheader = split_edge (loop_preheader_edge (loop));
+      /* Add in frequency/count of edge from switch block.  */
+      preheader->frequency += iter_freq;
+      preheader->count += iter_count;
+      single_succ_edge (preheader)->count = preheader->count;
       branch_code = compare_and_jump_seq (copy_rtx (niter), GEN_INT (j), EQ,
 					  block_label (preheader), p,
-					  NULL_RTX);
+					  NULL);
 
       /* We rely on the fact that the compare and jump cannot be optimized out,
 	 and hence the cfg we create is correct.  */
@@ -1090,9 +1006,15 @@ unroll_loop_runtime_iterations (struct loop *loop)
 
       swtch = split_edge_and_insert (single_pred_edge (swtch), branch_code);
       set_immediate_dominator (CDI_DOMINATORS, preheader, swtch);
-      single_pred_edge (swtch)->probability = REG_BR_PROB_BASE - p;
+      single_succ_edge (swtch)->probability = REG_BR_PROB_BASE - p;
+      single_succ_edge (swtch)->count = new_count;
+      new_freq += iter_freq;
+      new_count += iter_count;
+      swtch->frequency = new_freq;
+      swtch->count = new_count;
       e = make_edge (swtch, preheader,
 		     single_succ_edge (swtch)->flags & EDGE_IRREDUCIBLE_LOOP);
+      e->count = iter_count;
       e->probability = p;
     }
 
@@ -1102,16 +1024,26 @@ unroll_loop_runtime_iterations (struct loop *loop)
       p = REG_BR_PROB_BASE / (max_unroll + 1);
       swtch = ezc_swtch;
       preheader = split_edge (loop_preheader_edge (loop));
+      /* Recompute frequency/count adjustments since initial peel copy may
+	 have exited and reduced those values that were computed above.  */
+      iter_freq = swtch->frequency / (max_unroll + 1);
+      iter_count = swtch->count / (max_unroll + 1);
+      /* Add in frequency/count of edge from switch block.  */
+      preheader->frequency += iter_freq;
+      preheader->count += iter_count;
+      single_succ_edge (preheader)->count = preheader->count;
       branch_code = compare_and_jump_seq (copy_rtx (niter), const0_rtx, EQ,
 					  block_label (preheader), p,
-					  NULL_RTX);
+					  NULL);
       gcc_assert (branch_code != NULL_RTX);
 
       swtch = split_edge_and_insert (single_succ_edge (swtch), branch_code);
       set_immediate_dominator (CDI_DOMINATORS, preheader, swtch);
       single_succ_edge (swtch)->probability = REG_BR_PROB_BASE - p;
+      single_succ_edge (swtch)->count -= iter_count;
       e = make_edge (swtch, preheader,
 		     single_succ_edge (swtch)->flags & EDGE_IRREDUCIBLE_LOOP);
+      e->count = iter_count;
       e->probability = p;
     }
 
@@ -1120,8 +1052,8 @@ unroll_loop_runtime_iterations (struct loop *loop)
 
   /* And unroll loop.  */
 
-  sbitmap_ones (wont_exit);
-  RESET_BIT (wont_exit, may_exit_copy);
+  bitmap_ones (wont_exit);
+  bitmap_clear_bit (wont_exit, may_exit_copy);
   opt_info_start_duplication (opt_info);
 
   ok = duplicate_loop_to_header_edge (loop, loop_latch_edge (loop),
@@ -1139,8 +1071,6 @@ unroll_loop_runtime_iterations (struct loop *loop)
       apply_opt_in_copies (opt_info, max_unroll, true, true);
       free_opt_info (opt_info);
     }
-
-  free (wont_exit);
 
   if (exit_at_end)
     {
@@ -1161,9 +1091,8 @@ unroll_loop_runtime_iterations (struct loop *loop)
     }
 
   /* Remove the edges.  */
-  FOR_EACH_VEC_ELT (edge, remove_edges, i, e)
+  FOR_EACH_VEC_ELT (remove_edges, i, e)
     remove_path (e);
-  VEC_free (edge, heap, remove_edges);
 
   /* We must be careful when updating the number of iterations due to
      preconditioning and the fact that the value must be valid at entry
@@ -1172,14 +1101,31 @@ unroll_loop_runtime_iterations (struct loop *loop)
   gcc_assert (!desc->const_iter);
   desc->niter_expr =
     simplify_gen_binary (UDIV, desc->mode, old_niter,
-			 GEN_INT (max_unroll + 1));
-  desc->niter_max /= max_unroll + 1;
+			 gen_int_mode (max_unroll + 1, desc->mode));
+  loop->nb_iterations_upper_bound
+    = wi::udiv_trunc (loop->nb_iterations_upper_bound, max_unroll + 1);
+  if (loop->any_estimate)
+    loop->nb_iterations_estimate
+      = wi::udiv_trunc (loop->nb_iterations_estimate, max_unroll + 1);
+  if (loop->any_likely_upper_bound)
+    loop->nb_iterations_likely_upper_bound
+      = wi::udiv_trunc (loop->nb_iterations_likely_upper_bound, max_unroll + 1);
   if (exit_at_end)
     {
       desc->niter_expr =
 	simplify_gen_binary (MINUS, desc->mode, desc->niter_expr, const1_rtx);
       desc->noloop_assumptions = NULL_RTX;
-      desc->niter_max--;
+      --loop->nb_iterations_upper_bound;
+      if (loop->any_estimate
+	  && loop->nb_iterations_estimate != 0)
+	--loop->nb_iterations_estimate;
+      else
+	loop->any_estimate = false;
+      if (loop->any_likely_upper_bound
+	  && loop->nb_iterations_likely_upper_bound != 0)
+	--loop->nb_iterations_likely_upper_bound;
+      else
+	loop->any_likely_upper_bound = false;
     }
 
   if (dump_file)
@@ -1187,161 +1133,6 @@ unroll_loop_runtime_iterations (struct loop *loop)
 	     ";; Unrolled loop %d times, counting # of iterations "
 	     "in runtime, %i insns\n",
 	     max_unroll, num_loop_insns (loop));
-
-  VEC_free (basic_block, heap, dom_bbs);
-}
-
-/* Decide whether to simply peel LOOP and how much.  */
-static void
-decide_peel_simple (struct loop *loop, int flags)
-{
-  unsigned npeel;
-  struct niter_desc *desc;
-
-  if (!(flags & UAP_PEEL))
-    {
-      /* We were not asked to, just return back silently.  */
-      return;
-    }
-
-  if (dump_file)
-    fprintf (dump_file, "\n;; Considering simply peeling loop\n");
-
-  /* npeel = number of iterations to peel.  */
-  npeel = PARAM_VALUE (PARAM_MAX_PEELED_INSNS) / loop->ninsns;
-  if (npeel > (unsigned) PARAM_VALUE (PARAM_MAX_PEEL_TIMES))
-    npeel = PARAM_VALUE (PARAM_MAX_PEEL_TIMES);
-
-  /* Skip big loops.  */
-  if (!npeel)
-    {
-      if (dump_file)
-	fprintf (dump_file, ";; Not considering loop, is too big\n");
-      return;
-    }
-
-  /* Check for simple loops.  */
-  desc = get_simple_loop_desc (loop);
-
-  /* Check number of iterations.  */
-  if (desc->simple_p && !desc->assumptions && desc->const_iter)
-    {
-      if (dump_file)
-	fprintf (dump_file, ";; Loop iterates constant times\n");
-      return;
-    }
-
-  /* Do not simply peel loops with branches inside -- it increases number
-     of mispredicts.  */
-  if (num_loop_branches (loop) > 1)
-    {
-      if (dump_file)
-	fprintf (dump_file, ";; Not peeling, contains branches\n");
-      return;
-    }
-
-  if (loop->header->count)
-    {
-      unsigned niter = expected_loop_iterations (loop);
-      if (niter + 1 > npeel)
-	{
-	  if (dump_file)
-	    {
-	      fprintf (dump_file, ";; Not peeling loop, rolls too much (");
-	      fprintf (dump_file, HOST_WIDEST_INT_PRINT_DEC,
-		       (HOST_WIDEST_INT) (niter + 1));
-	      fprintf (dump_file, " iterations > %d [maximum peelings])\n",
-		       npeel);
-	    }
-	  return;
-	}
-      npeel = niter + 1;
-    }
-  else
-    {
-      /* For now we have no good heuristics to decide whether loop peeling
-         will be effective, so disable it.  */
-      if (dump_file)
-	fprintf (dump_file,
-		 ";; Not peeling loop, no evidence it will be profitable\n");
-      return;
-    }
-
-  /* Success.  */
-  loop->lpt_decision.decision = LPT_PEEL_SIMPLE;
-  loop->lpt_decision.times = npeel;
-
-  if (dump_file)
-    fprintf (dump_file, ";; Decided to simply peel the loop, %d times.\n",
-	     loop->lpt_decision.times);
-}
-
-/* Peel a LOOP LOOP->LPT_DECISION.TIMES times.  The transformation:
-   while (cond)
-     body;
-
-   ==>
-
-   if (!cond) goto end;
-   body;
-   if (!cond) goto end;
-   body;
-   while (cond)
-     body;
-   end: ;
-   */
-static void
-peel_loop_simple (struct loop *loop)
-{
-  sbitmap wont_exit;
-  unsigned npeel = loop->lpt_decision.times;
-  struct niter_desc *desc = get_simple_loop_desc (loop);
-  struct opt_info *opt_info = NULL;
-  bool ok;
-
-  if (flag_split_ivs_in_unroller && npeel > 1)
-    opt_info = analyze_insns_in_loop (loop);
-
-  wont_exit = sbitmap_alloc (npeel + 1);
-  sbitmap_zero (wont_exit);
-
-  opt_info_start_duplication (opt_info);
-
-  ok = duplicate_loop_to_header_edge (loop, loop_preheader_edge (loop),
-				      npeel, wont_exit, NULL,
-				      NULL, DLTHE_FLAG_UPDATE_FREQ
-				      | (opt_info
-					 ? DLTHE_RECORD_COPY_NUMBER
-					   : 0));
-  gcc_assert (ok);
-
-  free (wont_exit);
-
-  if (opt_info)
-    {
-      apply_opt_in_copies (opt_info, npeel, false, false);
-      free_opt_info (opt_info);
-    }
-
-  if (desc->simple_p)
-    {
-      if (desc->const_iter)
-	{
-	  desc->niter -= npeel;
-	  desc->niter_expr = GEN_INT (desc->niter);
-	  desc->noloop_assumptions = NULL_RTX;
-	}
-      else
-	{
-	  /* We cannot just update niter_expr, as its value might be clobbered
-	     inside loop.  We could handle this by counting the number into
-	     temporary just like we do in runtime unrolling, but it does not
-	     seem worthwhile.  */
-	  free_simple_loop_desc (loop);
-	}
-    }
-  if (dump_file)
-    fprintf (dump_file, ";; Peeling loop %d times\n", npeel);
 }
 
 /* Decide whether to unroll LOOP stupidly and how much.  */
@@ -1350,6 +1141,7 @@ decide_unroll_stupid (struct loop *loop, int flags)
 {
   unsigned nunroll, nunroll_by_av, i;
   struct niter_desc *desc;
+  widest_int iterations;
 
   if (!(flags & UAP_UNROLL_ALL))
     {
@@ -1393,7 +1185,9 @@ decide_unroll_stupid (struct loop *loop, int flags)
     }
 
   /* Do not unroll loops with branches inside -- it increases number
-     of mispredicts.  */
+     of mispredicts. 
+     TODO: this heuristic needs tunning; call inside the loop body
+     is also relatively good reason to not unroll.  */
   if (num_loop_branches (loop) > 1)
     {
       if (dump_file)
@@ -1401,9 +1195,10 @@ decide_unroll_stupid (struct loop *loop, int flags)
       return;
     }
 
-  /* If we have profile feedback, check whether the loop rolls.  */
-  if (loop->header->count
-      && expected_loop_iterations (loop) < 2 * nunroll)
+  /* Check whether the loop rolls.  */
+  if ((get_estimated_loop_iterations (loop, &iterations)
+       || get_likely_max_loop_iterations (loop, &iterations))
+      && wi::ltu_p (iterations, 2 * nunroll))
     {
       if (dump_file)
 	fprintf (dump_file, ";; Not unrolling loop, doesn't roll\n");
@@ -1418,18 +1213,14 @@ decide_unroll_stupid (struct loop *loop, int flags)
 
   loop->lpt_decision.decision = LPT_UNROLL_STUPID;
   loop->lpt_decision.times = i - 1;
-
-  if (dump_file)
-    fprintf (dump_file,
-	     ";; Decided to unroll the loop stupidly, %d times.\n",
-	     loop->lpt_decision.times);
 }
 
-/* Unroll a LOOP LOOP->LPT_DECISION.TIMES times.  The transformation:
+/* Unroll a LOOP LOOP->LPT_DECISION.TIMES times.  The transformation does this:
+
    while (cond)
      body;
 
-   ==>
+   ==>  (LOOP->LPT_DECISION.TIMES == 3)
 
    while (cond)
      {
@@ -1445,7 +1236,6 @@ decide_unroll_stupid (struct loop *loop, int flags)
 static void
 unroll_loop_stupid (struct loop *loop)
 {
-  sbitmap wont_exit;
   unsigned nunroll = loop->lpt_decision.times;
   struct niter_desc *desc = get_simple_loop_desc (loop);
   struct opt_info *opt_info = NULL;
@@ -1455,9 +1245,8 @@ unroll_loop_stupid (struct loop *loop)
       || flag_variable_expansion_in_unroller)
     opt_info = analyze_insns_in_loop (loop);
 
-
-  wont_exit = sbitmap_alloc (nunroll + 1);
-  sbitmap_zero (wont_exit);
+  auto_sbitmap wont_exit (nunroll + 1);
+  bitmap_clear (wont_exit);
   opt_info_start_duplication (opt_info);
 
   ok = duplicate_loop_to_header_edge (loop, loop_latch_edge (loop),
@@ -1475,15 +1264,13 @@ unroll_loop_stupid (struct loop *loop)
       free_opt_info (opt_info);
     }
 
-  free (wont_exit);
-
   if (desc->simple_p)
     {
       /* We indeed may get here provided that there are nontrivial assumptions
 	 for a loop to be really simple.  We could update the counts, but the
 	 problem is that we are unable to decide which exit will be taken
 	 (not really true in case the number of iterations is constant,
-	 but noone will do anything with this information, so we do not
+	 but no one will do anything with this information, so we do not
 	 worry about it).  */
       desc->simple_p = false;
     }
@@ -1493,57 +1280,18 @@ unroll_loop_stupid (struct loop *loop)
 	     nunroll, num_loop_insns (loop));
 }
 
-/* A hash function for information about insns to split.  */
-
-static hashval_t
-si_info_hash (const void *ivts)
-{
-  return (hashval_t) INSN_UID (((const struct iv_to_split *) ivts)->insn);
-}
-
-/* An equality functions for information about insns to split.  */
-
-static int
-si_info_eq (const void *ivts1, const void *ivts2)
-{
-  const struct iv_to_split *const i1 = (const struct iv_to_split *) ivts1;
-  const struct iv_to_split *const i2 = (const struct iv_to_split *) ivts2;
-
-  return i1->insn == i2->insn;
-}
-
-/* Return a hash for VES, which is really a "var_to_expand *".  */
-
-static hashval_t
-ve_info_hash (const void *ves)
-{
-  return (hashval_t) INSN_UID (((const struct var_to_expand *) ves)->insn);
-}
-
-/* Return true if IVTS1 and IVTS2 (which are really both of type
-   "var_to_expand *") refer to the same instruction.  */
-
-static int
-ve_info_eq (const void *ivts1, const void *ivts2)
-{
-  const struct var_to_expand *const i1 = (const struct var_to_expand *) ivts1;
-  const struct var_to_expand *const i2 = (const struct var_to_expand *) ivts2;
-
-  return i1->insn == i2->insn;
-}
-
 /* Returns true if REG is referenced in one nondebug insn in LOOP.
    Set *DEBUG_USES to the number of debug insns that reference the
    variable.  */
 
-bool
+static bool
 referenced_in_one_insn_in_loop_p (struct loop *loop, rtx reg,
 				  int *debug_uses)
 {
   basic_block *body, bb;
   unsigned i;
   int count_ref = 0;
-  rtx insn;
+  rtx_insn *insn;
 
   body = get_loop_body (loop);
   for (i = 0; i < loop->num_nodes; i++)
@@ -1569,7 +1317,7 @@ reset_debug_uses_in_loop (struct loop *loop, rtx reg, int debug_uses)
 {
   basic_block *body, bb;
   unsigned i;
-  rtx insn;
+  rtx_insn *insn;
 
   body = get_loop_body (loop);
   for (i = 0; debug_uses && i < loop->num_nodes; i++)
@@ -1614,7 +1362,7 @@ reset_debug_uses_in_loop (struct loop *loop, rtx reg, int debug_uses)
 */
 
 static struct var_to_expand *
-analyze_insn_to_expand_var (struct loop *loop, rtx insn)
+analyze_insn_to_expand_var (struct loop *loop, rtx_insn *insn)
 {
   rtx set, dest, src;
   struct var_to_expand *ves;
@@ -1706,7 +1454,7 @@ analyze_insn_to_expand_var (struct loop *loop, rtx insn)
   if (debug_uses)
     /* Instead of resetting the debug insns, we could replace each
        debug use in the loop with the sum or product of all expanded
-       accummulators.  Since we'll only know of all expansions at the
+       accumulators.  Since we'll only know of all expansions at the
        end, we'd have to keep track of which vars_to_expand a debug
        insn in the loop references, take note of each copy of the
        debug insn during unrolling, and when it's all done, compute
@@ -1718,12 +1466,11 @@ analyze_insn_to_expand_var (struct loop *loop, rtx insn)
   ves = XNEW (struct var_to_expand);
   ves->insn = insn;
   ves->reg = copy_rtx (dest);
-  ves->var_expansions = VEC_alloc (rtx, heap, 1);
+  ves->var_expansions.create (1);
   ves->next = NULL;
   ves->op = GET_CODE (src);
   ves->expansion_count = 0;
   ves->reuse_expansion = 0;
-  ves->accum_pos = accum_pos;
   return ves;
 }
 
@@ -1753,7 +1500,7 @@ analyze_insn_to_expand_var (struct loop *loop, rtx insn)
    pointer to it.  */
 
 static struct iv_to_split *
-analyze_iv_to_split_insn (rtx insn)
+analyze_iv_to_split_insn (rtx_insn *insn)
 {
   rtx set, dest;
   struct rtx_iv iv;
@@ -1793,11 +1540,10 @@ analyze_iv_to_split_insn (rtx insn)
   /* Record the insn to split.  */
   ivts = XNEW (struct iv_to_split);
   ivts->insn = insn;
+  ivts->orig_var = dest;
   ivts->base_var = NULL_RTX;
   ivts->step = iv.step;
   ivts->next = NULL;
-  ivts->n_loc = 1;
-  ivts->loc[0] = 1;
 
   return ivts;
 }
@@ -1813,12 +1559,12 @@ analyze_insns_in_loop (struct loop *loop)
   basic_block *body, bb;
   unsigned i;
   struct opt_info *opt_info = XCNEW (struct opt_info);
-  rtx insn;
+  rtx_insn *insn;
   struct iv_to_split *ivts = NULL;
   struct var_to_expand *ves = NULL;
-  PTR *slot1;
-  PTR *slot2;
-  VEC (edge, heap) *edges = get_loop_exit_edges (loop);
+  iv_to_split **slot1;
+  var_to_expand **slot2;
+  vec<edge> edges = get_loop_exit_edges (loop);
   edge exit;
   bool can_apply = false;
 
@@ -1828,8 +1574,8 @@ analyze_insns_in_loop (struct loop *loop)
 
   if (flag_split_ivs_in_unroller)
     {
-      opt_info->insns_to_split = htab_create (5 * loop->num_nodes,
-					      si_info_hash, si_info_eq, free);
+      opt_info->insns_to_split
+       	= new hash_table<iv_split_hasher> (5 * loop->num_nodes);
       opt_info->iv_to_split_head = NULL;
       opt_info->iv_to_split_tail = &opt_info->iv_to_split_head;
     }
@@ -1837,9 +1583,9 @@ analyze_insns_in_loop (struct loop *loop)
   /* Record the loop exit bb and loop preheader before the unrolling.  */
   opt_info->loop_preheader = loop_preheader_edge (loop)->src;
 
-  if (VEC_length (edge, edges) == 1)
+  if (edges.length () == 1)
     {
-      exit = VEC_index (edge, edges, 0);
+      exit = edges[0];
       if (!(exit->flags & EDGE_COMPLEX))
 	{
 	  opt_info->loop_exit = split_edge (exit);
@@ -1850,9 +1596,8 @@ analyze_insns_in_loop (struct loop *loop)
   if (flag_variable_expansion_in_unroller
       && can_apply)
     {
-      opt_info->insns_with_var_to_expand = htab_create (5 * loop->num_nodes,
-							ve_info_hash,
-							ve_info_eq, free);
+      opt_info->insns_with_var_to_expand
+       	= new hash_table<var_expand_hasher> (5 * loop->num_nodes);
       opt_info->var_to_expand_head = NULL;
       opt_info->var_to_expand_tail = &opt_info->var_to_expand_head;
     }
@@ -1873,7 +1618,7 @@ analyze_insns_in_loop (struct loop *loop)
 
         if (ivts)
           {
-            slot1 = htab_find_slot (opt_info->insns_to_split, ivts, INSERT);
+            slot1 = opt_info->insns_to_split->find_slot (ivts, INSERT);
 	    gcc_assert (*slot1 == NULL);
             *slot1 = ivts;
 	    *opt_info->iv_to_split_tail = ivts;
@@ -1886,7 +1631,7 @@ analyze_insns_in_loop (struct loop *loop)
 
         if (ves)
           {
-            slot2 = htab_find_slot (opt_info->insns_with_var_to_expand, ves, INSERT);
+            slot2 = opt_info->insns_with_var_to_expand->find_slot (ves, INSERT);
 	    gcc_assert (*slot2 == NULL);
             *slot2 = ves;
 	    *opt_info->var_to_expand_tail = ves;
@@ -1895,7 +1640,7 @@ analyze_insns_in_loop (struct loop *loop)
       }
     }
 
-  VEC_free (edge, heap, edges);
+  edges.release ();
   free (body);
   return opt_info;
 }
@@ -1907,7 +1652,7 @@ static void
 opt_info_start_duplication (struct opt_info *opt_info)
 {
   if (opt_info)
-    opt_info->first_new_block = last_basic_block;
+    opt_info->first_new_block = last_basic_block_for_fn (cfun);
 }
 
 /* Determine the number of iterations between initialization of the base
@@ -1935,27 +1680,12 @@ determine_split_iv_delta (unsigned n_copy, unsigned n_copies, bool unrolling)
     }
 }
 
-/* Locate in EXPR the expression corresponding to the location recorded
-   in IVTS, and return a pointer to the RTX for this location.  */
-
-static rtx *
-get_ivts_expr (rtx expr, struct iv_to_split *ivts)
-{
-  unsigned i;
-  rtx *ret = &expr;
-
-  for (i = 0; i < ivts->n_loc; i++)
-    ret = &XEXP (*ret, ivts->loc[i]);
-
-  return ret;
-}
-
 /* Allocate basic variable for the induction variable chain.  */
 
 static void
 allocate_basic_variable (struct iv_to_split *ivts)
 {
-  rtx expr = *get_ivts_expr (single_set (ivts->insn), ivts);
+  rtx expr = SET_SRC (single_set (ivts->insn));
 
   ivts->base_var = gen_reg_rtx (GET_MODE (expr));
 }
@@ -1964,10 +1694,10 @@ allocate_basic_variable (struct iv_to_split *ivts)
    the initial value from INSN.  */
 
 static void
-insert_base_initialization (struct iv_to_split *ivts, rtx insn)
+insert_base_initialization (struct iv_to_split *ivts, rtx_insn *insn)
 {
-  rtx expr = copy_rtx (*get_ivts_expr (single_set (insn), ivts));
-  rtx seq;
+  rtx expr = copy_rtx (SET_SRC (single_set (insn)));
+  rtx_insn *seq;
 
   start_sequence ();
   expr = force_operand (expr, ivts->base_var);
@@ -1983,10 +1713,11 @@ insert_base_initialization (struct iv_to_split *ivts, rtx insn)
    by base variable + DELTA * step.  */
 
 static void
-split_iv (struct iv_to_split *ivts, rtx insn, unsigned delta)
+split_iv (struct iv_to_split *ivts, rtx_insn *insn, unsigned delta)
 {
-  rtx expr, *loc, seq, incr, var;
-  enum machine_mode mode = GET_MODE (ivts->base_var);
+  rtx expr, *loc, incr, var;
+  rtx_insn *seq;
+  machine_mode mode = GET_MODE (ivts->base_var);
   rtx src, dest, set;
 
   /* Construct base + DELTA * step.  */
@@ -2001,7 +1732,7 @@ split_iv (struct iv_to_split *ivts, rtx insn, unsigned delta)
     }
 
   /* Figure out where to do the replacement.  */
-  loc = get_ivts_expr (single_set (insn), ivts);
+  loc = &SET_SRC (single_set (insn));
 
   /* If we can make the replacement right away, we're done.  */
   if (validate_change (insn, loc, expr, 0))
@@ -2050,9 +1781,9 @@ get_expansion (struct var_to_expand *ve)
   if (ve->reuse_expansion == 0)
     reg = ve->reg;
   else
-    reg = VEC_index (rtx, ve->var_expansions, ve->reuse_expansion - 1);
+    reg = ve->var_expansions[ve->reuse_expansion - 1];
 
-  if (VEC_length (rtx, ve->var_expansions) == (unsigned) ve->reuse_expansion)
+  if (ve->var_expansions.length () == (unsigned) ve->reuse_expansion)
     ve->reuse_expansion = 0;
   else
     ve->reuse_expansion++;
@@ -2065,7 +1796,7 @@ get_expansion (struct var_to_expand *ve)
    with a new register.  */
 
 static void
-expand_var_during_unrolling (struct var_to_expand *ve, rtx insn)
+expand_var_during_unrolling (struct var_to_expand *ve, rtx_insn *insn)
 {
   rtx new_reg, set;
   bool really_new_expansion = false;
@@ -2083,13 +1814,11 @@ expand_var_during_unrolling (struct var_to_expand *ve, rtx insn)
   else
     new_reg = get_expansion (ve);
 
-  validate_change (insn, &SET_DEST (set), new_reg, 1);
-  validate_change (insn, &XEXP (SET_SRC (set), ve->accum_pos), new_reg, 1);
-
+  validate_replace_rtx_group (SET_DEST (set), new_reg, insn);
   if (apply_change_group ())
     if (really_new_expansion)
       {
-        VEC_safe_push (rtx, heap, ve->var_expansions, new_reg);
+        ve->var_expansions.safe_push (new_reg);
         ve->expansion_count++;
       }
 }
@@ -2125,12 +1854,13 @@ static void
 insert_var_expansion_initialization (struct var_to_expand *ve,
 				     basic_block place)
 {
-  rtx seq, var, zero_init, insn;
+  rtx_insn *seq;
+  rtx var, zero_init;
   unsigned i;
-  enum machine_mode mode = GET_MODE (ve->reg);
+  machine_mode mode = GET_MODE (ve->reg);
   bool honor_signed_zero_p = HONOR_SIGNED_ZEROS (mode);
 
-  if (VEC_length (rtx, ve->var_expansions) == 0)
+  if (ve->var_expansions.length () == 0)
     return;
 
   start_sequence ();
@@ -2140,7 +1870,7 @@ insert_var_expansion_initialization (struct var_to_expand *ve,
       /* Note that we only accumulate FMA via the ADD operand.  */
     case PLUS:
     case MINUS:
-      FOR_EACH_VEC_ELT (rtx, ve->var_expansions, i, var)
+      FOR_EACH_VEC_ELT (ve->var_expansions, i, var)
         {
 	  if (honor_signed_zero_p)
 	    zero_init = simplify_gen_unary (NEG, mode, CONST0_RTX (mode), mode);
@@ -2151,7 +1881,7 @@ insert_var_expansion_initialization (struct var_to_expand *ve,
       break;
 
     case MULT:
-      FOR_EACH_VEC_ELT (rtx, ve->var_expansions, i, var)
+      FOR_EACH_VEC_ELT (ve->var_expansions, i, var)
         {
           zero_init = CONST1_RTX (GET_MODE (var));
           emit_move_insn (var, zero_init);
@@ -2165,11 +1895,7 @@ insert_var_expansion_initialization (struct var_to_expand *ve,
   seq = get_insns ();
   end_sequence ();
 
-  insn = BB_HEAD (place);
-  while (!NOTE_INSN_BASIC_BLOCK_P (insn))
-    insn = NEXT_INSN (insn);
-
-  emit_insn_after (seq, insn);
+  emit_insn_after (seq, BB_END (place));
 }
 
 /* Combine the variable expansions at the loop exit.  PLACE is the
@@ -2180,12 +1906,16 @@ static void
 combine_var_copies_in_loop_exit (struct var_to_expand *ve, basic_block place)
 {
   rtx sum = ve->reg;
-  rtx expr, seq, var, insn;
+  rtx expr, var;
+  rtx_insn *seq, *insn;
   unsigned i;
 
-  if (VEC_length (rtx, ve->var_expansions) == 0)
+  if (ve->var_expansions.length () == 0)
     return;
 
+  /* ve->reg might be SUBREG or some other non-shareable RTL, and we use
+     it both here and as the destination of the assignment.  */
+  sum = copy_rtx (sum);
   start_sequence ();
   switch (ve->op)
     {
@@ -2193,12 +1923,12 @@ combine_var_copies_in_loop_exit (struct var_to_expand *ve, basic_block place)
       /* Note that we only accumulate FMA via the ADD operand.  */
     case PLUS:
     case MINUS:
-      FOR_EACH_VEC_ELT (rtx, ve->var_expansions, i, var)
+      FOR_EACH_VEC_ELT (ve->var_expansions, i, var)
 	sum = simplify_gen_binary (PLUS, GET_MODE (ve->reg), var, sum);
       break;
 
     case MULT:
-      FOR_EACH_VEC_ELT (rtx, ve->var_expansions, i, var)
+      FOR_EACH_VEC_ELT (ve->var_expansions, i, var)
 	sum = simplify_gen_binary (MULT, GET_MODE (ve->reg), var, sum);
       break;
 
@@ -2219,6 +1949,32 @@ combine_var_copies_in_loop_exit (struct var_to_expand *ve, basic_block place)
   emit_insn_after (seq, insn);
 }
 
+/* Strip away REG_EQUAL notes for IVs we're splitting.
+
+   Updating REG_EQUAL notes for IVs we split is tricky: We
+   cannot tell until after unrolling, DF-rescanning, and liveness
+   updating, whether an EQ_USE is reached by the split IV while
+   the IV reg is still live.  See PR55006.
+
+   ??? We cannot use remove_reg_equal_equiv_notes_for_regno,
+   because RTL loop-iv requires us to defer rescanning insns and
+   any notes attached to them.  So resort to old techniques...  */
+
+static void
+maybe_strip_eq_note_for_split_iv (struct opt_info *opt_info, rtx_insn *insn)
+{
+  struct iv_to_split *ivts;
+  rtx note = find_reg_equal_equiv_note (insn);
+  if (! note)
+    return;
+  for (ivts = opt_info->iv_to_split_head; ivts; ivts = ivts->next)
+    if (reg_mentioned_p (ivts->orig_var, note))
+      {
+	remove_note (insn, note);
+	return;
+      }
+}
+
 /* Apply loop optimizations in loop copies using the
    data which gathered during the unrolling.  Structure
    OPT_INFO record that data.
@@ -2235,7 +1991,7 @@ apply_opt_in_copies (struct opt_info *opt_info,
 {
   unsigned i, delta;
   basic_block bb, orig_bb;
-  rtx insn, orig_insn, next;
+  rtx_insn *insn, *orig_insn, *next;
   struct iv_to_split ivts_templ, *ivts;
   struct var_to_expand ve_templ, *ves;
 
@@ -2248,9 +2004,11 @@ apply_opt_in_copies (struct opt_info *opt_info,
     for (ivts = opt_info->iv_to_split_head; ivts; ivts = ivts->next)
       allocate_basic_variable (ivts);
 
-  for (i = opt_info->first_new_block; i < (unsigned) last_basic_block; i++)
+  for (i = opt_info->first_new_block;
+       i < (unsigned) last_basic_block_for_fn (cfun);
+       i++)
     {
-      bb = BASIC_BLOCK (i);
+      bb = BASIC_BLOCK_FOR_FN (cfun, i);
       orig_bb = get_bb_original (bb);
 
       /* bb->aux holds position in copy sequence initialized by
@@ -2259,9 +2017,8 @@ apply_opt_in_copies (struct opt_info *opt_info,
 					unrolling);
       bb->aux = 0;
       orig_insn = BB_HEAD (orig_bb);
-      for (insn = BB_HEAD (bb); insn != NEXT_INSN (BB_END (bb)); insn = next)
+      FOR_BB_INSNS_SAFE (bb, insn, next)
         {
-          next = NEXT_INSN (insn);
 	  if (!INSN_P (insn)
 	      || (DEBUG_INSN_P (insn)
 		  && TREE_CODE (INSN_VAR_LOCATION_DECL (insn)) == LABEL_DECL))
@@ -2279,8 +2036,9 @@ apply_opt_in_copies (struct opt_info *opt_info,
           /* Apply splitting iv optimization.  */
           if (opt_info->insns_to_split)
             {
-              ivts = (struct iv_to_split *)
-		htab_find (opt_info->insns_to_split, &ivts_templ);
+	      maybe_strip_eq_note_for_split_iv (opt_info, insn);
+
+              ivts = opt_info->insns_to_split->find (&ivts_templ);
 
               if (ivts)
                 {
@@ -2296,7 +2054,7 @@ apply_opt_in_copies (struct opt_info *opt_info,
           if (unrolling && opt_info->insns_with_var_to_expand)
             {
               ves = (struct var_to_expand *)
-		htab_find (opt_info->insns_with_var_to_expand, &ve_templ);
+		opt_info->insns_with_var_to_expand->find (&ve_templ);
               if (ves)
                 {
 		  gcc_assert (GET_CODE (PATTERN (insn))
@@ -2324,9 +2082,11 @@ apply_opt_in_copies (struct opt_info *opt_info,
   /* Rewrite also the original loop body.  Find them as originals of the blocks
      in the last copied iteration, i.e. those that have
      get_bb_copy (get_bb_original (bb)) == bb.  */
-  for (i = opt_info->first_new_block; i < (unsigned) last_basic_block; i++)
+  for (i = opt_info->first_new_block;
+       i < (unsigned) last_basic_block_for_fn (cfun);
+       i++)
     {
-      bb = BASIC_BLOCK (i);
+      bb = BASIC_BLOCK_FOR_FN (cfun, i);
       orig_bb = get_bb_original (bb);
       if (get_bb_copy (orig_bb) != bb)
 	continue;
@@ -2344,8 +2104,10 @@ apply_opt_in_copies (struct opt_info *opt_info,
           ivts_templ.insn = orig_insn;
           if (opt_info->insns_to_split)
             {
+	      maybe_strip_eq_note_for_split_iv (opt_info, orig_insn);
+
               ivts = (struct iv_to_split *)
-		htab_find (opt_info->insns_to_split, &ivts_templ);
+		opt_info->insns_to_split->find (&ivts_templ);
               if (ivts)
                 {
                   if (!delta)
@@ -2364,15 +2126,16 @@ apply_opt_in_copies (struct opt_info *opt_info,
 static void
 free_opt_info (struct opt_info *opt_info)
 {
-  if (opt_info->insns_to_split)
-    htab_delete (opt_info->insns_to_split);
+  delete opt_info->insns_to_split;
+  opt_info->insns_to_split = NULL;
   if (opt_info->insns_with_var_to_expand)
     {
       struct var_to_expand *ves;
 
       for (ves = opt_info->var_to_expand_head; ves; ves = ves->next)
-	VEC_free (rtx, heap, ves->var_expansions);
-      htab_delete (opt_info->insns_with_var_to_expand);
+	ves->var_expansions.release ();
+      delete opt_info->insns_with_var_to_expand;
+      opt_info->insns_with_var_to_expand = NULL;
     }
   free (opt_info);
 }

@@ -1,5 +1,5 @@
-// { dg-do compile }
-// { dg-options "-fgnu-tm -O -std=c++0x -fdump-tree-tmmark -fdump-tree-tmlower" }
+// { dg-do compile { target c++11 } }
+// { dg-options "-fgnu-tm -O -fdump-tree-tmmark -fdump-tree-tmlower" }
 
 // Same as noexcept-1.C but all noexcepts are false.
 
@@ -36,5 +36,3 @@ int f3()
 
 /* { dg-final { scan-tree-dump-times "eh_must_not_throw" 0 "tmlower" } } */
 /* { dg-final { scan-tree-dump-times "ITM_RU" 6 "tmmark" } } */
-/* { dg-final { cleanup-tree-dump "tmmark" } } */
-/* { dg-final { cleanup-tree-dump "tmlower" } } */

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2009, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -29,7 +29,7 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-pragma Compiler_Unit;
+pragma Compiler_Unit_Warning;
 
 with Interfaces;     use Interfaces;
 with System.WCh_Con; use System.WCh_Con;
@@ -97,7 +97,6 @@ package body System.WCh_Cnv is
 
    begin
       case EM is
-
          when WCEM_Hex =>
             if C /= ASCII.ESC then
                return Character'Pos (C);
@@ -245,7 +244,6 @@ package body System.WCh_Cnv is
             end if;
 
             return UTF_32_Code (B1);
-
       end case;
    end Char_Sequence_To_UTF_32;
 
@@ -293,7 +291,6 @@ package body System.WCh_Cnv is
       --  Processing depends on encoding mode
 
       case EM is
-
          when WCEM_Hex =>
             if Val < 256 then
                Out_Char (Character'Val (Val));

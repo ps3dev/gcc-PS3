@@ -1,6 +1,5 @@
 /* Handling of compile-time options that influence the library.
-   Copyright (C) 2005, 2007, 2009, 2010, 2011, 2012
-   Free Software Foundation, Inc.
+   Copyright (C) 2005-2017 Free Software Foundation, Inc.
 
 This file is part of the GNU Fortran runtime library (libgfortran).
 
@@ -30,8 +29,8 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 /* Useful compile-time options will be stored in here.  */
 compile_options_t compile_options;
 
-
-volatile sig_atomic_t fatal_error_in_progress = 0;
+#ifndef LIBGFOR_MINIMAL
+static volatile sig_atomic_t fatal_error_in_progress = 0;
 
 
 /* Helper function for backtrace_handler to write information about the
@@ -126,7 +125,8 @@ backtrace_handler (int signum)
   fatal_error_in_progress = 1;
 
   show_signal (signum);
-  show_backtrace();
+  estr_write ("\nBacktrace for this error:\n");
+  show_backtrace (true);
 
   /* Now reraise the signal.  We reactivate the signal's
      default handling, which is to terminate the process.
@@ -136,16 +136,7 @@ backtrace_handler (int signum)
   signal (signum, SIG_DFL);
   raise (signum);
 }
-
-
-/* Helper function for set_options because we need to access the
-   global variable options which is not seen in set_options.  */
-static void
-maybe_find_addr2line (void)
-{
-  if (options.backtrace == -1)
-    find_addr2line ();
-}
+#endif
 
 /* Set the usual compile-time options.  */
 extern void set_options (int , int []);
@@ -160,18 +151,16 @@ set_options (int num, int options[])
     compile_options.allow_std = options[1];
   if (num >= 3)
     compile_options.pedantic = options[2];
-  /* options[3] is the removed -fdump-core option. It's place in the
-     options array is retained due to ABI compatibility. Remove when
-     bumping the library ABI.  */
+  if (num >= 4)
+    compile_options.backtrace = options[3];
   if (num >= 5)
-    compile_options.backtrace = options[4];
+    compile_options.sign_zero = options[4];
   if (num >= 6)
-    compile_options.sign_zero = options[5];
+    compile_options.bounds_check = options[5];
   if (num >= 7)
-    compile_options.bounds_check = options[6];
-  if (num >= 8)
-    compile_options.range_check = options[7];
+    compile_options.fpe_summary = options[6];
 
+#ifndef LIBGFOR_MINIMAL
   /* If backtrace is required, we set signal handlers on the POSIX
      2001 signals with core action.  */
   if (compile_options.backtrace)
@@ -205,9 +194,8 @@ set_options (int num, int options[])
 #if defined(SIGXFSZ)
       signal (SIGXFSZ, backtrace_handler);
 #endif
-
-      maybe_find_addr2line ();
     }
+#endif
 }
 
 
@@ -223,7 +211,7 @@ init_compile_options (void)
   compile_options.pedantic = 0;
   compile_options.backtrace = 0;
   compile_options.sign_zero = 1;
-  compile_options.range_check = 1;
+  compile_options.fpe_summary = 0;
 }
 
 /* Function called by the front-end to tell us the

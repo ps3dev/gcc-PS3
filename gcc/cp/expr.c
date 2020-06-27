@@ -1,7 +1,6 @@
 /* Convert language-specific tree expression to rtl instructions,
    for GNU compiler.
-   Copyright (C) 1988, 1992, 1993, 1994, 1995, 1996, 1997, 1998,
-   2000, 2001, 2002, 2003, 2004, 2007, 2010 Free Software Foundation, Inc.
+   Copyright (C) 1988-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -23,11 +22,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
-#include "tree.h"
-#include "flags.h"
 #include "cp-tree.h"
-#include "tm_p.h"
 
 /* Expand C++-specific constants.  Currently, this means PTRMEM_CST.  */
 
@@ -43,6 +38,10 @@ cplus_expand_constant (tree cst)
 
 	/* Find the member.  */
 	member = PTRMEM_CST_MEMBER (cst);
+
+	/* We can't lower this until the class is complete.  */
+	if (!COMPLETE_TYPE_P (DECL_CONTEXT (member)))
+	  return cst;
 
 	if (TREE_CODE (member) == FIELD_DECL)
 	  {
@@ -71,6 +70,14 @@ cplus_expand_constant (tree cst)
       }
       break;
 
+    case CONSTRUCTOR:
+      {
+	constructor_elt *elt;
+	unsigned HOST_WIDE_INT idx;
+	FOR_EACH_VEC_SAFE_ELT (CONSTRUCTOR_ELTS (cst), idx, elt)
+	  elt->value = cplus_expand_constant (elt->value);
+      }
+
     default:
       /* There's nothing to do.  */
       break;
@@ -79,18 +86,24 @@ cplus_expand_constant (tree cst)
   return cst;
 }
 
-/* Called whenever an expression is used
-   in a rvalue context.  */
-
+/* Called whenever the expression EXPR is used in an rvalue context.
+   When REJECT_BUILTIN is true the expression is checked to make sure
+   it doesn't make it possible to obtain the address of a GCC built-in
+   function with no library fallback (or any of its bits, such as in
+   a conversion to bool).  */
 tree
-mark_rvalue_use (tree expr)
+mark_rvalue_use (tree expr,
+		 location_t loc /* = UNKNOWN_LOCATION */,
+		 bool reject_builtin /* = true */)
 {
+  if (reject_builtin && reject_gcc_builtin (expr, loc))
+    return error_mark_node;
+
   mark_exp_read (expr);
   return expr;
 }
 
-/* Called whenever an expression is used
-   in a lvalue context.  */
+/* Called whenever an expression is used in an lvalue context.  */
 
 tree
 mark_lvalue_use (tree expr)
@@ -131,6 +144,9 @@ mark_exp_read (tree exp)
     CASE_CONVERT:
     case ADDR_EXPR:
     case INDIRECT_REF:
+    case FLOAT_EXPR:
+    case NON_DEPENDENT_EXPR:
+    case VIEW_CONVERT_EXPR:
       mark_exp_read (TREE_OPERAND (exp, 0));
       break;
     case COMPOUND_EXPR:

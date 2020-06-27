@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 2004-2009, Free Software Foundation, Inc.         --
+--          Copyright (C) 2004-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -34,7 +34,7 @@ generic
    with package HT_Types is
      new Generic_Hash_Table_Types (<>);
 
-   use HT_Types;
+   use HT_Types, HT_Types.Implementation;
 
    with function Next (Node : Node_Access) return Node_Access;
 
@@ -59,6 +59,20 @@ package Ada.Containers.Hash_Tables.Generic_Keys is
    pragma Inline (Index);
    --  Returns the bucket number (array index value) for the given key
 
+   function Checked_Index
+     (HT  : aliased in out Hash_Table_Type;
+      Key : Key_Type) return Hash_Type;
+   pragma Inline (Checked_Index);
+   --  Calls Index, but also locks and unlocks the container, per AI05-0022, in
+   --  order to detect element tampering by the generic actual Hash function.
+
+   function Checked_Equivalent_Keys
+     (HT   : aliased in out Hash_Table_Type;
+      Key  : Key_Type;
+      Node : Node_Access) return Boolean;
+   --  Calls Equivalent_Keys, but locks and unlocks the container, per
+   --  AI05-0022, in order to detect element tampering by that generic actual.
+
    procedure Delete_Key_Sans_Free
      (HT  : in out Hash_Table_Type;
       Key : Key_Type;
@@ -67,7 +81,9 @@ package Ada.Containers.Hash_Tables.Generic_Keys is
    --  without deallocating it. Program_Error is raised if the hash
    --  table is busy.
 
-   function Find (HT : Hash_Table_Type; Key : Key_Type) return Node_Access;
+   function Find
+     (HT  : aliased in out Hash_Table_Type;
+      Key : Key_Type) return Node_Access;
    --  Returns the node (if any) corresponding to the given key
 
    generic

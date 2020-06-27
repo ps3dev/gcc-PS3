@@ -1,4 +1,4 @@
-/* Copyright (C) 2008, 2009, 2011, 2012 Free Software Foundation, Inc.
+/* Copyright (C) 2008-2017 Free Software Foundation, Inc.
    Contributed by Richard Henderson <rth@redhat.com>.
 
    This file is part of the GNU Transactional Memory Library (libitm).
@@ -50,13 +50,15 @@ static serial_mg o_serial_mg;
 class serialirr_dispatch : public abi_dispatch
 {
  public:
-  serialirr_dispatch() : abi_dispatch(false, true, true, false, &o_serial_mg)
+  serialirr_dispatch() : abi_dispatch(false, true, true, false,
+      gtm_thread::STATE_SERIAL | gtm_thread::STATE_IRREVOCABLE, &o_serial_mg)
   { }
 
  protected:
   serialirr_dispatch(bool ro, bool wt, bool uninstrumented,
-      bool closed_nesting, method_group* mg) :
-    abi_dispatch(ro, wt, uninstrumented, closed_nesting, mg) { }
+      bool closed_nesting, uint32_t requires_serial, method_group* mg) :
+    abi_dispatch(ro, wt, uninstrumented, closed_nesting, requires_serial, mg)
+  { }
 
   // Transactional loads and stores simply access memory directly.
   // These methods are static to avoid indirect calls, and will be used by the
@@ -93,6 +95,7 @@ class serialirr_dispatch : public abi_dispatch
   virtual gtm_restart_reason begin_or_restart() { return NO_RESTART; }
   virtual bool trycommit(gtm_word& priv_time) { return true; }
   virtual void rollback(gtm_transaction_cp *cp) { abort(); }
+  virtual bool snapshot_most_recent() { return true; }
 
   virtual abi_dispatch* closed_nesting_alternative()
   {
@@ -147,11 +150,14 @@ public:
   // Local undo will handle this.
   // trydropreference() need not be changed either.
   virtual void rollback(gtm_transaction_cp *cp) { }
+  virtual bool snapshot_most_recent() { return true; }
 
   CREATE_DISPATCH_METHODS(virtual, )
   CREATE_DISPATCH_METHODS_MEM()
 
-  serial_dispatch() : abi_dispatch(false, true, false, true, &o_serial_mg) { }
+  serial_dispatch() : abi_dispatch(false, true, false, true,
+      gtm_thread::STATE_SERIAL, &o_serial_mg)
+  { }
 };
 
 
@@ -162,7 +168,7 @@ class serialirr_onwrite_dispatch : public serialirr_dispatch
 {
  public:
   serialirr_onwrite_dispatch() :
-    serialirr_dispatch(false, true, false, false, &o_serial_mg) { }
+    serialirr_dispatch(false, true, false, false, 0, &o_serial_mg) { }
 
  protected:
   static void pre_write()
@@ -206,6 +212,42 @@ class serialirr_onwrite_dispatch : public serialirr_dispatch
     if (tx->state & gtm_thread::STATE_IRREVOCABLE)
       abort();
   }
+
+  virtual bool snapshot_most_recent() { return true; }
+};
+
+// This group is pure HTM with serial mode as a fallback.  There is no
+// difference to serial_mg except that we need to enable or disable the HTM
+// fastpath.  See gtm_thread::begin_transaction.
+struct htm_mg : public method_group
+{
+  virtual void init()
+  {
+    // Enable the HTM fastpath if the HW is available.  The fastpath is
+    // initially disabled.
+#ifdef USE_HTM_FASTPATH
+    gtm_thread::serial_lock.set_htm_fastpath(htm_init());
+#endif
+  }
+  virtual void fini()
+  {
+    // Disable the HTM fastpath.
+    gtm_thread::serial_lock.set_htm_fastpath(0);
+  }
+};
+
+static htm_mg o_htm_mg;
+
+// We just need the subclass to associate it with the HTM method group that
+// sets up the HTM fast path.  This will use serial_dispatch as fallback for
+// transactions that might get canceled; it has a different method group, but
+// this is harmless for serial dispatchs because they never abort.
+class htm_dispatch : public serialirr_dispatch
+{
+ public:
+  htm_dispatch() : serialirr_dispatch(false, true, false, false,
+      gtm_thread::STATE_SERIAL | gtm_thread::STATE_IRREVOCABLE, &o_htm_mg)
+  { }
 };
 
 } // anon namespace
@@ -213,6 +255,7 @@ class serialirr_onwrite_dispatch : public serialirr_dispatch
 static const serialirr_dispatch o_serialirr_dispatch;
 static const serial_dispatch o_serial_dispatch;
 static const serialirr_onwrite_dispatch o_serialirr_onwrite_dispatch;
+static const htm_dispatch o_htm_dispatch;
 
 abi_dispatch *
 GTM::dispatch_serialirr ()
@@ -233,12 +276,25 @@ GTM::dispatch_serialirr_onwrite ()
       const_cast<serialirr_onwrite_dispatch *>(&o_serialirr_onwrite_dispatch);
 }
 
+abi_dispatch *
+GTM::dispatch_htm ()
+{
+  return const_cast<htm_dispatch *>(&o_htm_dispatch);
+}
+
 // Put the transaction into serial-irrevocable mode.
 
 void
 GTM::gtm_thread::serialirr_mode ()
 {
   struct abi_dispatch *disp = abi_disp ();
+
+#if defined(USE_HTM_FASTPATH)
+  // HTM fastpath.  If we are executing a HW transaction, don't go serial but
+  // continue.  See gtm_thread::begin_transaction.
+  if (likely(!gtm_thread::serial_lock.htm_fastpath_disabled()))
+    return;
+#endif
 
   if (this->state & STATE_SERIAL)
     {

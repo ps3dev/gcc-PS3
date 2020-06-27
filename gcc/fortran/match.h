@@ -1,6 +1,5 @@
 /* All matcher functions.
-   Copyright (C) 2003, 2005, 2007, 2008, 2010, 2012
-   Free Software Foundation, Inc.
+   Copyright (C) 2003-2017 Free Software Foundation, Inc.
    Contributed by Steven Bosscher
 
 This file is part of GCC.
@@ -60,6 +59,9 @@ match gfc_match_char (char);
 match gfc_match (const char *, ...);
 match gfc_match_iterator (gfc_iterator *, int);
 match gfc_match_parens (void);
+match gfc_match_type_spec (gfc_typespec *);
+match gfc_match_member_sep(gfc_symbol *);
+
 
 /* Statement matchers.  */
 match gfc_match_program (void);
@@ -68,7 +70,10 @@ match gfc_match_assignment (void);
 match gfc_match_if (gfc_statement *);
 match gfc_match_else (void);
 match gfc_match_elseif (void);
+match gfc_match_event_post (void);
+match gfc_match_event_wait (void);
 match gfc_match_critical (void);
+match gfc_match_fail_image (void);
 match gfc_match_block (void);
 match gfc_match_associate (void);
 match gfc_match_do (void);
@@ -106,6 +111,7 @@ match gfc_match_namelist (void);
 match gfc_match_module (void);
 match gfc_match_equivalence (void);
 match gfc_match_st_function (void);
+match gfc_match_ptr_fcn_assign (void);
 match gfc_match_case (void);
 match gfc_match_select (void);
 match gfc_match_select_type (void);
@@ -121,26 +127,79 @@ gfc_common_head *gfc_get_common (const char *, int);
 
 /* openmp.c.  */
 
+/* OpenACC directive matchers.  */
+match gfc_match_oacc_atomic (void);
+match gfc_match_oacc_cache (void);
+match gfc_match_oacc_wait (void);
+match gfc_match_oacc_update (void);
+match gfc_match_oacc_declare (void);
+match gfc_match_oacc_loop (void);
+match gfc_match_oacc_host_data (void);
+match gfc_match_oacc_data (void);
+match gfc_match_oacc_kernels (void);
+match gfc_match_oacc_kernels_loop (void);
+match gfc_match_oacc_parallel (void);
+match gfc_match_oacc_parallel_loop (void);
+match gfc_match_oacc_enter_data (void);
+match gfc_match_oacc_exit_data (void);
+match gfc_match_oacc_routine (void);
+
 /* OpenMP directive matchers.  */
 match gfc_match_omp_eos (void);
 match gfc_match_omp_atomic (void);
 match gfc_match_omp_barrier (void);
+match gfc_match_omp_cancel (void);
+match gfc_match_omp_cancellation_point (void);
 match gfc_match_omp_critical (void);
+match gfc_match_omp_declare_reduction (void);
+match gfc_match_omp_declare_simd (void);
+match gfc_match_omp_declare_target (void);
+match gfc_match_omp_distribute (void);
+match gfc_match_omp_distribute_parallel_do (void);
+match gfc_match_omp_distribute_parallel_do_simd (void);
+match gfc_match_omp_distribute_simd (void);
 match gfc_match_omp_do (void);
+match gfc_match_omp_do_simd (void);
 match gfc_match_omp_flush (void);
 match gfc_match_omp_master (void);
 match gfc_match_omp_ordered (void);
+match gfc_match_omp_ordered_depend (void);
 match gfc_match_omp_parallel (void);
 match gfc_match_omp_parallel_do (void);
+match gfc_match_omp_parallel_do_simd (void);
 match gfc_match_omp_parallel_sections (void);
 match gfc_match_omp_parallel_workshare (void);
 match gfc_match_omp_sections (void);
+match gfc_match_omp_simd (void);
 match gfc_match_omp_single (void);
+match gfc_match_omp_target (void);
+match gfc_match_omp_target_data (void);
+match gfc_match_omp_target_enter_data (void);
+match gfc_match_omp_target_exit_data (void);
+match gfc_match_omp_target_parallel (void);
+match gfc_match_omp_target_parallel_do (void);
+match gfc_match_omp_target_parallel_do_simd (void);
+match gfc_match_omp_target_simd (void);
+match gfc_match_omp_target_teams (void);
+match gfc_match_omp_target_teams_distribute (void);
+match gfc_match_omp_target_teams_distribute_parallel_do (void);
+match gfc_match_omp_target_teams_distribute_parallel_do_simd (void);
+match gfc_match_omp_target_teams_distribute_simd (void);
+match gfc_match_omp_target_update (void);
 match gfc_match_omp_task (void);
+match gfc_match_omp_taskgroup (void);
+match gfc_match_omp_taskloop (void);
+match gfc_match_omp_taskloop_simd (void);
 match gfc_match_omp_taskwait (void);
 match gfc_match_omp_taskyield (void);
+match gfc_match_omp_teams (void);
+match gfc_match_omp_teams_distribute (void);
+match gfc_match_omp_teams_distribute_parallel_do (void);
+match gfc_match_omp_teams_distribute_parallel_do_simd (void);
+match gfc_match_omp_teams_distribute_simd (void);
 match gfc_match_omp_threadprivate (void);
 match gfc_match_omp_workshare (void);
+match gfc_match_omp_end_critical (void);
 match gfc_match_omp_end_nowait (void);
 match gfc_match_omp_end_single (void);
 
@@ -160,8 +219,13 @@ match gfc_match_generic (void);
 match gfc_match_function_decl (void);
 match gfc_match_entry (void);
 match gfc_match_subroutine (void);
+match gfc_match_submod_proc (void);
+match gfc_match_map (void);
+match gfc_match_union (void);
+match gfc_match_structure_decl (void);
 match gfc_match_derived_decl (void);
 match gfc_match_final_decl (void);
+match gfc_match_type (gfc_statement *);
 
 match gfc_match_implicit_none (void);
 match gfc_match_implicit (void);
@@ -171,6 +235,7 @@ void gfc_set_constant_character_len (int, gfc_expr *, int);
 /* Matchers for attribute declarations.  */
 match gfc_match_allocatable (void);
 match gfc_match_asynchronous (void);
+match gfc_match_automatic (void);
 match gfc_match_codimension (void);
 match gfc_match_contiguous (void);
 match gfc_match_dimension (void);
@@ -186,6 +251,7 @@ match gfc_match_protected (void);
 match gfc_match_private (gfc_statement *);
 match gfc_match_public (gfc_statement *);
 match gfc_match_save (void);
+match gfc_match_static (void);
 match gfc_match_modproc (void);
 match gfc_match_target (void);
 match gfc_match_value (void);
@@ -196,9 +262,9 @@ match gfc_match_volatile (void);
 /* Fortran 2003 c interop.
    TODO: some of these should be moved to another file rather than decl.c */
 void set_com_block_bind_c (gfc_common_head *, int);
-gfc_try set_verify_bind_c_sym (gfc_symbol *, int);
-gfc_try set_verify_bind_c_com_block (gfc_common_head *, int);
-gfc_try get_bind_c_idents (void);
+bool set_verify_bind_c_sym (gfc_symbol *, int);
+bool set_verify_bind_c_com_block (gfc_common_head *, int);
+bool get_bind_c_idents (void);
 match gfc_match_bind_c_stmt (void);
 match gfc_match_suffix (gfc_symbol *, gfc_symbol **);
 match gfc_match_bind_c (gfc_symbol *, bool);
@@ -214,7 +280,7 @@ match gfc_match_literal_constant (gfc_expr **, int);
 /* expr.c -- FIXME: this one should be eliminated by moving the
    matcher to matchexp.c and a call to a new function in expr.c that
    only makes sure the init expr. is valid.  */
-gfc_try gfc_reduce_init_expr (gfc_expr *expr);
+bool gfc_reduce_init_expr (gfc_expr *expr);
 match gfc_match_init_expr (gfc_expr **);
 
 /* array.c.  */
@@ -248,6 +314,7 @@ match gfc_match_expr (gfc_expr **);
 
 /* module.c.  */
 match gfc_match_use (void);
+match gfc_match_submodule (void);
 void gfc_use_modules (void);
 
 #endif  /* GFC_MATCH_H  */

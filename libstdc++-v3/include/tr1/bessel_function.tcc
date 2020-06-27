@@ -1,7 +1,6 @@
 // Special functions -*- C++ -*-
 
-// Copyright (C) 2006, 2007, 2008, 2009, 2010
-// Free Software Foundation, Inc.
+// Copyright (C) 2006-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -51,8 +50,15 @@
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
+#if _GLIBCXX_USE_STD_SPEC_FUNCS
+# define _GLIBCXX_MATH_NS ::std
+#elif defined(_GLIBCXX_TR1_CMATH)
 namespace tr1
 {
+# define _GLIBCXX_MATH_NS ::std::tr1
+#else
+# error do not include this header directly, use <cmath> or <tr1/cmath>
+#endif
   // [5.2] Special functions
 
   // Implementation-space details.
@@ -87,12 +93,12 @@ namespace tr1
      */
     template <typename _Tp>
     void
-    __gamma_temme(const _Tp __mu,
-                   _Tp & __gam1, _Tp & __gam2, _Tp & __gampl, _Tp & __gammi)
+    __gamma_temme(_Tp __mu,
+                  _Tp & __gam1, _Tp & __gam2, _Tp & __gampl, _Tp & __gammi)
     {
 #if _GLIBCXX_USE_C99_MATH_TR1
-      __gampl = _Tp(1) / std::tr1::tgamma(_Tp(1) + __mu);
-      __gammi = _Tp(1) / std::tr1::tgamma(_Tp(1) - __mu);
+      __gampl = _Tp(1) / _GLIBCXX_MATH_NS::tgamma(_Tp(1) + __mu);
+      __gammi = _Tp(1) / _GLIBCXX_MATH_NS::tgamma(_Tp(1) - __mu);
 #else
       __gampl = _Tp(1) / __gamma(_Tp(1) + __mu);
       __gammi = _Tp(1) / __gamma(_Tp(1) - __mu);
@@ -125,7 +131,7 @@ namespace tr1
      */
     template <typename _Tp>
     void
-    __bessel_jn(const _Tp __nu, const _Tp __x,
+    __bessel_jn(_Tp __nu, _Tp __x,
                 _Tp & __Jnu, _Tp & __Nnu, _Tp & __Jpnu, _Tp & __Npnu)
     {
       if (__x == _Tp(0))
@@ -307,7 +313,7 @@ namespace tr1
           const _Tp __gam = (__p - __f) / __q;
           __Jmu = std::sqrt(__w / ((__p - __f) * __gam + __q));
 #if _GLIBCXX_USE_C99_MATH_TR1
-          __Jmu = std::tr1::copysign(__Jmu, __Jnul);
+          __Jmu = _GLIBCXX_MATH_NS::copysign(__Jmu, __Jnul);
 #else
           if (__Jmu * __Jnul < _Tp(0))
             __Jmu = -__Jmu;
@@ -350,11 +356,8 @@ namespace tr1
      */
     template <typename _Tp>
     void
-    __cyl_bessel_jn_asymp(const _Tp __nu, const _Tp __x,
-                          _Tp & __Jnu, _Tp & __Nnu)
+    __cyl_bessel_jn_asymp(_Tp __nu, _Tp __x, _Tp & __Jnu, _Tp & __Nnu)
     {
-      const _Tp __coef = std::sqrt(_Tp(2)
-                             / (__numeric_constants<_Tp>::__pi() * __x));
       const _Tp __mu   = _Tp(4) * __nu * __nu;
       const _Tp __mum1 = __mu - _Tp(1);
       const _Tp __mum9 = __mu - _Tp(9);
@@ -371,6 +374,8 @@ namespace tr1
       const _Tp __c = std::cos(__chi);
       const _Tp __s = std::sin(__chi);
 
+      const _Tp __coef = std::sqrt(_Tp(2)
+                             / (__numeric_constants<_Tp>::__pi() * __x));
       __Jnu = __coef * (__c * __P - __s * __Q);
       __Nnu = __coef * (__s * __P + __c * __Q);
 
@@ -407,14 +412,16 @@ namespace tr1
      */
     template <typename _Tp>
     _Tp
-    __cyl_bessel_ij_series(const _Tp __nu, const _Tp __x, const _Tp __sgn,
-                           const unsigned int __max_iter)
+    __cyl_bessel_ij_series(_Tp __nu, _Tp __x, _Tp __sgn,
+                           unsigned int __max_iter)
     {
+      if (__x == _Tp(0))
+	return __nu == _Tp(0) ? _Tp(1) : _Tp(0);
 
       const _Tp __x2 = __x / _Tp(2);
       _Tp __fact = __nu * std::log(__x2);
 #if _GLIBCXX_USE_C99_MATH_TR1
-      __fact -= std::tr1::lgamma(__nu + _Tp(1));
+      __fact -= _GLIBCXX_MATH_NS::lgamma(__nu + _Tp(1));
 #else
       __fact -= __log_gamma(__nu + _Tp(1));
 #endif
@@ -451,7 +458,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __cyl_bessel_j(const _Tp __nu, const _Tp __x)
+    __cyl_bessel_j(_Tp __nu, _Tp __x)
     {
       if (__nu < _Tp(0) || __x < _Tp(0))
         std::__throw_domain_error(__N("Bad argument "
@@ -493,7 +500,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __cyl_neumann_n(const _Tp __nu, const _Tp __x)
+    __cyl_neumann_n(_Tp __nu, _Tp __x)
     {
       if (__nu < _Tp(0) || __x < _Tp(0))
         std::__throw_domain_error(__N("Bad argument "
@@ -530,7 +537,7 @@ namespace tr1
      */
     template <typename _Tp>
     void
-    __sph_bessel_jn(const unsigned int __n, const _Tp __x,
+    __sph_bessel_jn(unsigned int __n, _Tp __x,
                     _Tp & __j_n, _Tp & __n_n, _Tp & __jp_n, _Tp & __np_n)
     {
       const _Tp __nu = _Tp(__n) + _Tp(0.5L);
@@ -565,7 +572,7 @@ namespace tr1
      */
     template <typename _Tp>
     _Tp
-    __sph_bessel(const unsigned int __n, const _Tp __x)
+    __sph_bessel(unsigned int __n, _Tp __x)
     {
       if (__x < _Tp(0))
         std::__throw_domain_error(__N("Bad argument "
@@ -603,7 +610,7 @@ namespace tr1
      */
     template <typename _Tp>
     _Tp
-    __sph_neumann(const unsigned int __n, const _Tp __x)
+    __sph_neumann(unsigned int __n, _Tp __x)
     {
       if (__x < _Tp(0))
         std::__throw_domain_error(__N("Bad argument "
@@ -621,8 +628,11 @@ namespace tr1
     }
 
   _GLIBCXX_END_NAMESPACE_VERSION
-  } // namespace std::tr1::__detail
-}
+  } // namespace __detail
+#undef _GLIBCXX_MATH_NS
+#if ! _GLIBCXX_USE_STD_SPEC_FUNCS && defined(_GLIBCXX_TR1_CMATH)
+} // namespace tr1
+#endif
 }
 
 #endif // _GLIBCXX_TR1_BESSEL_FUNCTION_TCC

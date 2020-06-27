@@ -1,6 +1,5 @@
 /* HOST_WIDE_INT definitions for the GNU compiler.
-   Copyright (C) 1998, 2002, 2004, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 1998-2017 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -38,105 +37,82 @@
 # if GCC_VERSION >= 3000
 #  define HAVE_LONG_LONG 1
 #  define SIZEOF_LONG_LONG 8
-extern char sizeof_long_long_must_be_8[sizeof(long long) == 8 ? 1 : -1];
+extern char sizeof_long_long_must_be_8[sizeof (long long) == 8 ? 1 : -1];
 # endif
 #endif
 
 #ifdef HAVE_LONG_LONG
 # define HOST_BITS_PER_LONGLONG (CHAR_BIT * SIZEOF_LONG_LONG)
 #endif
-#ifdef HAVE___INT64
-# define HOST_BITS_PER___INT64 (CHAR_BIT * SIZEOF___INT64)
+
+/* Set HOST_WIDE_INT, this should be always 64 bits.
+   The underlying type is matched to that of int64_t and assumed
+   to be either long or long long.  */
+
+#define HOST_BITS_PER_WIDE_INT 64
+#if INT64_T_IS_LONG   
+#   define HOST_WIDE_INT long
+#   define HOST_WIDE_INT_C(X) X ## L
+#else
+# if HOST_BITS_PER_LONGLONG == 64
+#   define HOST_WIDE_INT long long
+#   define HOST_WIDE_INT_C(X) X ## LL
+# else
+   #error "Unable to find a suitable type for HOST_WIDE_INT"
+# endif
 #endif
 
-/* Set HOST_WIDE_INT.  This should be the widest efficient host
-   integer type.  It can be 32 or 64 bits, except that if we are
-   targeting a machine with 64-bit size_t then it has to be 64 bits.
+#define HOST_WIDE_INT_UC(X) HOST_WIDE_INT_C (X ## U)
+#define HOST_WIDE_INT_0 HOST_WIDE_INT_C (0)
+#define HOST_WIDE_INT_0U HOST_WIDE_INT_UC (0)
+#define HOST_WIDE_INT_1 HOST_WIDE_INT_C (1)
+#define HOST_WIDE_INT_1U HOST_WIDE_INT_UC (1)
+#define HOST_WIDE_INT_M1 HOST_WIDE_INT_C (-1)
+#define HOST_WIDE_INT_M1U HOST_WIDE_INT_UC (-1)
 
-   With a sane ABI, 'long' is the largest efficient host integer type.
-   Thus, we use that unless we have to use 'long long' or '__int64'
-   because we're targeting a 64-bit machine from a 32-bit host.  */
+/* This is a magic identifier which allows GCC to figure out the type
+   of HOST_WIDE_INT for %wd specifier checks.  You must issue this
+   typedef before using the __asm_fprintf__ format attribute.  */
+typedef HOST_WIDE_INT __gcc_host_wide_int__;
 
-#if HOST_BITS_PER_LONG >= 64 || !defined NEED_64BIT_HOST_WIDE_INT
-#   define HOST_BITS_PER_WIDE_INT HOST_BITS_PER_LONG
-#   define HOST_WIDE_INT long
+/* Provide C99 <inttypes.h> style format definitions for 64bits.  */
+#ifndef HAVE_INTTYPES_H
+#if INT64_T_IS_LONG
+# define GCC_PRI64 HOST_LONG_FORMAT
 #else
-# if HOST_BITS_PER_LONGLONG >= 64
-#   define HOST_BITS_PER_WIDE_INT HOST_BITS_PER_LONGLONG
-#   define HOST_WIDE_INT long long
-# else
-#  if HOST_BITS_PER___INT64 >= 64
-#   define HOST_BITS_PER_WIDE_INT HOST_BITS_PER___INT64
-#   define HOST_WIDE_INT __int64
-#  else
-    #error "Unable to find a suitable type for HOST_WIDE_INT"
-#  endif
-# endif
+# define GCC_PRI64 HOST_LONG_LONG_FORMAT
+#endif
+#undef PRId64
+#define PRId64 GCC_PRI64 "d"
+#undef PRIi64
+#define PRIi64 GCC_PRI64 "i"
+#undef PRIo64
+#define PRIo64 GCC_PRI64 "o"
+#undef PRIu64
+#define PRIu64 GCC_PRI64 "u"
+#undef PRIx64
+#define PRIx64 GCC_PRI64 "x"
+#undef PRIX64
+#define PRIX64 GCC_PRI64 "X"
 #endif
 
 /* Various printf format strings for HOST_WIDE_INT.  */
 
-#if HOST_BITS_PER_WIDE_INT == HOST_BITS_PER_LONG
+#if INT64_T_IS_LONG
 # define HOST_WIDE_INT_PRINT HOST_LONG_FORMAT
 # define HOST_WIDE_INT_PRINT_C "L"
-# define HOST_WIDE_INT_1 1L
-  /* 'long' might be 32 or 64 bits, and the number of leading zeroes
-     must be tweaked accordingly.  */
-# if HOST_BITS_PER_WIDE_INT == 64
-#  define HOST_WIDE_INT_PRINT_DOUBLE_HEX \
-     "0x%" HOST_LONG_FORMAT "x%016" HOST_LONG_FORMAT "x"
-# else
-#  define HOST_WIDE_INT_PRINT_DOUBLE_HEX \
-     "0x%" HOST_LONG_FORMAT "x%08" HOST_LONG_FORMAT "x"
-# endif
 #else
 # define HOST_WIDE_INT_PRINT HOST_LONG_LONG_FORMAT
 # define HOST_WIDE_INT_PRINT_C "LL"
-# define HOST_WIDE_INT_1 1LL
-  /* We can assume that 'long long' is at least 64 bits.  */
-# define HOST_WIDE_INT_PRINT_DOUBLE_HEX \
-    "0x%" HOST_LONG_LONG_FORMAT "x%016" HOST_LONG_LONG_FORMAT "x"
-#endif /* HOST_BITS_PER_WIDE_INT == HOST_BITS_PER_LONG */
-
-#define HOST_WIDE_INT_PRINT_DEC "%" HOST_WIDE_INT_PRINT "d"
-#define HOST_WIDE_INT_PRINT_DEC_C HOST_WIDE_INT_PRINT_DEC HOST_WIDE_INT_PRINT_C
-#define HOST_WIDE_INT_PRINT_UNSIGNED "%" HOST_WIDE_INT_PRINT "u"
-#define HOST_WIDE_INT_PRINT_HEX "%#" HOST_WIDE_INT_PRINT "x"
-#define HOST_WIDE_INT_PRINT_HEX_PURE "%" HOST_WIDE_INT_PRINT "x"
-
-/* Set HOST_WIDEST_INT.  This is a 64-bit type unless the compiler
-   in use has no 64-bit type at all; in that case it's 32 bits.  */
-
-#if HOST_BITS_PER_WIDE_INT >= 64 \
-    || (HOST_BITS_PER_LONGLONG < 64 && HOST_BITS_PER___INT64 < 64)
-# define HOST_WIDEST_INT		      HOST_WIDE_INT
-# define HOST_BITS_PER_WIDEST_INT	      HOST_BITS_PER_WIDE_INT
-# define HOST_WIDEST_INT_PRINT                HOST_WIDE_INT_PRINT
-# define HOST_WIDEST_INT_PRINT_DEC	      HOST_WIDE_INT_PRINT_DEC
-# define HOST_WIDEST_INT_PRINT_DEC_C	      HOST_WIDE_INT_PRINT_DEC_C
-# define HOST_WIDEST_INT_PRINT_UNSIGNED	      HOST_WIDE_INT_PRINT_UNSIGNED
-# define HOST_WIDEST_INT_PRINT_HEX	      HOST_WIDE_INT_PRINT_HEX
-# define HOST_WIDEST_INT_PRINT_DOUBLE_HEX     HOST_WIDE_INT_PRINT_DOUBLE_HEX
-#else
-# if HOST_BITS_PER_LONGLONG >= 64
-#  define HOST_BITS_PER_WIDEST_INT	      HOST_BITS_PER_LONGLONG
-#  define HOST_WIDEST_INT		      long long
-# else
-#  if HOST_BITS_PER___INT64 >= 64
-#   define HOST_BITS_PER_WIDEST_INT	      HOST_BITS_PER___INT64
-#   define HOST_WIDEST_INT		      __int64
-#  else
-    #error "This line should be impossible to reach"
-#  endif
-# endif
-# define HOST_WIDEST_INT_PRINT                HOST_LONG_LONG_FORMAT
-# define HOST_WIDEST_INT_PRINT_DEC	      "%" HOST_LONG_LONG_FORMAT "d"
-# define HOST_WIDEST_INT_PRINT_DEC_C	      "%" HOST_LONG_LONG_FORMAT "dLL"
-# define HOST_WIDEST_INT_PRINT_UNSIGNED	      "%" HOST_LONG_LONG_FORMAT "u"
-# define HOST_WIDEST_INT_PRINT_HEX	      "%#" HOST_LONG_LONG_FORMAT "x"
-# define HOST_WIDEST_INT_PRINT_DOUBLE_HEX     \
-    "0x%" HOST_LONG_LONG_FORMAT "x%016" HOST_LONG_LONG_FORMAT "x"
 #endif
+
+#define HOST_WIDE_INT_PRINT_DEC "%" PRId64
+#define HOST_WIDE_INT_PRINT_DEC_C "%" PRId64 HOST_WIDE_INT_PRINT_C
+#define HOST_WIDE_INT_PRINT_UNSIGNED "%" PRIu64
+#define HOST_WIDE_INT_PRINT_HEX "%#" PRIx64
+#define HOST_WIDE_INT_PRINT_HEX_PURE "%" PRIx64
+#define HOST_WIDE_INT_PRINT_DOUBLE_HEX "0x%" PRIx64 "%016" PRIx64
+#define HOST_WIDE_INT_PRINT_PADDED_HEX "%016" PRIx64
 
 /* Define HOST_WIDEST_FAST_INT to the widest integer type supported
    efficiently in hardware.  (That is, the widest integer type that fits
@@ -149,12 +125,8 @@ extern char sizeof_long_long_must_be_8[sizeof(long long) == 8 ? 1 : -1];
 #  ifdef HAVE_LONG_LONG
 #    define HOST_WIDEST_FAST_INT long long
 #    define HOST_BITS_PER_WIDEST_FAST_INT HOST_BITS_PER_LONGLONG
-#  elif defined (HAVE___INT64)
-#    define HOST_WIDEST_FAST_INT __int64
-#    define HOST_BITS_PER_WIDEST_FAST_INT HOST_BITS_PER___INT64
 #  else
-#    error "Your host said it wanted to use long long or __int64 but neither"
-#    error "exist"
+#    error "Your host said it wanted to use long long but that does not exist"
 #  endif
 #else
 #  define HOST_WIDEST_FAST_INT long
@@ -162,17 +134,48 @@ extern char sizeof_long_long_must_be_8[sizeof(long long) == 8 ? 1 : -1];
 #endif
 
 /* Inline functions operating on HOST_WIDE_INT.  */
+
+/* Return X with all but the lowest bit masked off.  */
+
+static inline unsigned HOST_WIDE_INT
+least_bit_hwi (unsigned HOST_WIDE_INT x)
+{
+  return (x & -x);
+}
+
+/* True if X is zero or a power of two.  */
+
+static inline bool
+pow2_or_zerop (unsigned HOST_WIDE_INT x)
+{
+  return least_bit_hwi (x) == x;
+}
+
+/* True if X is a power of two.  */
+
+static inline bool
+pow2p_hwi (unsigned HOST_WIDE_INT x)
+{
+  return x && pow2_or_zerop (x);
+}
+
 #if GCC_VERSION < 3004
 
 extern int clz_hwi (unsigned HOST_WIDE_INT x);
 extern int ctz_hwi (unsigned HOST_WIDE_INT x);
 extern int ffs_hwi (unsigned HOST_WIDE_INT x);
 
+/* Return the number of set bits in X.  */
+extern int popcount_hwi (unsigned HOST_WIDE_INT x);
+
 /* Return log2, or -1 if not exact.  */
 extern int exact_log2                  (unsigned HOST_WIDE_INT);
 
 /* Return floor of log2, with -1 for zero.  */
 extern int floor_log2                  (unsigned HOST_WIDE_INT);
+
+/* Return the smallest n such that 2**n >= X.  */
+extern int ceil_log2			(unsigned HOST_WIDE_INT);
 
 #else /* GCC_VERSION >= 3004 */
 
@@ -218,21 +221,39 @@ ffs_hwi (unsigned HOST_WIDE_INT x)
 }
 
 static inline int
+popcount_hwi (unsigned HOST_WIDE_INT x)
+{
+# if HOST_BITS_PER_WIDE_INT == HOST_BITS_PER_LONG
+  return __builtin_popcountl (x);
+# elif HOST_BITS_PER_WIDE_INT == HOST_BITS_PER_LONGLONG
+  return __builtin_popcountll (x);
+# else
+  return __builtin_popcount (x);
+# endif
+}
+
+static inline int
 floor_log2 (unsigned HOST_WIDE_INT x)
 {
   return HOST_BITS_PER_WIDE_INT - 1 - clz_hwi (x);
 }
 
 static inline int
+ceil_log2 (unsigned HOST_WIDE_INT x)
+{
+  return floor_log2 (x - 1) + 1;
+}
+
+static inline int
 exact_log2 (unsigned HOST_WIDE_INT x)
 {
-  return x == (x & -x) && x ? ctz_hwi (x) : -1;
+  return pow2p_hwi (x) ? ctz_hwi (x) : -1;
 }
 
 #endif /* GCC_VERSION >= 3004 */
 
 #define HOST_WIDE_INT_MIN (HOST_WIDE_INT) \
-  ((unsigned HOST_WIDE_INT) 1 << (HOST_BITS_PER_WIDE_INT - 1))
+  (HOST_WIDE_INT_1U << (HOST_BITS_PER_WIDE_INT - 1))
 #define HOST_WIDE_INT_MAX (~(HOST_WIDE_INT_MIN))
 
 extern HOST_WIDE_INT abs_hwi (HOST_WIDE_INT);
@@ -241,5 +262,74 @@ extern HOST_WIDE_INT gcd (HOST_WIDE_INT, HOST_WIDE_INT);
 extern HOST_WIDE_INT pos_mul_hwi (HOST_WIDE_INT, HOST_WIDE_INT);
 extern HOST_WIDE_INT mul_hwi (HOST_WIDE_INT, HOST_WIDE_INT);
 extern HOST_WIDE_INT least_common_multiple (HOST_WIDE_INT, HOST_WIDE_INT);
+
+/* Like ctz_hwi, except 0 when x == 0.  */
+
+static inline int
+ctz_or_zero (unsigned HOST_WIDE_INT x)
+{
+  return ffs_hwi (x) - 1;
+}
+
+/* Sign extend SRC starting from PREC.  */
+
+static inline HOST_WIDE_INT
+sext_hwi (HOST_WIDE_INT src, unsigned int prec)
+{
+  if (prec == HOST_BITS_PER_WIDE_INT)
+    return src;
+  else
+#if defined (__GNUC__)
+    {
+      /* Take the faster path if the implementation-defined bits it's relying
+	 on are implemented the way we expect them to be.  Namely, conversion
+	 from unsigned to signed preserves bit pattern, and right shift of
+	 a signed value propagates the sign bit.
+	 We have to convert from signed to unsigned and back, because when left
+	 shifting signed values, any overflow is undefined behavior.  */
+      gcc_checking_assert (prec < HOST_BITS_PER_WIDE_INT);
+      int shift = HOST_BITS_PER_WIDE_INT - prec;
+      return ((HOST_WIDE_INT) ((unsigned HOST_WIDE_INT) src << shift)) >> shift;
+    }
+#else
+    {
+      /* Fall back to the slower, well defined path otherwise.  */
+      gcc_checking_assert (prec < HOST_BITS_PER_WIDE_INT);
+      HOST_WIDE_INT sign_mask = HOST_WIDE_INT_1 << (prec - 1);
+      HOST_WIDE_INT value_mask = (HOST_WIDE_INT_1U << prec) - HOST_WIDE_INT_1U;
+      return (((src & value_mask) ^ sign_mask) - sign_mask);
+    }
+#endif
+}
+
+/* Zero extend SRC starting from PREC.  */
+static inline unsigned HOST_WIDE_INT
+zext_hwi (unsigned HOST_WIDE_INT src, unsigned int prec)
+{
+  if (prec == HOST_BITS_PER_WIDE_INT)
+    return src;
+  else
+    {
+      gcc_checking_assert (prec < HOST_BITS_PER_WIDE_INT);
+      return src & ((HOST_WIDE_INT_1U << prec) - 1);
+    }
+}
+
+/* Compute the absolute value of X.  */
+
+inline HOST_WIDE_INT
+abs_hwi (HOST_WIDE_INT x)
+{
+  gcc_checking_assert (x != HOST_WIDE_INT_MIN);
+  return x >= 0 ? x : -x;
+}
+
+/* Compute the absolute value of X as an unsigned type.  */
+
+inline unsigned HOST_WIDE_INT
+absu_hwi (HOST_WIDE_INT x)
+{
+  return x >= 0 ? (unsigned HOST_WIDE_INT)x : -(unsigned HOST_WIDE_INT)x;
+}
 
 #endif /* ! GCC_HWINT_H */

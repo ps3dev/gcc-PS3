@@ -1,7 +1,6 @@
 // <tr1/shared_ptr.h> -*- C++ -*-
 
-// Copyright (C) 2007, 2008, 2009, 2010, 2011, 2012
-// Free Software Foundation, Inc.
+// Copyright (C) 2007-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -71,13 +70,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   // Substitute for bad_weak_ptr object in the case of -fno-exceptions.
   inline void
   __throw_bad_weak_ptr()
-  {
-#if __EXCEPTIONS
-    throw bad_weak_ptr();
-#else
-    __builtin_abort();
-#endif
-  }
+  { _GLIBCXX_THROW_OR_ABORT(bad_weak_ptr()); }
 
   using __gnu_cxx::_Lock_policy;
   using __gnu_cxx::__default_lock_policy;
@@ -152,8 +145,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	    // See http://gcc.gnu.org/ml/libstdc++/2005-11/msg00136.html
 	    if (_Mutex_base<_Lp>::_S_need_barriers)
 	      {
-	        _GLIBCXX_READ_MEM_BARRIER;
-	        _GLIBCXX_WRITE_MEM_BARRIER;
+		__atomic_thread_fence (__ATOMIC_ACQ_REL);
 	      }
 
             // Be race-detector-friendly.  For more info see bits/c++config.
@@ -183,8 +175,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	      {
 	        // See _M_release(),
 	        // destroy() must observe results of dispose()
-	        _GLIBCXX_READ_MEM_BARRIER;
-	        _GLIBCXX_WRITE_MEM_BARRIER;
+		__atomic_thread_fence (__ATOMIC_ACQ_REL);
 	      }
 	    _M_destroy();
 	  }
@@ -266,7 +257,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       virtual void*
       _M_get_deleter(const std::type_info& __ti)
       {
-#ifdef __GXX_RTTI
+#if __cpp_rtti
         return __ti == typeid(_Deleter) ? &_M_del : 0;
 #else
         return 0;
@@ -591,7 +582,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  _M_ptr = __r._M_ptr;
 	}
 
-#if !defined(__GXX_EXPERIMENTAL_CXX0X__) || _GLIBCXX_USE_DEPRECATED
+#if (__cplusplus < 201103L) || _GLIBCXX_USE_DEPRECATED
       // Postcondition: use_count() == 1 and __r.get() == 0
       template<typename _Tp1>
         explicit
@@ -637,7 +628,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  return *this;
 	}
 
-#if !defined(__GXX_EXPERIMENTAL_CXX0X__) || _GLIBCXX_USE_DEPRECATED
+#if (__cplusplus < 201103L) || _GLIBCXX_USE_DEPRECATED
       template<typename _Tp1>
         __shared_ptr&
         operator=(std::auto_ptr<_Tp1>& __r)
@@ -795,7 +786,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     inline _Del*
     get_deleter(const __shared_ptr<_Tp, _Lp>& __p)
     {
-#ifdef __GXX_RTTI
+#if __cpp_rtti
       return static_cast<_Del*>(__p._M_get_deleter(typeid(_Del)));
 #else
       return 0;
@@ -1014,7 +1005,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
         shared_ptr(const weak_ptr<_Tp1>& __r)
 	: __shared_ptr<_Tp>(__r) { }
 
-#if !defined(__GXX_EXPERIMENTAL_CXX0X__) || _GLIBCXX_USE_DEPRECATED
+#if (__cplusplus < 201103L) || _GLIBCXX_USE_DEPRECATED
       template<typename _Tp1>
         explicit
         shared_ptr(std::auto_ptr<_Tp1>& __r)
@@ -1041,7 +1032,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  return *this;
 	}
 
-#if !defined(__GXX_EXPERIMENTAL_CXX0X__) || _GLIBCXX_USE_DEPRECATED
+#if (__cplusplus < 201103L) || _GLIBCXX_USE_DEPRECATED
       template<typename _Tp1>
         shared_ptr&
         operator=(std::auto_ptr<_Tp1>& __r)

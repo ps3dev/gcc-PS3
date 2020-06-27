@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -49,7 +49,7 @@ package body Debug is
    --  dj   Suppress "junk null check" for access parameter values
    --  dk   Generate GNATBUG message on abort, even if previous errors
    --  dl   Generate unit load trace messages
-   --  dm   Allow VMS features even if not OpenVMS version
+   --  dm
    --  dn   Generate messages for node/list allocation
    --  do   Print source from tree (original code only)
    --  dp   Generate messages for parser scope stack push/pops
@@ -73,14 +73,14 @@ package body Debug is
    --  dG   Generate all warnings including those normally suppressed
    --  dH   Hold (kill) call to gigi
    --  dI   Inhibit internal name numbering in gnatG listing
-   --  dJ   Output debugging trace info for JGNAT (Java VM version of GNAT)
+   --  dJ
    --  dK   Kill all error messages
    --  dL   Output trace information on elaboration checking
    --  dM   Assume all variables are modified (no current values)
    --  dN   No file name information in exception messages
    --  dO   Output immediate error messages
    --  dP   Do not check for controlled objects in preelaborable packages
-   --  dQ   Do not generate runtime check for duplicated external tag
+   --  dQ   Use old secondary stack method
    --  dR   Bypass check for correct version of s-rpc
    --  dS   Never convert numbers to machine numbers in Sem_Eval
    --  dT   Convert to machine numbers only for constant declarations
@@ -98,52 +98,52 @@ package body Debug is
    --  d.e  Enable atomic synchronization
    --  d.f  Inhibit folding of static expressions
    --  d.g  Enable conversion of raise into goto
-   --  d.h
+   --  d.h  Minimize the creation of public internal symbols for concatenation
    --  d.i  Ignore Warnings pragmas
-   --  d.j
-   --  d.k
+   --  d.j  Generate listing of frontend inlined calls
+   --  d.k  Kill referenced run-time library unit line numbers
    --  d.l  Use Ada 95 semantics for limited function returns
    --  d.m  For -gnatl, print full source only for main unit
    --  d.n  Print source file names
-   --  d.o  Generate .NET listing of CIL code
-   --  d.p  Enable the .NET CIL verifier
+   --  d.o  Conservative elaboration order for indirect calls
+   --  d.p  Use original Ada 95 semantics for Bit_Order (disable AI95-0133)
    --  d.q
    --  d.r  Enable OK_To_Reorder_Components in non-variant records
-   --  d.s  Disable expansion of slice move, use memmove
+   --  d.s
    --  d.t  Disable static allocation of library level dispatch tables
-   --  d.u
+   --  d.u  Enable Modify_Tree_For_C (update tree for c)
    --  d.v  Enable OK_To_Reorder_Components in variant records
    --  d.w  Do not check for infinite loops
    --  d.x  No exception handlers
    --  d.y
-   --  d.z
+   --  d.z  Restore previous support for frontend handling of Inline_Always
 
    --  d.A  Read/write Aspect_Specifications hash table to tree
-   --  d.B
+   --  d.B  Generate a bug box on abort_statement
    --  d.C  Generate concatenation call, do not generate inline code
-   --  d.D  Strict Alfa mode
-   --  d.E  Force Alfa mode for gnat2why
-   --  d.F  Alfa mode
-   --  d.G  Precondition only mode for gnat2why
-   --  d.H  Standard package only mode for gnat2why
-   --  d.I  SCIL generation mode
-   --  d.J  Disable parallel SCIL generation mode
-   --  d.K  Alfa detection only mode for gnat2why
-   --  d.L  Depend on back end for limited types in conditional expressions
-   --  d.M
-   --  d.N
+   --  d.D  Disable errors on use of overriding keyword in Ada 95 mode
+   --  d.E  Turn selected errors into warnings
+   --  d.F  Debug mode for GNATprove
+   --  d.G  Ignore calls through generic formal parameters for elaboration
+   --  d.H  GNSA mode for ASIS
+   --  d.I  Do not ignore enum representation clauses in CodePeer mode
+   --  d.J
+   --  d.K  Enable generation of contract-only procedures in CodePeer mode
+   --  d.L  Depend on back end for limited types in if and case expressions
+   --  d.M  Relaxed RM semantics
+   --  d.N  Add node to all entities
    --  d.O  Dump internal SCO tables
    --  d.P  Previous (non-optimized) handling of length comparisons
-   --  d.Q
-   --  d.R
+   --  d.Q  Previous (incomplete) style check for binary operators
+   --  d.R  Restrictions in ali files in positional form
    --  d.S  Force Optimize_Alignment (Space)
    --  d.T  Force Optimize_Alignment (Time)
-   --  d.U
-   --  d.V
+   --  d.U  Ignore indirect calls for static elaboration
+   --  d.V  Do not verify validity of SCIL files (CodePeer mode)
    --  d.W  Print out debugging information for Walk_Library_Items
-   --  d.X  Use Expression_With_Actions
-   --  d.Y  Do not use Expression_With_Actions
-   --  d.Z
+   --  d.X  Old treatment of indexing aspects
+   --  d.Y
+   --  d.Z  Do not enable expansion in configurable run-time mode
 
    --  d1   Error msgs have node numbers where possible
    --  d2   Eliminate error flags in verbose form error messages
@@ -151,9 +151,19 @@ package body Debug is
    --  d4   Inhibit automatic krunch of predefined library unit files
    --  d5   Debug output for tree read/write
    --  d6   Default access unconstrained to thin pointers
-   --  d7   Do not output version & file time stamp in -gnatv or -gnatl mode
+   --  d7   Suppress version/source stamp/compilation time for -gnatv/-gnatl
    --  d8   Force opposite endianness in packed stuff
-   --  d9
+   --  d9   Allow lock free implementation
+
+   --  d.1  Enable unnesting of nested procedures
+   --  d.2  Allow statements in declarative part
+   --  d.3  Output debugging information from Exp_Unst
+   --  d.4  Do not delete generated C file in case of errors
+   --  d.5  Do not generate imported subprogram definitions in C code
+   --  d.6  Do not avoid declaring unreferenced itypes in C code
+   --  d.7
+   --  d.8
+   --  d.9
 
    --  Debug flags for binder (GNATBIND)
 
@@ -171,14 +181,14 @@ package body Debug is
    --  dl
    --  dm
    --  dn  List details of manipulation of Num_Pred values
-   --  do  Use old preference for elaboration order
-   --  dp
+   --  do  Use older preference for elaboration order
+   --  dp  Use old preference for elaboration order
    --  dq
    --  dr
    --  ds
    --  dt
    --  du  List units as they are acquired
-   --  dv
+   --  dv  Verbose debugging printouts
    --  dw
    --  dx  Force binder to read xref information from ali files
    --  dy
@@ -239,7 +249,7 @@ package body Debug is
    --       output (dt) or recreated source output (dg,do,ds) includes only
    --       the main unit. If df is set, then the output in either case
    --       includes all compiled units (see also dg,do,ds,dt). Note that to
-   --       be effective, this swich must be used in combination with one or
+   --       be effective, this switch must be used in combination with one or
    --       more of dt, dg, do or ds.
 
    --  dg   Print the source recreated from the generated tree. In the case
@@ -270,14 +280,6 @@ package body Debug is
    --  dl   Generate unit load trace messages. A line of traceback output is
    --       generated each time a request is made to the library manager to
    --       load a new unit.
-
-   --  dm   Some features are permitted only in OpenVMS ports of GNAT (e.g.
-   --       the specification of passing by descriptor). Normally any use
-   --       of these features will be flagged as an error, but this debug
-   --       flag allows acceptance of these features in non OpenVMS ports.
-   --       Of course they may not have any useful effect, and in particular
-   --       attempting to generate code with this flag set may blow up.
-   --       The flag also forces the use of 64-bits for Long_Integer.
 
    --  dn   Generate messages for node/list allocation. Each time a node or
    --       list header is allocated, a line of output is generated. Certain
@@ -314,14 +316,15 @@ package body Debug is
    --  dt   Print full tree. The generated tree is output (see also df,dy)
 
    --  du   Uncheck categorization pragmas. This debug switch causes the
-   --       categorization pragmas (Pure, Preelaborate etc) to be ignored
-   --       so that normal checks are not made (this is particularly useful
-   --       for adding temporary debugging code to units that have pragmas
-   --       that are inconsistent with the debugging code added.
+   --       elaboration control pragmas (Pure, Preelaborate, etc.) and the
+   --       categorization pragmas (Shared_Passive, Remote_Types, etc.) to be
+   --       ignored, so that normal checks are not made (this is particularly
+   --       useful for adding temporary debugging code to units that have
+   --       pragmas that are inconsistent with the debugging code added).
 
    --  dv   Output trace of overload resolution. Outputs messages for
    --       overload attempts that involve cascaded errors, or where
-   --       an interepretation is incompatible with the context.
+   --       an interpretation is incompatible with the context.
 
    --  dw   Write semantic scope stack messages. Each time a scope is created
    --       or removed, a message is output (see the Sem_Ch8.Push_Scope and
@@ -373,8 +376,7 @@ package body Debug is
    --       general Elaborate_All is still required because of nested calls.
 
    --  dE   Apply compile time elaboration checking for with relations between
-   --       predefined units. Normally no checks are made (it seems that at
-   --       least on the SGI, such checks run into trouble).
+   --       predefined units. Normally no checks are made.
 
    --  dF   Front end data layout enabled. Normally front end data layout
    --       is only enabled if the target parameter Backend_Layout is False.
@@ -397,11 +399,6 @@ package body Debug is
    --       is used in the fixed bugs run to minimize system and version
    --       dependency in filed -gnatD or -gnatG output.
 
-   --  dJ   Generate debugging trace output for the JGNAT back end. This
-   --       consists of symbolic Java Byte Code sequences for all generated
-   --       classes plus additional information to indicate local variables
-   --       and methods.
-
    --  dK   Kill all error messages. This debug flag suppresses the output
    --       of all error messages. It is used in regression tests where the
    --       error messages are target dependent and irrelevant.
@@ -409,7 +406,7 @@ package body Debug is
    --  dL   Output trace information on elaboration checking. This debug
    --       switch causes output to be generated showing each call or
    --       instantiation as it is checked, and the progress of the recursive
-   --       trace through calls at elaboration time.
+   --       trace through elaboration calls at compile time.
 
    --  dM   Assume all variables have been modified, and ignore current value
    --       indications. This debug flag disconnects the tracking of constant
@@ -428,11 +425,10 @@ package body Debug is
    --       in preelaborable packages, but this restriction is a huge pain,
    --       especially in the predefined library units.
 
-   --  dQ   Eliminate check for duplicate external tags. This check was added
-   --       as per AI 0113, and causes some backward compatibility problems.
-   --       It is never legitimate to have duplicate external tags, so the
-   --       check is certainly valid, but this debug switch can be useful for
-   --       enabling previous behavior of ignoring this problem.
+   --  dQ   Use old method for determining what goes on the secondary stack.
+   --       This disables some newer optimizations. The intent is to use this
+   --       temporarily to measure before/after efficiency. ???Remove this
+   --       when we are done (see Sem_Util.Requires_Transient_Scope).
 
    --  dR   Bypass the check for a proper version of s-rpc being present
    --       to use the -gnatz? switch. This allows debugging of the use
@@ -529,9 +525,21 @@ package body Debug is
    --       this if this debug flag is set. Later we will enable this more
    --       generally by default.
 
+   --  d.h  Minimize the creation of public internal symbols for concatenation
+   --       by enforcing a secondary stack-like handling of the final result.
+   --       The target of the concatenation is thus constrained in place and
+   --       initialized with the result instead of acting as its alias.
+
    --  d.i  Ignore all occurrences of pragma Warnings in the sources. This can
    --       be used in particular to disable Warnings (Off) to check if any of
    --       these statements are inappropriate.
+
+   --  d.k  If an error message contains a reference to a location in an
+   --       internal unit, then suppress the line number in this reference.
+
+   --  d.j  Generate listing of frontend inlined calls and inline calls passed
+   --       to the backend. This is useful to locate skipped calls that must be
+   --       inlined by the frontend.
 
    --  d.l  Use Ada 95 semantics for limited function returns. This may be
    --       used to work around the incompatibility introduced by AI-318-2.
@@ -547,20 +555,15 @@ package body Debug is
    --       compiler has a bug -- these are the files that need to be included
    --       in a bug report.
 
-   --  d.o  Generate listing showing the IL instructions generated by the .NET
-   --       compiler for each subprogram.
+   --  d.o  Conservative elaboration order for indirect calls. This causes
+   --       P'Access to be treated as a call in more cases.
 
-   --  d.p  Enable the .NET CIL verifier. During development the verifier is
-   --       disabled by default and this flag is used to enable it. In the
-   --       future we will reverse this functionality.
+   --  d.p  In Ada 95 (or 83) mode, use original Ada 95 behavior for the
+   --       interpretation of component clauses crossing byte boundaries when
+   --       using the non-default bit order (i.e. ignore AI95-0133).
 
    --  d.r  Forces the flag OK_To_Reorder_Components to be set in all record
    --       base types that have no discriminants.
-
-   --  d.s  Normally the compiler expands slice moves into loops if overlap
-   --       might be possible. This debug flag inhibits that expansion, and
-   --       the back end is expected to use an appropriate routine to handle
-   --       overlap, based on Forward_OK and Backwards_OK flags.
 
    --  d.t  The compiler has been modified (a fairly extensive modification)
    --       to generate static dispatch tables for library level tagged types.
@@ -568,59 +571,98 @@ package body Debug is
    --       previous dynamic construction of tables. It is there as a possible
    --       work around if we run into trouble with the new implementation.
 
+   --  d.u  Sets Modify_Tree_For_C mode in which tree is modified to make it
+   --       easier to generate code using a C compiler.
+
    --  d.v  Forces the flag OK_To_Reorder_Components to be set in all record
    --       base types that have at least one discriminant (v = variant).
 
    --  d.w  This flag turns off the scanning of loops to detect possible
    --       infinite loops.
 
-   --  d.A  There seems to be a problem with ASIS if we activate the circuit
-   --       for reading and writing the aspect specification hash table, so
-   --       for now, this is controlled by the debug flag d.A. The hash table
-   --       is only written and read if this flag is set.
-
    --  d.x  No exception handlers in generated code. This causes exception
    --       handlers to be eliminated from the generated code. They are still
    --       fully compiled and analyzed, they just get eliminated from the
    --       code generation step.
 
+   --  d.z  Restore previous front-end support for Inline_Always. In default
+   --       mode, for targets that use the GCC back end, Inline_Always is
+   --       handled by the back end. Use of this switch restores the previous
+   --       handling of Inline_Always by the front end on such targets. For the
+   --       targets that do not use the GCC back end, this switch is ignored.
+
+   --  d.A  There seems to be a problem with ASIS if we activate the circuit
+   --       for reading and writing the aspect specification hash table, so
+   --       for now, this is controlled by the debug flag d.A. The hash table
+   --       is only written and read if this flag is set.
+
+   --  d.B  Generate a bug box when we see an abort_statement, even though
+   --       there is no bug. Useful for testing Comperr.Compiler_Abort: write
+   --       some code containing an abort_statement, and compile it with
+   --       -gnatd.B. There is nothing special about abort_statements; it just
+   --       provides a way to control where the bug box is generated. See "when
+   --       N_Abort_Statement" in package body Expander.
+
    --  d.C  Generate call to System.Concat_n.Str_Concat_n routines in cases
    --       where we would normally generate inline concatenation code.
 
-   --  d.D  Strict Alfa mode. Interpret compiler permissions as strictly as
-   --       possible in Alfa mode.
+   --  d.D  For compatibility with some Ada 95 compilers implementing only
+   --       one feature of Ada 2005 (overriding keyword), disable errors on use
+   --       of overriding keyword in Ada 95 mode.
 
-   --  d.E  Force Alfa mode for gnat2why. In this mode, errors are issued for
-   --       all violations of Alfa in user code, and warnings are issued for
-   --       constructs not yet implemented in gnat2why.
+   --  d.E  Turn selected errors into warnings. This debug switch causes a
+   --       specific set of error messages into warnings. Setting this switch
+   --       causes Opt.Error_To_Warning to be set to True. The intention is
+   --       that this be used for messages representing upwards incompatible
+   --       changes to Ada 2012 that cause previously correct programs to be
+   --       treated as illegal now. The following cases are affected:
+   --
+   --          Errors relating to overlapping subprogram parameters for cases
+   --          other than IN OUT parameters to functions.
+   --
+   --          Errors relating to the new rules about not defining equality
+   --          too late so that composition of equality can be assured.
+   --
+   --          Errors relating to overriding indicators on protected subprogram
+   --          bodies (not an Ada 2012 incompatibility, but might cause errors
+   --          for existing programs assuming they were legal because GNAT
+   --          formerly allowed them).
 
-   --  d.F  Alfa mode. Generate AST in a form suitable for formal verification,
-   --       as well as additional cross reference information in ALI files to
-   --       compute effects of subprograms.
+   --  d.F  Sets GNATprove_Mode to True. This allows debugging the frontend in
+   --       the special mode used by GNATprove.
 
-   --  d.G  Precondition only mode for gnat2why. In this mode, gnat2why will
-   --       only generate Why code that checks for the well-guardedness of
-   --       preconditions.
+   --  d.G  Previously the compiler ignored calls via generic formal parameters
+   --       when doing the analysis for the static elaboration model. This is
+   --       now fixed, but we provide this debug flag to revert to the previous
+   --       situation of ignoring such calls to aid in transition.
 
-   --  d.H  Standard package only mode for gnat2why. In this mode, gnat2why
-   --       will only generate Why code for package Standard. Any given input
-   --       file will be ignored.
+   --  d.H  Sets ASIS_GNSA_Mode to True. This signals the front end to suppress
+   --       the call to gigi in ASIS_Mode.
 
-   --  d.I  Generate SCIL mode. Generate intermediate code for the sake of
-   --       of static analysis tools, and ensure additional tree consistency
-   --       between different compilations of specs.
+   --  d.I  Do not ignore enum representation clauses in CodePeer mode.
+   --       The default of ignoring representation clauses for enumeration
+   --       types in CodePeer is good for the majority of Ada code, but in some
+   --       cases being able to change this default might be useful to remove
+   --       some false positives.
 
-   --  d.J  Disable parallel SCIL generation. Normally SCIL file generation is
-   --       done in parallel to speed processing. This switch disables this
-   --       behavior.
-
-   --  d.K  Alfa detection only mode for gnat2why. In this mode, gnat2why
-   --       will only generate the .alfa file, but no Why code.
+   --  d.K  Enable generation of contract-only procedures in CodePeer mode and
+   --       report a warning on subprograms for which the contract-only body
+   --       cannot be built. Currently reported on subprograms defined in
+   --       nested package specs that have some formal (or return type) whose
+   --       type is a private type defined in some enclosing package and that
+   --       have pre/postconditions.
 
    --  d.L  Normally the front end generates special expansion for conditional
    --       expressions of a limited type. This debug flag removes this special
    --       case expansion, leaving it up to the back end to handle conditional
    --       expressions correctly.
+
+   --  d.M  Relaxed RM semantics. This flag sets Opt.Relaxed_RM_Semantics
+   --       See Opt.Relaxed_RM_Semantics for more details.
+
+   --  d.N  Enlarge entities by one node (but don't attempt to use this extra
+   --       node for storage of any flags or fields). This can be used to do
+   --       experiments on the impact of increasing entity sizes.
 
    --  d.O  Dump internal SCO tables. Before outputting the SCO information to
    --       the ALI file, the internal SCO tables (SCO_Table/SCO_Unit_Table)
@@ -631,25 +673,49 @@ package body Debug is
    --       This is there in case we find a situation where the optimization
    --       malfunctions, to provide a work around.
 
+   --  d.Q  Previous incomplete style checks for binary operators. Style checks
+   --       for token separation rules were incomplete and have been made
+   --       compliant with the documentation. For example, no warning was
+   --       issued for expressions such as 16-One or "A"&"B". Setting this flag
+   --       inhibits these new checks.
+
+   --  d.R  As documented in lib-writ.ads, restrictions in the ali file can
+   --       have two forms, positional and named. The named notation is the
+   --       current preferred form, but the use of this debug switch will force
+   --       the use of the obsolescent positional form.
+
    --  d.S  Force Optimize_Alignment (Space) mode as the default
 
    --  d.T  Force Optimize_Alignment (Time) mode as the default
+
+   --  d.U  Ignore indirect calls for static elaboration. The static
+   --       elaboration model is conservative, especially regarding indirect
+   --       calls. If you say Proc'Access, it will assume you might call
+   --       Proc. This can cause elaboration cycles at bind time. This flag
+   --       reverts to the behavior of earlier compilers, which ignored
+   --       indirect calls.
+
+   --  d.V  Do not verify the validity of SCIL files (CodePeer mode). When
+   --       generating SCIL files for CodePeer, by default we verify that the
+   --       SCIL is well formed before saving it on disk. This switch can be
+   --       used to disable this checking, either to improve speed or to shut
+   --       down a false positive detected during the verification.
 
    --  d.W  Print out debugging information for Walk_Library_Items, including
    --       the order in which units are walked. This is primarily for use in
    --       debugging CodePeer mode.
 
-   --  d.X  By default, the compiler uses an elaborate rewriting framework for
-   --       short-circuited forms where the right hand condition generates
-   --       actions to be inserted. With the gcc backend, we now use the new
-   --       N_Expression_With_Actions node for this expansion, but we still use
-   --       the old method for other backends and in SCIL mode. This debug flag
-   --       forces use of the new N_Expression_With_Actions node in these other
-   --       cases and is intended for transitional use.
+   --  d.X  A previous version of GNAT allowed indexing aspects to be redefined
+   --       on derived container types, while the default iterator was
+   --       inherited from the parent type. This nonstandard extension is
+   --       preserved temporarily for use by the modeling project under debug
+   --       flag d.X.
 
-   --  d.Y  Prevents the use of the N_Expression_With_Actions node even in the
-   --       case of the gcc back end. Provided as a back up in case the new
-   --       scheme has problems.
+   --  d.Z  Normally we always enable expansion in configurable run-time mode
+   --       to make sure we get error messages about unsupported features even
+   --       when compiling in -gnatc mode. But expansion is turned off in this
+   --       case if debug flag -gnatd.Z is used. This is to deal with the case
+   --       where we discover difficulties in this new processing.
 
    --  d1   Error messages have node numbers where possible. Normally error
    --       messages have only source locations. This option is useful when
@@ -683,14 +749,41 @@ package body Debug is
    --       implications of using thin pointers, and also to test that the
    --       compiler functions correctly with this choice.
 
-   --  d7   Normally a -gnatl or -gnatv listing includes the time stamp
-   --       of the source file. This debug flag suppresses this output,
-   --       and also suppresses the message with the version number.
-   --       This is useful in certain regression tests.
+   --  d7   Normally a -gnatl or -gnatv listing includes the time stamp of the
+   --       source file and the time of the compilation. This debug flag can
+   --       be used to suppress this output, and also suppresses the message
+   --       with the version of the compiler. This is useful for regression
+   --       tests which need to have consistent output.
 
    --  d8   This forces the packed stuff to generate code assuming the
    --       opposite endianness from the actual correct value. Useful in
    --       testing out code generation from the packed routines.
+
+   --  d9   This allows lock free implementation for protected objects
+   --       (see Exp_Ch9).
+
+   --  d.1  Sets Opt.Unnest_Subprogram_Mode to enable unnesting of subprograms.
+   --       This special pass does not actually unnest things, but it ensures
+   --       that a nested procedure does not contain any uplevel references.
+   --       See spec of Exp_Unst for full details.
+
+   --  d.2  Allow statements within declarative parts. This is not usually
+   --       allowed, but in some debugging contexts (e.g. testing the circuit
+   --       for unnesting of procedures), it is useful to allow this.
+
+   --  d.3  Output debugging information from Exp_Unst, including the name of
+   --       any unreachable subprograms that get deleted.
+
+   --  d.4  By default in case of an error during C generation, the .c or .h
+   --       file is deleted. This flag keeps the C file.
+
+   --  d.5  By default a subprogram imported generates a subprogram profile.
+   --       This debug flag disables this generation when generating C code,
+   --       assuming a proper #include will be used instead.
+
+   --  d.6  By default the C back-end avoids declaring itypes that are not
+   --       referenced by the generated C code. This debug flag restores the
+   --       output of all the itypes.
 
    ------------------------------------------
    -- Documentation for Binder Debug Flags --
@@ -724,13 +817,23 @@ package body Debug is
    --      the algorithm used to determine a correct order of elaboration. This
    --      is useful in diagnosing any problems in its behavior.
 
-   --  do  Use old elaboration order preference. The new preference rules
+   --  do  Use older elaboration order preference. The new preference rules
    --      prefer specs with no bodies to specs with bodies, and between two
    --      specs with bodies, prefers the one whose body is closer to being
    --      able to be elaborated. This is a clear improvement, but we provide
-   --      this debug flag in case of regressions.
+   --      this debug flag in case of regressions. Note: -do is even older than
+   --      -dp.
+
+   --  dp  Use old elaboration order preference. The new preference rules
+   --      elaborate all units within a strongly connected component together,
+   --      with no other units in between. In particular, if a spec/body pair
+   --      can be elaborated together, it will be. In the new order, the binder
+   --      behaves as if every pragma Elaborate_All that would be legal is
+   --      present, even if it does not appear in the source code.
 
    --  du  List unit name and file name for each unit as it is read in
+
+   --  dv  Verbose debugging printouts
 
    --  dx  Force the binder to read (and then ignore) the xref information
    --      in ali files (used to check that read circuit is working OK).
@@ -749,7 +852,9 @@ package body Debug is
 
    --  dn  Do not delete temporary files created by gnatmake at the end
    --      of execution, such as temporary config pragma files, mapping
-   --      files or project path files.
+   --      files or project path files. This debug switch is equivalent to
+   --      the standard switch --keep-temp-files. We retain the debug switch
+   --      for back compatibility with past usage.
 
    --  dp  Prints the Q used by routine Make.Compile_Sources every time
    --      we go around the main compile loop of Make.Compile_Sources
@@ -771,9 +876,13 @@ package body Debug is
    -- Documentation for gprbuild Debug Flags  --
    ---------------------------------------------
 
-   --  dn  Do not delete temporary files createed by gprbuild at the end
+   --  dm  Display the maximum number of simultaneous compilations.
+
+   --  dn  Do not delete temporary files created by gprbuild at the end
    --      of execution, such as temporary config pragma files, mapping
-   --      files or project path files.
+   --      files or project path files. This debug switch is equivalent to
+   --      the standard switch --keep-temp-files. We retain the debug switch
+   --      for back compatibility with past usage.
 
    --  dt  When a time stamp mismatch has been found for an ALI file,
    --      display the source file name, the time stamp expected and
@@ -784,82 +893,143 @@ package body Debug is
    --------------------
 
    procedure Set_Debug_Flag (C : Character; Val : Boolean := True) is
-      subtype Dig  is Character range '1' .. '9';
+      subtype Dig is Character range '1' .. '9';
       subtype LLet is Character range 'a' .. 'z';
       subtype ULet is Character range 'A' .. 'Z';
 
    begin
       if C in Dig then
          case Dig (C) is
-            when '1' => Debug_Flag_1 := Val;
-            when '2' => Debug_Flag_2 := Val;
-            when '3' => Debug_Flag_3 := Val;
-            when '4' => Debug_Flag_4 := Val;
-            when '5' => Debug_Flag_5 := Val;
-            when '6' => Debug_Flag_6 := Val;
-            when '7' => Debug_Flag_7 := Val;
-            when '8' => Debug_Flag_8 := Val;
-            when '9' => Debug_Flag_9 := Val;
+            when '1' =>
+               Debug_Flag_1 := Val;
+            when '2' =>
+               Debug_Flag_2 := Val;
+            when '3' =>
+               Debug_Flag_3 := Val;
+            when '4' =>
+               Debug_Flag_4 := Val;
+            when '5' =>
+               Debug_Flag_5 := Val;
+            when '6' =>
+               Debug_Flag_6 := Val;
+            when '7' =>
+               Debug_Flag_7 := Val;
+            when '8' =>
+               Debug_Flag_8 := Val;
+            when '9' =>
+               Debug_Flag_9 := Val;
          end case;
 
       elsif C in ULet then
          case ULet (C) is
-            when 'A' => Debug_Flag_AA := Val;
-            when 'B' => Debug_Flag_BB := Val;
-            when 'C' => Debug_Flag_CC := Val;
-            when 'D' => Debug_Flag_DD := Val;
-            when 'E' => Debug_Flag_EE := Val;
-            when 'F' => Debug_Flag_FF := Val;
-            when 'G' => Debug_Flag_GG := Val;
-            when 'H' => Debug_Flag_HH := Val;
-            when 'I' => Debug_Flag_II := Val;
-            when 'J' => Debug_Flag_JJ := Val;
-            when 'K' => Debug_Flag_KK := Val;
-            when 'L' => Debug_Flag_LL := Val;
-            when 'M' => Debug_Flag_MM := Val;
-            when 'N' => Debug_Flag_NN := Val;
-            when 'O' => Debug_Flag_OO := Val;
-            when 'P' => Debug_Flag_PP := Val;
-            when 'Q' => Debug_Flag_QQ := Val;
-            when 'R' => Debug_Flag_RR := Val;
-            when 'S' => Debug_Flag_SS := Val;
-            when 'T' => Debug_Flag_TT := Val;
-            when 'U' => Debug_Flag_UU := Val;
-            when 'V' => Debug_Flag_VV := Val;
-            when 'W' => Debug_Flag_WW := Val;
-            when 'X' => Debug_Flag_XX := Val;
-            when 'Y' => Debug_Flag_YY := Val;
-            when 'Z' => Debug_Flag_ZZ := Val;
+            when 'A' =>
+               Debug_Flag_AA := Val;
+            when 'B' =>
+               Debug_Flag_BB := Val;
+            when 'C' =>
+               Debug_Flag_CC := Val;
+            when 'D' =>
+               Debug_Flag_DD := Val;
+            when 'E' =>
+               Debug_Flag_EE := Val;
+            when 'F' =>
+               Debug_Flag_FF := Val;
+            when 'G' =>
+               Debug_Flag_GG := Val;
+            when 'H' =>
+               Debug_Flag_HH := Val;
+            when 'I' =>
+               Debug_Flag_II := Val;
+            when 'J' =>
+               Debug_Flag_JJ := Val;
+            when 'K' =>
+               Debug_Flag_KK := Val;
+            when 'L' =>
+               Debug_Flag_LL := Val;
+            when 'M' =>
+               Debug_Flag_MM := Val;
+            when 'N' =>
+               Debug_Flag_NN := Val;
+            when 'O' =>
+               Debug_Flag_OO := Val;
+            when 'P' =>
+               Debug_Flag_PP := Val;
+            when 'Q' =>
+               Debug_Flag_QQ := Val;
+            when 'R' =>
+               Debug_Flag_RR := Val;
+            when 'S' =>
+               Debug_Flag_SS := Val;
+            when 'T' =>
+               Debug_Flag_TT := Val;
+            when 'U' =>
+               Debug_Flag_UU := Val;
+            when 'V' =>
+               Debug_Flag_VV := Val;
+            when 'W' =>
+               Debug_Flag_WW := Val;
+            when 'X' =>
+               Debug_Flag_XX := Val;
+            when 'Y' =>
+               Debug_Flag_YY := Val;
+            when 'Z' =>
+               Debug_Flag_ZZ := Val;
          end case;
 
       else
          case LLet (C) is
-            when 'a' => Debug_Flag_A := Val;
-            when 'b' => Debug_Flag_B := Val;
-            when 'c' => Debug_Flag_C := Val;
-            when 'd' => Debug_Flag_D := Val;
-            when 'e' => Debug_Flag_E := Val;
-            when 'f' => Debug_Flag_F := Val;
-            when 'g' => Debug_Flag_G := Val;
-            when 'h' => Debug_Flag_H := Val;
-            when 'i' => Debug_Flag_I := Val;
-            when 'j' => Debug_Flag_J := Val;
-            when 'k' => Debug_Flag_K := Val;
-            when 'l' => Debug_Flag_L := Val;
-            when 'm' => Debug_Flag_M := Val;
-            when 'n' => Debug_Flag_N := Val;
-            when 'o' => Debug_Flag_O := Val;
-            when 'p' => Debug_Flag_P := Val;
-            when 'q' => Debug_Flag_Q := Val;
-            when 'r' => Debug_Flag_R := Val;
-            when 's' => Debug_Flag_S := Val;
-            when 't' => Debug_Flag_T := Val;
-            when 'u' => Debug_Flag_U := Val;
-            when 'v' => Debug_Flag_V := Val;
-            when 'w' => Debug_Flag_W := Val;
-            when 'x' => Debug_Flag_X := Val;
-            when 'y' => Debug_Flag_Y := Val;
-            when 'z' => Debug_Flag_Z := Val;
+            when 'a' =>
+               Debug_Flag_A := Val;
+            when 'b' =>
+               Debug_Flag_B := Val;
+            when 'c' =>
+               Debug_Flag_C := Val;
+            when 'd' =>
+               Debug_Flag_D := Val;
+            when 'e' =>
+               Debug_Flag_E := Val;
+            when 'f' =>
+               Debug_Flag_F := Val;
+            when 'g' =>
+               Debug_Flag_G := Val;
+            when 'h' =>
+               Debug_Flag_H := Val;
+            when 'i' =>
+               Debug_Flag_I := Val;
+            when 'j' =>
+               Debug_Flag_J := Val;
+            when 'k' =>
+               Debug_Flag_K := Val;
+            when 'l' =>
+               Debug_Flag_L := Val;
+            when 'm' =>
+               Debug_Flag_M := Val;
+            when 'n' =>
+               Debug_Flag_N := Val;
+            when 'o' =>
+               Debug_Flag_O := Val;
+            when 'p' =>
+               Debug_Flag_P := Val;
+            when 'q' =>
+               Debug_Flag_Q := Val;
+            when 'r' =>
+               Debug_Flag_R := Val;
+            when 's' =>
+               Debug_Flag_S := Val;
+            when 't' =>
+               Debug_Flag_T := Val;
+            when 'u' =>
+               Debug_Flag_U := Val;
+            when 'v' =>
+               Debug_Flag_V := Val;
+            when 'w' =>
+               Debug_Flag_W := Val;
+            when 'x' =>
+               Debug_Flag_X := Val;
+            when 'y' =>
+               Debug_Flag_Y := Val;
+            when 'z' =>
+               Debug_Flag_Z := Val;
          end case;
       end if;
    end Set_Debug_Flag;
@@ -869,82 +1039,143 @@ package body Debug is
    ---------------------------
 
    procedure Set_Dotted_Debug_Flag (C : Character; Val : Boolean := True) is
-      subtype Dig  is Character range '1' .. '9';
+      subtype Dig is Character range '1' .. '9';
       subtype LLet is Character range 'a' .. 'z';
       subtype ULet is Character range 'A' .. 'Z';
 
    begin
       if C in Dig then
          case Dig (C) is
-            when '1' => Debug_Flag_Dot_1 := Val;
-            when '2' => Debug_Flag_Dot_2 := Val;
-            when '3' => Debug_Flag_Dot_3 := Val;
-            when '4' => Debug_Flag_Dot_4 := Val;
-            when '5' => Debug_Flag_Dot_5 := Val;
-            when '6' => Debug_Flag_Dot_6 := Val;
-            when '7' => Debug_Flag_Dot_7 := Val;
-            when '8' => Debug_Flag_Dot_8 := Val;
-            when '9' => Debug_Flag_Dot_9 := Val;
+            when '1' =>
+               Debug_Flag_Dot_1 := Val;
+            when '2' =>
+               Debug_Flag_Dot_2 := Val;
+            when '3' =>
+               Debug_Flag_Dot_3 := Val;
+            when '4' =>
+               Debug_Flag_Dot_4 := Val;
+            when '5' =>
+               Debug_Flag_Dot_5 := Val;
+            when '6' =>
+               Debug_Flag_Dot_6 := Val;
+            when '7' =>
+               Debug_Flag_Dot_7 := Val;
+            when '8' =>
+               Debug_Flag_Dot_8 := Val;
+            when '9' =>
+               Debug_Flag_Dot_9 := Val;
          end case;
 
       elsif C in ULet then
          case ULet (C) is
-            when 'A' => Debug_Flag_Dot_AA := Val;
-            when 'B' => Debug_Flag_Dot_BB := Val;
-            when 'C' => Debug_Flag_Dot_CC := Val;
-            when 'D' => Debug_Flag_Dot_DD := Val;
-            when 'E' => Debug_Flag_Dot_EE := Val;
-            when 'F' => Debug_Flag_Dot_FF := Val;
-            when 'G' => Debug_Flag_Dot_GG := Val;
-            when 'H' => Debug_Flag_Dot_HH := Val;
-            when 'I' => Debug_Flag_Dot_II := Val;
-            when 'J' => Debug_Flag_Dot_JJ := Val;
-            when 'K' => Debug_Flag_Dot_KK := Val;
-            when 'L' => Debug_Flag_Dot_LL := Val;
-            when 'M' => Debug_Flag_Dot_MM := Val;
-            when 'N' => Debug_Flag_Dot_NN := Val;
-            when 'O' => Debug_Flag_Dot_OO := Val;
-            when 'P' => Debug_Flag_Dot_PP := Val;
-            when 'Q' => Debug_Flag_Dot_QQ := Val;
-            when 'R' => Debug_Flag_Dot_RR := Val;
-            when 'S' => Debug_Flag_Dot_SS := Val;
-            when 'T' => Debug_Flag_Dot_TT := Val;
-            when 'U' => Debug_Flag_Dot_UU := Val;
-            when 'V' => Debug_Flag_Dot_VV := Val;
-            when 'W' => Debug_Flag_Dot_WW := Val;
-            when 'X' => Debug_Flag_Dot_XX := Val;
-            when 'Y' => Debug_Flag_Dot_YY := Val;
-            when 'Z' => Debug_Flag_Dot_ZZ := Val;
+            when 'A' =>
+               Debug_Flag_Dot_AA := Val;
+            when 'B' =>
+               Debug_Flag_Dot_BB := Val;
+            when 'C' =>
+               Debug_Flag_Dot_CC := Val;
+            when 'D' =>
+               Debug_Flag_Dot_DD := Val;
+            when 'E' =>
+               Debug_Flag_Dot_EE := Val;
+            when 'F' =>
+               Debug_Flag_Dot_FF := Val;
+            when 'G' =>
+               Debug_Flag_Dot_GG := Val;
+            when 'H' =>
+               Debug_Flag_Dot_HH := Val;
+            when 'I' =>
+               Debug_Flag_Dot_II := Val;
+            when 'J' =>
+               Debug_Flag_Dot_JJ := Val;
+            when 'K' =>
+               Debug_Flag_Dot_KK := Val;
+            when 'L' =>
+               Debug_Flag_Dot_LL := Val;
+            when 'M' =>
+               Debug_Flag_Dot_MM := Val;
+            when 'N' =>
+               Debug_Flag_Dot_NN := Val;
+            when 'O' =>
+               Debug_Flag_Dot_OO := Val;
+            when 'P' =>
+               Debug_Flag_Dot_PP := Val;
+            when 'Q' =>
+               Debug_Flag_Dot_QQ := Val;
+            when 'R' =>
+               Debug_Flag_Dot_RR := Val;
+            when 'S' =>
+               Debug_Flag_Dot_SS := Val;
+            when 'T' =>
+               Debug_Flag_Dot_TT := Val;
+            when 'U' =>
+               Debug_Flag_Dot_UU := Val;
+            when 'V' =>
+               Debug_Flag_Dot_VV := Val;
+            when 'W' =>
+               Debug_Flag_Dot_WW := Val;
+            when 'X' =>
+               Debug_Flag_Dot_XX := Val;
+            when 'Y' =>
+               Debug_Flag_Dot_YY := Val;
+            when 'Z' =>
+               Debug_Flag_Dot_ZZ := Val;
          end case;
 
       else
          case LLet (C) is
-            when 'a' => Debug_Flag_Dot_A := Val;
-            when 'b' => Debug_Flag_Dot_B := Val;
-            when 'c' => Debug_Flag_Dot_C := Val;
-            when 'd' => Debug_Flag_Dot_D := Val;
-            when 'e' => Debug_Flag_Dot_E := Val;
-            when 'f' => Debug_Flag_Dot_F := Val;
-            when 'g' => Debug_Flag_Dot_G := Val;
-            when 'h' => Debug_Flag_Dot_H := Val;
-            when 'i' => Debug_Flag_Dot_I := Val;
-            when 'j' => Debug_Flag_Dot_J := Val;
-            when 'k' => Debug_Flag_Dot_K := Val;
-            when 'l' => Debug_Flag_Dot_L := Val;
-            when 'm' => Debug_Flag_Dot_M := Val;
-            when 'n' => Debug_Flag_Dot_N := Val;
-            when 'o' => Debug_Flag_Dot_O := Val;
-            when 'p' => Debug_Flag_Dot_P := Val;
-            when 'q' => Debug_Flag_Dot_Q := Val;
-            when 'r' => Debug_Flag_Dot_R := Val;
-            when 's' => Debug_Flag_Dot_S := Val;
-            when 't' => Debug_Flag_Dot_T := Val;
-            when 'u' => Debug_Flag_Dot_U := Val;
-            when 'v' => Debug_Flag_Dot_V := Val;
-            when 'w' => Debug_Flag_Dot_W := Val;
-            when 'x' => Debug_Flag_Dot_X := Val;
-            when 'y' => Debug_Flag_Dot_Y := Val;
-            when 'z' => Debug_Flag_Dot_Z := Val;
+            when 'a' =>
+               Debug_Flag_Dot_A := Val;
+            when 'b' =>
+               Debug_Flag_Dot_B := Val;
+            when 'c' =>
+               Debug_Flag_Dot_C := Val;
+            when 'd' =>
+               Debug_Flag_Dot_D := Val;
+            when 'e' =>
+               Debug_Flag_Dot_E := Val;
+            when 'f' =>
+               Debug_Flag_Dot_F := Val;
+            when 'g' =>
+               Debug_Flag_Dot_G := Val;
+            when 'h' =>
+               Debug_Flag_Dot_H := Val;
+            when 'i' =>
+               Debug_Flag_Dot_I := Val;
+            when 'j' =>
+               Debug_Flag_Dot_J := Val;
+            when 'k' =>
+               Debug_Flag_Dot_K := Val;
+            when 'l' =>
+               Debug_Flag_Dot_L := Val;
+            when 'm' =>
+               Debug_Flag_Dot_M := Val;
+            when 'n' =>
+               Debug_Flag_Dot_N := Val;
+            when 'o' =>
+               Debug_Flag_Dot_O := Val;
+            when 'p' =>
+               Debug_Flag_Dot_P := Val;
+            when 'q' =>
+               Debug_Flag_Dot_Q := Val;
+            when 'r' =>
+               Debug_Flag_Dot_R := Val;
+            when 's' =>
+               Debug_Flag_Dot_S := Val;
+            when 't' =>
+               Debug_Flag_Dot_T := Val;
+            when 'u' =>
+               Debug_Flag_Dot_U := Val;
+            when 'v' =>
+               Debug_Flag_Dot_V := Val;
+            when 'w' =>
+               Debug_Flag_Dot_W := Val;
+            when 'x' =>
+               Debug_Flag_Dot_X := Val;
+            when 'y' =>
+               Debug_Flag_Dot_Y := Val;
+            when 'z' =>
+               Debug_Flag_Dot_Z := Val;
          end case;
       end if;
    end Set_Dotted_Debug_Flag;

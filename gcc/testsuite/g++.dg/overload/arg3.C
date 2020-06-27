@@ -10,14 +10,13 @@ struct A {};
 
 struct B : A
 {
-  B(int); // { dg-message "B::B|no known conversion" "" }
-  B(B&);  // { dg-message "note" "" }
+  B(int);
+  B(B&);  // { dg-message "note" "" { target c++14_down } }
 };
 
-void foo(B);			// { dg-error "initializing" }
+void foo(B);			// { dg-message "initializing" "" { target c++14_down } }
 
 void bar()
 {
-  foo(0); // { dg-error "no matching function" "no matching" }
-  // { dg-message "candidate" "candidate note" { target *-*-* } 21 }
+  foo(0); // { dg-error "" "" { target c++14_down } }
 }

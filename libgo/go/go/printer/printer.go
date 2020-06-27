@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"unicode"
 )
 
 const (
@@ -38,8 +39,16 @@ const (
 type pmode int
 
 const (
-	noExtraLinebreak pmode = 1 << iota
+	noExtraBlank     pmode = 1 << iota // disables extra blank after /*-style comment
+	noExtraLinebreak                   // disables extra line break after /*-style comment
 )
+
+type commentInfo struct {
+	cindex         int               // current comment index
+	comment        *ast.CommentGroup // = printer.comments[cindex]; or nil
+	commentOffset  int               // = printer.posFor(printer.comments[cindex].List[0].Pos()).Offset; or infinity
+	commentNewline bool              // true if the comment group contains newlines
+}
 
 type printer struct {
 	// Configuration (does not change after initialization)
@@ -49,9 +58,11 @@ type printer struct {
 	// Current state
 	output      []byte       // raw printer result
 	indent      int          // current indentation
+	level       int          // level == 0: outside composite literal; level > 0: inside composite literal
 	mode        pmode        // current printer mode
 	impliedSemi bool         // if set, a linebreak implies a semicolon
-	lastTok     token.Token  // the last token printed (token.ILLEGAL if it's whitespace)
+	lastTok     token.Token  // last token printed (token.ILLEGAL if it's whitespace)
+	prevOpen    token.Token  // previous non-brace "open" token (, [, or token.ILLEGAL
 	wsbuf       []whiteSpace // delayed white space
 
 	// Positions
@@ -60,19 +71,17 @@ type printer struct {
 	// white space). If there's a difference and SourcePos is set in
 	// ConfigMode, //line comments are used in the output to restore
 	// original source positions for a reader.
-	pos  token.Position // current position in AST (source) space
-	out  token.Position // current position in output space
-	last token.Position // value of pos after calling writeString
+	pos     token.Position // current position in AST (source) space
+	out     token.Position // current position in output space
+	last    token.Position // value of pos after calling writeString
+	linePtr *int           // if set, record out.Line for the next token in *linePtr
 
 	// The list of all source comments, in order of appearance.
 	comments        []*ast.CommentGroup // may be nil
-	cindex          int                 // current comment index
 	useNodeComments bool                // if not set, ignore lead and line comments of nodes
 
 	// Information about p.comments[p.cindex]; set up by nextComment.
-	comment        *ast.CommentGroup // = p.comments[p.cindex]; or nil
-	commentOffset  int               // = p.posFor(p.comments[p.cindex].List[0].Pos()).Offset; or infinity
-	commentNewline bool              // true if the comment group contains newlines
+	commentInfo
 
 	// Cache of already computed node sizes.
 	nodeSizes map[ast.Node]int
@@ -90,6 +99,14 @@ func (p *printer) init(cfg *Config, fset *token.FileSet, nodeSizes map[ast.Node]
 	p.wsbuf = make([]whiteSpace, 0, 16) // whitespace sequences are short
 	p.nodeSizes = nodeSizes
 	p.cachedPos = -1
+}
+
+func (p *printer) internalError(msg ...interface{}) {
+	if debug {
+		fmt.Print(p.pos.String() + ": ")
+		fmt.Println(msg...)
+		panic("go/printer")
+	}
 }
 
 // commentsHaveNewline reports whether a list of comments belonging to
@@ -128,12 +145,49 @@ func (p *printer) nextComment() {
 	p.commentOffset = infinity
 }
 
-func (p *printer) internalError(msg ...interface{}) {
-	if debug {
-		fmt.Print(p.pos.String() + ": ")
-		fmt.Println(msg...)
-		panic("go/printer")
+// commentBefore reports whether the current comment group occurs
+// before the next position in the source code and printing it does
+// not introduce implicit semicolons.
+//
+func (p *printer) commentBefore(next token.Position) bool {
+	return p.commentOffset < next.Offset && (!p.impliedSemi || !p.commentNewline)
+}
+
+// commentSizeBefore returns the estimated size of the
+// comments on the same line before the next position.
+//
+func (p *printer) commentSizeBefore(next token.Position) int {
+	// save/restore current p.commentInfo (p.nextComment() modifies it)
+	defer func(info commentInfo) {
+		p.commentInfo = info
+	}(p.commentInfo)
+
+	size := 0
+	for p.commentBefore(next) {
+		for _, c := range p.comment.List {
+			size += len(c.Text)
+		}
+		p.nextComment()
 	}
+	return size
+}
+
+// recordLine records the output line number for the next non-whitespace
+// token in *linePtr. It is used to compute an accurate line number for a
+// formatted construct, independent of pending (not yet emitted) whitespace
+// or comments.
+//
+func (p *printer) recordLine(linePtr *int) {
+	p.linePtr = linePtr
+}
+
+// linesFrom returns the number of output lines between the current
+// output line and the line argument, ignoring any pending (not yet
+// emitted) whitespace or comments. It is used to compute an accurate
+// size (in number of lines) for a formatted construct.
+//
+func (p *printer) linesFrom(line int) int {
+	return p.out.Line - line
 }
 
 func (p *printer) posFor(pos token.Pos) token.Position {
@@ -164,15 +218,15 @@ func (p *printer) atLineBegin(pos token.Position) {
 	// write indentation
 	// use "hard" htabs - indentation columns
 	// must not be discarded by the tabwriter
-	for i := 0; i < p.indent; i++ {
+	n := p.Config.Indent + p.indent // include base indentation
+	for i := 0; i < n; i++ {
 		p.output = append(p.output, '\t')
 	}
 
 	// update positions
-	i := p.indent
-	p.pos.Offset += i
-	p.pos.Column += i
-	p.out.Column += i
+	p.pos.Offset += n
+	p.pos.Column += n
+	p.out.Column += n
 }
 
 // writeByte writes ch n times to p.output and updates p.pos.
@@ -220,14 +274,6 @@ func (p *printer) writeString(pos token.Position, s string, isLit bool) {
 		// atLineBegin updates p.pos if there's indentation, but p.pos
 		// is the position of s.
 		p.pos = pos
-		// reset state if the file changed
-		// (used when printing merged ASTs of different files
-		// e.g., the result of ast.MergePackageFiles)
-		if p.last.IsValid() && p.last.Filename != pos.Filename {
-			p.indent = 0
-			p.mode = 0
-			p.wsbuf = p.wsbuf[0:0]
-		}
 	}
 
 	if isLit {
@@ -402,36 +448,9 @@ func (p *printer) writeCommentPrefix(pos, next token.Position, prev, comment *as
 	}
 }
 
-// Split comment text into lines
-// (using strings.Split(text, "\n") is significantly slower for
-// this specific purpose, as measured with: go test -bench=Print)
-func split(text string) []string {
-	// count lines (comment text never ends in a newline)
-	n := 1
-	for i := 0; i < len(text); i++ {
-		if text[i] == '\n' {
-			n++
-		}
-	}
-
-	// split
-	lines := make([]string, n)
-	n = 0
-	i := 0
-	for j := 0; j < len(text); j++ {
-		if text[j] == '\n' {
-			lines[n] = text[i:j] // exclude newline
-			i = j + 1            // discard newline
-			n++
-		}
-	}
-	lines[n] = text[i:]
-
-	return lines
-}
-
 // Returns true if s contains only white space
 // (only tabs and blanks can appear in the printer's context).
+//
 func isBlank(s string) bool {
 	for i := 0; i < len(s); i++ {
 		if s[i] > ' ' {
@@ -441,6 +460,7 @@ func isBlank(s string) bool {
 	return true
 }
 
+// commonPrefix returns the common prefix of a and b.
 func commonPrefix(a, b string) string {
 	i := 0
 	for i < len(a) && i < len(b) && a[i] == b[i] && (a[i] <= ' ' || a[i] == '*') {
@@ -449,11 +469,22 @@ func commonPrefix(a, b string) string {
 	return a[0:i]
 }
 
+// trimRight returns s with trailing whitespace removed.
+func trimRight(s string) string {
+	return strings.TrimRightFunc(s, unicode.IsSpace)
+}
+
+// stripCommonPrefix removes a common prefix from /*-style comment lines (unless no
+// comment line is indented, all but the first line have some form of space prefix).
+// The prefix is computed using heuristics such that is likely that the comment
+// contents are nicely laid out after re-printing each line using the printer's
+// current indentation.
+//
 func stripCommonPrefix(lines []string) {
-	if len(lines) < 2 {
+	if len(lines) <= 1 {
 		return // at most one line - nothing to do
 	}
-	// len(lines) >= 2
+	// len(lines) > 1
 
 	// The heuristic in this function tries to handle a few
 	// common patterns of /*-style comments: Comments where
@@ -466,29 +497,33 @@ func stripCommonPrefix(lines []string) {
 	// Compute maximum common white prefix of all but the first,
 	// last, and blank lines, and replace blank lines with empty
 	// lines (the first line starts with /* and has no prefix).
-	// In case of two-line comments, consider the last line for
-	// the prefix computation since otherwise the prefix would
-	// be empty.
+	// In cases where only the first and last lines are not blank,
+	// such as two-line comments, or comments where all inner lines
+	// are blank, consider the last line for the prefix computation
+	// since otherwise the prefix would be empty.
 	//
 	// Note that the first and last line are never empty (they
 	// contain the opening /* and closing */ respectively) and
 	// thus they can be ignored by the blank line check.
-	var prefix string
+	prefix := ""
+	prefixSet := false
 	if len(lines) > 2 {
-		first := true
 		for i, line := range lines[1 : len(lines)-1] {
-			switch {
-			case isBlank(line):
-				lines[1+i] = "" // range starts at line 1
-			case first:
-				prefix = commonPrefix(line, line)
-				first = false
-			default:
+			if isBlank(line) {
+				lines[1+i] = "" // range starts with lines[1]
+			} else {
+				if !prefixSet {
+					prefix = line
+					prefixSet = true
+				}
 				prefix = commonPrefix(prefix, line)
 			}
+
 		}
-	} else { // len(lines) == 2, lines cannot be blank (contain /* and */)
-		line := lines[1]
+	}
+	// If we don't have a prefix yet, consider the last line.
+	if !prefixSet {
+		line := lines[len(lines)-1]
 		prefix = commonPrefix(line, line)
 	}
 
@@ -544,9 +579,7 @@ func stripCommonPrefix(lines []string) {
 			}
 			// Shorten the computed common prefix by the length of
 			// suffix, if it is found as suffix of the prefix.
-			if strings.HasSuffix(prefix, string(suffix)) {
-				prefix = prefix[0 : len(prefix)-len(suffix)]
-			}
+			prefix = strings.TrimSuffix(prefix, string(suffix))
 		}
 	}
 
@@ -570,9 +603,9 @@ func stripCommonPrefix(lines []string) {
 	}
 
 	// Remove the common prefix from all but the first and empty lines.
-	for i, line := range lines[1:] {
-		if len(line) != 0 {
-			lines[1+i] = line[len(prefix):] // range starts at line 1
+	for i, line := range lines {
+		if i > 0 && line != "" {
+			lines[i] = line[len(prefix):]
 		}
 	}
 }
@@ -605,13 +638,26 @@ func (p *printer) writeComment(comment *ast.Comment) {
 
 	// shortcut common case of //-style comments
 	if text[1] == '/' {
-		p.writeString(pos, text, true)
+		p.writeString(pos, trimRight(text), true)
 		return
 	}
 
 	// for /*-style comments, print line by line and let the
 	// write function take care of the proper indentation
-	lines := split(text)
+	lines := strings.Split(text, "\n")
+
+	// The comment started in the first column but is going
+	// to be indented. For an idempotent result, add indentation
+	// to all lines such that they look like they were indented
+	// before - this will make sure the common prefix computation
+	// is the same independent of how many times formatting is
+	// applied (was issue 1835).
+	if pos.IsValid() && pos.Column == 1 && p.indent > 0 {
+		for i, line := range lines[1:] {
+			lines[1+i] = "   " + line
+		}
+	}
+
 	stripCommonPrefix(lines)
 
 	// write comment lines, separated by formfeed,
@@ -622,7 +668,7 @@ func (p *printer) writeComment(comment *ast.Comment) {
 			pos = p.pos
 		}
 		if len(line) > 0 {
-			p.writeString(pos, line, true)
+			p.writeString(pos, trimRight(line), true)
 		}
 	}
 }
@@ -667,6 +713,16 @@ func (p *printer) writeCommentSuffix(needsLinebreak bool) (wroteNewline, dropped
 	return
 }
 
+// containsLinebreak reports whether the whitespace buffer contains any line breaks.
+func (p *printer) containsLinebreak() bool {
+	for _, ch := range p.wsbuf {
+		if ch == newline || ch == formfeed {
+			return true
+		}
+	}
+	return false
+}
+
 // intersperseComments consumes all comments that appear before the next token
 // tok and prints it together with the buffered whitespace (i.e., the whitespace
 // that needs to be written before the next token). A heuristic is used to mix
@@ -685,19 +741,35 @@ func (p *printer) intersperseComments(next token.Position, tok token.Token) (wro
 	}
 
 	if last != nil {
-		// if the last comment is a /*-style comment and the next item
-		// follows on the same line but is not a comma or a "closing"
-		// token, add an extra blank for separation
-		if last.Text[1] == '*' && p.lineFor(last.Pos()) == next.Line && tok != token.COMMA &&
-			tok != token.RPAREN && tok != token.RBRACK && tok != token.RBRACE {
-			p.writeByte(' ', 1)
+		// If the last comment is a /*-style comment and the next item
+		// follows on the same line but is not a comma, and not a "closing"
+		// token immediately following its corresponding "opening" token,
+		// add an extra separator unless explicitly disabled. Use a blank
+		// as separator unless we have pending linebreaks, they are not
+		// disabled, and we are outside a composite literal, in which case
+		// we want a linebreak (issue 15137).
+		// TODO(gri) This has become overly complicated. We should be able
+		// to track whether we're inside an expression or statement and
+		// use that information to decide more directly.
+		needsLinebreak := false
+		if p.mode&noExtraBlank == 0 &&
+			last.Text[1] == '*' && p.lineFor(last.Pos()) == next.Line &&
+			tok != token.COMMA &&
+			(tok != token.RPAREN || p.prevOpen == token.LPAREN) &&
+			(tok != token.RBRACK || p.prevOpen == token.LBRACK) {
+			if p.containsLinebreak() && p.mode&noExtraLinebreak == 0 && p.level == 0 {
+				needsLinebreak = true
+			} else {
+				p.writeByte(' ', 1)
+			}
 		}
-		// ensure that there is a line break after a //-style comment,
-		// before a closing '}' unless explicitly disabled, or at eof
-		needsLinebreak :=
-			last.Text[1] == '/' ||
-				tok == token.RBRACE && p.mode&noExtraLinebreak == 0 ||
-				tok == token.EOF
+		// Ensure that there is a line break after a //-style comment,
+		// before EOF, and before a closing '}' unless explicitly disabled.
+		if last.Text[1] == '/' ||
+			tok == token.EOF ||
+			tok == token.RBRACE && p.mode&noExtraLinebreak == 0 {
+			needsLinebreak = true
+		}
 		return p.writeCommentSuffix(needsLinebreak)
 	}
 
@@ -746,12 +818,8 @@ func (p *printer) writeWhitespace(n int) {
 	}
 
 	// shift remaining entries down
-	i := 0
-	for ; n < len(p.wsbuf); n++ {
-		p.wsbuf[i] = p.wsbuf[n]
-		i++
-	}
-	p.wsbuf = p.wsbuf[0:i]
+	l := copy(p.wsbuf, p.wsbuf[n:])
+	p.wsbuf = p.wsbuf[:l]
 }
 
 // ----------------------------------------------------------------------------
@@ -800,6 +868,17 @@ func (p *printer) print(args ...interface{}) {
 		var data string
 		var isLit bool
 		var impliedSemi bool // value for p.impliedSemi after this arg
+
+		// record previous opening token, if any
+		switch p.lastTok {
+		case token.ILLEGAL:
+			// ignore (white space)
+		case token.LPAREN, token.LBRACK:
+			p.prevOpen = p.lastTok
+		default:
+			// other tokens followed any opening token
+			p.prevOpen = token.ILLEGAL
+		}
 
 		switch x := arg.(type) {
 		case pmode:
@@ -910,17 +989,15 @@ func (p *printer) print(args ...interface{}) {
 			}
 		}
 
+		// the next token starts now - record its line number if requested
+		if p.linePtr != nil {
+			*p.linePtr = p.out.Line
+			p.linePtr = nil
+		}
+
 		p.writeString(next, data, isLit)
 		p.impliedSemi = impliedSemi
 	}
-}
-
-// commentBefore returns true iff the current comment group occurs
-// before the next position in the source code and printing it does
-// not introduce implicit semicolons.
-//
-func (p *printer) commentBefore(next token.Position) (result bool) {
-	return p.commentOffset < next.Offset && (!p.impliedSemi || !p.commentNewline)
 }
 
 // flush prints any pending comments and whitespace occurring textually
@@ -1012,9 +1089,9 @@ func (p *printer) printNode(node interface{}) error {
 	case ast.Expr:
 		p.expr(n)
 	case ast.Stmt:
-		// A labeled statement will un-indent to position the
-		// label. Set indent to 1 so we don't get indent "underflow".
-		if _, labeledStmt := n.(*ast.LabeledStmt); labeledStmt {
+		// A labeled statement will un-indent to position the label.
+		// Set p.indent to 1 so we don't get indent "underflow".
+		if _, ok := n.(*ast.LabeledStmt); ok {
 			p.indent = 1
 		}
 		p.stmt(n, false)
@@ -1022,6 +1099,17 @@ func (p *printer) printNode(node interface{}) error {
 		p.decl(n)
 	case ast.Spec:
 		p.spec(n, 1, false)
+	case []ast.Stmt:
+		// A labeled statement will un-indent to position the label.
+		// Set p.indent to 1 so we don't get indent "underflow".
+		for _, s := range n {
+			if _, ok := s.(*ast.LabeledStmt); ok {
+				p.indent = 1
+			}
+		}
+		p.stmtList(n, 0, false)
+	case []ast.Decl:
+		p.declList(n)
 	case *ast.File:
 		p.file(n)
 	default:
@@ -1113,7 +1201,9 @@ func (p *trimmer) Write(data []byte) (n int, err error) {
 			case '\n', '\f':
 				_, err = p.output.Write(data[m:n])
 				p.resetSpace()
-				_, err = p.output.Write(aNewline)
+				if err == nil {
+					_, err = p.output.Write(aNewline)
+				}
 			case tabwriter.Escape:
 				_, err = p.output.Write(data[m:n])
 				p.state = inEscape
@@ -1140,7 +1230,7 @@ func (p *trimmer) Write(data []byte) (n int, err error) {
 // ----------------------------------------------------------------------------
 // Public interface
 
-// A Mode value is a set of flags (or 0). They coontrol printing. 
+// A Mode value is a set of flags (or 0). They control printing.
 type Mode uint
 
 const (
@@ -1154,6 +1244,7 @@ const (
 type Config struct {
 	Mode     Mode // default: 0
 	Tabwidth int  // default: 8
+	Indent   int  // default: 0 (all code is indented at least by this much)
 }
 
 // fprint implements Fprint and takes a nodesSizes map for setting up the printer state.
@@ -1198,7 +1289,7 @@ func (cfg *Config) fprint(output io.Writer, fset *token.FileSet, node interface{
 	}
 
 	// flush tabwriter, if any
-	if tw, _ := (output).(*tabwriter.Writer); tw != nil {
+	if tw, _ := output.(*tabwriter.Writer); tw != nil {
 		err = tw.Flush()
 	}
 
@@ -1215,8 +1306,8 @@ type CommentedNode struct {
 
 // Fprint "pretty-prints" an AST node to output for a given configuration cfg.
 // Position information is interpreted relative to the file set fset.
-// The node type must be *ast.File, *CommentedNode, or assignment-compatible
-// to ast.Expr, ast.Decl, ast.Spec, or ast.Stmt.
+// The node type must be *ast.File, *CommentedNode, []ast.Decl, []ast.Stmt,
+// or assignment-compatible to ast.Expr, ast.Decl, ast.Spec, or ast.Stmt.
 //
 func (cfg *Config) Fprint(output io.Writer, fset *token.FileSet, node interface{}) error {
 	return cfg.fprint(output, fset, node, make(map[ast.Node]int))
@@ -1224,6 +1315,8 @@ func (cfg *Config) Fprint(output io.Writer, fset *token.FileSet, node interface{
 
 // Fprint "pretty-prints" an AST node to output.
 // It calls Config.Fprint with default settings.
+// Note that gofmt uses tabs for indentation but spaces for alignent;
+// use format.Node (package go/format) for output that matches gofmt.
 //
 func Fprint(output io.Writer, fset *token.FileSet, node interface{}) error {
 	return (&Config{Tabwidth: 8}).Fprint(output, fset, node)

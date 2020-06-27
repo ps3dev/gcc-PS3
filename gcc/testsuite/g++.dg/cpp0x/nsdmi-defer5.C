@@ -1,10 +1,13 @@
 // PR c++/51666 (DR 325)
-// { dg-options -std=c++0x }
+// { dg-do compile { target c++11 } }
 
 template<typename T, typename U>
 struct tuple
 {
   tuple(T, U) { }
+
+  static const int x = 3;
+  int var = tuple<T,U>::x;
 };
 
 struct Y

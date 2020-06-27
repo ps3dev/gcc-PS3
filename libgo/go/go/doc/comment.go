@@ -45,15 +45,15 @@ func commentEscape(w io.Writer, text string, nice bool) {
 
 const (
 	// Regexp for Go identifiers
-	identRx = `[a-zA-Z_][a-zA-Z_0-9]*` // TODO(gri) ASCII only for now - fix this
+	identRx = `[\pL_][\pL_0-9]*`
 
 	// Regexp for URLs
-	protocol = `(https?|ftp|file|gopher|mailto|news|nntp|telnet|wais|prospero):`
+	protocol = `https?|ftp|file|gopher|mailto|news|nntp|telnet|wais|prospero`
 	hostPart = `[a-zA-Z0-9_@\-]+`
-	filePart = `[a-zA-Z0-9_?%#~&/\-+=]+`
-	urlRx    = protocol + `//` + // http://
+	filePart = `[a-zA-Z0-9_?%#~&/\-+=()]+` // parentheses may not be matching; see pairedParensPrefixLen
+	urlRx    = `(` + protocol + `)://` +   // http://
 		hostPart + `([.:]` + hostPart + `)*/?` + // //www.google.com:8080/
-		filePart + `([:.,]` + filePart + `)*`
+		filePart + `([:.,;]` + filePart + `)*`
 )
 
 var matchRx = regexp.MustCompile(`(` + urlRx + `)|(` + identRx + `)`)
@@ -72,6 +72,29 @@ var (
 	html_hq     = []byte(`">`)
 	html_endh   = []byte("</h3>\n")
 )
+
+// pairedParensPrefixLen returns the length of the longest prefix of s containing paired parentheses.
+func pairedParensPrefixLen(s string) int {
+	parens := 0
+	l := len(s)
+	for i, ch := range s {
+		switch ch {
+		case '(':
+			if parens == 0 {
+				l = i
+			}
+			parens++
+		case ')':
+			parens--
+			if parens == 0 {
+				l = len(s)
+			} else if parens < 0 {
+				return i
+			}
+		}
+	}
+	return l
+}
 
 // Emphasize and escape a line of text for HTML. URLs are converted into links;
 // if the URL also appears in the words map, the link is taken from the map (if
@@ -92,18 +115,26 @@ func emphasize(w io.Writer, line string, words map[string]string, nice bool) {
 		// write text before match
 		commentEscape(w, line[0:m[0]], nice)
 
-		// analyze match
+		// adjust match if necessary
 		match := line[m[0]:m[1]]
+		if n := pairedParensPrefixLen(match); n < len(match) {
+			// match contains unpaired parentheses (rare);
+			// redo matching with shortened line for correct indices
+			m = matchRx.FindStringSubmatchIndex(line[:m[0]+n])
+			match = match[:n]
+		}
+
+		// analyze match
 		url := ""
 		italics := false
 		if words != nil {
-			url, italics = words[string(match)]
+			url, italics = words[match]
 		}
 		if m[2] >= 0 {
 			// match against first parenthesized sub-regexp; must be match against urlRx
 			if !italics {
 				// no alternative URL in words list, use match instead
-				url = string(match)
+				url = match
 			}
 			italics = false // don't italicize URLs
 		}
@@ -174,7 +205,7 @@ func unindent(block []string) {
 }
 
 // heading returns the trimmed line if it passes as a section heading;
-// otherwise it returns the empty string. 
+// otherwise it returns the empty string.
 func heading(line string) string {
 	line = strings.TrimSpace(line)
 	if len(line) == 0 {
@@ -194,7 +225,7 @@ func heading(line string) string {
 	}
 
 	// exclude lines with illegal characters
-	if strings.IndexAny(line, ",.;:!?+*/=()[]{}_^°&§~%#@<\">\\") >= 0 {
+	if strings.ContainsAny(line, ",.;:!?+*/=()[]{}_^°&§~%#@<\">\\") {
 		return ""
 	}
 
@@ -229,7 +260,8 @@ type block struct {
 var nonAlphaNumRx = regexp.MustCompile(`[^a-zA-Z0-9]`)
 
 func anchorID(line string) string {
-	return nonAlphaNumRx.ReplaceAllString(line, "_")
+	// Add a "hdr-" prefix to avoid conflicting with IDs used for package symbols.
+	return "hdr-" + nonAlphaNumRx.ReplaceAllString(line, "_")
 }
 
 // ToHTML converts comment text to formatted HTML.
@@ -238,9 +270,14 @@ func anchorID(line string) string {
 // nor to have trailing spaces at the end of lines.
 // The comment markers have already been removed.
 //
-// Turn each run of multiple \n into </p><p>.
-// Turn each run of indented lines into a <pre> block without indent.
-// Enclose headings with header tags.
+// Each span of unindented non-blank lines is converted into
+// a single paragraph. There is one exception to the rule: a span that
+// consists of a single line, is followed by another paragraph span,
+// begins with a capital letter, and contains no punctuation
+// is formatted as a heading.
+//
+// A span of indented lines is converted into a <pre> block,
+// with the common indent prefix removed.
 //
 // URLs in the comment text are converted into links; if the URL also appears
 // in the words map, the link is taken from the map (if the corresponding map
@@ -361,7 +398,7 @@ func blocks(text string) []block {
 
 // ToText prepares comment text for presentation in textual output.
 // It wraps paragraphs of text to width or fewer Unicode code points
-// and then prefixes each line with the indent.  In preformatted sections
+// and then prefixes each line with the indent. In preformatted sections
 // (such as program text), it prefixes each non-blank line with preIndent.
 func ToText(w io.Writer, text string, indent, preIndent string, width int) {
 	l := lineWrapper{
@@ -386,7 +423,9 @@ func ToText(w io.Writer, text string, indent, preIndent string, width int) {
 		case opPre:
 			w.Write(nl)
 			for _, line := range b.lines {
-				if !isBlank(line) {
+				if isBlank(line) {
+					w.Write([]byte("\n"))
+				} else {
 					w.Write([]byte(preIndent))
 					w.Write([]byte(line))
 				}

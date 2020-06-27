@@ -3,6 +3,8 @@
 int b;
 int c;
 int d;
+void long_function (int);
+void
 split_me(int a)
 {
   int t = 0;
@@ -29,6 +31,7 @@ split_me(int a)
     goto make_me_irregular;
 }
 
+int
 main()
 {
   split_me (1);
@@ -38,4 +41,3 @@ main()
   split_me (5);
 }
 /* { dg-final { scan-tree-dump-times "Splitting function" 1 "fnsplit"} } */
-/* { dg-final { cleanup-tree-dump "fnsplit" } } */

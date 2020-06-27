@@ -1,7 +1,5 @@
 /* Definitions of target machine for GNU compiler, for ARM.
-   Copyright (C) 1991, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000,
-   2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012
-   Free Software Foundation, Inc.
+   Copyright (C) 1991-2017 Free Software Foundation, Inc.
    Contributed by Pieter `Tiggr' Schoenmakers (rcpieter@win.tue.nl)
    and Martin Simmons (@harleqn.co.uk).
    More major hacks by Richard Earnshaw (rearnsha@arm.com)
@@ -19,21 +17,26 @@
    or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
    License for more details.
 
-   You should have received a copy of the GNU General Public License
-   along with GCC; see the file COPYING3.  If not see
+   Under Section 7 of GPL version 3, you are granted additional
+   permissions described in the GCC Runtime Library Exception, version
+   3.1, as published by the Free Software Foundation.
+
+   You should have received a copy of the GNU General Public License and
+   a copy of the GCC Runtime Library Exception along with this program;
+   see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
    <http://www.gnu.org/licenses/>.  */
 
 #ifndef GCC_ARM_H
 #define GCC_ARM_H
 
-/* We can't use enum machine_mode inside a generator file because it
+/* We can't use machine_mode inside a generator file because it
    hasn't been created yet; we shouldn't be using any code that
    needs the real definition though, so this ought to be safe.  */
 #ifdef GENERATOR_FILE
 #define MACHMODE int
 #else
 #include "insn-modes.h"
-#define MACHMODE enum machine_mode
+#define MACHMODE machine_mode
 #endif
 
 #include "config/vxworks-dummy.h"
@@ -42,83 +45,9 @@
 extern char arm_arch_name[];
 
 /* Target CPU builtins.  */
-#define TARGET_CPU_CPP_BUILTINS()			\
-  do							\
-    {							\
-	if (TARGET_DSP_MULTIPLY)			\
-	   builtin_define ("__ARM_FEATURE_DSP");	\
-	if (unaligned_access)				\
-	  builtin_define ("__ARM_FEATURE_UNALIGNED");	\
-	/* Define __arm__ even when in thumb mode, for	\
-	   consistency with armcc.  */			\
-	builtin_define ("__arm__");			\
-	builtin_define ("__APCS_32__");			\
-	if (TARGET_THUMB)				\
-	  builtin_define ("__thumb__");			\
-	if (TARGET_THUMB2)				\
-	  builtin_define ("__thumb2__");		\
-							\
-	if (TARGET_BIG_END)				\
-	  {						\
-	    builtin_define ("__ARMEB__");		\
-	    if (TARGET_THUMB)				\
-	      builtin_define ("__THUMBEB__");		\
-	    if (TARGET_LITTLE_WORDS)			\
-	      builtin_define ("__ARMWEL__");		\
-	  }						\
-        else						\
-	  {						\
-	    builtin_define ("__ARMEL__");		\
-	    if (TARGET_THUMB)				\
-	      builtin_define ("__THUMBEL__");		\
-	  }						\
-							\
-	if (TARGET_SOFT_FLOAT)				\
-	  builtin_define ("__SOFTFP__");		\
-							\
-	if (TARGET_VFP)					\
-	  builtin_define ("__VFP_FP__");		\
-							\
-	if (TARGET_NEON)				\
-	  builtin_define ("__ARM_NEON__");		\
-							\
-	/* Add a define for interworking.		\
-	   Needed when building libgcc.a.  */		\
-	if (arm_cpp_interwork)				\
-	  builtin_define ("__THUMB_INTERWORK__");	\
-							\
-	builtin_assert ("cpu=arm");			\
-	builtin_assert ("machine=arm");			\
-							\
-	builtin_define (arm_arch_name);			\
-	if (arm_arch_cirrus)				\
-	  builtin_define ("__MAVERICK__");		\
-	if (arm_arch_xscale)				\
-	  builtin_define ("__XSCALE__");		\
-	if (arm_arch_iwmmxt)				\
-	  builtin_define ("__IWMMXT__");		\
-	if (TARGET_AAPCS_BASED)				\
-	  {						\
-	    if (arm_pcs_default == ARM_PCS_AAPCS_VFP)	\
-	      builtin_define ("__ARM_PCS_VFP");		\
-	    else if (arm_pcs_default == ARM_PCS_AAPCS)	\
-	      builtin_define ("__ARM_PCS");		\
-	    builtin_define ("__ARM_EABI__");		\
-	  }						\
-	if (TARGET_IDIV)				\
-	  builtin_define ("__ARM_ARCH_EXT_IDIV__");	\
-    } while (0)
+#define TARGET_CPU_CPP_BUILTINS() arm_cpu_cpp_builtins (pfile)
 
 #include "config/arm/arm-opts.h"
-
-enum target_cpus
-{
-#define ARM_CORE(NAME, IDENT, ARCH, FLAGS, COSTS) \
-  TARGET_CPU_##IDENT,
-#include "arm-cores.def"
-#undef ARM_CORE
-  TARGET_CPU_generic
-};
 
 /* The processor for which instructions should be scheduled.  */
 extern enum processor_type arm_tune;
@@ -134,23 +63,22 @@ extern arm_cc arm_current_cc;
 
 #define ARM_INVERSE_CONDITION_CODE(X)  ((arm_cc) (((int)X) ^ 1))
 
+/* The maximum number of instructions that is beneficial to
+   conditionally execute. */
+#undef MAX_CONDITIONAL_EXECUTE
+#define MAX_CONDITIONAL_EXECUTE arm_max_conditional_execute ()
+
 extern int arm_target_label;
 extern int arm_ccfsm_state;
 extern GTY(()) rtx arm_target_insn;
-/* The label of the current constant pool.  */
-extern rtx pool_vector_label;
-/* Set to 1 when a return insn is output, this means that the epilogue
-   is not needed.  */
-extern int return_used_this_function;
 /* Callback to output language specific object attributes.  */
 extern void (*arm_lang_output_object_attributes_hook)(void);
+
+/* This type is the user-visible __fp16.  We need it in a few places in
+   the backend.  Defined in arm-builtins.c.  */
+extern tree arm_fp16_type_node;
+
 
-/* Just in case configure has failed to define anything.  */
-#ifndef TARGET_CPU_DEFAULT
-#define TARGET_CPU_DEFAULT TARGET_CPU_generic
-#endif
-
-
 #undef  CPP_SPEC
 #define CPP_SPEC "%(subtarget_cpp_spec)					\
 %{mfloat-abi=soft:%{mfloat-abi=hard:					\
@@ -184,24 +112,28 @@ extern void (*arm_lang_output_object_attributes_hook)(void);
 #define SUBTARGET_CPP_SPEC      ""
 #endif
 
+/* Tree Target Specification.  */
+#define TARGET_ARM_P(flags)    (!TARGET_THUMB_P (flags))
+#define TARGET_THUMB1_P(flags) (TARGET_THUMB_P (flags) && !arm_arch_thumb2)
+#define TARGET_THUMB2_P(flags) (TARGET_THUMB_P (flags) && arm_arch_thumb2)
+#define TARGET_32BIT_P(flags)  (TARGET_ARM_P (flags) || TARGET_THUMB2_P (flags))
+
 /* Run-time Target Specification.  */
 #define TARGET_SOFT_FLOAT		(arm_float_abi == ARM_FLOAT_ABI_SOFT)
 /* Use hardware floating point instructions. */
 #define TARGET_HARD_FLOAT		(arm_float_abi != ARM_FLOAT_ABI_SOFT)
 /* Use hardware floating point calling convention.  */
 #define TARGET_HARD_FLOAT_ABI		(arm_float_abi == ARM_FLOAT_ABI_HARD)
-#define TARGET_FPA		(arm_fpu_desc->model == ARM_FP_MODEL_FPA)
-#define TARGET_MAVERICK		(arm_fpu_desc->model == ARM_FP_MODEL_MAVERICK)
-#define TARGET_VFP		(arm_fpu_desc->model == ARM_FP_MODEL_VFP)
 #define TARGET_IWMMXT			(arm_arch_iwmmxt)
+#define TARGET_IWMMXT2			(arm_arch_iwmmxt2)
 #define TARGET_REALLY_IWMMXT		(TARGET_IWMMXT && TARGET_32BIT)
+#define TARGET_REALLY_IWMMXT2		(TARGET_IWMMXT2 && TARGET_32BIT)
 #define TARGET_IWMMXT_ABI (TARGET_32BIT && arm_abi == ARM_ABI_IWMMXT)
 #define TARGET_ARM                      (! TARGET_THUMB)
 #define TARGET_EITHER			1 /* (TARGET_ARM | TARGET_THUMB) */
-#define TARGET_BACKTRACE	        (leaf_function_p () \
+#define TARGET_BACKTRACE	        (crtl->is_leaf \
 				         ? TARGET_TPCS_LEAF_FRAME \
 				         : TARGET_TPCS_FRAME)
-#define TARGET_LDRD			(arm_arch5e && ARM_DOUBLEWORD_ALIGN)
 #define TARGET_AAPCS_BASED \
     (arm_abi != ARM_ABI_APCS && arm_abi != ARM_ABI_ATPCS)
 
@@ -217,8 +149,11 @@ extern void (*arm_lang_output_object_attributes_hook)(void);
 #define TARGET_THUMB2			(TARGET_THUMB && arm_arch_thumb2)
 /* Thumb-1 only.  */
 #define TARGET_THUMB1_ONLY		(TARGET_THUMB1 && !arm_arch_notm)
-/* FPA emulator without LFM.  */
-#define TARGET_FPA_EMU2			(TARGET_FPA && arm_fpu_desc->rev == 2)
+
+#define TARGET_LDRD			(arm_arch5e && ARM_DOUBLEWORD_ALIGN \
+                                         && !TARGET_THUMB1)
+
+#define TARGET_CRC32			(arm_arch_crc)
 
 /* The following two macros concern the ability to execute coprocessor
    instructions for VFPv3 or NEON.  TARGET_VFP3/TARGET_VFPD32 are currently
@@ -226,31 +161,67 @@ extern void (*arm_lang_output_object_attributes_hook)(void);
    to be more careful with TARGET_NEON as noted below.  */
 
 /* FPU is has the full VFPv3/NEON register file of 32 D registers.  */
-#define TARGET_VFPD32 (TARGET_VFP && arm_fpu_desc->regs == VFP_REG_D32)
+#define TARGET_VFPD32 (bitmap_bit_p (arm_active_target.isa, isa_bit_fp_d32))
 
 /* FPU supports VFPv3 instructions.  */
-#define TARGET_VFP3 (TARGET_VFP && arm_fpu_desc->rev >= 3)
+#define TARGET_VFP3 (bitmap_bit_p (arm_active_target.isa, isa_bit_VFPv3))
+
+/* FPU supports FPv5 instructions.  */
+#define TARGET_VFP5 (bitmap_bit_p (arm_active_target.isa, isa_bit_FPv5))
 
 /* FPU only supports VFP single-precision instructions.  */
-#define TARGET_VFP_SINGLE (TARGET_VFP && arm_fpu_desc->regs == VFP_REG_SINGLE)
+#define TARGET_VFP_SINGLE (!TARGET_VFP_DOUBLE)
 
 /* FPU supports VFP double-precision instructions.  */
-#define TARGET_VFP_DOUBLE (TARGET_VFP && arm_fpu_desc->regs != VFP_REG_SINGLE)
+#define TARGET_VFP_DOUBLE (bitmap_bit_p (arm_active_target.isa, isa_bit_fp_dbl))
 
 /* FPU supports half-precision floating-point with NEON element load/store.  */
-#define TARGET_NEON_FP16 \
-  (TARGET_VFP && arm_fpu_desc->neon && arm_fpu_desc->fp16)
+#define TARGET_NEON_FP16					\
+  (bitmap_bit_p (arm_active_target.isa, isa_bit_neon)		\
+   && bitmap_bit_p (arm_active_target.isa, isa_bit_fp16conv))
 
-/* FPU supports VFP half-precision floating-point.  */
-#define TARGET_FP16 (TARGET_VFP && arm_fpu_desc->fp16)
+/* FPU supports VFP half-precision floating-point conversions.  */
+#define TARGET_FP16 (bitmap_bit_p (arm_active_target.isa, isa_bit_fp16conv))
+
+/* FPU supports converting between HFmode and DFmode in a single hardware
+   step.  */
+#define TARGET_FP16_TO_DOUBLE						\
+  (TARGET_HARD_FLOAT && (TARGET_FP16 && TARGET_VFP5))
+
+/* FPU supports fused-multiply-add operations.  */
+#define TARGET_FMA (bitmap_bit_p (arm_active_target.isa, isa_bit_VFPv4))
+
+/* FPU is ARMv8 compatible.  */
+#define TARGET_FPU_ARMV8					\
+  (bitmap_bit_p (arm_active_target.isa, isa_bit_FP_ARMv8))
+
+/* FPU supports Crypto extensions.  */
+#define TARGET_CRYPTO (bitmap_bit_p (arm_active_target.isa, isa_bit_crypto))
 
 /* FPU supports Neon instructions.  The setting of this macro gets
    revealed via __ARM_NEON__ so we add extra guards upon TARGET_32BIT
    and TARGET_HARD_FLOAT to ensure that NEON instructions are
    available.  */
-#define TARGET_NEON (TARGET_32BIT && TARGET_HARD_FLOAT \
-		     && TARGET_VFP && arm_fpu_desc->neon)
+#define TARGET_NEON							\
+  (TARGET_32BIT && TARGET_HARD_FLOAT					\
+   && bitmap_bit_p (arm_active_target.isa, isa_bit_neon))
 
+/* FPU supports ARMv8.1 Adv.SIMD extensions.  */
+#define TARGET_NEON_RDMA (TARGET_NEON && arm_arch8_1)
+
+/* FPU supports the floating point FP16 instructions for ARMv8.2 and later.  */
+#define TARGET_VFP_FP16INST \
+  (TARGET_32BIT && TARGET_HARD_FLOAT && TARGET_FPU_ARMV8 && arm_fp16_inst)
+
+/* FPU supports the AdvSIMD FP16 instructions for ARMv8.2 and later.  */
+#define TARGET_NEON_FP16INST (TARGET_VFP_FP16INST && TARGET_NEON_RDMA)
+
+/* Q-bit is present.  */
+#define TARGET_ARM_QBIT \
+  (TARGET_32BIT && arm_arch5e && (arm_arch_notm || arm_arch7))
+/* Saturation operation, e.g. SSAT.  */
+#define TARGET_ARM_SAT \
+  (TARGET_32BIT && arm_arch6 && (arm_arch_notm || arm_arch7))
 /* "DSP" multiply instructions, eg. SMULxy.  */
 #define TARGET_DSP_MULTIPLY \
   (TARGET_32BIT && arm_arch5e && (arm_arch_notm || arm_arch7em))
@@ -260,14 +231,12 @@ extern void (*arm_lang_output_object_attributes_hook)(void);
 
 /* Should MOVW/MOVT be used in preference to a constant pool.  */
 #define TARGET_USE_MOVT \
-  (arm_arch_thumb2 && !optimize_size && !current_tune->prefer_constant_pool)
-
-/* We could use unified syntax for arm mode, but for now we just use it
-   for Thumb-2.  */
-#define TARGET_UNIFIED_ASM TARGET_THUMB2
+  (TARGET_HAVE_MOVT \
+   && (arm_disable_literal_pool \
+       || (!optimize_size && !current_tune->prefer_constant_pool)))
 
 /* Nonzero if this chip provides the DMB instruction.  */
-#define TARGET_HAVE_DMB		(arm_arch7)
+#define TARGET_HAVE_DMB		(arm_arch6m || arm_arch7)
 
 /* Nonzero if this chip implements a memory barrier via CP15.  */
 #define TARGET_HAVE_DMB_MCR	(arm_arch6 && ! TARGET_HAVE_DMB \
@@ -277,18 +246,51 @@ extern void (*arm_lang_output_object_attributes_hook)(void);
 #define TARGET_HAVE_MEMORY_BARRIER (TARGET_HAVE_DMB || TARGET_HAVE_DMB_MCR)
 
 /* Nonzero if this chip supports ldrex and strex */
-#define TARGET_HAVE_LDREX	((arm_arch6 && TARGET_ARM) || arm_arch7)
+#define TARGET_HAVE_LDREX        ((arm_arch6 && TARGET_ARM)	\
+				  || arm_arch7			\
+				  || (arm_arch8 && !arm_arch_notm))
+
+/* Nonzero if this chip supports LPAE.  */
+#define TARGET_HAVE_LPAE (arm_arch_lpae)
 
 /* Nonzero if this chip supports ldrex{bh} and strex{bh}.  */
-#define TARGET_HAVE_LDREXBH	((arm_arch6k && TARGET_ARM) || arm_arch7)
+#define TARGET_HAVE_LDREXBH ((arm_arch6k && TARGET_ARM)		\
+			     || arm_arch7			\
+			     || (arm_arch8 && !arm_arch_notm))
 
 /* Nonzero if this chip supports ldrexd and strexd.  */
-#define TARGET_HAVE_LDREXD	(((arm_arch6k && TARGET_ARM) || arm_arch7) \
+#define TARGET_HAVE_LDREXD (((arm_arch6k && TARGET_ARM) \
+			     || arm_arch7) && arm_arch_notm)
+
+/* Nonzero if this chip supports load-acquire and store-release.  */
+#define TARGET_HAVE_LDACQ	(TARGET_ARM_ARCH >= 8)
+
+/* Nonzero if this chip supports LDAEXD and STLEXD.  */
+#define TARGET_HAVE_LDACQEXD	(TARGET_ARM_ARCH >= 8	\
+				 && TARGET_32BIT	\
 				 && arm_arch_notm)
 
+/* Nonzero if this chip provides the MOVW and MOVT instructions.  */
+#define TARGET_HAVE_MOVT	(arm_arch_thumb2 || arm_arch8)
+
+/* Nonzero if this chip provides the CBZ and CBNZ instructions.  */
+#define TARGET_HAVE_CBZ		(arm_arch_thumb2 || arm_arch8)
+
 /* Nonzero if integer division instructions supported.  */
-#define TARGET_IDIV		((TARGET_ARM && arm_arch_arm_hwdiv) \
-				 || (TARGET_THUMB2 && arm_arch_thumb_hwdiv))
+#define TARGET_IDIV	((TARGET_ARM && arm_arch_arm_hwdiv)	\
+			 || (TARGET_THUMB && arm_arch_thumb_hwdiv))
+
+/* Nonzero if disallow volatile memory access in IT block.  */
+#define TARGET_NO_VOLATILE_CE		(arm_arch_no_volatile_ce)
+
+/* Should NEON be used for 64-bits bitops.  */
+#define TARGET_PREFER_NEON_64BITS (prefer_neon_for_64bits)
+
+/* Should constant I be slplit for OP.  */
+#define DONT_EARLY_SPLIT_CONSTANT(i, op) \
+				((optimize >= 2) \
+				 && can_create_pseudo_p () \
+				 && !const_ok_for_op (i, op))
 
 /* True iff the full BPABI is being used.  If TARGET_BPABI is true,
    then TARGET_AAPCS_BASED must be true -- but the converse does not
@@ -297,6 +299,12 @@ extern void (*arm_lang_output_object_attributes_hook)(void);
 #ifndef TARGET_BPABI
 #define TARGET_BPABI false
 #endif
+
+/* Transform lane numbers on big endian targets. This is used to allow for the
+   endianness difference between NEON architectural lane numbers and those
+   used in RTL */
+#define NEON_ENDIAN_LANE_N(mode, n)  \
+  (BYTES_BIG_ENDIAN ? GET_MODE_NUNITS (mode) - 1 - n : n)
 
 /* Support for a compile-time default CPU, et cetera.  The rules are:
    --with-arch is ignored if -march or -mcpu are specified.
@@ -318,35 +326,11 @@ extern void (*arm_lang_output_object_attributes_hook)(void);
   {"mode", "%{!marm:%{!mthumb:-m%(VALUE)}}"}, \
   {"tls", "%{!mtls-dialect=*:-mtls-dialect=%(VALUE)}"},
 
-/* Which floating point model to use.  */
-enum arm_fp_model
-{
-  ARM_FP_MODEL_UNKNOWN,
-  /* FPA model (Hardware or software).  */
-  ARM_FP_MODEL_FPA,
-  /* Cirrus Maverick floating point model.  */
-  ARM_FP_MODEL_MAVERICK,
-  /* VFP floating point model.  */
-  ARM_FP_MODEL_VFP
-};
-
-enum vfp_reg_type
-{
-  VFP_NONE = 0,
-  VFP_REG_D16,
-  VFP_REG_D32,
-  VFP_REG_SINGLE
-};
-
 extern const struct arm_fpu_desc
 {
   const char *name;
-  enum arm_fp_model model;
-  int rev;
-  enum vfp_reg_type regs;
-  int neon;
-  int fp16;
-} *arm_fpu_desc;
+  enum isa_feature isa_bits[isa_num_bits];
+} all_fpus[];
 
 /* Which floating point hardware to schedule for.  */
 extern int arm_fpu_attr;
@@ -355,12 +339,51 @@ extern int arm_fpu_attr;
 #define TARGET_DEFAULT_FLOAT_ABI ARM_FLOAT_ABI_SOFT
 #endif
 
-#define LARGEST_EXPONENT_IS_NORMAL(bits) \
-    ((bits) == 16 && arm_fp16_format == ARM_FP16_FORMAT_ALTERNATIVE)
-
 #ifndef ARM_DEFAULT_ABI
 #define ARM_DEFAULT_ABI ARM_ABI_APCS
 #endif
+
+/* AAPCS based ABIs use short enums by default.  */
+#ifndef ARM_DEFAULT_SHORT_ENUMS
+#define ARM_DEFAULT_SHORT_ENUMS \
+  (TARGET_AAPCS_BASED && arm_abi != ARM_ABI_AAPCS_LINUX)
+#endif
+
+/* Map each of the micro-architecture variants to their corresponding
+   major architecture revision.  */
+
+enum base_architecture
+{
+  BASE_ARCH_0 = 0,
+  BASE_ARCH_2 = 2,
+  BASE_ARCH_3 = 3,
+  BASE_ARCH_3M = 3,
+  BASE_ARCH_4 = 4,
+  BASE_ARCH_4T = 4,
+  BASE_ARCH_5 = 5,
+  BASE_ARCH_5E = 5,
+  BASE_ARCH_5T = 5,
+  BASE_ARCH_5TE = 5,
+  BASE_ARCH_5TEJ = 5,
+  BASE_ARCH_6 = 6,
+  BASE_ARCH_6J = 6,
+  BASE_ARCH_6KZ = 6,
+  BASE_ARCH_6K = 6,
+  BASE_ARCH_6T2 = 6,
+  BASE_ARCH_6M = 6,
+  BASE_ARCH_6Z = 6,
+  BASE_ARCH_7 = 7,
+  BASE_ARCH_7A = 7,
+  BASE_ARCH_7R = 7,
+  BASE_ARCH_7M = 7,
+  BASE_ARCH_7EM = 7,
+  BASE_ARCH_8A = 8,
+  BASE_ARCH_8M_BASE = 8,
+  BASE_ARCH_8M_MAIN = 8
+};
+
+/* The major revision number of the ARM Architecture implemented by the target.  */
+extern enum base_architecture arm_base_arch;
 
 /* Nonzero if this chip supports the ARM Architecture 3M extensions.  */
 extern int arm_arch3m;
@@ -383,6 +406,9 @@ extern int arm_arch6;
 /* Nonzero if this chip supports the ARM Architecture 6k extensions.  */
 extern int arm_arch6k;
 
+/* Nonzero if instructions present in ARMv6-M can be used.  */
+extern int arm_arch6m;
+
 /* Nonzero if this chip supports the ARM Architecture 7 extensions.  */
 extern int arm_arch7;
 
@@ -392,23 +418,30 @@ extern int arm_arch_notm;
 /* Nonzero if instructions present in ARMv7E-M can be used.  */
 extern int arm_arch7em;
 
+/* Nonzero if this chip supports the ARM Architecture 8 extensions.  */
+extern int arm_arch8;
+
+/* Nonzero if this chip supports the ARM Architecture 8.1 extensions.  */
+extern int arm_arch8_1;
+
+/* Nonzero if this chip supports the ARM Architecture 8.2 extensions.  */
+extern int arm_arch8_2;
+
+/* Nonzero if this chip supports the FP16 instructions extension of ARM
+   Architecture 8.2.  */
+extern int arm_fp16_inst;
+
 /* Nonzero if this chip can benefit from load scheduling.  */
 extern int arm_ld_sched;
-
-/* Nonzero if generating Thumb code, either Thumb-1 or Thumb-2.  */
-extern int thumb_code;
-
-/* Nonzero if generating Thumb-1 code.  */
-extern int thumb1_code;
 
 /* Nonzero if this chip is a StrongARM.  */
 extern int arm_tune_strongarm;
 
-/* Nonzero if this chip is a Cirrus variant.  */
-extern int arm_arch_cirrus;
-
 /* Nonzero if this chip supports Intel XScale with Wireless MMX technology.  */
 extern int arm_arch_iwmmxt;
+
+/* Nonzero if this chip supports Intel Wireless MMX2 technology.  */
+extern int arm_arch_iwmmxt2;
 
 /* Nonzero if this chip is an XScale.  */
 extern int arm_arch_xscale;
@@ -429,6 +462,9 @@ extern int arm_tune_cortex_a9;
    interworking clean.  */
 extern int arm_cpp_interwork;
 
+/* Nonzero if chip supports Thumb 1.  */
+extern int arm_arch_thumb1;
+
 /* Nonzero if chip supports Thumb 2.  */
 extern int arm_arch_thumb2;
 
@@ -437,6 +473,24 @@ extern int arm_arch_arm_hwdiv;
 
 /* Nonzero if chip supports integer division instruction in Thumb mode.  */
 extern int arm_arch_thumb_hwdiv;
+
+/* Nonzero if chip disallows volatile memory access in IT block.  */
+extern int arm_arch_no_volatile_ce;
+
+/* Nonzero if we should use Neon to handle 64-bits operations rather
+   than core registers.  */
+extern int prefer_neon_for_64bits;
+
+/* Nonzero if we shouldn't use literal pools.  */
+#ifndef USED_FOR_TARGET
+extern bool arm_disable_literal_pool;
+#endif
+
+/* Nonzero if chip supports the ARMv8 CRC instructions.  */
+extern int arm_arch_crc;
+
+/* Nonzero if chip supports the ARMv8-M Security Extensions.  */
+extern int arm_arch_cmse;
 
 #ifndef TARGET_DEFAULT
 #define TARGET_DEFAULT  (MASK_APCS_FRAME)
@@ -450,6 +504,10 @@ extern int arm_arch_thumb_hwdiv;
 #endif
 #ifndef NEED_PLT_RELOC
 #define NEED_PLT_RELOC	0
+#endif
+
+#ifndef TARGET_DEFAULT_PIC_DATA_IS_TEXT_RELATIVE
+#define TARGET_DEFAULT_PIC_DATA_IS_TEXT_RELATIVE 1
 #endif
 
 /* Nonzero if we need to refer to the GOT with a PC-relative
@@ -476,16 +534,10 @@ extern int arm_arch_thumb_hwdiv;
    type, but kept valid in the wider mode.  The signedness of the
    extension may differ from that of the type.  */
 
-/* It is far faster to zero extend chars than to sign extend them */
-
 #define PROMOTE_MODE(MODE, UNSIGNEDP, TYPE)	\
   if (GET_MODE_CLASS (MODE) == MODE_INT		\
       && GET_MODE_SIZE (MODE) < 4)      	\
     {						\
-      if (MODE == QImode)			\
-	UNSIGNEDP = 1;				\
-      else if (MODE == HImode)			\
-	UNSIGNEDP = 1;				\
       (MODE) = SImode;				\
     }
 
@@ -500,14 +552,8 @@ extern int arm_arch_thumb_hwdiv;
 #define BYTES_BIG_ENDIAN  (TARGET_BIG_END != 0)
 
 /* Define this if most significant word of a multiword number is the lowest
-   numbered.
-   This is always false, even when in big-endian mode.  */
-#define WORDS_BIG_ENDIAN  (BYTES_BIG_ENDIAN && ! TARGET_LITTLE_WORDS)
-
-/* Define this if most significant word of doubles is the lowest numbered.
-   The rules are different based on whether or not we use FPA-format,
-   VFP-format or some other floating point co-processor's format doubles.  */
-#define FLOAT_WORDS_BIG_ENDIAN (arm_float_words_big_endian ())
+   numbered.  */
+#define WORDS_BIG_ENDIAN  (BYTES_BIG_ENDIAN)
 
 #define UNITS_PER_WORD	4
 
@@ -523,7 +569,8 @@ extern int arm_arch_thumb_hwdiv;
 #define PREFERRED_STACK_BOUNDARY \
     (arm_abi == ARM_ABI_ATPCS ? 64 : STACK_BOUNDARY)
 
-#define FUNCTION_BOUNDARY  ((TARGET_THUMB && optimize_size) ? 16 : 32)
+#define FUNCTION_BOUNDARY_P(flags)  (TARGET_THUMB_P (flags) ? 16 : 32)
+#define FUNCTION_BOUNDARY           (FUNCTION_BOUNDARY_P (target_flags))
 
 /* The lowest bit is used to indicate Thumb-mode functions, so the
    vbit must go into the delta field of pointers to member
@@ -533,6 +580,8 @@ extern int arm_arch_thumb_hwdiv;
 #define EMPTY_FIELD_BOUNDARY  32
 
 #define BIGGEST_ALIGNMENT (ARM_DOUBLEWORD_ALIGN ? DOUBLEWORD_ALIGNMENT : 32)
+
+#define MALLOC_ABI_ALIGNMENT  BIGGEST_ALIGNMENT
 
 /* XXX Blah -- this macro is used directly by libobjc.  Since it
    supports no vector modes, cut out the complexity and fall back
@@ -624,10 +673,15 @@ extern int arm_arch_thumb_hwdiv;
 #define PCC_BITFIELD_TYPE_MATTERS TARGET_AAPCS_BASED
 #endif
 
+/* The maximum size of the sync library functions supported.  */
+#ifndef MAX_SYNC_LIBFUNC_SIZE
+#define MAX_SYNC_LIBFUNC_SIZE (2 * UNITS_PER_WORD)
+#endif
+
 
 /* Standard register usage.  */
 
-/* Register allocation in ARM Procedure Call Standard (as used on RISCiX):
+/* Register allocation in ARM Procedure Call Standard
    (S - saved over call).
 
 	r0	   *	argument word/integer result
@@ -643,11 +697,6 @@ extern int arm_arch_thumb_hwdiv;
 	r14		(lr) link address/workspace
 	r15	   F	(pc) program counter
 
-	f0		floating point result
-	f1-f3		floating point scratch
-
-	f4-f7	     S	floating point variable
-
 	cc		This is NOT a real register, but is used internally
 	                to represent things that use or set the condition
 			codes.
@@ -660,11 +709,6 @@ extern int arm_arch_thumb_hwdiv;
 			fp exactly at all times.
 
    *: See TARGET_CONDITIONAL_REGISTER_USAGE  */
-
-/*
-  	mvf0		Cirrus floating point result
-	mvf1-mvf3	Cirrus floating point scratch
-	mvf4-mvf15   S	Cirrus floating point variable.  */
 
 /*	s0-s15		VFP scratch (aka d0-d7).
 	s16-s31	      S	VFP variable (aka d8-d15).
@@ -687,34 +731,30 @@ extern int arm_arch_thumb_hwdiv;
                      [|  saved r2 value     |]
                      [|  saved r1 value     |]
                      [|  saved r0 value     |]
-                     [|  saved f7 value     |]     three words
-                     [|  saved f6 value     |]     three words
-                     [|  saved f5 value     |]     three words
-                     [|  saved f4 value     |]     three words
   r0-r3 are not normally saved in a C function.  */
 
 /* 1 for registers that have pervasive standard uses
    and are not available for the register allocator.  */
-#define FIXED_REGISTERS \
-{                       \
-  0,0,0,0,0,0,0,0,	\
-  0,0,0,0,0,1,0,1,	\
-  0,0,0,0,0,0,0,0,	\
-  1,1,1,		\
-  1,1,1,1,1,1,1,1,	\
-  1,1,1,1,1,1,1,1,	\
-  1,1,1,1,1,1,1,1,	\
-  1,1,1,1,1,1,1,1,	\
-  1,1,1,1,		\
-  1,1,1,1,1,1,1,1,	\
-  1,1,1,1,1,1,1,1,	\
-  1,1,1,1,1,1,1,1,	\
-  1,1,1,1,1,1,1,1,	\
-  1,1,1,1,1,1,1,1,	\
-  1,1,1,1,1,1,1,1,	\
-  1,1,1,1,1,1,1,1,	\
-  1,1,1,1,1,1,1,1,	\
-  1			\
+#define FIXED_REGISTERS 	\
+{				\
+  /* Core regs.  */		\
+  0,0,0,0,0,0,0,0,		\
+  0,0,0,0,0,1,0,1,		\
+  /* VFP regs.  */		\
+  1,1,1,1,1,1,1,1,		\
+  1,1,1,1,1,1,1,1,		\
+  1,1,1,1,1,1,1,1,		\
+  1,1,1,1,1,1,1,1,		\
+  1,1,1,1,1,1,1,1,		\
+  1,1,1,1,1,1,1,1,		\
+  1,1,1,1,1,1,1,1,		\
+  1,1,1,1,1,1,1,1,		\
+  /* IWMMXT regs.  */		\
+  1,1,1,1,1,1,1,1,		\
+  1,1,1,1,1,1,1,1,		\
+  1,1,1,1,			\
+  /* Specials.  */		\
+  1,1,1,1			\
 }
 
 /* 1 for registers not available across function calls.
@@ -725,26 +765,26 @@ extern int arm_arch_thumb_hwdiv;
    Aside from that, you can include as many other registers as you like.
    The CC is not preserved over function calls on the ARM 6, so it is
    easier to assume this for all.  SFP is preserved, since FP is.  */
-#define CALL_USED_REGISTERS  \
-{                            \
-  1,1,1,1,0,0,0,0,	     \
-  0,0,0,0,1,1,1,1,	     \
-  1,1,1,1,0,0,0,0,	     \
-  1,1,1,		     \
-  1,1,1,1,1,1,1,1,	     \
-  1,1,1,1,1,1,1,1,	     \
-  1,1,1,1,1,1,1,1,	     \
-  1,1,1,1,1,1,1,1,	     \
-  1,1,1,1,		     \
-  1,1,1,1,1,1,1,1,	     \
-  1,1,1,1,1,1,1,1,	     \
-  1,1,1,1,1,1,1,1,	     \
-  1,1,1,1,1,1,1,1,	     \
-  1,1,1,1,1,1,1,1,	     \
-  1,1,1,1,1,1,1,1,	     \
-  1,1,1,1,1,1,1,1,	     \
-  1,1,1,1,1,1,1,1,	     \
-  1			     \
+#define CALL_USED_REGISTERS	\
+{				\
+  /* Core regs.  */		\
+  1,1,1,1,0,0,0,0,		\
+  0,0,0,0,1,1,1,1,		\
+  /* VFP Regs.  */		\
+  1,1,1,1,1,1,1,1,		\
+  1,1,1,1,1,1,1,1,		\
+  1,1,1,1,1,1,1,1,		\
+  1,1,1,1,1,1,1,1,		\
+  1,1,1,1,1,1,1,1,		\
+  1,1,1,1,1,1,1,1,		\
+  1,1,1,1,1,1,1,1,		\
+  1,1,1,1,1,1,1,1,		\
+  /* IWMMXT regs.  */		\
+  1,1,1,1,1,1,1,1,		\
+  1,1,1,1,1,1,1,1,		\
+  1,1,1,1,			\
+  /* Specials.  */		\
+  1,1,1,1			\
 }
 
 #ifndef SUBTARGET_CONDITIONAL_REGISTER_USAGE
@@ -816,13 +856,13 @@ extern int arm_arch_thumb_hwdiv;
 
 #ifndef ARM_TARGET2_DWARF_FORMAT
 #define ARM_TARGET2_DWARF_FORMAT DW_EH_PE_pcrel
+#endif
 
 /* ttype entries (the only interesting data references used)
    use TARGET2 relocations.  */
 #define ASM_PREFERRED_EH_DATA_FORMAT(code, data) \
   (((code) == 0 && (data) == 1 && ARM_UNWIND_INFO) ? ARM_TARGET2_DWARF_FORMAT \
 			       : DW_EH_PE_absptr)
-#endif
 
 /* The native (Norcroft) Pascal compiler for the ARM passes the static chain
    as an invisible last argument (possible since varargs don't exist in
@@ -861,34 +901,26 @@ extern int arm_arch_thumb_hwdiv;
 /* Register to use for pushing function arguments.  */
 #define STACK_POINTER_REGNUM	SP_REGNUM
 
-/* ARM floating pointer registers.  */
-#define FIRST_FPA_REGNUM 	16
-#define LAST_FPA_REGNUM  	23
-#define IS_FPA_REGNUM(REGNUM) \
-  (((REGNUM) >= FIRST_FPA_REGNUM) && ((REGNUM) <= LAST_FPA_REGNUM))
+#define FIRST_IWMMXT_REGNUM	(LAST_HI_VFP_REGNUM + 1)
+#define LAST_IWMMXT_REGNUM	(FIRST_IWMMXT_REGNUM + 15)
 
-#define FIRST_IWMMXT_GR_REGNUM	43
-#define LAST_IWMMXT_GR_REGNUM	46
-#define FIRST_IWMMXT_REGNUM	47
-#define LAST_IWMMXT_REGNUM	62
+/* Need to sync with WCGR in iwmmxt.md.  */
+#define FIRST_IWMMXT_GR_REGNUM	(LAST_IWMMXT_REGNUM + 1)
+#define LAST_IWMMXT_GR_REGNUM	(FIRST_IWMMXT_GR_REGNUM + 3)
+
 #define IS_IWMMXT_REGNUM(REGNUM) \
   (((REGNUM) >= FIRST_IWMMXT_REGNUM) && ((REGNUM) <= LAST_IWMMXT_REGNUM))
 #define IS_IWMMXT_GR_REGNUM(REGNUM) \
   (((REGNUM) >= FIRST_IWMMXT_GR_REGNUM) && ((REGNUM) <= LAST_IWMMXT_GR_REGNUM))
 
 /* Base register for access to local variables of the function.  */
-#define FRAME_POINTER_REGNUM	25
+#define FRAME_POINTER_REGNUM	102
 
 /* Base register for access to arguments of the function.  */
-#define ARG_POINTER_REGNUM	26
+#define ARG_POINTER_REGNUM	103
 
-#define FIRST_CIRRUS_FP_REGNUM	27
-#define LAST_CIRRUS_FP_REGNUM	42
-#define IS_CIRRUS_REGNUM(REGNUM) \
-  (((REGNUM) >= FIRST_CIRRUS_FP_REGNUM) && ((REGNUM) <= LAST_CIRRUS_FP_REGNUM))
-
-#define FIRST_VFP_REGNUM	63
-#define D7_VFP_REGNUM		78  /* Registers 77 and 78 == VFP reg D7.  */
+#define FIRST_VFP_REGNUM	16
+#define D7_VFP_REGNUM		(FIRST_VFP_REGNUM + 15)
 #define LAST_VFP_REGNUM	\
   (TARGET_VFPD32 ? LAST_HI_VFP_REGNUM : LAST_LO_VFP_REGNUM)
 
@@ -901,9 +933,9 @@ extern int arm_arch_thumb_hwdiv;
    in various parts of the backend, we implement as "fake" single-precision
    registers (which would be S32-S63, but cannot be used in that way).  The
    following macros define these ranges of registers.  */
-#define LAST_LO_VFP_REGNUM	94
-#define FIRST_HI_VFP_REGNUM	95
-#define LAST_HI_VFP_REGNUM	126
+#define LAST_LO_VFP_REGNUM	(FIRST_VFP_REGNUM + 31)
+#define FIRST_HI_VFP_REGNUM	(LAST_LO_VFP_REGNUM + 1)
+#define LAST_HI_VFP_REGNUM	(FIRST_HI_VFP_REGNUM + 31)
 
 #define VFP_REGNO_OK_FOR_SINGLE(REGNUM) \
   ((REGNUM) <= LAST_LO_VFP_REGNUM)
@@ -924,11 +956,10 @@ extern int arm_arch_thumb_hwdiv;
   ((((REGNUM) - FIRST_VFP_REGNUM) & 3) == 0 \
    && (LAST_VFP_REGNUM - (REGNUM) >= 2 * (N) - 1))
 
-/* The number of hard registers is 16 ARM + 8 FPA + 1 CC + 1 SFP + 1 AFP.  */
-/* + 16 Cirrus registers take us up to 43.  */
+/* The number of hard registers is 16 ARM + 1 CC + 1 SFP + 1 AFP.  */
 /* Intel Wireless MMX Technology registers add 16 + 4 more.  */
-/* VFP (VFP3) adds 32 (64) + 1 more.  */
-#define FIRST_PSEUDO_REGISTER   128
+/* VFP (VFP3) adds 32 (64) + 1 VFPCC.  */
+#define FIRST_PSEUDO_REGISTER   104
 
 #define DBX_REGISTER_NUMBER(REGNO) arm_dbx_register_number (REGNO)
 
@@ -948,11 +979,10 @@ extern int arm_arch_thumb_hwdiv;
    This is ordinarily the length in words of a value of mode MODE
    but can be less for certain modes in special long registers.
 
-   On the ARM regs are UNITS_PER_WORD bits wide; FPA regs can hold any FP
-   mode.  */
+   On the ARM core regs are UNITS_PER_WORD bits wide.  */
 #define HARD_REGNO_NREGS(REGNO, MODE)  	\
   ((TARGET_32BIT			\
-    && REGNO >= FIRST_FPA_REGNUM	\
+    && REGNO > PC_REGNUM		\
     && REGNO != FRAME_POINTER_REGNUM	\
     && REGNO != ARG_POINTER_REGNUM)	\
     && !IS_VFP_REGNUM (REGNO)		\
@@ -970,12 +1000,12 @@ extern int arm_arch_thumb_hwdiv;
 /* Modes valid for Neon D registers.  */
 #define VALID_NEON_DREG_MODE(MODE) \
   ((MODE) == V2SImode || (MODE) == V4HImode || (MODE) == V8QImode \
-   || (MODE) == V2SFmode || (MODE) == DImode)
+   || (MODE) == V4HFmode || (MODE) == V2SFmode || (MODE) == DImode)
 
 /* Modes valid for Neon Q registers.  */
 #define VALID_NEON_QREG_MODE(MODE) \
   ((MODE) == V4SImode || (MODE) == V8HImode || (MODE) == V16QImode \
-   || (MODE) == V4SFmode || (MODE) == V2DImode)
+   || (MODE) == V8HFmode || (MODE) == V4SFmode || (MODE) == V2DImode)
 
 /* Structure modes valid for Neon registers.  */
 #define VALID_NEON_STRUCT_MODE(MODE) \
@@ -996,26 +1026,44 @@ extern int arm_regs_in_sequence[];
    pressure when both single- and double-precision registers are used in a
    function.  */
 
+#define VREG(X)  (FIRST_VFP_REGNUM + (X))
+#define WREG(X)  (FIRST_IWMMXT_REGNUM + (X))
+#define WGREG(X) (FIRST_IWMMXT_GR_REGNUM + (X))
+
 #define REG_ALLOC_ORDER				\
 {						\
-     3,  2,  1,  0, 12, 14,  4,  5,		\
-     6,  7,  8, 10,  9, 11, 13, 15,		\
-    16, 17, 18, 19, 20, 21, 22, 23,		\
-    27, 28, 29, 30, 31, 32, 33, 34,		\
-    35, 36, 37, 38, 39, 40, 41, 42,		\
-    43, 44, 45, 46, 47, 48, 49, 50,		\
-    51, 52, 53, 54, 55, 56, 57, 58,		\
-    59, 60, 61, 62,				\
-    24, 25, 26,					\
-    95,  96,  97,  98,  99, 100, 101, 102,	\
-   103, 104, 105, 106, 107, 108, 109, 110,	\
-   111, 112, 113, 114, 115, 116, 117, 118,	\
-   119, 120, 121, 122, 123, 124, 125, 126,	\
-    78,  77,  76,  75,  74,  73,  72,  71,	\
-    70,  69,  68,  67,  66,  65,  64,  63,	\
-    79,  80,  81,  82,  83,  84,  85,  86,	\
-    87,  88,  89,  90,  91,  92,  93,  94,	\
-   127						\
+  /* General registers.  */			\
+  3,  2,  1,  0,  12, 14,  4,  5,		\
+  6,  7,  8,  9,  10, 11,			\
+  /* High VFP registers.  */			\
+  VREG(32), VREG(33), VREG(34), VREG(35),	\
+  VREG(36), VREG(37), VREG(38), VREG(39),	\
+  VREG(40), VREG(41), VREG(42), VREG(43),	\
+  VREG(44), VREG(45), VREG(46), VREG(47),	\
+  VREG(48), VREG(49), VREG(50), VREG(51),	\
+  VREG(52), VREG(53), VREG(54), VREG(55),	\
+  VREG(56), VREG(57), VREG(58), VREG(59),	\
+  VREG(60), VREG(61), VREG(62), VREG(63),	\
+  /* VFP argument registers.  */		\
+  VREG(15), VREG(14), VREG(13), VREG(12),	\
+  VREG(11), VREG(10), VREG(9),  VREG(8),	\
+  VREG(7),  VREG(6),  VREG(5),  VREG(4),	\
+  VREG(3),  VREG(2),  VREG(1),  VREG(0),	\
+  /* VFP call-saved registers.  */		\
+  VREG(16), VREG(17), VREG(18), VREG(19),	\
+  VREG(20), VREG(21), VREG(22), VREG(23),	\
+  VREG(24), VREG(25), VREG(26), VREG(27),	\
+  VREG(28), VREG(29), VREG(30), VREG(31),	\
+  /* IWMMX registers.  */			\
+  WREG(0),  WREG(1),  WREG(2),  WREG(3),	\
+  WREG(4),  WREG(5),  WREG(6),  WREG(7),	\
+  WREG(8),  WREG(9),  WREG(10), WREG(11),	\
+  WREG(12), WREG(13), WREG(14), WREG(15),	\
+  WGREG(0), WGREG(1), WGREG(2), WGREG(3),	\
+  /* Registers not for general use.  */		\
+  CC_REGNUM, VFPCC_REGNUM,			\
+  FRAME_POINTER_REGNUM, ARG_POINTER_REGNUM,	\
+  SP_REGNUM, PC_REGNUM 				\
 }
 
 /* Use different register alloc ordering for Thumb.  */
@@ -1023,7 +1071,7 @@ extern int arm_regs_in_sequence[];
 
 /* Tell IRA to use the order we define rather than messing it up with its
    own cost calculations.  */
-#define HONOR_REG_ALLOC_ORDER
+#define HONOR_REG_ALLOC_ORDER 1
 
 /* Interrupt functions can only use registers that have already been
    saved by the prologue, even if they would normally be
@@ -1034,27 +1082,27 @@ extern int arm_regs_in_sequence[];
 
 /* Register and constant classes.  */
 
-/* Register classes: used to be simple, just all ARM regs or all FPA regs
-   Now that the Thumb is involved it has become more complicated.  */
+/* Register classes.  */
 enum reg_class
 {
   NO_REGS,
-  FPA_REGS,
-  CIRRUS_REGS,
-  VFP_D0_D7_REGS,
-  VFP_LO_REGS,
-  VFP_HI_REGS,
-  VFP_REGS,
-  IWMMXT_GR_REGS,
-  IWMMXT_REGS,
   LO_REGS,
   STACK_REG,
   BASE_REGS,
   HI_REGS,
-  CC_REG,
-  VFPCC_REG,
+  CALLER_SAVE_REGS,
   GENERAL_REGS,
   CORE_REGS,
+  VFP_D0_D7_REGS,
+  VFP_LO_REGS,
+  VFP_HI_REGS,
+  VFP_REGS,
+  IWMMXT_REGS,
+  IWMMXT_GR_REGS,
+  CC_REG,
+  VFPCC_REG,
+  SFP_REG,
+  AFP_REG,
   ALL_REGS,
   LIM_REG_CLASSES
 };
@@ -1065,23 +1113,24 @@ enum reg_class
 #define REG_CLASS_NAMES  \
 {			\
   "NO_REGS",		\
-  "FPA_REGS",		\
-  "CIRRUS_REGS",	\
-  "VFP_D0_D7_REGS",	\
-  "VFP_LO_REGS",	\
-  "VFP_HI_REGS",	\
-  "VFP_REGS",		\
-  "IWMMXT_GR_REGS",	\
-  "IWMMXT_REGS",	\
   "LO_REGS",		\
   "STACK_REG",		\
   "BASE_REGS",		\
   "HI_REGS",		\
-  "CC_REG",		\
-  "VFPCC_REG",		\
+  "CALLER_SAVE_REGS",	\
   "GENERAL_REGS",	\
   "CORE_REGS",		\
-  "ALL_REGS",		\
+  "VFP_D0_D7_REGS",	\
+  "VFP_LO_REGS",	\
+  "VFP_HI_REGS",	\
+  "VFP_REGS",		\
+  "IWMMXT_REGS",	\
+  "IWMMXT_GR_REGS",	\
+  "CC_REG",		\
+  "VFPCC_REG",		\
+  "SFP_REG",		\
+  "AFP_REG",		\
+  "ALL_REGS"		\
 }
 
 /* Define which registers fit in which classes.
@@ -1090,23 +1139,24 @@ enum reg_class
 #define REG_CLASS_CONTENTS						\
 {									\
   { 0x00000000, 0x00000000, 0x00000000, 0x00000000 }, /* NO_REGS  */	\
-  { 0x00FF0000, 0x00000000, 0x00000000, 0x00000000 }, /* FPA_REGS */	\
-  { 0xF8000000, 0x000007FF, 0x00000000, 0x00000000 }, /* CIRRUS_REGS */	\
-  { 0x00000000, 0x80000000, 0x00007FFF, 0x00000000 }, /* VFP_D0_D7_REGS  */ \
-  { 0x00000000, 0x80000000, 0x7FFFFFFF, 0x00000000 }, /* VFP_LO_REGS  */ \
-  { 0x00000000, 0x00000000, 0x80000000, 0x7FFFFFFF }, /* VFP_HI_REGS  */ \
-  { 0x00000000, 0x80000000, 0xFFFFFFFF, 0x7FFFFFFF }, /* VFP_REGS  */	\
-  { 0x00000000, 0x00007800, 0x00000000, 0x00000000 }, /* IWMMXT_GR_REGS */ \
-  { 0x00000000, 0x7FFF8000, 0x00000000, 0x00000000 }, /* IWMMXT_REGS */	\
   { 0x000000FF, 0x00000000, 0x00000000, 0x00000000 }, /* LO_REGS */	\
   { 0x00002000, 0x00000000, 0x00000000, 0x00000000 }, /* STACK_REG */	\
   { 0x000020FF, 0x00000000, 0x00000000, 0x00000000 }, /* BASE_REGS */	\
-  { 0x0000DF00, 0x00000000, 0x00000000, 0x00000000 }, /* HI_REGS */	\
-  { 0x01000000, 0x00000000, 0x00000000, 0x00000000 }, /* CC_REG */	\
-  { 0x00000000, 0x00000000, 0x00000000, 0x80000000 }, /* VFPCC_REG */	\
-  { 0x0000DFFF, 0x00000000, 0x00000000, 0x00000000 }, /* GENERAL_REGS */ \
-  { 0x0000FFFF, 0x00000000, 0x00000000, 0x00000000 }, /* CORE_REGS */	\
-  { 0xFAFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x7FFFFFFF }  /* ALL_REGS */	\
+  { 0x00005F00, 0x00000000, 0x00000000, 0x00000000 }, /* HI_REGS */	\
+  { 0x0000100F, 0x00000000, 0x00000000, 0x00000000 }, /* CALLER_SAVE_REGS */ \
+  { 0x00005FFF, 0x00000000, 0x00000000, 0x00000000 }, /* GENERAL_REGS */ \
+  { 0x00007FFF, 0x00000000, 0x00000000, 0x00000000 }, /* CORE_REGS */	\
+  { 0xFFFF0000, 0x00000000, 0x00000000, 0x00000000 }, /* VFP_D0_D7_REGS  */ \
+  { 0xFFFF0000, 0x0000FFFF, 0x00000000, 0x00000000 }, /* VFP_LO_REGS  */ \
+  { 0x00000000, 0xFFFF0000, 0x0000FFFF, 0x00000000 }, /* VFP_HI_REGS  */ \
+  { 0xFFFF0000, 0xFFFFFFFF, 0x0000FFFF, 0x00000000 }, /* VFP_REGS  */	\
+  { 0x00000000, 0x00000000, 0xFFFF0000, 0x00000000 }, /* IWMMXT_REGS */	\
+  { 0x00000000, 0x00000000, 0x00000000, 0x0000000F }, /* IWMMXT_GR_REGS */ \
+  { 0x00000000, 0x00000000, 0x00000000, 0x00000010 }, /* CC_REG */	\
+  { 0x00000000, 0x00000000, 0x00000000, 0x00000020 }, /* VFPCC_REG */	\
+  { 0x00000000, 0x00000000, 0x00000000, 0x00000040 }, /* SFP_REG */	\
+  { 0x00000000, 0x00000000, 0x00000000, 0x00000080 }, /* AFP_REG */	\
+  { 0xFFFF7FFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x0000000F }  /* ALL_REGS */	\
 }
 
 /* Any of the VFP register classes.  */
@@ -1120,14 +1170,22 @@ enum reg_class
    or could index an array.  */
 #define REGNO_REG_CLASS(REGNO)  arm_regno_class (REGNO)
 
-/* FPA registers can't do subreg as all values are reformatted to internal
-   precision.  In VFPv1, VFP registers could only be accessed in the mode
-   they were set, so subregs would be invalid there too.  However, we don't
-   support VFPv1 at the moment, and the restriction was lifted in VFPv2.  */
+/* In VFPv1, VFP registers could only be accessed in the mode they
+   were set, so subregs would be invalid there.  However, we don't
+   support VFPv1 at the moment, and the restriction was lifted in
+   VFPv2.
+   In big-endian mode, modes greater than word size (i.e. DFmode) are stored in
+   VFP registers in little-endian order.  We can't describe that accurately to
+   GCC, so avoid taking subregs of such values.
+   The only exception is going from a 128-bit to a 64-bit type.  In that case
+   the data layout happens to be consistent for big-endian, so we explicitly allow
+   that case.  */
 #define CANNOT_CHANGE_MODE_CLASS(FROM, TO, CLASS)		\
-  (GET_MODE_SIZE (FROM) != GET_MODE_SIZE (TO)			\
-   ? reg_classes_intersect_p (FPA_REGS, (CLASS))		\
-   : 0)
+  (TARGET_BIG_END						\
+   && !(GET_MODE_SIZE (FROM) == 16 && GET_MODE_SIZE (TO) == 8)	\
+   && (GET_MODE_SIZE (FROM) > UNITS_PER_WORD			\
+       || GET_MODE_SIZE (TO) > UNITS_PER_WORD)			\
+   && reg_classes_intersect_p (VFP_REGS, (CLASS)))
 
 /* The class value for index registers, and the one for base regs.  */
 #define INDEX_REG_CLASS  (TARGET_THUMB1 ? LO_REGS : GENERAL_REGS)
@@ -1136,9 +1194,10 @@ enum reg_class
 /* For the Thumb the high registers cannot be used as base registers
    when addressing quantities in QI or HI mode; if we don't know the
    mode, then we must be conservative.  */
-#define MODE_BASE_REG_CLASS(MODE)					\
-    (TARGET_ARM || (TARGET_THUMB2 && !optimize_size) ? CORE_REGS :      \
-     (((MODE) == SImode) ? BASE_REGS : LO_REGS))
+#define MODE_BASE_REG_CLASS(MODE)				\
+  (TARGET_32BIT ? CORE_REGS					\
+   : GET_MODE_SIZE (MODE) >= 4 ? BASE_REGS			\
+   : LO_REGS)
 
 /* For Thumb we can not support SP+reg addressing, so we return LO_REGS
    instead of BASE_REGS.  */
@@ -1151,38 +1210,29 @@ enum reg_class
 #define TARGET_SMALL_REGISTER_CLASSES_FOR_MODE_P \
   arm_small_register_classes_for_mode_p 
 
-/* Given an rtx X being reloaded into a reg required to be
-   in class CLASS, return the class of reg to actually use.
-   In general this is just CLASS, but for the Thumb core registers and
-   immediate constants we prefer a LO_REGS class or a subset.  */
-#define PREFERRED_RELOAD_CLASS(X, CLASS)		\
-  (TARGET_32BIT ? (CLASS) :				\
-   ((CLASS) == GENERAL_REGS || (CLASS) == HI_REGS	\
-    || (CLASS) == NO_REGS || (CLASS) == STACK_REG	\
-   ? LO_REGS : (CLASS)))
-
 /* Must leave BASE_REGS reloads alone */
 #define THUMB_SECONDARY_INPUT_RELOAD_CLASS(CLASS, MODE, X)		\
-  ((CLASS) != LO_REGS && (CLASS) != BASE_REGS				\
-   ? ((true_regnum (X) == -1 ? LO_REGS					\
-       : (true_regnum (X) + HARD_REGNO_NREGS (0, MODE) > 8) ? LO_REGS	\
-       : NO_REGS)) 							\
-   : NO_REGS)
+  (lra_in_progress ? NO_REGS						\
+   : ((CLASS) != LO_REGS && (CLASS) != BASE_REGS			\
+      ? ((true_regnum (X) == -1 ? LO_REGS				\
+         : (true_regnum (X) + HARD_REGNO_NREGS (0, MODE) > 8) ? LO_REGS	\
+         : NO_REGS)) 							\
+      : NO_REGS))
 
 #define THUMB_SECONDARY_OUTPUT_RELOAD_CLASS(CLASS, MODE, X)		\
-  ((CLASS) != LO_REGS && (CLASS) != BASE_REGS				\
-   ? ((true_regnum (X) == -1 ? LO_REGS					\
-       : (true_regnum (X) + HARD_REGNO_NREGS (0, MODE) > 8) ? LO_REGS	\
-       : NO_REGS)) 							\
-   : NO_REGS)
+  (lra_in_progress ? NO_REGS						\
+   : (CLASS) != LO_REGS && (CLASS) != BASE_REGS				\
+      ? ((true_regnum (X) == -1 ? LO_REGS				\
+         : (true_regnum (X) + HARD_REGNO_NREGS (0, MODE) > 8) ? LO_REGS	\
+         : NO_REGS)) 							\
+      : NO_REGS)
 
 /* Return the register class of a scratch register needed to copy IN into
    or out of a register in CLASS in MODE.  If it can be done directly,
    NO_REGS is returned.  */
 #define SECONDARY_OUTPUT_RELOAD_CLASS(CLASS, MODE, X)		\
   /* Restrict which direct reloads are allowed for VFP/iWMMXt regs.  */ \
-  ((TARGET_VFP && TARGET_HARD_FLOAT				\
-    && IS_VFP_CLASS (CLASS))					\
+  ((TARGET_HARD_FLOAT && IS_VFP_CLASS (CLASS))			\
    ? coproc_secondary_reload_class (MODE, X, FALSE)		\
    : (TARGET_IWMMXT && (CLASS) == IWMMXT_REGS)			\
    ? coproc_secondary_reload_class (MODE, X, TRUE)		\
@@ -1194,72 +1244,27 @@ enum reg_class
 /* If we need to load shorts byte-at-a-time, then we need a scratch.  */
 #define SECONDARY_INPUT_RELOAD_CLASS(CLASS, MODE, X)		\
   /* Restrict which direct reloads are allowed for VFP/iWMMXt regs.  */ \
-  ((TARGET_VFP && TARGET_HARD_FLOAT				\
-    && IS_VFP_CLASS (CLASS))					\
+  ((TARGET_HARD_FLOAT && IS_VFP_CLASS (CLASS))			\
     ? coproc_secondary_reload_class (MODE, X, FALSE) :		\
     (TARGET_IWMMXT && (CLASS) == IWMMXT_REGS) ?			\
     coproc_secondary_reload_class (MODE, X, TRUE) :		\
-  /* Cannot load constants into Cirrus registers.  */		\
-   (TARGET_MAVERICK && TARGET_HARD_FLOAT			\
-     && (CLASS) == CIRRUS_REGS					\
-     && (CONSTANT_P (X) || GET_CODE (X) == SYMBOL_REF))		\
+   (TARGET_32BIT ?						\
+    (((CLASS) == IWMMXT_REGS || (CLASS) == IWMMXT_GR_REGS)	\
+     && CONSTANT_P (X))						\
     ? GENERAL_REGS :						\
-  (TARGET_32BIT ?						\
-   (((CLASS) == IWMMXT_REGS || (CLASS) == IWMMXT_GR_REGS)	\
-      && CONSTANT_P (X))					\
-   ? GENERAL_REGS :						\
-   (((MODE) == HImode && ! arm_arch4				\
-     && (GET_CODE (X) == MEM					\
-	 || ((GET_CODE (X) == REG || GET_CODE (X) == SUBREG)	\
-	     && true_regnum (X) == -1)))			\
-    ? GENERAL_REGS : NO_REGS)					\
-   : THUMB_SECONDARY_INPUT_RELOAD_CLASS (CLASS, MODE, X)))
-
-/* Try a machine-dependent way of reloading an illegitimate address
-   operand.  If we find one, push the reload and jump to WIN.  This
-   macro is used in only one place: `find_reloads_address' in reload.c.
-
-   For the ARM, we wish to handle large displacements off a base
-   register by splitting the addend across a MOV and the mem insn.
-   This can cut the number of reloads needed.  */
-#define ARM_LEGITIMIZE_RELOAD_ADDRESS(X, MODE, OPNUM, TYPE, IND, WIN)	   \
-  do									   \
-    {									   \
-      if (arm_legitimize_reload_address (&X, MODE, OPNUM, TYPE, IND))	   \
-	goto WIN;							   \
-    }									   \
-  while (0)
-
-/* XXX If an HImode FP+large_offset address is converted to an HImode
-   SP+large_offset address, then reload won't know how to fix it.  It sees
-   only that SP isn't valid for HImode, and so reloads the SP into an index
-   register, but the resulting address is still invalid because the offset
-   is too big.  We fix it here instead by reloading the entire address.  */
-/* We could probably achieve better results by defining PROMOTE_MODE to help
-   cope with the variances between the Thumb's signed and unsigned byte and
-   halfword load instructions.  */
-/* ??? This should be safe for thumb2, but we may be able to do better.  */
-#define THUMB_LEGITIMIZE_RELOAD_ADDRESS(X, MODE, OPNUM, TYPE, IND_L, WIN)     \
-do {									      \
-  rtx new_x = thumb_legitimize_reload_address (&X, MODE, OPNUM, TYPE, IND_L); \
-  if (new_x)								      \
-    {									      \
-      X = new_x;							      \
-      goto WIN;								      \
-    }									      \
-} while (0)
-
-#define LEGITIMIZE_RELOAD_ADDRESS(X, MODE, OPNUM, TYPE, IND_LEVELS, WIN)   \
-  if (TARGET_ARM)							   \
-    ARM_LEGITIMIZE_RELOAD_ADDRESS (X, MODE, OPNUM, TYPE, IND_LEVELS, WIN); \
-  else									   \
-    THUMB_LEGITIMIZE_RELOAD_ADDRESS (X, MODE, OPNUM, TYPE, IND_LEVELS, WIN)
+    (((MODE) == HImode && ! arm_arch4				\
+      && (MEM_P (X)					\
+	  || ((REG_P (X) || GET_CODE (X) == SUBREG)	\
+	      && true_regnum (X) == -1)))			\
+     ? GENERAL_REGS : NO_REGS)					\
+    : THUMB_SECONDARY_INPUT_RELOAD_CLASS (CLASS, MODE, X)))
 
 /* Return the maximum number of consecutive registers
    needed to represent mode MODE in a register of class CLASS.
-   ARM regs are UNITS_PER_WORD bits while FPA regs can hold any FP mode */
+   ARM regs are UNITS_PER_WORD bits.  
+   FIXME: Is this true for iWMMX?  */
 #define CLASS_MAX_NREGS(CLASS, MODE)  \
-  (((CLASS) == FPA_REGS || (CLASS) == CIRRUS_REGS) ? 1 : ARM_NUM_REGS (MODE))
+  (ARM_NUM_REGS (MODE))
 
 /* If defined, gives a class of registers that cannot be used as the
    operand of a SUBREG that changes the mode of the object illegally.  */
@@ -1346,6 +1351,7 @@ do {									      \
 #define ARM_FT_VOLATILE		(1 << 4) /* Does not return.  */
 #define ARM_FT_NESTED		(1 << 5) /* Embedded inside another func.  */
 #define ARM_FT_STACKALIGN	(1 << 6) /* Called with misaligned stack.  */
+#define ARM_FT_CMSE_ENTRY	(1 << 7) /* ARMv8-M non-secure entry function.  */
 
 /* Some macros to test these flags.  */
 #define ARM_FUNC_TYPE(t)	(t & ARM_FT_TYPE_MASK)
@@ -1354,6 +1360,7 @@ do {									      \
 #define IS_NAKED(t)        	(t & ARM_FT_NAKED)
 #define IS_NESTED(t)       	(t & ARM_FT_NESTED)
 #define IS_STACKALIGN(t)       	(t & ARM_FT_STACKALIGN)
+#define IS_CMSE_ENTRY(t)	(t & ARM_FT_CMSE_ENTRY)
 
 
 /* Structure used to hold the function stack frame layout.  Offsets are
@@ -1373,7 +1380,7 @@ typedef struct GTY(()) arm_stack_offsets
 }
 arm_stack_offsets;
 
-#ifndef GENERATOR_FILE
+#if !defined(GENERATOR_FILE) && !defined (USED_FOR_TARGET)
 /* A C structure for machine-specific, per-function data.
    This is added to the cfun structure.  */
 typedef struct GTY(()) machine_function
@@ -1410,7 +1417,9 @@ typedef struct GTY(()) machine_function
   rtx thumb1_cc_op0;
   rtx thumb1_cc_op1;
   /* Also record the CC mode that is supported.  */
-  enum machine_mode thumb1_cc_mode;
+  machine_mode thumb1_cc_mode;
+  /* Set to 1 after arm_reorg has started.  */
+  int after_arm_reorg;
 }
 machine_function;
 #endif
@@ -1439,6 +1448,7 @@ enum arm_pcs
 /* Default procedure calling standard of current compilation unit. */
 extern enum arm_pcs arm_pcs_default;
 
+#if !defined (USED_FOR_TARGET)
 /* A C type for declaring a variable that is used as the first argument of
    `FUNCTION_ARG' and other related values.  */
 typedef struct
@@ -1472,6 +1482,7 @@ typedef struct
   int aapcs_vfp_rcount;
   MACHMODE aapcs_vfp_rmode;
 } CUMULATIVE_ARGS;
+#endif
 
 #define FUNCTION_ARG_PADDING(MODE, TYPE) \
   (arm_pad_arg_upward (MODE, TYPE) ? upward : downward)
@@ -1495,7 +1506,7 @@ typedef struct
    On the ARM, r0-r3 are used to pass args.  */
 #define FUNCTION_ARG_REGNO_P(REGNO)					\
    (IN_RANGE ((REGNO), 0, 3)						\
-    || (TARGET_AAPCS_BASED && TARGET_VFP && TARGET_HARD_FLOAT		\
+    || (TARGET_AAPCS_BASED && TARGET_HARD_FLOAT				\
 	&& IN_RANGE ((REGNO), FIRST_VFP_REGNUM, FIRST_VFP_REGNUM + 15))	\
     || (TARGET_IWMMXT_ABI						\
 	&& IN_RANGE ((REGNO), FIRST_IWMMXT_REGNUM, FIRST_IWMMXT_REGNUM + 9)))
@@ -1562,7 +1573,7 @@ typedef struct
    frame.  */
 #define EXIT_IGNORE_STACK 1
 
-#define EPILOGUE_USES(REGNO) ((REGNO) == LR_REGNUM)
+#define EPILOGUE_USES(REGNO) (epilogue_completed && (REGNO) == LR_REGNUM)
 
 /* Determine if the epilogue should be output as RTL.
    You should override this if you define FUNCTION_EXTRA_EPILOGUE.  */
@@ -1623,13 +1634,38 @@ typedef struct
 #define HAVE_PRE_MODIFY_REG   TARGET_32BIT
 #define HAVE_POST_MODIFY_REG  TARGET_32BIT
 
+enum arm_auto_incmodes
+  {
+    ARM_POST_INC,
+    ARM_PRE_INC,
+    ARM_POST_DEC,
+    ARM_PRE_DEC
+  };
+
+#define ARM_AUTOINC_VALID_FOR_MODE_P(mode, code) \
+  (TARGET_32BIT && arm_autoinc_modes_ok_p (mode, code))
+#define USE_LOAD_POST_INCREMENT(mode) \
+  ARM_AUTOINC_VALID_FOR_MODE_P(mode, ARM_POST_INC)
+#define USE_LOAD_PRE_INCREMENT(mode)  \
+  ARM_AUTOINC_VALID_FOR_MODE_P(mode, ARM_PRE_INC)
+#define USE_LOAD_POST_DECREMENT(mode) \
+  ARM_AUTOINC_VALID_FOR_MODE_P(mode, ARM_POST_DEC)
+#define USE_LOAD_PRE_DECREMENT(mode)  \
+  ARM_AUTOINC_VALID_FOR_MODE_P(mode, ARM_PRE_DEC)
+
+#define USE_STORE_PRE_DECREMENT(mode) USE_LOAD_PRE_DECREMENT(mode)
+#define USE_STORE_PRE_INCREMENT(mode) USE_LOAD_PRE_INCREMENT(mode)
+#define USE_STORE_POST_DECREMENT(mode) USE_LOAD_POST_DECREMENT(mode)
+#define USE_STORE_POST_INCREMENT(mode) USE_LOAD_POST_INCREMENT(mode)
+
 /* Macros to check register numbers against specific register classes.  */
 
 /* These assume that REGNO is a hard or pseudo reg number.
    They give nonzero only if REGNO is a hard reg of the suitable class
    or a pseudo reg currently allocated to a suitable hard reg.
    Since they use reg_renumber, they are safe only once reg_renumber
-   has been allocated, which happens in local-alloc.c.  */
+   has been allocated, which happens in reginfo.c during register
+   allocation.  */
 #define TEST_REGNO(R, TEST, VALUE) \
   ((R TEST VALUE) || ((unsigned) reg_renumber[R] TEST VALUE))
 
@@ -1831,10 +1867,10 @@ typedef struct
   REG_OK_FOR_INDEX_P (X)
 
 #define ARM_BASE_REGISTER_RTX_P(X)  \
-  (GET_CODE (X) == REG && ARM_REG_OK_FOR_BASE_P (X))
+  (REG_P (X) && ARM_REG_OK_FOR_BASE_P (X))
 
 #define ARM_INDEX_REGISTER_RTX_P(X)  \
-  (GET_CODE (X) == REG && ARM_REG_OK_FOR_INDEX_P (X))
+  (REG_P (X) && ARM_REG_OK_FOR_INDEX_P (X))
 
 /* Specify the machine mode that this machine uses
    for the index in the tablejump instruction.  */
@@ -1874,7 +1910,7 @@ typedef struct
 
 /* Define if operations between registers always perform the operation
    on the full register even if a narrower mode is specified.  */
-#define WORD_REGISTER_OPERATIONS
+#define WORD_REGISTER_OPERATIONS 1
 
 /* Define if loading in MODE, an integral mode narrower than BITS_PER_WORD
    will either zero-extend or sign-extend.  The value of this macro should
@@ -1916,9 +1952,16 @@ typedef struct
    || (X) == arg_pointer_rtx)
 
 /* Try to generate sequences that don't involve branches, we can then use
-   conditional instructions */
+   conditional instructions.  */
 #define BRANCH_COST(speed_p, predictable_p) \
   (current_tune->branch_cost (speed_p, predictable_p))
+
+/* False if short circuit operation is preferred.  */
+#define LOGICAL_OP_NON_SHORT_CIRCUIT					\
+  ((optimize_size)							\
+   ? (TARGET_THUMB ? false : true)					\
+   : TARGET_THUMB ? static_cast<bool> (current_tune->logical_op_non_short_circuit_thumb) \
+   : static_cast<bool> (current_tune->logical_op_non_short_circuit_arm))
 
 
 /* Position Independent Code.  */
@@ -1954,7 +1997,8 @@ extern int making_const_table;
   c_register_pragma (0, "long_calls", arm_pr_long_calls);		\
   c_register_pragma (0, "no_long_calls", arm_pr_no_long_calls);		\
   c_register_pragma (0, "long_calls_off", arm_pr_long_calls_off);	\
-  arm_lang_object_attributes_init(); \
+  arm_lang_object_attributes_init();					\
+  arm_register_target_pragmas();                                       \
 } while (0)
 
 /* Condition code information.  */
@@ -1970,19 +2014,21 @@ extern int making_const_table;
    ? reverse_condition_maybe_unordered (code) \
    : reverse_condition (code))
 
-#define CANONICALIZE_COMPARISON(CODE, OP0, OP1)				\
-  (CODE) = arm_canonicalize_comparison (CODE, &(OP0), &(OP1))
-
-/* The arm5 clz instruction returns 32.  */
-#define CLZ_DEFINED_VALUE_AT_ZERO(MODE, VALUE)  ((VALUE) = 32, 1)
-#define CTZ_DEFINED_VALUE_AT_ZERO(MODE, VALUE)  ((VALUE) = 32, 1)
+#define CLZ_DEFINED_VALUE_AT_ZERO(MODE, VALUE) \
+  ((VALUE) = GET_MODE_UNIT_BITSIZE (MODE), 2)
+#define CTZ_DEFINED_VALUE_AT_ZERO(MODE, VALUE) \
+  ((VALUE) = GET_MODE_UNIT_BITSIZE (MODE), 2)
 
 #define CC_STATUS_INIT \
   do { cfun->machine->thumb1_cc_insn = NULL_RTX; } while (0)
 
+#undef ASM_APP_ON
+#define ASM_APP_ON (inline_asm_unified ? "\t.syntax unified\n" : \
+		    "\t.syntax divided\n")
+
 #undef  ASM_APP_OFF
-#define ASM_APP_OFF (TARGET_THUMB1 ? "\t.code\t16\n" : \
-		     TARGET_THUMB2 ? "\t.thumb\n" : "")
+#define ASM_APP_OFF (TARGET_ARM ? "\t.arm\n\t.syntax unified\n" : \
+		     "\t.thumb\n\t.syntax unified\n")
 
 /* Output a push or a pop instruction (only used when profiling).
    We can't push STATIC_CHAIN_REGNUM (r12) directly with Thumb-1.  We know
@@ -1993,10 +2039,7 @@ extern int making_const_table;
 #define ASM_OUTPUT_REG_PUSH(STREAM, REGNO)		\
   do							\
     {							\
-      if (TARGET_ARM)					\
-	asm_fprintf (STREAM,"\tstmfd\t%r!,{%r}\n",	\
-		     STACK_POINTER_REGNUM, REGNO);	\
-      else if (TARGET_THUMB1				\
+      if (TARGET_THUMB1					\
 	       && (REGNO) == STATIC_CHAIN_REGNUM)	\
 	{						\
 	  asm_fprintf (STREAM, "\tpush\t{r7}\n");	\
@@ -2012,11 +2055,8 @@ extern int making_const_table;
 #define ASM_OUTPUT_REG_POP(STREAM, REGNO)		\
   do							\
     {							\
-      if (TARGET_ARM)					\
-	asm_fprintf (STREAM, "\tldmfd\t%r!,{%r}\n",	\
-		     STACK_POINTER_REGNUM, REGNO);	\
-      else if (TARGET_THUMB1				\
-	       && (REGNO) == STATIC_CHAIN_REGNUM)	\
+      if (TARGET_THUMB1					\
+	  && (REGNO) == STATIC_CHAIN_REGNUM)		\
 	{						\
 	  asm_fprintf (STREAM, "\tpop\t{r7}\n");	\
 	  asm_fprintf (STREAM, "\tmov\t%r, r7\n", REGNO);\
@@ -2026,48 +2066,20 @@ extern int making_const_table;
 	asm_fprintf (STREAM, "\tpop {%r}\n", REGNO);	\
     } while (0)
 
-/* Jump table alignment is explicit in ASM_OUTPUT_CASE_LABEL.  */
-#define ADDR_VEC_ALIGN(JUMPTABLE) 0
+#define ADDR_VEC_ALIGN(JUMPTABLE)	\
+  ((TARGET_THUMB && GET_MODE (PATTERN (JUMPTABLE)) == SImode) ? 2 : 0)
 
-/* This is how to output a label which precedes a jumptable.  Since
-   Thumb instructions are 2 bytes, we may need explicit alignment here.  */
-#undef  ASM_OUTPUT_CASE_LABEL
-#define ASM_OUTPUT_CASE_LABEL(FILE, PREFIX, NUM, JUMPTABLE)		\
-  do									\
-    {									\
-      if (TARGET_THUMB && GET_MODE (PATTERN (JUMPTABLE)) == SImode)	\
-        ASM_OUTPUT_ALIGN (FILE, 2);					\
-      (*targetm.asm_out.internal_label) (FILE, PREFIX, NUM);		\
-    }									\
-  while (0)
+/* Alignment for case labels comes from ADDR_VEC_ALIGN; avoid the
+   default alignment from elfos.h.  */
+#undef ASM_OUTPUT_BEFORE_CASE_LABEL
+#define ASM_OUTPUT_BEFORE_CASE_LABEL(FILE, PREFIX, NUM, TABLE) /* Empty.  */
 
-/* Make sure subsequent insns are aligned after a TBB.  */
-#define ASM_OUTPUT_CASE_END(FILE, NUM, JUMPTABLE)	\
-  do							\
-    {							\
-      if (GET_MODE (PATTERN (JUMPTABLE)) == QImode)	\
-	ASM_OUTPUT_ALIGN (FILE, 1);			\
-    }							\
-  while (0)
+#define LABEL_ALIGN_AFTER_BARRIER(LABEL)                \
+   (GET_CODE (PATTERN (prev_active_insn (LABEL))) == ADDR_DIFF_VEC \
+   ? 1 : 0)
 
 #define ARM_DECLARE_FUNCTION_NAME(STREAM, NAME, DECL) 	\
-  do							\
-    {							\
-      if (TARGET_THUMB) 				\
-        {						\
-          if (is_called_in_ARM_mode (DECL)		\
-	      || (TARGET_THUMB1 && !TARGET_THUMB1_ONLY	\
-		  && cfun->is_thunk))	\
-            fprintf (STREAM, "\t.code 32\n") ;		\
-          else if (TARGET_THUMB1)			\
-           fprintf (STREAM, "\t.code\t16\n\t.thumb_func\n") ;	\
-          else						\
-           fprintf (STREAM, "\t.thumb\n\t.thumb_func\n") ;	\
-        }						\
-      if (TARGET_POKE_FUNCTION_NAME)			\
-        arm_poke_function_name (STREAM, (const char *) NAME);	\
-    }							\
-  while (0)
+  arm_declare_function_name ((STREAM), (NAME), (DECL));
 
 /* For aliases of functions we use .thumb_set instead.  */
 #define ASM_OUTPUT_DEF_FROM_DECLS(FILE, DECL1, DECL2)		\
@@ -2162,35 +2174,75 @@ extern int making_const_table;
 #define NEED_INDICATE_EXEC_STACK	0
 #endif
 
+#define TARGET_ARM_ARCH	\
+  (arm_base_arch)	\
+
+/* The highest Thumb instruction set version supported by the chip.  */
+#define TARGET_ARM_ARCH_ISA_THUMB		\
+  (arm_arch_thumb2 ? 2 : (arm_arch_thumb1 ? 1 : 0))
+
+/* Expands to an upper-case char of the target's architectural
+   profile.  */
+#define TARGET_ARM_ARCH_PROFILE				\
+  (!arm_arch_notm					\
+    ? 'M'						\
+    : (arm_arch7					\
+      ? (strlen (arm_arch_name) >=3			\
+	? (arm_arch_name[strlen (arm_arch_name) - 3])	\
+      	: 0)						\
+      : 0))
+
+/* Bit-field indicating what size LDREX/STREX loads/stores are available.
+   Bit 0 for bytes, up to bit 3 for double-words.  */
+#define TARGET_ARM_FEATURE_LDREX				\
+  ((TARGET_HAVE_LDREX ? 4 : 0)					\
+   | (TARGET_HAVE_LDREXBH ? 3 : 0)				\
+   | (TARGET_HAVE_LDREXD ? 8 : 0))
+
+/* Set as a bit mask indicating the available widths of hardware floating
+   point types.  Where bit 1 indicates 16-bit support, bit 2 indicates
+   32-bit support, bit 3 indicates 64-bit support.  */
+#define TARGET_ARM_FP			\
+  (!TARGET_SOFT_FLOAT ? (TARGET_VFP_SINGLE ? 4		\
+			: (TARGET_VFP_DOUBLE ? (TARGET_FP16 ? 14 : 12) : 0)) \
+		      : 0)
+
+
+/* Set as a bit mask indicating the available widths of floating point
+   types for hardware NEON floating point.  This is the same as
+   TARGET_ARM_FP without the 64-bit bit set.  */
+#define TARGET_NEON_FP				 \
+  (TARGET_NEON ? (TARGET_ARM_FP & (0xff ^ 0x08)) \
+	       : 0)
+
 /* The maximum number of parallel loads or stores we support in an ldm/stm
    instruction.  */
 #define MAX_LDM_STM_OPS 4
 
+#define BIG_LITTLE_SPEC \
+   " %{mcpu=*:-mcpu=%:rewrite_mcpu(%{mcpu=*:%*})}"
+
+extern const char *arm_rewrite_mcpu (int argc, const char **argv);
+#define BIG_LITTLE_CPU_SPEC_FUNCTIONS \
+  { "rewrite_mcpu", arm_rewrite_mcpu },
+
 #define ASM_CPU_SPEC \
    " %{mcpu=generic-*:-march=%*;"				\
-   "   :%{mcpu=*:-mcpu=%*} %{march=*:-march=%*}}"
+   "   :%{march=*:-march=%*}}"					\
+   BIG_LITTLE_SPEC
 
-/* This macro is used to emit an EABI tag and its associated value.
-   We emit the numerical value of the tag in case the assembler does not
-   support textual tags.  (Eg gas prior to 2.20).  If requested we include
-   the tag name in a comment so that anyone reading the assembler output
-   will know which tag is being set.  */
-#define EMIT_EABI_ATTRIBUTE(NAME,NUM,VAL)				\
-  do									\
-    {									\
-      asm_fprintf (asm_out_file, "\t.eabi_attribute %d, %d", NUM, VAL); \
-      if (flag_verbose_asm || flag_debug_asm)				\
-	asm_fprintf (asm_out_file, "\t%s " #NAME, ASM_COMMENT_START);	\
-      asm_fprintf (asm_out_file, "\n");					\
-    }									\
-  while (0)
+extern const char *arm_target_thumb_only (int argc, const char **argv);
+#define TARGET_MODE_SPEC_FUNCTIONS					\
+  { "target_mode_check", arm_target_thumb_only },
 
 /* -mcpu=native handling only makes sense with compiler running on
    an ARM chip.  */
 #if defined(__arm__)
 extern const char *host_detect_local_cpu (int argc, const char **argv);
 # define EXTRA_SPEC_FUNCTIONS						\
-  { "local_cpu_detect", host_detect_local_cpu },
+  { "local_cpu_detect", host_detect_local_cpu },			\
+  BIG_LITTLE_CPU_SPEC_FUNCTIONS						\
+  TARGET_MODE_SPEC_FUNCTIONS
 
 # define MCPU_MTUNE_NATIVE_SPECS					\
    " %{march=native:%<march=native %:local_cpu_detect(arch)}"		\
@@ -2198,8 +2250,28 @@ extern const char *host_detect_local_cpu (int argc, const char **argv);
    " %{mtune=native:%<mtune=native %:local_cpu_detect(tune)}"
 #else
 # define MCPU_MTUNE_NATIVE_SPECS ""
+# define EXTRA_SPEC_FUNCTIONS						\
+	BIG_LITTLE_CPU_SPEC_FUNCTIONS					\
+	TARGET_MODE_SPEC_FUNCTIONS
 #endif
 
-#define DRIVER_SELF_SPECS MCPU_MTUNE_NATIVE_SPECS
+/* Automatically add -mthumb for Thumb-only targets if mode isn't specified
+   via the configuration option --with-mode or via the command line. The
+   function target_mode_check is called to do the check with either:
+   - an array of -march values if any is given;
+   - an array of -mcpu values if any is given;
+   - an empty array.  */
+#define TARGET_MODE_SPECS						\
+  " %{!marm:%{!mthumb:%:target_mode_check(%{march=*:%*;mcpu=*:%*;:})}}"
+
+#define DRIVER_SELF_SPECS MCPU_MTUNE_NATIVE_SPECS TARGET_MODE_SPECS
+#define TARGET_SUPPORTS_WIDE_INT 1
+
+/* For switching between functions with different target attributes.  */
+#define SWITCHABLE_TARGET 1
+
+/* Define SECTION_ARM_PURECODE as the ARM specific section attribute
+   representation for SHF_ARM_PURECODE in GCC.  */
+#define SECTION_ARM_PURECODE SECTION_MACH_DEP
 
 #endif /* ! GCC_ARM_H */

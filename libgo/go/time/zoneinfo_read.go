@@ -11,8 +11,11 @@ package time
 
 import "errors"
 
+// Copies of io.Seek* constants to avoid importing "io":
 const (
-	headerSize = 4 + 16 + 4*7
+	seekStart   = 0
+	seekCurrent = 1
+	seekEnd     = 2
 )
 
 // Simple I/O interface to binary blob of data.
@@ -72,7 +75,7 @@ func loadZoneData(bytes []byte) (l *Location, err error) {
 
 	// 1-byte version, then 15 bytes of padding
 	var p []byte
-	if p = d.read(16); len(p) != 16 || p[0] != 0 && p[0] != '2' {
+	if p = d.read(16); len(p) != 16 || p[0] != 0 && p[0] != '2' && p[0] != '3' {
 		return nil, badData
 	}
 
@@ -127,7 +130,7 @@ func loadZoneData(bytes []byte) (l *Location, err error) {
 		return nil, badData
 	}
 
-	// If version == 2, the entire file repeats, this time using
+	// If version == 2 or 3, the entire file repeats, this time using
 	// 8-byte ints for txtimes and leap seconds.
 	// We won't need those until 2106.
 
@@ -141,7 +144,7 @@ func loadZoneData(bytes []byte) (l *Location, err error) {
 		if n, ok = zonedata.big4(); !ok {
 			return nil, badData
 		}
-		zone[i].offset = int(n)
+		zone[i].offset = int(int32(n))
 		var b byte
 		if b, ok = zonedata.byte(); !ok {
 			return nil, badData
@@ -174,7 +177,13 @@ func loadZoneData(bytes []byte) (l *Location, err error) {
 		}
 	}
 
-	// Commited to succeed.
+	if len(tx) == 0 {
+		// Build fake transition to cover all time.
+		// This happens in fixed locations like "Etc/GMT0".
+		tx = append(tx, zoneTrans{when: alpha, index: 0})
+	}
+
+	// Committed to succeed.
 	l = &Location{zone: zone, tx: tx}
 
 	// Fill in the cache with information about right now,
@@ -183,7 +192,7 @@ func loadZoneData(bytes []byte) (l *Location, err error) {
 	for i := range tx {
 		if tx[i].when <= sec && (i+1 == len(tx) || sec < tx[i+1].when) {
 			l.cacheStart = tx[i].when
-			l.cacheEnd = 1<<63 - 1
+			l.cacheEnd = omega
 			if i+1 < len(tx) {
 				l.cacheEnd = tx[i+1].when
 			}
@@ -208,10 +217,10 @@ func loadZoneFile(dir, name string) (l *Location, err error) {
 	return loadZoneData(buf)
 }
 
-// There are 500+ zoneinfo files.  Rather than distribute them all
+// There are 500+ zoneinfo files. Rather than distribute them all
 // individually, we ship them in an uncompressed zip file.
 // Used this way, the zip file format serves as a commonly readable
-// container for the individual small files.  We choose zip over tar
+// container for the individual small files. We choose zip over tar
 // because zip files have a contiguous table of contents, making
 // individual file lookups faster, and because the per-file overhead
 // in a zip file is considerably less than tar's 512 bytes.
@@ -284,7 +293,7 @@ func loadZoneZip(zipfile, name string) (l *Location, err error) {
 		//	42	off[4]
 		//	46	name[namelen]
 		//	46+namelen+xlen+fclen - next header
-		//		
+		//
 		if get4(buf) != zcheader {
 			break
 		}

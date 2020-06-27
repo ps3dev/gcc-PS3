@@ -1,8 +1,6 @@
-/* Declarations for insn-output.c.  These functions are defined in recog.c,
-   final.c, and varasm.c.
-   Copyright (C) 1987, 1991, 1994, 1997, 1998, 1999, 2000, 2001, 2002,
-   2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+/* Declarations for insn-output.c and other code to write to asm_out_file.
+   These functions are defined in final.c, and varasm.c.
+   Copyright (C) 1987-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -44,22 +42,24 @@ extern void init_insn_lengths (void);
 
 /* Obtain the current length of an insn.  If branch shortening has been done,
    get its actual length.  Otherwise, get its maximum length.  */
-extern int get_attr_length (rtx);
+extern int get_attr_length (rtx_insn *);
 
 /* Obtain the current length of an insn.  If branch shortening has been done,
    get its actual length.  Otherwise, get its minimum length.  */
-extern int get_attr_min_length (rtx);
+extern int get_attr_min_length (rtx_insn *);
 
 /* Make a pass over all insns and compute their actual lengths by shortening
    any branches of variable length if possible.  */
-extern void shorten_branches (rtx);
+extern void shorten_branches (rtx_insn *);
+
+const char *get_some_local_dynamic_name ();
 
 /* Output assembler code for the start of a function,
    and initialize some of the variables in this file
    for the new function.  The label for the function and associated
    assembler pseudo-ops have already been output in
    `assemble_start_function'.  */
-extern void final_start_function (rtx, FILE *, int);
+extern void final_start_function (rtx_insn *, FILE *, int);
 
 /* Output assembler code for the end of a function.
    For clarity, args are same as those of `final_start_function'
@@ -67,16 +67,16 @@ extern void final_start_function (rtx, FILE *, int);
 extern void final_end_function (void);
 
 /* Output assembler code for some insns: all or part of a function.  */
-extern void final (rtx, FILE *, int);
+extern void final (rtx_insn *, FILE *, int);
 
 /* The final scan for one insn, INSN.  Args are same as in `final', except
    that INSN is the insn being scanned.  Value returned is the next insn to
    be scanned.  */
-extern rtx final_scan_insn (rtx, FILE *, int, int, int *);
+extern rtx_insn *final_scan_insn (rtx_insn *, FILE *, int, int, int *);
 
 /* Replace a SUBREG with a REG or a MEM, based on the thing it is a
    subreg of.  */
-extern rtx alter_subreg (rtx *);
+extern rtx alter_subreg (rtx *, bool);
 
 /* Print an operand using machine-dependent assembler syntax.  */
 extern void output_operand (rtx, int);
@@ -92,7 +92,7 @@ extern void output_asm_insn (const char *, rtx *);
 /* Compute a worst-case reference address of a branch so that it
    can be safely used in the presence of aligned labels.
    Defined in final.c.  */
-extern int insn_current_reference_address (rtx);
+extern int insn_current_reference_address (rtx_insn *);
 
 /* Find the alignment associated with a CODE_LABEL.
    Defined in final.c.  */
@@ -108,9 +108,9 @@ extern void output_asm_label (rtx);
 /* Marks SYMBOL_REFs in x as referenced through use of assemble_external.  */
 extern void mark_symbol_refs_as_used (rtx);
 
-/* Print a memory reference operand for address X
+/* Print a memory reference operand for address X with access mode MODE
    using machine-dependent assembler syntax.  */
-extern void output_address (rtx);
+extern void output_address (machine_mode, rtx);
 
 /* Print an integer constant expression in assembler syntax.
    Addition and subtraction are the only arithmetic
@@ -121,10 +121,6 @@ extern void output_addr_const (FILE *, rtx);
    and fixed syntactic prefixes.  */
 #if GCC_VERSION >= 3004
 #define ATTRIBUTE_ASM_FPRINTF(m, n) __attribute__ ((__format__ (__asm_fprintf__, m, n))) ATTRIBUTE_NONNULL(m)
-/* This is a magic identifier which allows GCC to figure out the type
-   of HOST_WIDE_INT for %wd specifier checks.  You must issue this
-   typedef before using the __asm_fprintf__ format attribute.  */
-typedef HOST_WIDE_INT __gcc_host_wide_int__;
 #else
 #define ATTRIBUTE_ASM_FPRINTF(m, n) ATTRIBUTE_NONNULL(m)
 #endif
@@ -136,17 +132,13 @@ extern int sprint_ul (char *, unsigned long);
 extern void asm_fprintf (FILE *file, const char *p, ...)
      ATTRIBUTE_ASM_FPRINTF(2, 3);
 
-/* Split up a CONST_DOUBLE or integer constant rtx into two rtx's for single
-   words.  */
-extern void split_double (rtx, rtx *, rtx *);
-
 /* Return nonzero if this function has no function calls.  */
 extern int leaf_function_p (void);
 
 /* Return 1 if branch is a forward branch.
    Uses insn_shuid array, so it works only in the final pass.  May be used by
    output templates to add branch prediction hints, for example.  */
-extern int final_forward_branch_p (rtx);
+extern int final_forward_branch_p (rtx_insn *);
 
 /* Return 1 if this function uses only the registers that can be
    safely renumbered.  */
@@ -161,16 +153,8 @@ extern const char *get_insn_template (int, rtx);
 
 /* Functions in varasm.c.  */
 
-/* Declare DECL to be a weak symbol.  */
-extern void declare_weak (tree);
-/* Merge weak status.  */
-extern void merge_weak (tree, tree);
-
 /* Emit any pending weak declarations.  */
 extern void weak_finish (void);
-
-/* Return the default TLS model for a given variable.  */
-extern enum tls_model decl_default_tls_model (const_tree);
 
 /* Decode an `asm' spec for a declaration as a register name.
    Return the register number, or -1 if nothing specified,
@@ -186,13 +170,16 @@ extern int decode_reg_name (const char *);
    external name.  */
 extern int decode_reg_name_and_count (const char *, int *);
 
-extern void assemble_alias (tree, tree);
+extern void do_assemble_alias (tree, tree);
 
 extern void default_assemble_visibility (tree, int);
 
 /* Output a string of literal assembler code
    for an `asm' keyword used between functions.  */
 extern void assemble_asm (tree);
+
+/* Get the function's name from a decl, as described by its RTL.  */
+extern const char *get_fnname_from_decl (tree);
 
 /* Output assembler code for the constant pool of a function and associated
    with defining the name of the function.  DECL describes the function.
@@ -214,6 +201,14 @@ extern void assemble_end_function (tree, const char *);
    DONT_OUTPUT_DATA if nonzero means don't actually output the
    initial value (that will be done by the caller).  */
 extern void assemble_variable (tree, int, int, int);
+
+/* Put the vtable verification constructor initialization function
+   into the preinit array.  */
+extern void assemble_vtv_preinit_initializer (tree);
+
+/* Assemble everything that is needed for a variable declaration that has
+   no definition in the current translation unit.  */
+extern void assemble_undefined_decl (tree);
 
 /* Compute the alignment of variable specified by DECL.
    DONT_OUTPUT_DATA is from assemble_variable.  */
@@ -283,20 +278,21 @@ extern section *get_named_text_section (tree, const char *, const char *);
 #define assemble_aligned_integer(SIZE, VALUE) \
   assemble_integer (VALUE, SIZE, (SIZE) * BITS_PER_UNIT, 1)
 
-#ifdef REAL_VALUE_TYPE_SIZE
-/* Assemble the floating-point constant D into an object of size MODE.  */
-extern void assemble_real (REAL_VALUE_TYPE, enum machine_mode, unsigned);
-#endif
+/* Assemble the floating-point constant D into an object of size MODE.  ALIGN
+   is the alignment of the constant in bits.  If REVERSE is true, D is output
+   in reverse storage order.  */
+extern void assemble_real (REAL_VALUE_TYPE, machine_mode, unsigned,
+			   bool = false);
 
 /* Write the address of the entity given by SYMBOL to SEC.  */
 extern void assemble_addr_to_section (rtx, section *);
 
-/* Return the size of the constant pool.  */
-extern int get_pool_size (void);
+/* Return TRUE if and only if the constant pool has no entries.  Note
+   that even entries we might end up choosing not to emit are counted
+   here, so there is the potential for missed optimizations.  */
+extern bool constant_pool_empty_p (void);
 
-#ifdef HAVE_peephole
-extern rtx peephole (rtx);
-#endif
+extern rtx_insn *peephole (rtx_insn *);
 
 extern void output_shared_constant_pool (void);
 
@@ -304,53 +300,18 @@ extern void output_object_blocks (void);
 
 extern void output_quoted_string (FILE *, const char *);
 
-/* Whether a constructor CTOR is a valid static constant initializer if all
-   its elements are.  This used to be internal to initializer_constant_valid_p
-   and has been exposed to let other functions like categorize_ctor_elements
-   evaluate the property while walking a constructor for other purposes.  */
-
-extern bool constructor_static_from_elts_p (const_tree);
-
-/* Return nonzero if VALUE is a valid constant-valued expression
-   for use in initializing a static variable; one that can be an
-   element of a "constant" initializer.
-
-   Return null_pointer_node if the value is absolute;
-   if it is relocatable, return the variable that determines the relocation.
-   We assume that VALUE has been folded as much as possible;
-   therefore, we do not need to check for such things as
-   arithmetic-combinations of integers.  */
-extern tree initializer_constant_valid_p (tree, tree);
-
-/* Return true if VALUE is a valid constant-valued expression
-   for use in initializing a static bit-field; one that can be
-   an element of a "constant" initializer.  */
-extern bool initializer_constant_valid_for_bitfield_p (tree);
-
-/* Output assembler code for constant EXP to FILE, with no label.
-   This includes the pseudo-op such as ".int" or ".byte", and a newline.
-   Assumes output_addressed_constants has been done on EXP already.
-
-   Generate exactly SIZE bytes of assembler data, padding at the end
-   with zeros if necessary.  SIZE must always be specified.
-
-   ALIGN is the alignment in bits that may be assumed for the data.  */
-extern void output_constant (tree, unsigned HOST_WIDE_INT, unsigned int);
-
 /* When outputting delayed branch sequences, this rtx holds the
    sequence being output.  It is null when no delayed branch
    sequence is being output, so it can be used as a test in the
    insn output code.
 
    This variable is defined  in final.c.  */
-extern rtx final_sequence;
+extern rtx_sequence *final_sequence;
 
 /* The line number of the beginning of the current function.  Various
    md code needs this so that it can output relative linenumbers.  */
 
-#ifdef SDB_DEBUGGING_INFO /* Avoid undef sym in certain broken linkers.  */
 extern int sdb_begin_function_line;
-#endif
 
 /* File in which assembler code is being written.  */
 
@@ -364,41 +325,16 @@ extern const char *first_global_object_name;
 /* The first weak object in the file.  */
 extern const char *weak_global_object_name;
 
-/* Nonzero if function being compiled doesn't contain any calls
-   (ignoring the prologue and epilogue).  This is set prior to
-   local register allocation and is valid for the remaining
-   compiler passes.  */
-
-extern int current_function_is_leaf;
-
-/* Nonzero if function being compiled doesn't modify the stack pointer
-   (ignoring the prologue and epilogue).  This is only valid after
-   pass_stack_ptr_mod has run.  */
-
-extern int current_function_sp_is_unchanging;
-
-/* Nonzero if the function being compiled is a leaf function which only
-   uses leaf registers.  This is valid after reload (specifically after
-   sched2) and is useful only if the port defines LEAF_REGISTERS.  */
-
-extern int current_function_uses_only_leaf_regs;
-
-/* Default file in which to dump debug output.  */
-
-#ifdef BUFSIZ
-extern FILE *dump_file;
-#endif
-
 /* Nonnull if the insn currently being emitted was a COND_EXEC pattern.  */
 extern rtx current_insn_predicate;
 
 /* Last insn processed by final_scan_insn.  */
-extern rtx current_output_insn;
+extern rtx_insn *current_output_insn;
 
 /* Nonzero while outputting an `asm' with operands.
    This means that inconsistencies are the user's fault, so don't die.
    The precise value is the insn being output, to pass to error_for_asm.  */
-extern rtx this_is_asm_operands;
+extern const rtx_insn *this_is_asm_operands;
 
 /* Carry information from ASM_DECLARE_OBJECT_NAME
    to ASM_FINISH_DECLARE_OBJECT.  */
@@ -446,8 +382,8 @@ extern void no_asm_to_stream (FILE *);
 #define SECTION_STYLE_MASK 0x600000	/* bits used for SECTION_STYLE */
 #define SECTION_COMMON   0x800000	/* contains common data */
 #define SECTION_RELRO	 0x1000000	/* data is readonly after relocation processing */
-#define SECTION_MACH_DEP 0x2000000	/* subsequent bits reserved for target */
-#define SECTION_EXCLUDE  0x4000000      /* discarded by the linker */
+#define SECTION_EXCLUDE  0x2000000	/* discarded by the linker */
+#define SECTION_MACH_DEP 0x4000000	/* subsequent bits reserved for target */
 
 /* This SECTION_STYLE is used for unnamed sections that we can switch
    to using a special assembler directive.  */
@@ -556,7 +492,7 @@ struct GTY(()) noswitch_section {
 };
 
 /* Information about a section, which may be named or unnamed.  */
-union GTY ((desc ("SECTION_STYLE (&(%h))"))) section {
+union GTY ((desc ("SECTION_STYLE (&(%h))"), for_user)) section {
   struct section_common GTY ((skip)) common;
   struct named_section GTY ((tag ("SECTION_NAMED"))) named;
   struct unnamed_section GTY ((tag ("SECTION_UNNAMED"))) unnamed;
@@ -595,7 +531,7 @@ extern section *get_variable_section (tree, bool);
 extern void place_block_symbol (rtx);
 extern rtx get_section_anchor (struct object_block *, HOST_WIDE_INT,
 			       enum tls_model);
-extern section *mergeable_constant_section (enum machine_mode,
+extern section *mergeable_constant_section (machine_mode,
 					    unsigned HOST_WIDE_INT,
 					    unsigned int);
 extern section *function_section (tree);
@@ -620,16 +556,16 @@ extern void output_file_directive (FILE *, const char *);
 extern unsigned int default_section_type_flags (tree, const char *, int);
 
 extern bool have_global_bss_p (void);
+extern bool bss_initializer_p (const_tree);
+
 extern void default_no_named_section (const char *, unsigned int, tree);
 extern void default_elf_asm_named_section (const char *, unsigned int, tree);
 extern enum section_category categorize_decl_for_section (const_tree, int);
 extern void default_coff_asm_named_section (const char *, unsigned int, tree);
 extern void default_pe_asm_named_section (const char *, unsigned int, tree);
 
-extern void default_stabs_asm_out_destructor (rtx, int);
 extern void default_named_section_asm_out_destructor (rtx, int);
 extern void default_dtor_section_asm_out_destructor (rtx, int);
-extern void default_stabs_asm_out_constructor (rtx, int);
 extern void default_named_section_asm_out_constructor (rtx, int);
 extern void default_ctor_section_asm_out_constructor (rtx, int);
 
@@ -639,9 +575,9 @@ extern void default_unique_section (tree, int);
 extern section *default_function_rodata_section (tree);
 extern section *default_no_function_rodata_section (tree);
 extern section *default_clone_table_section (void);
-extern section *default_select_rtx_section (enum machine_mode, rtx,
+extern section *default_select_rtx_section (machine_mode, rtx,
 					    unsigned HOST_WIDE_INT);
-extern section *default_elf_select_rtx_section (enum machine_mode, rtx,
+extern section *default_elf_select_rtx_section (machine_mode, rtx,
 						unsigned HOST_WIDE_INT);
 extern void default_encode_section_info (tree, rtx, int);
 extern const char *default_strip_name_encoding (const char *);
@@ -649,6 +585,8 @@ extern void default_asm_output_anchor (rtx);
 extern bool default_use_anchors_for_symbol_p (const_rtx);
 extern bool default_binds_local_p (const_tree);
 extern bool default_binds_local_p_1 (const_tree, int);
+extern bool default_binds_local_p_2 (const_tree);
+extern bool default_binds_local_p_3 (const_tree, bool, bool, bool, bool);
 extern void default_globalize_label (FILE *, const char *);
 extern void default_globalize_decl_name (FILE *, tree);
 extern void default_emit_unwind_label (FILE *, tree, int, int);
@@ -672,29 +610,9 @@ extern void default_elf_init_array_asm_out_constructor (rtx, int);
 extern void default_elf_fini_array_asm_out_destructor (rtx, int);
 extern int maybe_assemble_visibility (tree);
 
-extern int default_address_cost (rtx, bool);
+extern int default_address_cost (rtx, machine_mode, addr_space_t, bool);
 
 /* Output stack usage information.  */
 extern void output_stack_usage (void);
-
-/* dbxout helper functions */
-#if defined DBX_DEBUGGING_INFO || defined XCOFF_DEBUGGING_INFO
-
-extern void dbxout_int (int);
-extern void dbxout_stabd (int, int);
-extern void dbxout_begin_stabn (int);
-extern void dbxout_begin_stabn_sline (int);
-extern void dbxout_begin_empty_stabs (int);
-extern void dbxout_begin_simple_stabs (const char *, int);
-extern void dbxout_begin_simple_stabs_desc (const char *, int, int);
-
-extern void dbxout_stab_value_zero (void);
-extern void dbxout_stab_value_label (const char *);
-extern void dbxout_stab_value_label_diff (const char *, const char *);
-extern void dbxout_stab_value_internal_label (const char *, int *);
-extern void dbxout_stab_value_internal_label_diff (const char *, int *,
-						   const char *);
-
-#endif
 
 #endif /* ! GCC_OUTPUT_H */

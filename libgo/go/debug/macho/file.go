@@ -1,4 +1,4 @@
-// Copyright 2009 The Go Authors.  All rights reserved.
+// Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -11,7 +11,6 @@ import (
 	"bytes"
 	"debug/dwarf"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -74,6 +73,9 @@ type Segment struct {
 func (s *Segment) Data() ([]byte, error) {
 	dat := make([]byte, s.sr.Size())
 	n, err := s.sr.ReadAt(dat, 0)
+	if n == len(dat) {
+		err = nil
+	}
 	return dat[0:n], err
 }
 
@@ -109,6 +111,9 @@ type Section struct {
 func (s *Section) Data() ([]byte, error) {
 	dat := make([]byte, s.sr.Size())
 	n, err := s.sr.ReadAt(dat, 0)
+	if n == len(dat) {
+		err = nil
+	}
 	return dat[0:n], err
 }
 
@@ -142,6 +147,8 @@ type Dysymtab struct {
  * Mach-O reader
  */
 
+// FormatError is returned by some operations if the data does
+// not have the correct format for an object file.
 type FormatError struct {
 	off int64
 	msg string
@@ -244,7 +251,7 @@ func NewFile(r io.ReaderAt) (*File, error) {
 
 		case LoadCmdDylib:
 			var hdr DylibCmd
-			b := bytes.NewBuffer(cmddat)
+			b := bytes.NewReader(cmddat)
 			if err := binary.Read(b, bo, &hdr); err != nil {
 				return nil, err
 			}
@@ -261,7 +268,7 @@ func NewFile(r io.ReaderAt) (*File, error) {
 
 		case LoadCmdSymtab:
 			var hdr SymtabCmd
-			b := bytes.NewBuffer(cmddat)
+			b := bytes.NewReader(cmddat)
 			if err := binary.Read(b, bo, &hdr); err != nil {
 				return nil, err
 			}
@@ -288,7 +295,7 @@ func NewFile(r io.ReaderAt) (*File, error) {
 
 		case LoadCmdDysymtab:
 			var hdr DysymtabCmd
-			b := bytes.NewBuffer(cmddat)
+			b := bytes.NewReader(cmddat)
 			if err := binary.Read(b, bo, &hdr); err != nil {
 				return nil, err
 			}
@@ -297,7 +304,7 @@ func NewFile(r io.ReaderAt) (*File, error) {
 				return nil, err
 			}
 			x := make([]uint32, hdr.Nindirectsyms)
-			if err := binary.Read(bytes.NewBuffer(dat), bo, x); err != nil {
+			if err := binary.Read(bytes.NewReader(dat), bo, x); err != nil {
 				return nil, err
 			}
 			st := new(Dysymtab)
@@ -309,7 +316,7 @@ func NewFile(r io.ReaderAt) (*File, error) {
 
 		case LoadCmdSegment:
 			var seg32 Segment32
-			b := bytes.NewBuffer(cmddat)
+			b := bytes.NewReader(cmddat)
 			if err := binary.Read(b, bo, &seg32); err != nil {
 				return nil, err
 			}
@@ -347,7 +354,7 @@ func NewFile(r io.ReaderAt) (*File, error) {
 
 		case LoadCmdSegment64:
 			var seg64 Segment64
-			b := bytes.NewBuffer(cmddat)
+			b := bytes.NewReader(cmddat)
 			if err := binary.Read(b, bo, &seg64); err != nil {
 				return nil, err
 			}
@@ -394,7 +401,7 @@ func NewFile(r io.ReaderAt) (*File, error) {
 func (f *File) parseSymtab(symdat, strtab, cmddat []byte, hdr *SymtabCmd, offset int64) (*Symtab, error) {
 	bo := f.ByteOrder
 	symtab := make([]Symbol, hdr.Nsyms)
-	b := bytes.NewBuffer(symdat)
+	b := bytes.NewReader(symdat)
 	for i := range symtab {
 		var n Nlist64
 		if f.Magic == Magic64 {
@@ -465,15 +472,15 @@ func (f *File) Section(name string) *Section {
 // DWARF returns the DWARF debug information for the Mach-O file.
 func (f *File) DWARF() (*dwarf.Data, error) {
 	// There are many other DWARF sections, but these
-	// are the required ones, and the debug/dwarf package
-	// does not use the others, so don't bother loading them.
-	var names = [...]string{"abbrev", "info", "line", "str"}
+	// are the ones the debug/dwarf package uses.
+	// Don't bother loading others.
+	var names = [...]string{"abbrev", "info", "line", "ranges", "str"}
 	var dat [len(names)][]byte
 	for i, name := range names {
 		name = "__debug_" + name
 		s := f.Section(name)
 		if s == nil {
-			return nil, errors.New("missing Mach-O section " + name)
+			continue
 		}
 		b, err := s.Data()
 		if err != nil && uint64(len(b)) < s.Size {
@@ -482,8 +489,8 @@ func (f *File) DWARF() (*dwarf.Data, error) {
 		dat[i] = b
 	}
 
-	abbrev, info, line, str := dat[0], dat[1], dat[2], dat[3]
-	return dwarf.New(abbrev, nil, nil, info, line, nil, nil, str)
+	abbrev, info, line, ranges, str := dat[0], dat[1], dat[2], dat[3], dat[4]
+	return dwarf.New(abbrev, nil, nil, info, line, nil, ranges, str)
 }
 
 // ImportedSymbols returns the names of all symbols

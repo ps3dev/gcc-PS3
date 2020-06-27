@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---            Copyright (C) 2011, Free Software Foundation, Inc.            --
+--          Copyright (C) 2011-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- This specification is derived from the Ada Reference Manual for use with --
 -- GNAT. The copyright notice above, and the license provisions that follow --
@@ -32,8 +32,8 @@
 ------------------------------------------------------------------------------
 
 with System;
+with Ada.Containers.Ordered_Sets;
 with Ada.Containers.Synchronized_Queue_Interfaces;
-with Ada.Finalization;
 
 generic
    with package Queue_Interfaces is
@@ -50,6 +50,7 @@ generic
    Default_Ceiling : System.Any_Priority := System.Priority'Last;
 
 package Ada.Containers.Unbounded_Priority_Queues is
+   pragma Annotate (CodePeer, Skip_Analysis);
    pragma Preelaborate;
 
    package Implementation is
@@ -58,55 +59,52 @@ package Ada.Containers.Unbounded_Priority_Queues is
 
       pragma Implementation_Defined;
 
-      type List_Type is tagged limited private;
+      --  We use an ordered set to hold the queue elements. This gives O(lg N)
+      --  performance in the worst case for Enqueue and Dequeue.
+      --  Sequence_Number is used to distinguish equivalent items. Each Enqueue
+      --  uses a higher Sequence_Number, so that a new item is placed after
+      --  already-enqueued equivalent items.
+      --
+      --  At any time, the first set element is the one to be dequeued next (if
+      --  the queue is not empty).
 
-      procedure Enqueue
-        (List     : in out List_Type;
-         New_Item : Queue_Interfaces.Element_Type);
-
-      procedure Dequeue
-        (List    : in out List_Type;
-         Element : out Queue_Interfaces.Element_Type);
-
-      procedure Dequeue
-        (List     : in out List_Type;
-         At_Least : Queue_Priority;
-         Element  : in out Queue_Interfaces.Element_Type;
-         Success  : out Boolean);
-
-      function Length (List : List_Type) return Count_Type;
-
-      function Max_Length (List : List_Type) return Count_Type;
-
-   private
-
-      type Node_Type;
-      type Node_Access is access Node_Type;
-
-      type Node_Type is limited record
-         Element : Queue_Interfaces.Element_Type;
-         Next    : Node_Access;
+      type Set_Elem is record
+         Sequence_Number : Count_Type;
+         Item : Queue_Interfaces.Element_Type;
       end record;
 
-      type List_Type is new Ada.Finalization.Limited_Controlled with record
-         First, Last : Node_Access;
-         Length      : Count_Type := 0;
-         Max_Length  : Count_Type := 0;
-      end record;
+      function "=" (X, Y : Queue_Interfaces.Element_Type) return Boolean is
+         (not Before (Get_Priority (X), Get_Priority (Y))
+            and then not Before (Get_Priority (Y), Get_Priority (X)));
+      --  Elements are equal if neither is Before the other
 
-      overriding
-      procedure Finalize (List : in out List_Type);
+      function "=" (X, Y : Set_Elem) return Boolean is
+         (X.Sequence_Number = Y.Sequence_Number and then X.Item = Y.Item);
+      --  Set_Elems are equal if the elements are equal, and the
+      --  Sequence_Numbers are equal. This is passed to Ordered_Sets.
+
+      function "<" (X, Y : Set_Elem) return Boolean is
+         (if X.Item = Y.Item
+            then X.Sequence_Number < Y.Sequence_Number
+            else Before (Get_Priority (X.Item), Get_Priority (Y.Item)));
+      --  If the items are equal, Sequence_Number breaks the tie. Otherwise,
+      --  use Before. This is passed to Ordered_Sets.
+
+      pragma Suppress (Container_Checks);
+      package Sets is new Ada.Containers.Ordered_Sets (Set_Elem);
 
    end Implementation;
 
+   use Implementation, Implementation.Sets;
+
    protected type Queue (Ceiling : System.Any_Priority := Default_Ceiling)
-     with Priority => Ceiling is new Queue_Interfaces.Queue with
+   with
+     Priority => Ceiling
+   is new Queue_Interfaces.Queue with
 
-      overriding
-      entry Enqueue (New_Item : Queue_Interfaces.Element_Type);
+      overriding entry Enqueue (New_Item : Queue_Interfaces.Element_Type);
 
-      overriding
-      entry Dequeue (Element : out Queue_Interfaces.Element_Type);
+      overriding entry Dequeue (Element : out Queue_Interfaces.Element_Type);
 
       --  The priority queue operation Dequeue_Only_High_Priority had been a
       --  protected entry in early drafts of AI05-0159, but it was discovered
@@ -115,22 +113,25 @@ package Ada.Containers.Unbounded_Priority_Queues is
       --  ARG meeting in Edinburgh (June 2011), with a different signature and
       --  semantics.
 
-      not overriding
       procedure Dequeue_Only_High_Priority
         (At_Least : Queue_Priority;
          Element  : in out Queue_Interfaces.Element_Type;
          Success  : out Boolean);
 
-      overriding
-      function Current_Use return Count_Type;
+      overriding function Current_Use return Count_Type;
 
-      overriding
-      function Peak_Use return Count_Type;
+      overriding function Peak_Use return Count_Type;
 
    private
+      Q_Elems : Set;
+      --  Elements of the queue
 
-      List : Implementation.List_Type;
+      Max_Length : Count_Type := 0;
+      --  The current length of the queue is the Length of Q_Elems. This is the
+      --  maximum value of that, so far. Updated by Enqueue.
 
+      Next_Sequence_Number : Count_Type := 0;
+      --  Steadily increasing counter
    end Queue;
 
 end Ada.Containers.Unbounded_Priority_Queues;

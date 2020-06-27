@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Package gif implements a GIF image decoder.
+// Package gif implements a GIF image decoder and encoder.
 //
 // The GIF specification is at http://www.w3.org/Graphics/GIF/spec-gif89a.txt.
 package gif
@@ -17,6 +17,12 @@ import (
 	"io"
 )
 
+var (
+	errNotEnough = errors.New("gif: not enough image data")
+	errTooMuch   = errors.New("gif: too much image data")
+	errBadPixel  = errors.New("gif: invalid pixel value")
+)
+
 // If the io.Reader does not also have ReadByte, then decode will introduce its own buffering.
 type reader interface {
 	io.Reader
@@ -26,15 +32,20 @@ type reader interface {
 // Masks etc.
 const (
 	// Fields.
-	fColorMapFollows = 1 << 7
-
-	// Image fields.
-	ifLocalColorTable = 1 << 7
-	ifInterlace       = 1 << 6
-	ifPixelSizeMask   = 7
+	fColorTable         = 1 << 7
+	fInterlace          = 1 << 6
+	fColorTableBitsMask = 7
 
 	// Graphic control flags.
 	gcTransparentColorSet = 1 << 0
+	gcDisposalMethodMask  = 7 << 2
+)
+
+// Disposal Methods.
+const (
+	DisposalNone       = 0x01
+	DisposalBackground = 0x02
+	DisposalPrevious   = 0x03
 )
 
 // Section indicators.
@@ -52,6 +63,22 @@ const (
 	eApplication    = 0xFF // Application
 )
 
+func readFull(r io.Reader, b []byte) error {
+	_, err := io.ReadFull(r, b)
+	if err == io.EOF {
+		err = io.ErrUnexpectedEOF
+	}
+	return err
+}
+
+func readByte(r io.ByteReader) (byte, error) {
+	b, err := r.ReadByte()
+	if err == io.EOF {
+		err = io.ErrUnexpectedEOF
+	}
+	return b, err
+}
+
 // decoder is the type used to decode a GIF file.
 type decoder struct {
 	r reader
@@ -60,58 +87,61 @@ type decoder struct {
 	vers            string
 	width           int
 	height          int
-	flags           byte
-	headerFields    byte
-	backgroundIndex byte
 	loopCount       int
 	delayTime       int
-
-	// Unused from header.
-	aspect byte
+	backgroundIndex byte
+	disposalMethod  byte
 
 	// From image descriptor.
 	imageFields byte
 
 	// From graphics control.
-	transparentIndex byte
+	transparentIndex    byte
+	hasTransparentIndex bool
 
 	// Computed.
-	pixelSize      uint
-	globalColorMap color.Palette
+	globalColorTable color.Palette
 
 	// Used when decoding.
-	delay []int
-	image []*image.Paletted
-	tmp   [1024]byte // must be at least 768 so we can read color map
+	delay    []int
+	disposal []byte
+	image    []*image.Paletted
+	tmp      [1024]byte // must be at least 768 so we can read color table
 }
 
 // blockReader parses the block structure of GIF image data, which
 // comprises (n, (n bytes)) blocks, with 1 <= n <= 255.  It is the
 // reader given to the LZW decoder, which is thus immune to the
-// blocking.  After the LZW decoder completes, there will be a 0-byte
-// block remaining (0, ()), but under normal execution blockReader
-// doesn't consume it, so it is handled in decode.
+// blocking. After the LZW decoder completes, there will be a 0-byte
+// block remaining (0, ()), which is consumed when checking that the
+// blockReader is exhausted.
 type blockReader struct {
 	r     reader
 	slice []byte
+	err   error
 	tmp   [256]byte
 }
 
 func (b *blockReader) Read(p []byte) (int, error) {
+	if b.err != nil {
+		return 0, b.err
+	}
 	if len(p) == 0 {
 		return 0, nil
 	}
 	if len(b.slice) == 0 {
-		blockLen, err := b.r.ReadByte()
-		if err != nil {
-			return 0, err
+		var blockLen uint8
+		blockLen, b.err = b.r.ReadByte()
+		if b.err != nil {
+			return 0, b.err
 		}
 		if blockLen == 0 {
-			return 0, io.EOF
+			b.err = io.EOF
+			return 0, b.err
 		}
-		b.slice = b.tmp[0:blockLen]
-		if _, err = io.ReadFull(b.r, b.slice); err != nil {
-			return 0, err
+		b.slice = b.tmp[:blockLen]
+		if b.err = readFull(b.r, b.slice); b.err != nil {
+			return 0, b.err
 		}
 	}
 	n := copy(p, b.slice)
@@ -136,132 +166,170 @@ func (d *decoder) decode(r io.Reader, configOnly bool) error {
 		return nil
 	}
 
-	if d.headerFields&fColorMapFollows != 0 {
-		if d.globalColorMap, err = d.readColorMap(); err != nil {
-			return err
-		}
-	}
-
-Loop:
-	for err == nil {
-		var c byte
-		c, err = d.r.ReadByte()
-		if err == io.EOF {
-			break
+	for {
+		c, err := readByte(d.r)
+		if err != nil {
+			return fmt.Errorf("gif: reading frames: %v", err)
 		}
 		switch c {
 		case sExtension:
-			err = d.readExtension()
+			if err = d.readExtension(); err != nil {
+				return err
+			}
 
 		case sImageDescriptor:
-			var m *image.Paletted
-			m, err = d.newImageFromDescriptor()
-			if err != nil {
-				break
-			}
-			if d.imageFields&fColorMapFollows != 0 {
-				m.Palette, err = d.readColorMap()
-				if err != nil {
-					break
-				}
-				// TODO: do we set transparency in this map too? That would be
-				// d.setTransparency(m.Palette)
-			} else {
-				m.Palette = d.globalColorMap
-			}
-			var litWidth uint8
-			litWidth, err = d.r.ReadByte()
+			m, err := d.newImageFromDescriptor()
 			if err != nil {
 				return err
+			}
+			useLocalColorTable := d.imageFields&fColorTable != 0
+			if useLocalColorTable {
+				m.Palette, err = d.readColorTable(d.imageFields)
+				if err != nil {
+					return err
+				}
+			} else {
+				if d.globalColorTable == nil {
+					return errors.New("gif: no color table")
+				}
+				m.Palette = d.globalColorTable
+			}
+			if d.hasTransparentIndex {
+				if !useLocalColorTable {
+					// Clone the global color table.
+					m.Palette = append(color.Palette(nil), d.globalColorTable...)
+				}
+				if ti := int(d.transparentIndex); ti < len(m.Palette) {
+					m.Palette[ti] = color.RGBA{}
+				} else {
+					// The transparentIndex is out of range, which is an error
+					// according to the spec, but Firefox and Google Chrome
+					// seem OK with this, so we enlarge the palette with
+					// transparent colors. See golang.org/issue/15059.
+					p := make(color.Palette, ti+1)
+					copy(p, m.Palette)
+					for i := len(m.Palette); i < len(p); i++ {
+						p[i] = color.RGBA{}
+					}
+					m.Palette = p
+				}
+			}
+			litWidth, err := readByte(d.r)
+			if err != nil {
+				return fmt.Errorf("gif: reading image data: %v", err)
 			}
 			if litWidth < 2 || litWidth > 8 {
 				return fmt.Errorf("gif: pixel size in decode out of range: %d", litWidth)
 			}
 			// A wonderfully Go-like piece of magic.
-			lzwr := lzw.NewReader(&blockReader{r: d.r}, lzw.LSB, int(litWidth))
-			if _, err = io.ReadFull(lzwr, m.Pix); err != nil {
-				break
+			br := &blockReader{r: d.r}
+			lzwr := lzw.NewReader(br, lzw.LSB, int(litWidth))
+			defer lzwr.Close()
+			if err = readFull(lzwr, m.Pix); err != nil {
+				if err != io.ErrUnexpectedEOF {
+					return fmt.Errorf("gif: reading image data: %v", err)
+				}
+				return errNotEnough
+			}
+			// Both lzwr and br should be exhausted. Reading from them should
+			// yield (0, io.EOF).
+			//
+			// The spec (Appendix F - Compression), says that "An End of
+			// Information code... must be the last code output by the encoder
+			// for an image". In practice, though, giflib (a widely used C
+			// library) does not enforce this, so we also accept lzwr returning
+			// io.ErrUnexpectedEOF (meaning that the encoded stream hit io.EOF
+			// before the LZW decoder saw an explicit end code), provided that
+			// the io.ReadFull call above successfully read len(m.Pix) bytes.
+			// See https://golang.org/issue/9856 for an example GIF.
+			if n, err := lzwr.Read(d.tmp[:1]); n != 0 || (err != io.EOF && err != io.ErrUnexpectedEOF) {
+				if err != nil {
+					return fmt.Errorf("gif: reading image data: %v", err)
+				}
+				return errTooMuch
+			}
+			if n, err := br.Read(d.tmp[:1]); n != 0 || err != io.EOF {
+				if err != nil {
+					return fmt.Errorf("gif: reading image data: %v", err)
+				}
+				return errTooMuch
 			}
 
-			// There should be a "0" block remaining; drain that.
-			c, err = d.r.ReadByte()
-			if err != nil {
-				return err
-			}
-			if c != 0 {
-				return errors.New("gif: extra data after image")
+			// Check that the color indexes are inside the palette.
+			if len(m.Palette) < 256 {
+				for _, pixel := range m.Pix {
+					if int(pixel) >= len(m.Palette) {
+						return errBadPixel
+					}
+				}
 			}
 
 			// Undo the interlacing if necessary.
-			if d.imageFields&ifInterlace != 0 {
+			if d.imageFields&fInterlace != 0 {
 				uninterlace(m)
 			}
 
 			d.image = append(d.image, m)
 			d.delay = append(d.delay, d.delayTime)
-			d.delayTime = 0 // TODO: is this correct, or should we hold on to the value?
+			d.disposal = append(d.disposal, d.disposalMethod)
+			// The GIF89a spec, Section 23 (Graphic Control Extension) says:
+			// "The scope of this extension is the first graphic rendering block
+			// to follow." We therefore reset the GCE fields to zero.
+			d.delayTime = 0
+			d.hasTransparentIndex = false
 
 		case sTrailer:
-			break Loop
+			if len(d.image) == 0 {
+				return fmt.Errorf("gif: missing image data")
+			}
+			return nil
 
 		default:
-			err = fmt.Errorf("gif: unknown block type: 0x%.2x", c)
+			return fmt.Errorf("gif: unknown block type: 0x%.2x", c)
 		}
 	}
-	if err != nil {
-		return err
-	}
-	if len(d.image) == 0 {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
 }
 
 func (d *decoder) readHeaderAndScreenDescriptor() error {
-	_, err := io.ReadFull(d.r, d.tmp[0:13])
+	err := readFull(d.r, d.tmp[:13])
 	if err != nil {
-		return err
+		return fmt.Errorf("gif: reading header: %v", err)
 	}
-	d.vers = string(d.tmp[0:6])
+	d.vers = string(d.tmp[:6])
 	if d.vers != "GIF87a" && d.vers != "GIF89a" {
-		return fmt.Errorf("gif: can't recognize format %s", d.vers)
+		return fmt.Errorf("gif: can't recognize format %q", d.vers)
 	}
 	d.width = int(d.tmp[6]) + int(d.tmp[7])<<8
 	d.height = int(d.tmp[8]) + int(d.tmp[9])<<8
-	d.headerFields = d.tmp[10]
-	d.backgroundIndex = d.tmp[11]
-	d.aspect = d.tmp[12]
-	d.loopCount = -1
-	d.pixelSize = uint(d.headerFields&7) + 1
+	if fields := d.tmp[10]; fields&fColorTable != 0 {
+		d.backgroundIndex = d.tmp[11]
+		// readColorTable overwrites the contents of d.tmp, but that's OK.
+		if d.globalColorTable, err = d.readColorTable(fields); err != nil {
+			return err
+		}
+	}
+	// d.tmp[12] is the Pixel Aspect Ratio, which is ignored.
 	return nil
 }
 
-func (d *decoder) readColorMap() (color.Palette, error) {
-	if d.pixelSize > 8 {
-		return nil, fmt.Errorf("gif: can't handle %d bits per pixel", d.pixelSize)
-	}
-	numColors := 1 << d.pixelSize
-	if d.imageFields&ifLocalColorTable != 0 {
-		numColors = 1 << ((d.imageFields & ifPixelSizeMask) + 1)
-	}
-	numValues := 3 * numColors
-	_, err := io.ReadFull(d.r, d.tmp[0:numValues])
+func (d *decoder) readColorTable(fields byte) (color.Palette, error) {
+	n := 1 << (1 + uint(fields&fColorTableBitsMask))
+	err := readFull(d.r, d.tmp[:3*n])
 	if err != nil {
-		return nil, fmt.Errorf("gif: short read on color map: %s", err)
+		return nil, fmt.Errorf("gif: reading color table: %s", err)
 	}
-	colorMap := make(color.Palette, numColors)
-	j := 0
-	for i := range colorMap {
-		colorMap[i] = color.RGBA{d.tmp[j+0], d.tmp[j+1], d.tmp[j+2], 0xFF}
+	j, p := 0, make(color.Palette, n)
+	for i := range p {
+		p[i] = color.RGBA{d.tmp[j+0], d.tmp[j+1], d.tmp[j+2], 0xFF}
 		j += 3
 	}
-	return colorMap, nil
+	return p, nil
 }
 
 func (d *decoder) readExtension() error {
-	extension, err := d.r.ReadByte()
+	extension, err := readByte(d.r)
 	if err != nil {
-		return err
+		return fmt.Errorf("gif: reading extension: %v", err)
 	}
 	size := 0
 	switch extension {
@@ -272,9 +340,9 @@ func (d *decoder) readExtension() error {
 	case eComment:
 		// nothing to do but read the data.
 	case eApplication:
-		b, err := d.r.ReadByte()
+		b, err := readByte(d.r)
 		if err != nil {
-			return err
+			return fmt.Errorf("gif: reading extension: %v", err)
 		}
 		// The spec requires size be 11, but Adobe sometimes uses 10.
 		size = int(b)
@@ -282,8 +350,8 @@ func (d *decoder) readExtension() error {
 		return fmt.Errorf("gif: unknown extension 0x%.2x", extension)
 	}
 	if size > 0 {
-		if _, err := io.ReadFull(d.r, d.tmp[0:size]); err != nil {
-			return err
+		if err := readFull(d.r, d.tmp[:size]); err != nil {
+			return fmt.Errorf("gif: reading extension: %v", err)
 		}
 	}
 
@@ -291,8 +359,11 @@ func (d *decoder) readExtension() error {
 	// this extension defines a loop count.
 	if extension == eApplication && string(d.tmp[:size]) == "NETSCAPE2.0" {
 		n, err := d.readBlock()
-		if n == 0 || err != nil {
-			return err
+		if err != nil {
+			return fmt.Errorf("gif: reading extension: %v", err)
+		}
+		if n == 0 {
+			return nil
 		}
 		if n == 3 && d.tmp[0] == 1 {
 			d.loopCount = int(d.tmp[1]) | int(d.tmp[2])<<8
@@ -300,34 +371,37 @@ func (d *decoder) readExtension() error {
 	}
 	for {
 		n, err := d.readBlock()
-		if n == 0 || err != nil {
-			return err
+		if err != nil {
+			return fmt.Errorf("gif: reading extension: %v", err)
+		}
+		if n == 0 {
+			return nil
 		}
 	}
-	panic("unreachable")
 }
 
 func (d *decoder) readGraphicControl() error {
-	if _, err := io.ReadFull(d.r, d.tmp[0:6]); err != nil {
+	if err := readFull(d.r, d.tmp[:6]); err != nil {
 		return fmt.Errorf("gif: can't read graphic control: %s", err)
 	}
-	d.flags = d.tmp[1]
+	if d.tmp[0] != 4 {
+		return fmt.Errorf("gif: invalid graphic control extension block size: %d", d.tmp[0])
+	}
+	flags := d.tmp[1]
+	d.disposalMethod = (flags & gcDisposalMethodMask) >> 2
 	d.delayTime = int(d.tmp[2]) | int(d.tmp[3])<<8
-	if d.flags&gcTransparentColorSet != 0 {
+	if flags&gcTransparentColorSet != 0 {
 		d.transparentIndex = d.tmp[4]
-		d.setTransparency(d.globalColorMap)
+		d.hasTransparentIndex = true
+	}
+	if d.tmp[5] != 0 {
+		return fmt.Errorf("gif: invalid graphic control extension block terminator: %d", d.tmp[5])
 	}
 	return nil
 }
 
-func (d *decoder) setTransparency(colorMap color.Palette) {
-	if int(d.transparentIndex) < len(colorMap) {
-		colorMap[d.transparentIndex] = color.RGBA{}
-	}
-}
-
 func (d *decoder) newImageFromDescriptor() (*image.Paletted, error) {
-	if _, err := io.ReadFull(d.r, d.tmp[0:9]); err != nil {
+	if err := readFull(d.r, d.tmp[:9]); err != nil {
 		return nil, fmt.Errorf("gif: can't read image descriptor: %s", err)
 	}
 	left := int(d.tmp[0]) + int(d.tmp[1])<<8
@@ -335,15 +409,26 @@ func (d *decoder) newImageFromDescriptor() (*image.Paletted, error) {
 	width := int(d.tmp[4]) + int(d.tmp[5])<<8
 	height := int(d.tmp[6]) + int(d.tmp[7])<<8
 	d.imageFields = d.tmp[8]
-	return image.NewPaletted(image.Rect(left, top, left+width, top+height), nil), nil
+
+	// The GIF89a spec, Section 20 (Image Descriptor) says:
+	// "Each image must fit within the boundaries of the Logical
+	// Screen, as defined in the Logical Screen Descriptor."
+	bounds := image.Rect(left, top, left+width, top+height)
+	if bounds != bounds.Intersect(image.Rect(0, 0, d.width, d.height)) {
+		return nil, errors.New("gif: frame bounds larger than image bounds")
+	}
+	return image.NewPaletted(bounds, nil), nil
 }
 
 func (d *decoder) readBlock() (int, error) {
-	n, err := d.r.ReadByte()
+	n, err := readByte(d.r)
 	if n == 0 || err != nil {
 		return 0, err
 	}
-	return io.ReadFull(d.r, d.tmp[0:n])
+	if err := readFull(d.r, d.tmp[:n]); err != nil {
+		return 0, err
+	}
+	return int(n), nil
 }
 
 // interlaceScan defines the ordering for a pass of the interlace algorithm.
@@ -392,6 +477,24 @@ type GIF struct {
 	Image     []*image.Paletted // The successive images.
 	Delay     []int             // The successive delay times, one per frame, in 100ths of a second.
 	LoopCount int               // The loop count.
+	// Disposal is the successive disposal methods, one per frame. For
+	// backwards compatibility, a nil Disposal is valid to pass to EncodeAll,
+	// and implies that each frame's disposal method is 0 (no disposal
+	// specified).
+	Disposal []byte
+	// Config is the global color table (palette), width and height. A nil or
+	// empty-color.Palette Config.ColorModel means that each frame has its own
+	// color table and there is no global color table. Each frame's bounds must
+	// be within the rectangle defined by the two points (0, 0) and
+	// (Config.Width, Config.Height).
+	//
+	// For backwards compatibility, a zero-valued Config is valid to pass to
+	// EncodeAll, and implies that the overall GIF's width and height equals
+	// the first frame's bounds' Rectangle.Max point.
+	Config image.Config
+	// BackgroundIndex is the background index in the global color table, for
+	// use with the DisposalBackground disposal method.
+	BackgroundIndex byte
 }
 
 // DecodeAll reads a GIF image from r and returns the sequential frames
@@ -405,6 +508,13 @@ func DecodeAll(r io.Reader) (*GIF, error) {
 		Image:     d.image,
 		LoopCount: d.loopCount,
 		Delay:     d.delay,
+		Disposal:  d.disposal,
+		Config: image.Config{
+			ColorModel: d.globalColorTable,
+			Width:      d.width,
+			Height:     d.height,
+		},
+		BackgroundIndex: d.backgroundIndex,
 	}
 	return gif, nil
 }
@@ -417,7 +527,7 @@ func DecodeConfig(r io.Reader) (image.Config, error) {
 		return image.Config{}, err
 	}
 	return image.Config{
-		ColorModel: d.globalColorMap,
+		ColorModel: d.globalColorTable,
 		Width:      d.width,
 		Height:     d.height,
 	}, nil

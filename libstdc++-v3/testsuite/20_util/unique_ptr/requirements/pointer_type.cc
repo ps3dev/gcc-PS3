@@ -1,7 +1,6 @@
-// { dg-do compile }
-// { dg-options "-std=gnu++0x" }
+// { dg-do compile { target c++11 } }
 
-// Copyright (C) 2010, 2011 Free Software Foundation
+// Copyright (C) 2010-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -18,10 +17,9 @@
 // with this library; see the file COPYING3.  If not see
 // <http://www.gnu.org/licenses/>.
 
-// 20.6.11 Template class unique_ptr [unique.ptr.single]
+// 20.7.1.2 unique_ptr for single objects [unique.ptr.single]
 
 #include <memory>
-#include <testsuite_hooks.h>
 
 struct A
 {

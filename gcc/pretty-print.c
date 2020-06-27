@@ -1,6 +1,5 @@
 /* Various declarations for language-independent pretty-print subroutines.
-   Copyright (C) 2003, 2004, 2005, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2003-2017 Free Software Foundation, Inc.
    Contributed by Gabriel Dos Reis <gdr@integrable-solutions.net>
 
 This file is part of GCC.
@@ -24,14 +23,60 @@ along with GCC; see the file COPYING3.  If not see
 #include "coretypes.h"
 #include "intl.h"
 #include "pretty-print.h"
+#include "diagnostic-color.h"
+#include "selftest.h"
 
 #if HAVE_ICONV
 #include <iconv.h>
 #endif
 
-/* A pointer to the formatted diagnostic message.  */
-#define pp_formatted_text_data(PP) \
-   ((const char *) obstack_base (pp_base (PP)->buffer->obstack))
+static void pp_quoted_string (pretty_printer *, const char *, size_t = -1);
+
+/* Overwrite the given location/range within this text_info's rich_location.
+   For use e.g. when implementing "+" in client format decoders.  */
+
+void
+text_info::set_location (unsigned int idx, location_t loc, bool show_caret_p)
+{
+  gcc_checking_assert (m_richloc);
+  m_richloc->set_range (line_table, idx, loc, show_caret_p);
+}
+
+location_t
+text_info::get_location (unsigned int index_of_location) const
+{
+  gcc_checking_assert (m_richloc);
+
+  if (index_of_location == 0)
+    return m_richloc->get_loc ();
+  else
+    return UNKNOWN_LOCATION;
+}
+
+// Default construct an output buffer.
+
+output_buffer::output_buffer ()
+  : formatted_obstack (),
+    chunk_obstack (),
+    obstack (&formatted_obstack),
+    cur_chunk_array (),
+    stream (stderr),
+    line_length (),
+    digit_buffer (),
+    flush_p (true)
+{
+  obstack_init (&formatted_obstack);
+  obstack_init (&chunk_obstack);
+}
+
+// Release resources owned by an output buffer at the end of lifetime.
+
+output_buffer::~output_buffer ()
+{
+  obstack_free (&chunk_obstack, NULL);
+  obstack_free (&formatted_obstack, NULL);
+}
+
 
 /* Format an integer given by va_arg (ARG, type-specifier T) where
    type-specifier is a precision modifier as indicated by PREC.  F is
@@ -95,7 +140,70 @@ void
 pp_write_text_to_stream (pretty_printer *pp)
 {
   const char *text = pp_formatted_text (pp);
-  fputs (text, pp->buffer->stream);
+  fputs (text, pp_buffer (pp)->stream);
+  pp_clear_output_area (pp);
+}
+
+/* As pp_write_text_to_stream, but for GraphViz label output.
+
+   Flush the formatted text of pretty-printer PP onto the attached stream.
+   Replace characters in PPF that have special meaning in a GraphViz .dot
+   file.
+   
+   This routine is not very fast, but it doesn't have to be as this is only
+   be used by routines dumping intermediate representations in graph form.  */
+
+void
+pp_write_text_as_dot_label_to_stream (pretty_printer *pp, bool for_record)
+{
+  const char *text = pp_formatted_text (pp);
+  const char *p = text;
+  FILE *fp = pp_buffer (pp)->stream;
+
+  for (;*p; p++)
+    {
+      bool escape_char;
+      switch (*p)
+	{
+	/* Print newlines as a left-aligned newline.  */
+	case '\n':
+	  fputs ("\\l", fp);
+	  escape_char = true;
+	  break;
+
+	/* The following characters are only special for record-shape nodes.  */
+	case '|':
+	case '{':
+	case '}':
+	case '<':
+	case '>':
+	case ' ':
+	  escape_char = for_record;
+	  break;
+
+	/* The following characters always have to be escaped
+	   for use in labels.  */
+	case '\\':
+	  /* There is a bug in some (f.i. 2.36.0) versions of graphiz
+	     ( http://www.graphviz.org/mantisbt/view.php?id=2524 ) related to
+	     backslash as last char in label.  Let's avoid triggering it.  */
+	  gcc_assert (*(p + 1) != '\0');
+	  /* Fall through.  */
+	case '"':
+	  escape_char = true;
+	  break;
+
+	default:
+	  escape_char = false;
+	  break;
+	}
+
+      if (escape_char)
+	fputc ('\\', fp);
+
+      fputc (*p, fp);
+    }
+
   pp_clear_output_area (pp);
 }
 
@@ -147,15 +255,14 @@ pp_maybe_wrap_text (pretty_printer *pp, const char *start, const char *end)
 static inline void
 pp_append_r (pretty_printer *pp, const char *start, int length)
 {
-  obstack_grow (pp->buffer->obstack, start, length);
-  pp->buffer->line_length += length;
+  output_buffer_append_r (pp_buffer (pp), start, length);
 }
 
 /* Insert enough spaces into the output area of PRETTY-PRINTER to bring
    the column position to the current indentation level, assuming that a
    newline has just been written to the buffer.  */
 void
-pp_base_indent (pretty_printer *pp)
+pp_indent (pretty_printer *pp)
 {
   int n = pp_indentation (pp);
   int i;
@@ -174,7 +281,9 @@ pp_base_indent (pretty_printer *pp)
    %wd, %wi, %wo, %wu, %wx: HOST_WIDE_INT versions.
    %c: character.
    %s: string.
-   %p: pointer.
+   %p: pointer (printed in a host-dependent manner).
+   %r: if pp_show_color(pp), switch to color identified by const char *.
+   %R: if pp_show_color(pp), reset color.
    %m: strerror(text->err_no) - does not consume a value from args_ptr.
    %%: '%'.
    %<: opening quote.
@@ -185,6 +294,8 @@ pp_base_indent (pretty_printer *pp)
 	 integer.
    %Ns: likewise, but length specified as constant in the format string.
    Flag 'q': quote formatted text (must come immediately after '%').
+   %Z: Requires two arguments - array of int, and len. Prints elements
+   of the array.
 
    Arguments can be used sequentially, or through %N$ resp. *N$
    notation Nth argument after the format string.  If %N$ / *N$
@@ -197,13 +308,13 @@ pp_base_indent (pretty_printer *pp)
    A format string can have at most 30 arguments.  */
 
 /* Formatting phases 1 and 2: render TEXT->format_spec plus
-   TEXT->args_ptr into a series of chunks in PP->buffer->args[].
-   Phase 3 is in pp_base_format_text.  */
+   TEXT->args_ptr into a series of chunks in pp_buffer (PP)->args[].
+   Phase 3 is in pp_output_formatted_text.  */
 
 void
-pp_base_format (pretty_printer *pp, text_info *text)
+pp_format (pretty_printer *pp, text_info *text)
 {
-  output_buffer *buffer = pp->buffer;
+  output_buffer *buffer = pp_buffer (pp);
   const char *p;
   const char **args;
   struct chunk_info *new_chunk_array;
@@ -220,7 +331,7 @@ pp_base_format (pretty_printer *pp, text_info *text)
   args = new_chunk_array->args;
 
   /* Formatting phase 1: split up TEXT->format_spec into chunks in
-     PP->buffer->args[].  Even-numbered chunks are to be output
+     pp_buffer (PP)->args[].  Even-numbered chunks are to be output
      verbatim, odd-numbered chunks are format specifiers.
      %m, %%, %<, %>, and %' are replaced with the appropriate text at
      this point.  */
@@ -249,17 +360,36 @@ pp_base_format (pretty_printer *pp, text_info *text)
 	  continue;
 
 	case '<':
-	  obstack_grow (&buffer->chunk_obstack,
-			open_quote, strlen (open_quote));
-	  p++;
-	  continue;
+	  {
+	    obstack_grow (&buffer->chunk_obstack,
+			  open_quote, strlen (open_quote));
+	    const char *colorstr
+	      = colorize_start (pp_show_color (pp), "quote");
+	    obstack_grow (&buffer->chunk_obstack, colorstr, strlen (colorstr));
+	    p++;
+	    continue;
+	  }
 
 	case '>':
+	  {
+	    const char *colorstr = colorize_stop (pp_show_color (pp));
+	    obstack_grow (&buffer->chunk_obstack, colorstr, strlen (colorstr));
+	  }
+	  /* FALLTHRU */
 	case '\'':
 	  obstack_grow (&buffer->chunk_obstack,
 			close_quote, strlen (close_quote));
 	  p++;
 	  continue;
+
+	case 'R':
+	  {
+	    const char *colorstr = colorize_stop (pp_show_color (pp));
+	    obstack_grow (&buffer->chunk_obstack, colorstr,
+			  strlen (colorstr));
+	    p++;
+	    continue;
+	  }
 
 	case 'm':
 	  {
@@ -415,13 +545,34 @@ pp_base_format (pretty_printer *pp, text_info *text)
       gcc_assert (!wide || precision == 0);
 
       if (quote)
-	pp_string (pp, open_quote);
+	{
+	  pp_string (pp, open_quote);
+	  pp_string (pp, colorize_start (pp_show_color (pp), "quote"));
+	}
 
       switch (*p)
 	{
-	case 'c':
-	  pp_character (pp, va_arg (*text->args_ptr, int));
+	case 'r':
+	  pp_string (pp, colorize_start (pp_show_color (pp),
+					 va_arg (*text->args_ptr,
+						 const char *)));
 	  break;
+
+	case 'c':
+	  {
+	    /* When quoting, print alphanumeric, punctuation, and the space
+	       character unchanged, and all others in hexadecimal with the
+	       "\x" prefix.  Otherwise print them all unchanged.  */
+	    int chr = va_arg (*text->args_ptr, int);
+	    if (ISPRINT (chr) || !quote)
+	      pp_character (pp, chr);
+	    else
+	      {
+		const char str [2] = { chr, '\0' };
+		pp_quoted_string (pp, str, 1);
+	      }
+	    break;
+	  }
 
 	case 'd':
 	case 'i':
@@ -442,7 +593,10 @@ pp_base_format (pretty_printer *pp, text_info *text)
 	  break;
 
 	case 's':
-	  pp_string (pp, va_arg (*text->args_ptr, const char *));
+	  if (quote)
+	    pp_quoted_string (pp, va_arg (*text->args_ptr, const char *));
+	  else
+	    pp_string (pp, va_arg (*text->args_ptr, const char *));
 	  break;
 
 	case 'p':
@@ -457,6 +611,23 @@ pp_base_format (pretty_printer *pp, text_info *text)
 	    pp_integer_with_precision
 	      (pp, *text->args_ptr, precision, unsigned, "u");
 	  break;
+
+	case 'Z':
+	  {
+	    int *v = va_arg (*text->args_ptr, int *);
+	    unsigned len = va_arg (*text->args_ptr, unsigned); 
+
+	    for (unsigned i = 0; i < len; ++i)
+	      {
+		pp_scalar (pp, "%i", v[i]);
+		if (i < len - 1)
+		  {
+		    pp_comma (pp);
+		    pp_space (pp);
+		  }
+	      }
+	    break;
+	 }
 
 	case 'x':
 	  if (wide)
@@ -512,16 +683,18 @@ pp_base_format (pretty_printer *pp, text_info *text)
 	}
 
       if (quote)
-	pp_string (pp, close_quote);
+	{
+	  pp_string (pp, colorize_stop (pp_show_color (pp)));
+	  pp_string (pp, close_quote);
+	}
 
       obstack_1grow (&buffer->chunk_obstack, '\0');
       *formatters[argno] = XOBFINISH (&buffer->chunk_obstack, const char *);
     }
 
-#ifdef ENABLE_CHECKING
-  for (; argno < PP_NL_ARGMAX; argno++)
-    gcc_assert (!formatters[argno]);
-#endif
+  if (CHECKING_P)
+    for (; argno < PP_NL_ARGMAX; argno++)
+      gcc_assert (!formatters[argno]);
 
   /* Revert to normal obstack and wrapping mode.  */
   buffer->obstack = &buffer->formatted_obstack;
@@ -532,7 +705,7 @@ pp_base_format (pretty_printer *pp, text_info *text)
 
 /* Format of a message pointed to by TEXT.  */
 void
-pp_base_output_formatted_text (pretty_printer *pp)
+pp_output_formatted_text (pretty_printer *pp)
 {
   unsigned int chunk;
   output_buffer *buffer = pp_buffer (pp);
@@ -542,7 +715,7 @@ pp_base_output_formatted_text (pretty_printer *pp)
   gcc_assert (buffer->obstack == &buffer->formatted_obstack);
   gcc_assert (buffer->line_length == 0);
 
-  /* This is a third phase, first 2 phases done in pp_base_format_args.
+  /* This is a third phase, first 2 phases done in pp_format_args.
      Now we actually print it.  */
   for (chunk = 0; args[chunk]; chunk++)
     pp_string (pp, args[chunk]);
@@ -556,7 +729,7 @@ pp_base_output_formatted_text (pretty_printer *pp)
 /* Helper subroutine of output_verbatim and verbatim. Do the appropriate
    settings needed by BUFFER for a verbatim formatting.  */
 void
-pp_base_format_verbatim (pretty_printer *pp, text_info *text)
+pp_format_verbatim (pretty_printer *pp, text_info *text)
 {
   /* Set verbatim mode.  */
   pp_wrapping_mode_t oldmode = pp_set_verbatim_wrapping (pp);
@@ -569,22 +742,33 @@ pp_base_format_verbatim (pretty_printer *pp, text_info *text)
   pp_wrapping_mode (pp) = oldmode;
 }
 
-/* Flush the content of BUFFER onto the attached stream.  */
+/* Flush the content of BUFFER onto the attached stream.  This
+   function does nothing unless pp->output_buffer->flush_p.  */
 void
-pp_base_flush (pretty_printer *pp)
+pp_flush (pretty_printer *pp)
 {
-  pp_write_text_to_stream (pp);
   pp_clear_state (pp);
-  fputc ('\n', pp->buffer->stream);
-  fflush (pp->buffer->stream);
-  pp_needs_newline (pp) = false;
+  if (!pp->buffer->flush_p)
+    return;
+  pp_write_text_to_stream (pp);
+  fflush (pp_buffer (pp)->stream);
+}
+
+/* Flush the content of BUFFER onto the attached stream independently
+   of the value of pp->output_buffer->flush_p.  */
+void
+pp_really_flush (pretty_printer *pp)
+{
+  pp_clear_state (pp);
+  pp_write_text_to_stream (pp);
+  fflush (pp_buffer (pp)->stream);
 }
 
 /* Sets the number of maximum characters per line PRETTY-PRINTER can
    output in line-wrapping mode.  A LENGTH value 0 suppresses
    line-wrapping.  */
 void
-pp_base_set_line_maximum_length (pretty_printer *pp, int length)
+pp_set_line_maximum_length (pretty_printer *pp, int length)
 {
   pp_line_cutoff (pp) = length;
   pp_set_real_maximum_length (pp);
@@ -592,15 +776,16 @@ pp_base_set_line_maximum_length (pretty_printer *pp, int length)
 
 /* Clear PRETTY-PRINTER output area text info.  */
 void
-pp_base_clear_output_area (pretty_printer *pp)
+pp_clear_output_area (pretty_printer *pp)
 {
-  obstack_free (pp->buffer->obstack, obstack_base (pp->buffer->obstack));
-  pp->buffer->line_length = 0;
+  obstack_free (pp_buffer (pp)->obstack,
+                obstack_base (pp_buffer (pp)->obstack));
+  pp_buffer (pp)->line_length = 0;
 }
 
 /* Set PREFIX for PRETTY-PRINTER.  */
 void
-pp_base_set_prefix (pretty_printer *pp, const char *prefix)
+pp_set_prefix (pretty_printer *pp, const char *prefix)
 {
   pp->prefix = prefix;
   pp_set_real_maximum_length (pp);
@@ -610,7 +795,7 @@ pp_base_set_prefix (pretty_printer *pp, const char *prefix)
 
 /* Free PRETTY-PRINTER's prefix, a previously malloc()'d string.  */
 void
-pp_base_destroy_prefix (pretty_printer *pp)
+pp_destroy_prefix (pretty_printer *pp)
 {
   if (pp->prefix != NULL)
     {
@@ -621,7 +806,7 @@ pp_base_destroy_prefix (pretty_printer *pp)
 
 /* Write out PRETTY-PRINTER's prefix.  */
 void
-pp_base_emit_prefix (pretty_printer *pp)
+pp_emit_prefix (pretty_printer *pp)
 {
   if (pp->prefix != NULL)
     {
@@ -634,7 +819,7 @@ pp_base_emit_prefix (pretty_printer *pp)
 	case DIAGNOSTICS_SHOW_PREFIX_ONCE:
 	  if (pp->emitted_prefix)
 	    {
-	      pp_base_indent (pp);
+	      pp_indent (pp);
 	      break;
 	    }
 	  pp_indentation (pp) += 3;
@@ -653,19 +838,30 @@ pp_base_emit_prefix (pretty_printer *pp)
 
 /* Construct a PRETTY-PRINTER with PREFIX and of MAXIMUM_LENGTH
    characters per line.  */
-void
-pp_construct (pretty_printer *pp, const char *prefix, int maximum_length)
+
+pretty_printer::pretty_printer (const char *p, int l)
+  : buffer (new (XCNEW (output_buffer)) output_buffer ()),
+    prefix (),
+    padding (pp_none),
+    maximum_length (),
+    indent_skip (),
+    wrapping (),
+    format_decoder (),
+    emitted_prefix (),
+    need_newline (),
+    translate_identifiers (true),
+    show_color ()
 {
-  memset (pp, 0, sizeof (pretty_printer));
-  pp->buffer = XCNEW (output_buffer);
-  obstack_init (&pp->buffer->chunk_obstack);
-  obstack_init (&pp->buffer->formatted_obstack);
-  pp->buffer->obstack = &pp->buffer->formatted_obstack;
-  pp->buffer->stream = stderr;
-  pp_line_cutoff (pp) = maximum_length;
-  pp_prefixing_rule (pp) = DIAGNOSTICS_SHOW_PREFIX_ONCE;
-  pp_set_prefix (pp, prefix);
-  pp_translate_identifiers (pp) = true;
+  pp_line_cutoff (this) = l;
+  /* By default, we emit prefixes once per message.  */
+  pp_prefixing_rule (this) = DIAGNOSTICS_SHOW_PREFIX_ONCE;
+  pp_set_prefix (this, p);
+}
+
+pretty_printer::~pretty_printer ()
+{
+  buffer->~output_buffer ();
+  XDELETE (buffer);
 }
 
 /* Append a string delimited by START and END to the output area of
@@ -674,10 +870,10 @@ pp_construct (pretty_printer *pp, const char *prefix, int maximum_length)
    whitespace if appropriate.  The caller must ensure that it is
    safe to do so.  */
 void
-pp_base_append_text (pretty_printer *pp, const char *start, const char *end)
+pp_append_text (pretty_printer *pp, const char *start, const char *end)
 {
   /* Emit prefix and skip whitespace if we're starting a new line.  */
-  if (pp->buffer->line_length == 0)
+  if (pp_buffer (pp)->line_length == 0)
     {
       pp_emit_prefix (pp);
       if (pp_is_wrapping_line (pp))
@@ -690,31 +886,25 @@ pp_base_append_text (pretty_printer *pp, const char *start, const char *end)
 /* Finishes constructing a NULL-terminated character string representing
    the PRETTY-PRINTED text.  */
 const char *
-pp_base_formatted_text (pretty_printer *pp)
+pp_formatted_text (pretty_printer *pp)
 {
-  obstack_1grow (pp->buffer->obstack, '\0');
-  return pp_formatted_text_data (pp);
+  return output_buffer_formatted_text (pp_buffer (pp));
 }
 
 /*  Return a pointer to the last character emitted in PRETTY-PRINTER's
     output area.  A NULL pointer means no character available.  */
 const char *
-pp_base_last_position_in_text (const pretty_printer *pp)
+pp_last_position_in_text (const pretty_printer *pp)
 {
-  const char *p = NULL;
-  struct obstack *text = pp->buffer->obstack;
-
-  if (obstack_base (text) != obstack_next_free (text))
-    p = ((const char *) obstack_next_free (text)) - 1;
-  return p;
+  return output_buffer_last_position_in_text (pp_buffer (pp));
 }
 
 /* Return the amount of characters PRETTY-PRINTER can accept to
    make a full line.  Meaningful only in line-wrapping mode.  */
 int
-pp_base_remaining_character_count_for_line (pretty_printer *pp)
+pp_remaining_character_count_for_line (pretty_printer *pp)
 {
-  return pp->maximum_length - pp->buffer->line_length;
+  return pp->maximum_length - pp_buffer (pp)->line_length;
 }
 
 
@@ -729,7 +919,6 @@ pp_printf (pretty_printer *pp, const char *msg, ...)
   text.err_no = errno;
   text.args_ptr = &ap;
   text.format_spec = msg;
-  text.locus = NULL;
   pp_format (pp, &text);
   pp_output_formatted_text (pp);
   va_end (ap);
@@ -747,7 +936,6 @@ pp_verbatim (pretty_printer *pp, const char *msg, ...)
   text.err_no = errno;
   text.args_ptr = &ap;
   text.format_spec = msg;
-  text.locus = NULL;
   pp_format_verbatim (pp, &text);
   va_end (ap);
 }
@@ -756,15 +944,16 @@ pp_verbatim (pretty_printer *pp, const char *msg, ...)
 
 /* Have PRETTY-PRINTER start a new line.  */
 void
-pp_base_newline (pretty_printer *pp)
+pp_newline (pretty_printer *pp)
 {
-  obstack_1grow (pp->buffer->obstack, '\n');
-  pp->buffer->line_length = 0;
+  obstack_1grow (pp_buffer (pp)->obstack, '\n');
+  pp_needs_newline (pp) = false;
+  pp_buffer (pp)->line_length = 0;
 }
 
 /* Have PRETTY-PRINTER add a CHARACTER.  */
 void
-pp_base_character (pretty_printer *pp, int c)
+pp_character (pretty_printer *pp, int c)
 {
   if (pp_is_wrapping_line (pp)
       && pp_remaining_character_count_for_line (pp) <= 0)
@@ -773,29 +962,96 @@ pp_base_character (pretty_printer *pp, int c)
       if (ISSPACE (c))
         return;
     }
-  obstack_1grow (pp->buffer->obstack, c);
-  ++pp->buffer->line_length;
+  obstack_1grow (pp_buffer (pp)->obstack, c);
+  ++pp_buffer (pp)->line_length;
 }
 
 /* Append a STRING to the output area of PRETTY-PRINTER; the STRING may
    be line-wrapped if in appropriate mode.  */
 void
-pp_base_string (pretty_printer *pp, const char *str)
+pp_string (pretty_printer *pp, const char *str)
 {
-  pp_maybe_wrap_text (pp, str, str + (str ? strlen (str) : 0));
+  gcc_checking_assert (str);
+  pp_maybe_wrap_text (pp, str, str + strlen (str));
+}
+
+/* Append the leading N characters of STRING to the output area of
+   PRETTY-PRINTER, quoting in hexadecimal non-printable characters.
+   Setting N = -1 is as if N were set to strlen (STRING).  The STRING
+   may be line-wrapped if in appropriate mode.  */
+static void
+pp_quoted_string (pretty_printer *pp, const char *str, size_t n /* = -1 */)
+{
+  gcc_checking_assert (str);
+
+  const char *last = str;
+  const char *ps;
+
+  /* Compute the length if not specified.  */
+  if (n == (size_t) -1)
+    n = strlen (str);
+
+  for (ps = str; n; ++ps, --n)
+    {
+      if (ISPRINT (*ps))
+	  continue;
+
+      if (last < ps)
+	pp_maybe_wrap_text (pp, last, ps - 1);
+
+      /* Append the hexadecimal value of the character.  Allocate a buffer
+	 that's large enough for a 32-bit char plus the hex prefix.  */
+      char buf [11];
+      int n = sprintf (buf, "\\x%02x", (unsigned char)*ps);
+      pp_maybe_wrap_text (pp, buf, buf + n);
+      last = ps + 1;
+    }
+
+  pp_maybe_wrap_text (pp, last, ps);
 }
 
 /* Maybe print out a whitespace if needed.  */
 
 void
-pp_base_maybe_space (pretty_printer *pp)
+pp_maybe_space (pretty_printer *pp)
 {
-  if (pp_base (pp)->padding != pp_none)
+  if (pp->padding != pp_none)
     {
       pp_space (pp);
-      pp_base (pp)->padding = pp_none;
+      pp->padding = pp_none;
     }
 }
+
+// Add a newline to the pretty printer PP and flush formatted text.
+
+void
+pp_newline_and_flush (pretty_printer *pp)
+{
+  pp_newline (pp);
+  pp_flush (pp);
+  pp_needs_newline (pp) = false;
+}
+
+// Add a newline to the pretty printer PP, followed by indentation.
+
+void
+pp_newline_and_indent (pretty_printer *pp, int n)
+{
+  pp_indentation (pp) += n;
+  pp_newline (pp);
+  pp_indent (pp);
+  pp_needs_newline (pp) = false;
+}
+
+// Add separator C, followed by a single whitespace.
+
+void
+pp_separate_with (pretty_printer *pp, char c)
+{
+  pp_character (pp, c);
+  pp_space (pp);
+}
+
 
 /* The string starting at P has LEN (at least 1) bytes left; if they
    start with a valid UTF-8 sequence, return the length of that
@@ -1019,3 +1275,204 @@ identifier_to_locale (const char *ident)
     return ret;
   }
 }
+
+#if CHECKING_P
+
+namespace selftest {
+
+/* Smoketest for pretty_printer.  */
+
+static void
+test_basic_printing ()
+{
+  pretty_printer pp;
+  pp_string (&pp, "hello");
+  pp_space (&pp);
+  pp_string (&pp, "world");
+
+  ASSERT_STREQ ("hello world", pp_formatted_text (&pp));
+}
+
+/* Helper function for testing pp_format.
+   Verify that pp_format (FMT, ...) followed by pp_output_formatted_text
+   prints EXPECTED, assuming that pp_show_color is SHOW_COLOR.  */
+
+static void
+assert_pp_format_va (const location &loc, const char *expected,
+		     bool show_color, const char *fmt, va_list *ap)
+{
+  pretty_printer pp;
+  text_info ti;
+  rich_location rich_loc (line_table, UNKNOWN_LOCATION);
+
+  ti.format_spec = fmt;
+  ti.args_ptr = ap;
+  ti.err_no = 0;
+  ti.x_data = NULL;
+  ti.m_richloc = &rich_loc;
+
+  pp_show_color (&pp) = show_color;
+  pp_format (&pp, &ti);
+  pp_output_formatted_text (&pp);
+  ASSERT_STREQ_AT (loc, expected, pp_formatted_text (&pp));
+}
+
+/* Verify that pp_format (FMT, ...) followed by pp_output_formatted_text
+   prints EXPECTED, with show_color disabled.  */
+
+static void
+assert_pp_format (const location &loc, const char *expected,
+		  const char *fmt, ...)
+{
+  va_list ap;
+
+  va_start (ap, fmt);
+  assert_pp_format_va (loc, expected, false, fmt, &ap);
+  va_end (ap);
+}
+
+/* As above, but with colorization enabled.  */
+
+static void
+assert_pp_format_colored (const location &loc, const char *expected,
+			  const char *fmt, ...)
+{
+  /* The tests of colorization assume the default color scheme.
+     If GCC_COLORS is set, then the colors have potentially been
+     overridden; skip the test.  */
+  if (getenv ("GCC_COLORS"))
+    return;
+
+  va_list ap;
+
+  va_start (ap, fmt);
+  assert_pp_format_va (loc, expected, true, fmt, &ap);
+  va_end (ap);
+}
+
+/* Helper function for calling testing pp_format,
+   by calling assert_pp_format with various numbers of arguments.
+   These exist mostly to avoid having to write SELFTEST_LOCATION
+   throughout test_pp_format.  */
+
+#define ASSERT_PP_FORMAT_1(EXPECTED, FMT, ARG1)		      \
+  SELFTEST_BEGIN_STMT					      \
+    assert_pp_format ((SELFTEST_LOCATION), (EXPECTED), (FMT), \
+		      (ARG1));				      \
+  SELFTEST_END_STMT
+
+#define ASSERT_PP_FORMAT_2(EXPECTED, FMT, ARG1, ARG2)	      \
+  SELFTEST_BEGIN_STMT					      \
+    assert_pp_format ((SELFTEST_LOCATION), (EXPECTED), (FMT), \
+		      (ARG1), (ARG2));			      \
+  SELFTEST_END_STMT
+
+#define ASSERT_PP_FORMAT_3(EXPECTED, FMT, ARG1, ARG2, ARG3)   \
+  SELFTEST_BEGIN_STMT					      \
+    assert_pp_format ((SELFTEST_LOCATION), (EXPECTED), (FMT), \
+                      (ARG1), (ARG2), (ARG3));		      \
+  SELFTEST_END_STMT
+
+/* Verify that pp_format works, for various format codes.  */
+
+static void
+test_pp_format ()
+{
+  /* Avoid introducing locale-specific differences in the results
+     by hardcoding open_quote and close_quote.  */
+  const char *old_open_quote = open_quote;
+  const char *old_close_quote = close_quote;
+  open_quote = "`";
+  close_quote = "'";
+
+  /* Verify that plain text is passed through unchanged.  */
+  assert_pp_format (SELFTEST_LOCATION, "unformatted", "unformatted");
+
+  /* Verify various individual format codes, in the order listed in the
+     comment for pp_format above.  For each code, we append a second
+     argument with a known bit pattern (0x12345678), to ensure that we
+     are consuming arguments correctly.  */
+  ASSERT_PP_FORMAT_2 ("-27 12345678", "%d %x", -27, 0x12345678);
+  ASSERT_PP_FORMAT_2 ("-5 12345678", "%i %x", -5, 0x12345678);
+  ASSERT_PP_FORMAT_2 ("10 12345678", "%u %x", 10, 0x12345678);
+  ASSERT_PP_FORMAT_2 ("17 12345678", "%o %x", 15, 0x12345678);
+  ASSERT_PP_FORMAT_2 ("cafebabe 12345678", "%x %x", 0xcafebabe, 0x12345678);
+  ASSERT_PP_FORMAT_2 ("-27 12345678", "%ld %x", (long)-27, 0x12345678);
+  ASSERT_PP_FORMAT_2 ("-5 12345678", "%li %x", (long)-5, 0x12345678);
+  ASSERT_PP_FORMAT_2 ("10 12345678", "%lu %x", (long)10, 0x12345678);
+  ASSERT_PP_FORMAT_2 ("17 12345678", "%lo %x", (long)15, 0x12345678);
+  ASSERT_PP_FORMAT_2 ("cafebabe 12345678", "%lx %x", (long)0xcafebabe,
+		      0x12345678);
+  ASSERT_PP_FORMAT_2 ("-27 12345678", "%lld %x", (long long)-27, 0x12345678);
+  ASSERT_PP_FORMAT_2 ("-5 12345678", "%lli %x", (long long)-5, 0x12345678);
+  ASSERT_PP_FORMAT_2 ("10 12345678", "%llu %x", (long long)10, 0x12345678);
+  ASSERT_PP_FORMAT_2 ("17 12345678", "%llo %x", (long long)15, 0x12345678);
+  ASSERT_PP_FORMAT_2 ("cafebabe 12345678", "%llx %x", (long long)0xcafebabe,
+		      0x12345678);
+  ASSERT_PP_FORMAT_2 ("-27 12345678", "%wd %x", (HOST_WIDE_INT)-27, 0x12345678);
+  ASSERT_PP_FORMAT_2 ("-5 12345678", "%wi %x", (HOST_WIDE_INT)-5, 0x12345678);
+  ASSERT_PP_FORMAT_2 ("10 12345678", "%wu %x", (unsigned HOST_WIDE_INT)10,
+		      0x12345678);
+  ASSERT_PP_FORMAT_2 ("17 12345678", "%wo %x", (HOST_WIDE_INT)15, 0x12345678);
+  ASSERT_PP_FORMAT_2 ("0xcafebabe 12345678", "%wx %x", (HOST_WIDE_INT)0xcafebabe,
+		      0x12345678);
+  ASSERT_PP_FORMAT_2 ("A 12345678", "%c %x", 'A', 0x12345678);
+  ASSERT_PP_FORMAT_2 ("hello world 12345678", "%s %x", "hello world",
+		      0x12345678);
+  /* We can't test for %p; the pointer is printed in an implementation-defined
+     manner.  */
+  ASSERT_PP_FORMAT_2 ("normal colored normal 12345678",
+		      "normal %rcolored%R normal %x",
+		      "error", 0x12345678);
+  assert_pp_format_colored
+    (SELFTEST_LOCATION,
+     "normal \33[01;31m\33[Kcolored\33[m\33[K normal 12345678",
+     "normal %rcolored%R normal %x", "error", 0x12345678);
+  /* TODO:
+     %m: strerror(text->err_no) - does not consume a value from args_ptr.  */
+  ASSERT_PP_FORMAT_1 ("% 12345678", "%% %x", 0x12345678);
+  ASSERT_PP_FORMAT_1 ("` 12345678", "%< %x", 0x12345678);
+  ASSERT_PP_FORMAT_1 ("' 12345678", "%> %x", 0x12345678);
+  ASSERT_PP_FORMAT_1 ("' 12345678", "%' %x", 0x12345678);
+  ASSERT_PP_FORMAT_3 ("abc 12345678", "%.*s %x", 3, "abcdef", 0x12345678);
+  ASSERT_PP_FORMAT_2 ("abc 12345678", "%.3s %x", "abcdef", 0x12345678);
+
+  /* Verify flag 'q'.  */
+  ASSERT_PP_FORMAT_2 ("`foo' 12345678", "%qs %x", "foo", 0x12345678);
+  assert_pp_format_colored (SELFTEST_LOCATION,
+			    "`\33[01m\33[Kfoo\33[m\33[K' 12345678", "%qs %x",
+			    "foo", 0x12345678);
+
+  /* Verify %Z.  */
+  int v[] = { 1, 2, 3 }; 
+  ASSERT_PP_FORMAT_3 ("1, 2, 3 12345678", "%Z %x", v, 3, 0x12345678);
+
+  int v2[] = { 0 }; 
+  ASSERT_PP_FORMAT_3 ("0 12345678", "%Z %x", v2, 1, 0x12345678);
+
+  /* Verify that combinations work, along with unformatted text.  */
+  assert_pp_format (SELFTEST_LOCATION,
+		    "the quick brown fox jumps over the lazy dog",
+		    "the %s %s %s jumps over the %s %s",
+		    "quick", "brown", "fox", "lazy", "dog");
+  assert_pp_format (SELFTEST_LOCATION, "item 3 of 7", "item %i of %i", 3, 7);
+  assert_pp_format (SELFTEST_LOCATION, "problem with `bar' at line 10",
+		    "problem with %qs at line %i", "bar", 10);
+
+  /* Restore old values of open_quote and close_quote.  */
+  open_quote = old_open_quote;
+  close_quote = old_close_quote;
+}
+
+/* Run all of the selftests within this file.  */
+
+void
+pretty_print_c_tests ()
+{
+  test_basic_printing ();
+  test_pp_format ();
+}
+
+} // namespace selftest
+
+#endif /* CHECKING_P */

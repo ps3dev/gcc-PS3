@@ -45,23 +45,23 @@ using std::C1;
   extern "C" void exit (int) throw ();
   extern "C" void *malloc (__SIZE_TYPE__) throw () __attribute__((malloc));
 
-  void abort (void) throw ();
+  void abort (void) throw (); // { dg-message "previous" }
   void _exit (int) throw (); // { dg-error "conflicts" "conflicts" }
-                             // { dg-message "void _exit" "_exit" { target *-*-* } 49 }
+                             // { dg-message "void _exit" "_exit" { target *-*-* } .-1 }
 
   extern "C" void c1 (void) throw ();
   void C1 (void) throw (); // { dg-error "conflicts" "conflicts" }
-                           // { dg-message "void C1" "C1" { target *-*-* } 53 }
+                           // { dg-message "void C1" "C1" { target *-*-* } .-1 }
 
   extern "C" void c2 (void) throw ();
-  void C2 (void) throw ();
+  void C2 (void) throw (); // { dg-message "previous" }
 
   int C3 (int) throw ();
 
 using std::malloc;
-using std::abort; // { dg-error "already declared" }
+using std::abort; // { dg-error "conflicts" }
 using std::c2;
-using std::C2; // { dg-error "already declared" }
+using std::C2; // { dg-error "conflicts" }
 
 using std::c3; using other::c3;
 using std::C3; using other::C3;
@@ -73,12 +73,10 @@ int main () {
   exit (0);
 
   _exit (0); // { dg-error "ambiguous" }
-  // { dg-message "candidate" "candidate note" { target *-*-* } 75 }
   abort ();
 
   c1 ();
   C1 (); // { dg-error "ambiguous" }
-  // { dg-message "candidate" "candidate note" { target *-*-* } 80 }
 
   c2 ();
   C2 (); // one might expect an ambiguous call error here as well, but
@@ -86,7 +84,6 @@ int main () {
 
   c3 ();
   C3 (); // { dg-error "ambiguous" }
-  // { dg-message "candidate" "candidate note" { target *-*-* } 88 }
   C3 (0);
   C3 (0l);
 }

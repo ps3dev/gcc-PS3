@@ -1,7 +1,7 @@
 /* Copyright (C) 2001 Free Software Foundation, Inc.  */
 
 /* { dg-do preprocess } */
-/* { dg-options "-std=gnu99 -pedantic -Wtraditional" } */
+/* { dg-options "-std=gnu99 -pedantic -Wtraditional -ftrack-macro-expansion=0" } */
 
 /* Tests diagnostics are suppressed for some macros defined in system
    headers.  */
@@ -22,5 +22,5 @@
 (str);				/* { dg-warning "used with arguments" } */
 (sys_str);			/* { dg-bogus "used with arguments" } */
 
-foo (one_arg);			/* { dg-warning "requires rest arguments" } */
-sys_foo (one_arg);		/* { dg-bogus "requires rest arguments" } */
+foo (one_arg);			/* { dg-warning "requires at least one" } */
+sys_foo (one_arg);		/* { dg-bogus "requires at least one" } */

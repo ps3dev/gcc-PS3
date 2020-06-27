@@ -1,4 +1,5 @@
 ! { dg-do compile }
+! { dg-require-visibility "" }
 !
 ! PR fortran/47399
 !
@@ -39,5 +40,3 @@ end subroutine test
 
 call test()
 end
-
-! { dg-final { cleanup-modules "mytypes" } }

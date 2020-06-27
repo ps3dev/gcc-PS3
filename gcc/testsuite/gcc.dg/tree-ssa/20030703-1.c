@@ -4,6 +4,7 @@
 extern void abort (void);
 extern int blah[];
 
+void
 foo(int index)
 {
   if (blah [(unsigned int)index] != 0)
@@ -19,4 +20,3 @@ foo(int index)
 /* There should be exactly one IF conditional.  */
 /* { dg-final { scan-tree-dump-times "if " 1 "dom2"} } */
 
-/* { dg-final { cleanup-tree-dump "dom2" } } */

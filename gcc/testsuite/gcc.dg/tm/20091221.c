@@ -4,6 +4,7 @@
 int i;
 extern void virgin () __attribute__((transaction_pure));
 
+void
 foo()
 {
 	__transaction_atomic {
@@ -12,4 +13,3 @@ foo()
 }
 
 /* { dg-final { scan-tree-dump-times "readOnly" 1 "tmedge" } } */
-/* { dg-final { cleanup-tree-dump "tmedge" } } */

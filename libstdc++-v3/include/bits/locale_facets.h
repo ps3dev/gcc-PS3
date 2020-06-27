@@ -1,8 +1,6 @@
 // Locale support -*- C++ -*-
 
-// Copyright (C) 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005,
-// 2006, 2007, 2008, 2009, 2010, 2011
-// Free Software Foundation, Inc.
+// Copyright (C) 1997-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -40,7 +38,7 @@
 
 #include <cwctype>	// For wctype_t
 #include <cctype>
-#include <bits/ctype_base.h>	
+#include <bits/ctype_base.h>
 #include <iosfwd>
 #include <bits/ios_base.h>  // For ios_base, ios_base::iostate
 #include <streambuf>
@@ -56,8 +54,15 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   // NB: Don't instantiate required wchar_t facets if no wchar_t support.
 #ifdef _GLIBCXX_USE_WCHAR_T
 # define  _GLIBCXX_NUM_FACETS 28
+# define  _GLIBCXX_NUM_CXX11_FACETS 16
 #else
 # define  _GLIBCXX_NUM_FACETS 14
+# define  _GLIBCXX_NUM_CXX11_FACETS 8
+#endif
+#ifdef _GLIBCXX_USE_C99_STDINT_TR1
+# define _GLIBCXX_NUM_UNICODE_FACETS 2
+#else
+# define _GLIBCXX_NUM_UNICODE_FACETS 0
 #endif
 
   // Convert string to numeric value of type _Tp and store results.
@@ -1123,7 +1128,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
        *  @return  The converted char.
       */
       virtual char
-      do_narrow(char_type __c, char __dfault) const
+      do_narrow(char_type __c, char __dfault __attribute__((__unused__))) const
       { return __c; }
 
       /**
@@ -1150,7 +1155,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       */
       virtual const char_type*
       do_narrow(const char_type* __lo, const char_type* __hi,
-		char __dfault, char* __to) const
+		char __dfault __attribute__((__unused__)), char* __to) const
       {
 	__builtin_memcpy(__to, __lo, __hi - __lo);
 	return __hi;
@@ -1474,6 +1479,12 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       explicit
       ctype_byname(const char* __s, size_t __refs = 0);
 
+#if __cplusplus >= 201103L
+      explicit
+      ctype_byname(const string& __s, size_t __refs = 0)
+      : ctype_byname(__s.c_str(), __refs) { }
+#endif
+
     protected:
       virtual
       ~ctype_byname() { };
@@ -1487,6 +1498,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       explicit
       ctype_byname(const char* __s, size_t __refs = 0);
 
+#if __cplusplus >= 201103L
+      explicit
+      ctype_byname(const string& __s, size_t __refs = 0);
+#endif
+
     protected:
       virtual
       ~ctype_byname();
@@ -1499,6 +1515,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     public:
       explicit
       ctype_byname(const char* __s, size_t __refs = 0);
+
+#if __cplusplus >= 201103L
+      explicit
+      ctype_byname(const string& __s, size_t __refs = 0);
+#endif
 
     protected:
       virtual
@@ -1524,16 +1545,16 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     // Below are the indices into _S_atoms_out.
     enum
       {
-        _S_ominus,
-        _S_oplus,
-        _S_ox,
-        _S_oX,
-        _S_odigits,
-        _S_odigits_end = _S_odigits + 16,
-        _S_oudigits = _S_odigits_end,
-        _S_oudigits_end = _S_oudigits + 16,
-        _S_oe = _S_odigits + 14,  // For scientific notation, 'e'
-        _S_oE = _S_oudigits + 14, // For scientific notation, 'E'
+	_S_ominus,
+	_S_oplus,
+	_S_ox,
+	_S_oX,
+	_S_odigits,
+	_S_odigits_end = _S_odigits + 16,
+	_S_oudigits = _S_odigits_end,
+	_S_oudigits_end = _S_oudigits + 16,
+	_S_oe = _S_odigits + 14,  // For scientific notation, 'e'
+	_S_oE = _S_oudigits + 14, // For scientific notation, 'E'
 	_S_oend = _S_oudigits_end
       };
 
@@ -1599,7 +1620,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	_M_truename(0), _M_truename_size(0), _M_falsename(0),
 	_M_falsename_size(0), _M_decimal_point(_CharT()),
 	_M_thousands_sep(_CharT()), _M_allocated(false)
-        { }
+	{ }
 
       ~__numpunct_cache();
 
@@ -1609,7 +1630,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     private:
       __numpunct_cache&
       operator=(const __numpunct_cache&);
-      
+
       explicit
       __numpunct_cache(const __numpunct_cache&);
     };
@@ -1624,6 +1645,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  delete [] _M_falsename;
 	}
     }
+
+_GLIBCXX_BEGIN_NAMESPACE_CXX11
 
   /**
    *  @brief  Primary class template numpunct.
@@ -1893,10 +1916,18 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  }
       }
 
+#if __cplusplus >= 201103L
+      explicit
+      numpunct_byname(const string& __s, size_t __refs = 0)
+      : numpunct_byname(__s.c_str(), __refs) { }
+#endif
+
     protected:
       virtual
       ~numpunct_byname() { }
     };
+
+_GLIBCXX_END_NAMESPACE_CXX11
 
 _GLIBCXX_BEGIN_NAMESPACE_LDBL
 
@@ -1981,9 +2012,10 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
        *  specifier.  Otherwise, parses like %d for signed and %u for unsigned
        *  types.  The matching type length modifier is also used.
        *
-       *  Digit grouping is interpreted according to numpunct::grouping() and
-       *  numpunct::thousands_sep().  If the pattern of digit groups isn't
-       *  consistent, sets err to ios_base::failbit.
+       *  Digit grouping is interpreted according to
+       *  numpunct::grouping() and numpunct::thousands_sep().  If the
+       *  pattern of digit groups isn't consistent, sets err to
+       *  ios_base::failbit.
        *
        *  If parsing the string yields a valid value for @a v, @a v is set.
        *  Otherwise, sets err to ios_base::failbit and leaves @a v unaltered.
@@ -2040,9 +2072,10 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
        *  matching type length modifier is also used.
        *
        *  The decimal point character used is numpunct::decimal_point().
-       *  Digit grouping is interpreted according to numpunct::grouping() and
-       *  numpunct::thousands_sep().  If the pattern of digit groups isn't
-       *  consistent, sets err to ios_base::failbit.
+       *  Digit grouping is interpreted according to
+       *  numpunct::grouping() and numpunct::thousands_sep().  If the
+       *  pattern of digit groups isn't consistent, sets err to
+       *  ios_base::failbit.
        *
        *  If parsing the string yields a valid value for @a v, @a v is set.
        *  Otherwise, sets err to ios_base::failbit and leaves @a v unaltered.
@@ -2079,9 +2112,10 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
        *
        *  The input characters are parsed like the scanf %p specifier.
        *
-       *  Digit grouping is interpreted according to numpunct::grouping() and
-       *  numpunct::thousands_sep().  If the pattern of digit groups isn't
-       *  consistent, sets err to ios_base::failbit.
+       *  Digit grouping is interpreted according to
+       *  numpunct::grouping() and numpunct::thousands_sep().  If the
+       *  pattern of digit groups isn't consistent, sets err to
+       *  ios_base::failbit.
        *
        *  Note that the digit grouping effect for pointers is a bit ambiguous
        *  in the standard and shouldn't be relied on.  See DR 344.
@@ -2106,19 +2140,21 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
       /// Destructor.
       virtual ~num_get() { }
 
+      _GLIBCXX_DEFAULT_ABI_TAG
       iter_type
       _M_extract_float(iter_type, iter_type, ios_base&, ios_base::iostate&,
 		       string&) const;
 
       template<typename _ValueT>
-        iter_type
-        _M_extract_int(iter_type, iter_type, ios_base&, ios_base::iostate&,
+	_GLIBCXX_DEFAULT_ABI_TAG
+	iter_type
+	_M_extract_int(iter_type, iter_type, ios_base&, ios_base::iostate&,
 		       _ValueT&) const;
 
       template<typename _CharT2>
       typename __gnu_cxx::__enable_if<__is_char<_CharT2>::__value, int>::__type
-        _M_find(const _CharT2*, size_t __len, _CharT2 __c) const
-        {
+	_M_find(const _CharT2*, size_t __len, _CharT2 __c) const
+	{
 	  int __ret = -1;
 	  if (__len <= 10)
 	    {
@@ -2138,10 +2174,10 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
 	}
 
       template<typename _CharT2>
-      typename __gnu_cxx::__enable_if<!__is_char<_CharT2>::__value, 
+      typename __gnu_cxx::__enable_if<!__is_char<_CharT2>::__value,
 				      int>::__type
-        _M_find(const _CharT2* __zero, size_t __len, _CharT2 __c) const
-        {
+	_M_find(const _CharT2* __zero, size_t __len, _CharT2 __c) const
+	{
 	  int __ret = -1;
 	  const char_type* __q = char_traits<_CharT2>::find(__zero, __len, __c);
 	  if (__q)
@@ -2195,7 +2231,7 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
       virtual iter_type
       do_get(iter_type __beg, iter_type __end, ios_base& __io,
 	     ios_base::iostate& __err, long long& __v) const
-      { return _M_extract_int(__beg, __end, __io, __err, __v); }	
+      { return _M_extract_int(__beg, __end, __io, __err, __v); }
 
       virtual iter_type
       do_get(iter_type __beg, iter_type __end, ios_base& __io,
@@ -2313,9 +2349,9 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
        *  If ios_base::showbase is set, '0' precedes octal values (except 0)
        *  and '0[xX]' precedes hex values.
        *
-       *  Thousands separators are inserted according to numpunct::grouping()
-       *  and numpunct::thousands_sep().  The decimal point character used is
-       *  numpunct::decimal_point().
+       *  The decimal point character used is numpunct::decimal_point().
+       *  Thousands separators are inserted according to
+       *  numpunct::grouping() and numpunct::thousands_sep().
        *
        *  If io.width() is non-zero, enough @a fill characters are inserted to
        *  make the result at least that wide.  If
@@ -2376,9 +2412,9 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
        *  If ios_base::showpoint is set, a decimal point will always be
        *  output.
        *
-       *  Thousands separators are inserted according to numpunct::grouping()
-       *  and numpunct::thousands_sep().  The decimal point character used is
-       *  numpunct::decimal_point().
+       *  The decimal point character used is numpunct::decimal_point().
+       *  Thousands separators are inserted according to
+       *  numpunct::grouping() and numpunct::thousands_sep().
        *
        *  If io.width() is non-zero, enough @a fill characters are inserted to
        *  make the result at least that wide.  If
@@ -2425,8 +2461,8 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
 
     protected:
       template<typename _ValueT>
-        iter_type
-        _M_insert_float(iter_type, ios_base& __io, char_type __fill,
+	iter_type
+	_M_insert_float(iter_type, ios_base& __io, char_type __fill,
 			char __mod, _ValueT __v) const;
 
       void
@@ -2435,8 +2471,8 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
 		     char_type* __cs, int& __len) const;
 
       template<typename _ValueT>
-        iter_type
-        _M_insert_int(iter_type, ios_base& __io, char_type __fill,
+	iter_type
+	_M_insert_int(iter_type, ios_base& __io, char_type __fill,
 		      _ValueT __v) const;
 
       void
@@ -2471,7 +2507,7 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
 
       virtual iter_type
       do_put(iter_type __s, ios_base& __io, char_type __fill, long __v) const
-      { return _M_insert_int(__s, __io, __fill, __v); }	
+      { return _M_insert_int(__s, __io, __fill, __v); }
 
       virtual iter_type
       do_put(iter_type __s, ios_base& __io, char_type __fill,
@@ -2549,7 +2585,7 @@ _GLIBCXX_END_NAMESPACE_LDBL
 
   /// Convenience interface to ctype.is(ctype_base::lower, __c).
   template<typename _CharT>
-    inline bool 
+    inline bool
     islower(_CharT __c, const locale& __loc)
     { return use_facet<ctype<_CharT> >(__loc).is(ctype_base::lower, __c); }
 
@@ -2588,6 +2624,14 @@ _GLIBCXX_END_NAMESPACE_LDBL
     inline bool
     isgraph(_CharT __c, const locale& __loc)
     { return use_facet<ctype<_CharT> >(__loc).is(ctype_base::graph, __c); }
+
+#if __cplusplus >= 201103L
+  /// Convenience interface to ctype.is(ctype_base::blank, __c).
+  template<typename _CharT>
+    inline bool
+    isblank(_CharT __c, const locale& __loc)
+    { return use_facet<ctype<_CharT> >(__loc).is(ctype_base::blank, __c); }
+#endif
 
   /// Convenience interface to ctype.toupper(__c).
   template<typename _CharT>

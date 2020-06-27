@@ -29,50 +29,127 @@ func newCBC(b Block, iv []byte) *cbc {
 
 type cbcEncrypter cbc
 
+// cbcEncAble is an interface implemented by ciphers that have a specific
+// optimized implementation of CBC encryption, like crypto/aes.
+// NewCBCEncrypter will check for this interface and return the specific
+// BlockMode if found.
+type cbcEncAble interface {
+	NewCBCEncrypter(iv []byte) BlockMode
+}
+
 // NewCBCEncrypter returns a BlockMode which encrypts in cipher block chaining
 // mode, using the given Block. The length of iv must be the same as the
 // Block's block size.
 func NewCBCEncrypter(b Block, iv []byte) BlockMode {
+	if len(iv) != b.BlockSize() {
+		panic("cipher.NewCBCEncrypter: IV length must equal block size")
+	}
+	if cbc, ok := b.(cbcEncAble); ok {
+		return cbc.NewCBCEncrypter(iv)
+	}
 	return (*cbcEncrypter)(newCBC(b, iv))
 }
 
 func (x *cbcEncrypter) BlockSize() int { return x.blockSize }
 
 func (x *cbcEncrypter) CryptBlocks(dst, src []byte) {
+	if len(src)%x.blockSize != 0 {
+		panic("crypto/cipher: input not full blocks")
+	}
+	if len(dst) < len(src) {
+		panic("crypto/cipher: output smaller than input")
+	}
+
+	iv := x.iv
+
 	for len(src) > 0 {
-		for i := 0; i < x.blockSize; i++ {
-			x.iv[i] ^= src[i]
-		}
-		x.b.Encrypt(x.iv, x.iv)
-		for i := 0; i < x.blockSize; i++ {
-			dst[i] = x.iv[i]
-		}
+		// Write the xor to dst, then encrypt in place.
+		xorBytes(dst[:x.blockSize], src[:x.blockSize], iv)
+		x.b.Encrypt(dst[:x.blockSize], dst[:x.blockSize])
+
+		// Move to the next block with this block as the next iv.
+		iv = dst[:x.blockSize]
 		src = src[x.blockSize:]
 		dst = dst[x.blockSize:]
 	}
+
+	// Save the iv for the next CryptBlocks call.
+	copy(x.iv, iv)
+}
+
+func (x *cbcEncrypter) SetIV(iv []byte) {
+	if len(iv) != len(x.iv) {
+		panic("cipher: incorrect length IV")
+	}
+	copy(x.iv, iv)
 }
 
 type cbcDecrypter cbc
+
+// cbcDecAble is an interface implemented by ciphers that have a specific
+// optimized implementation of CBC decryption, like crypto/aes.
+// NewCBCDecrypter will check for this interface and return the specific
+// BlockMode if found.
+type cbcDecAble interface {
+	NewCBCDecrypter(iv []byte) BlockMode
+}
 
 // NewCBCDecrypter returns a BlockMode which decrypts in cipher block chaining
 // mode, using the given Block. The length of iv must be the same as the
 // Block's block size and must match the iv used to encrypt the data.
 func NewCBCDecrypter(b Block, iv []byte) BlockMode {
+	if len(iv) != b.BlockSize() {
+		panic("cipher.NewCBCDecrypter: IV length must equal block size")
+	}
+	if cbc, ok := b.(cbcDecAble); ok {
+		return cbc.NewCBCDecrypter(iv)
+	}
 	return (*cbcDecrypter)(newCBC(b, iv))
 }
 
 func (x *cbcDecrypter) BlockSize() int { return x.blockSize }
 
 func (x *cbcDecrypter) CryptBlocks(dst, src []byte) {
-	for len(src) > 0 {
-		x.b.Decrypt(x.tmp, src[:x.blockSize])
-		for i := 0; i < x.blockSize; i++ {
-			x.tmp[i] ^= x.iv[i]
-			x.iv[i] = src[i]
-			dst[i] = x.tmp[i]
-		}
-
-		src = src[x.blockSize:]
-		dst = dst[x.blockSize:]
+	if len(src)%x.blockSize != 0 {
+		panic("crypto/cipher: input not full blocks")
 	}
+	if len(dst) < len(src) {
+		panic("crypto/cipher: output smaller than input")
+	}
+	if len(src) == 0 {
+		return
+	}
+
+	// For each block, we need to xor the decrypted data with the previous block's ciphertext (the iv).
+	// To avoid making a copy each time, we loop over the blocks BACKWARDS.
+	end := len(src)
+	start := end - x.blockSize
+	prev := start - x.blockSize
+
+	// Copy the last block of ciphertext in preparation as the new iv.
+	copy(x.tmp, src[start:end])
+
+	// Loop over all but the first block.
+	for start > 0 {
+		x.b.Decrypt(dst[start:end], src[start:end])
+		xorBytes(dst[start:end], dst[start:end], src[prev:start])
+
+		end = start
+		start = prev
+		prev -= x.blockSize
+	}
+
+	// The first block is special because it uses the saved iv.
+	x.b.Decrypt(dst[start:end], src[start:end])
+	xorBytes(dst[start:end], dst[start:end], x.iv)
+
+	// Set the new iv to the first block we copied earlier.
+	x.iv, x.tmp = x.tmp, x.iv
+}
+
+func (x *cbcDecrypter) SetIV(iv []byte) {
+	if len(iv) != len(x.iv) {
+		panic("cipher: incorrect length IV")
+	}
+	copy(x.iv, iv)
 }

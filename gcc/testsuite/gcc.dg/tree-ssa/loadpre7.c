@@ -2,6 +2,9 @@
 /* { dg-options "-O2 -fdump-tree-pre-stats" } */
 /* We can't eliminate the *p load here in any sane way, as eshup8 may 
    change it.  */
+
+void eshup8 (unsigned short *);
+
 void
 enormlz (x)
      unsigned short x[];
@@ -14,4 +17,3 @@ enormlz (x)
     }
 }
 /* { dg-final { scan-tree-dump-not "Eliminated:" "pre"} } */
-/* { dg-final { cleanup-tree-dump "pre" } } */

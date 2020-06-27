@@ -1,7 +1,6 @@
 /* Definitions for ia64-linux target.
 
-Copyright (C) 2000, 2001, 2002, 2003, 2004, 2006,
-2009, 2010, 2011 Free Software Foundation, Inc.
+Copyright (C) 2000-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -77,12 +76,8 @@ do {						\
 #undef LINK_EH_SPEC
 #define LINK_EH_SPEC ""
 
-/* Put all *tf routines in libgcc.  */
-#undef LIBGCC2_HAS_TF_MODE
-#define LIBGCC2_HAS_TF_MODE 1
-#undef LIBGCC2_TF_CEXT
-#define LIBGCC2_TF_CEXT q
-#define TF_SIZE 113
-
 #undef TARGET_INIT_LIBFUNCS
 #define TARGET_INIT_LIBFUNCS ia64_soft_fp_init_libfuncs
+
+/* Define this to be nonzero if static stack checking is supported.  */
+#define STACK_CHECK_STATIC_BUILTIN 1

@@ -2,6 +2,13 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+// +build !darwin
+// +build !freebsd
+// +build !linux
+// +build !netbsd
+// +build !openbsd
+// +build !solaris
+
 package os
 
 import (
@@ -9,9 +16,9 @@ import (
 	"time"
 )
 
-func sameFile(sys1, sys2 interface{}) bool {
-	stat1 := sys1.(*syscall.Stat_t)
-	stat2 := sys2.(*syscall.Stat_t)
+func sameFile(fs1, fs2 *fileStat) bool {
+	stat1 := fs1.sys.(*syscall.Stat_t)
+	stat2 := fs2.sys.(*syscall.Stat_t)
 	return stat1.Dev == stat2.Dev && stat1.Ino == stat2.Ino
 }
 
@@ -19,7 +26,7 @@ func fileInfoFromStat(st *syscall.Stat_t, name string) FileInfo {
 	fs := &fileStat{
 		name:    basename(name),
 		size:    int64(st.Size),
-		modTime: timespecToTime(st.Mtime),
+		modTime: timespecToTime(st.Mtim),
 		sys:     st,
 	}
 	fs.mode = FileMode(st.Mode & 0777)
@@ -52,5 +59,5 @@ func timespecToTime(ts syscall.Timespec) time.Time {
 
 // For testing.
 func atime(fi FileInfo) time.Time {
-	return timespecToTime(fi.Sys().(*syscall.Stat_t).Atime)
+	return timespecToTime(fi.Sys().(*syscall.Stat_t).Atim)
 }

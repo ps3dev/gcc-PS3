@@ -1,8 +1,6 @@
 /* Get common system includes and various definitions and declarations based
    on autoconf macros.
-   Copyright (C) 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2007, 2008,
-   2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 1998-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -24,12 +22,18 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef GCC_SYSTEM_H
 #define GCC_SYSTEM_H
 
+/* Define this so that inttypes.h defines the PRI?64 macros even
+   when compiling with a C++ compiler.  Define it here so in the
+   event inttypes.h gets pulled in by another header it is already
+   defined.  */
+#define __STDC_FORMAT_MACROS
+
 /* We must include stdarg.h before stdio.h.  */
 #include <stdarg.h>
 
 #ifndef va_copy
 # ifdef __va_copy
-#   define va_copy(d,s)  __va_copy((d),(s))
+#   define va_copy(d,s)  __va_copy (d, s)
 # else
 #   define va_copy(d,s)  ((d) = (s))
 # endif
@@ -55,9 +59,9 @@ along with GCC; see the file COPYING3.  If not see
 #undef fopen 
 #undef freopen 
 
-#define fopen(PATH,MODE) fopen_unlocked(PATH,MODE)
-#define fdopen(FILDES,MODE) fdopen_unlocked(FILDES,MODE)
-#define freopen(PATH,MODE,STREAM) freopen_unlocked(PATH,MODE,STREAM)
+#define fopen(PATH, MODE) fopen_unlocked (PATH, MODE)
+#define fdopen(FILDES, MODE) fdopen_unlocked (FILDES, MODE)
+#define freopen(PATH, MODE, STREAM) freopen_unlocked (PATH, MODE, STREAM)
 
 /* The compiler is not a multi-threaded application and therefore we
    do not have to use the locking functions.  In fact, using the locking
@@ -190,6 +194,15 @@ extern int fprintf_unlocked (FILE *, const char *, ...);
 #undef fread_unlocked
 #undef fwrite_unlocked
 
+/* Include <string> before "safe-ctype.h" to avoid GCC poisoning
+   the ctype macros through safe-ctype.h */
+
+#ifdef __cplusplus
+#ifdef INCLUDE_STRING
+# include <string>
+#endif
+#endif
+
 /* There are an extraordinary number of issues with <ctype.h>.
    The last straw is that it varies with the locale.  Use libiberty's
    replacement instead.  */
@@ -204,7 +217,24 @@ extern int errno;
 #endif
 
 #ifdef __cplusplus
+#if defined (INCLUDE_ALGORITHM) || !defined (HAVE_SWAP_IN_UTILITY)
+# include <algorithm>
+#endif
+#ifdef INCLUDE_LIST
+# include <list>
+#endif
+#ifdef INCLUDE_MAP
+# include <map>
+#endif
+#ifdef INCLUDE_SET
+# include <set>
+#endif
+#ifdef INCLUDE_VECTOR
+# include <vector>
+#endif
 # include <cstring>
+# include <new>
+# include <utility>
 #endif
 
 /* Some of glibc's string inlines cause warnings.  Plus we'd rather
@@ -227,6 +257,17 @@ extern int errno;
 #ifdef HAVE_STDLIB_H
 # include <stdlib.h>
 #endif
+
+/* When compiling C++ we need to include <cstdlib> as well as <stdlib.h> so
+   that it is processed before we poison "malloc"; otherwise, if a source
+   file uses a standard library header that includes <cstdlib>, we will get
+   an error about 'using std::malloc'.  */
+#ifdef __cplusplus
+#include <cstdlib>
+#endif
+
+/* Undef vec_free from AIX stdlib.h header which conflicts with vec.h.  */
+#undef vec_free
 
 /* If we don't have an overriding definition, set SUCCESS_EXIT_CODE and
    FATAL_EXIT_CODE to EXIT_SUCCESS and EXIT_FAILURE respectively,
@@ -255,16 +296,14 @@ extern int errno;
 
 #ifdef HAVE_SYS_PARAM_H
 # include <sys/param.h>
-/* We use this identifier later and it appears in some vendor param.h's.  */
+/* We use these identifiers later and they appear in some vendor param.h's.  */
 # undef PREFETCH
+# undef m_slot
 #endif
 
 #if HAVE_LIMITS_H
 # include <limits.h>
 #endif
-
-/* Get definitions of HOST_WIDE_INT and HOST_WIDEST_INT.  */
-#include "hwint.h"
 
 /* A macro to determine whether a VALUE lies inclusively within a
    certain range without evaluating the VALUE more than once.  This
@@ -285,7 +324,7 @@ extern int errno;
 /* The outer cast is needed to work around a bug in Cray C 5.0.3.0.
    It is necessary at least when t == time_t.  */
 #define INTTYPE_MINIMUM(t) ((t) (INTTYPE_SIGNED (t) \
-                             ? ~ (t) 0 << (sizeof(t) * CHAR_BIT - 1) : (t) 0))
+			    ? (t) 1 << (sizeof (t) * CHAR_BIT - 1) : (t) 0))
 #define INTTYPE_MAXIMUM(t) ((t) (~ (t) 0 - INTTYPE_MINIMUM (t)))
 
 /* Use that infrastructure to provide a few constants.  */
@@ -347,6 +386,12 @@ extern int errno;
 /* Returns the least number N such that N * Y >= X.  */
 #define CEIL(x,y) (((x) + (y) - 1) / (y))
 
+/* This macro rounds x up to the y boundary.  */
+#define ROUND_UP(x,y) (((x) + (y) - 1) & ~((y) - 1))
+
+/* This macro rounds x down to the y boundary.  */
+#define ROUND_DOWN(x,y) ((x) & ~((y) - 1))
+ 	
 #ifdef HAVE_SYS_WAIT_H
 #include <sys/wait.h>
 #endif
@@ -443,6 +488,10 @@ extern char *getwd (char *);
 extern void *sbrk (int);
 #endif
 
+#if defined (HAVE_DECL_SETENV) && !HAVE_DECL_SETENV
+int setenv(const char *, const char *, int);
+#endif
+
 #if defined (HAVE_DECL_STRSTR) && !HAVE_DECL_STRSTR
 extern char *strstr (const char *, const char *);
 #endif
@@ -451,16 +500,8 @@ extern char *strstr (const char *, const char *);
 extern char *stpcpy (char *, const char *);
 #endif
 
-#ifdef __cplusplus
-}
-#endif
-
-#ifdef HAVE_MALLOC_H
-#include <malloc.h>
-#endif
-
-#ifdef __cplusplus
-extern "C" {
+#if defined (HAVE_DECL_UNSETENV) && !HAVE_DECL_UNSETENV
+int unsetenv(const char *);
 #endif
 
 #if defined (HAVE_DECL_MALLOC) && !HAVE_DECL_MALLOC
@@ -527,7 +568,7 @@ extern int snprintf (char *, size_t, const char *, ...);
 #endif
 
 #if defined (HAVE_DECL_VSNPRINTF) && !HAVE_DECL_VSNPRINTF
-extern int vsnprintf(char *, size_t, const char *, va_list);
+extern int vsnprintf (char *, size_t, const char *, va_list);
 #endif
 
 #ifdef __cplusplus
@@ -536,15 +577,21 @@ extern int vsnprintf(char *, size_t, const char *, va_list);
 
 /* 1 if we have C99 designated initializers.  */
 #if !defined(HAVE_DESIGNATED_INITIALIZERS)
+#ifdef __cplusplus
+#define HAVE_DESIGNATED_INITIALIZERS 0
+#else
 #define HAVE_DESIGNATED_INITIALIZERS \
-  (((GCC_VERSION >= 2007) || (__STDC_VERSION__ >= 199901L)) \
-   && !defined(__cplusplus))
+  ((GCC_VERSION >= 2007) || (__STDC_VERSION__ >= 199901L))
+#endif
 #endif
 
 #if !defined(HAVE_DESIGNATED_UNION_INITIALIZERS)
+#ifdef __cplusplus
+#define HAVE_DESIGNATED_UNION_INITIALIZERS (GCC_VERSION >= 4007)
+#else
 #define HAVE_DESIGNATED_UNION_INITIALIZERS \
-  (((GCC_VERSION >= 2007) || (__STDC_VERSION__ >= 199901L)) \
-   && (!defined(__cplusplus) || (GCC_VERSION >= 4007)))
+  ((GCC_VERSION >= 2007) || (__STDC_VERSION__ >= 199901L))
+#endif
 #endif
 
 #if HAVE_SYS_STAT_H
@@ -602,11 +649,11 @@ extern int vsnprintf(char *, size_t, const char *, va_list);
 
 /* Some systems have mkdir that takes a single argument.  */
 #ifdef MKDIR_TAKES_ONE_ARG
-# define mkdir(a,b) mkdir(a)
+# define mkdir(a,b) mkdir (a)
 #endif
 
 #ifndef HAVE_KILL
-# define kill(p,s) raise(s)
+# define kill(p,s) raise (s)
 #endif
 
 /* Provide a way to print an address via printf.  */
@@ -635,8 +682,18 @@ extern int vsnprintf(char *, size_t, const char *, va_list);
 #include <dlfcn.h>
 #endif
 
+/* Do not introduce a gmp.h dependency on the build system.  */
+#ifndef GENERATOR_FILE
+#include <gmp.h>
+#endif
+
 /* Get libiberty declarations.  */
 #include "libiberty.h"
+
+#undef FFS  /* Some systems predefine this symbol; don't let it interfere.  */
+#undef FLOAT /* Likewise.  */
+#undef ABS /* Likewise.  */
+#undef PC /* Likewise.  */
 
 /* Provide a default for the HOST_BIT_BUCKET.
    This suffices for POSIX-like hosts.  */
@@ -674,24 +731,50 @@ extern void fancy_abort (const char *, int, const char *) ATTRIBUTE_NORETURN;
    ((void)(!(EXPR) ? fancy_abort (__FILE__, __LINE__, __FUNCTION__), 0 : 0))
 #elif (GCC_VERSION >= 4005)
 #define gcc_assert(EXPR) 						\
-  ((void)(__builtin_expect(!(EXPR), 0) ? __builtin_unreachable(), 0 : 0))
+  ((void)(__builtin_expect (!(EXPR), 0) ? __builtin_unreachable (), 0 : 0))
 #else
 /* Include EXPR, so that unused variable warnings do not occur.  */
 #define gcc_assert(EXPR) ((void)(0 && (EXPR)))
 #endif
 
-#ifdef ENABLE_CHECKING
+#if CHECKING_P
 #define gcc_checking_assert(EXPR) gcc_assert (EXPR)
 #else
+/* N.B.: in release build EXPR is not evaluated.  */
 #define gcc_checking_assert(EXPR) ((void)(0 && (EXPR)))
 #endif
 
 /* Use gcc_unreachable() to mark unreachable locations (like an
    unreachable default case of a switch.  Do not use gcc_assert(0).  */
 #if (GCC_VERSION >= 4005) && !ENABLE_ASSERT_CHECKING
-#define gcc_unreachable() __builtin_unreachable()
+#define gcc_unreachable() __builtin_unreachable ()
 #else
 #define gcc_unreachable() (fancy_abort (__FILE__, __LINE__, __FUNCTION__))
+#endif
+
+#if GCC_VERSION >= 7000 && defined(__has_attribute)
+# if __has_attribute(fallthrough)
+#  define gcc_fallthrough() __attribute__((fallthrough))
+# else
+#  define gcc_fallthrough()
+# endif
+#else
+# define gcc_fallthrough()
+#endif
+
+#if GCC_VERSION >= 3001
+#define STATIC_CONSTANT_P(X) (__builtin_constant_p (X) && (X))
+#else
+#define STATIC_CONSTANT_P(X) (false && (X))
+#endif
+
+/* static_assert (COND, MESSAGE) is available in C++11 onwards.  */
+#if __cplusplus >= 201103L
+#define STATIC_ASSERT(X) \
+  static_assert ((X), #X)
+#else
+#define STATIC_ASSERT(X) \
+  typedef int assertion1[(X) ? 1 : -1] ATTRIBUTE_UNUSED
 #endif
 
 /* Provide a fake boolean type.  We make no attempt to use the
@@ -753,9 +836,13 @@ extern void fancy_abort (const char *, int, const char *) ATTRIBUTE_NORETURN;
    compiling gcc, so that the autoconf declaration tests for malloc
    etc don't spuriously fail.  */
 #ifdef IN_GCC
+
+#ifndef USES_ISL
 #undef calloc
 #undef strdup
- #pragma GCC poison calloc strdup
+#undef strndup
+ #pragma GCC poison calloc strdup strndup
+#endif
 
 #if !defined(FLEX_SCANNER) && !defined(YYBISON)
 #undef malloc
@@ -768,6 +855,11 @@ extern void fancy_abort (const char *, int, const char *) ATTRIBUTE_NORETURN;
    otherwise.  */
 #undef strerror
  #pragma GCC poison strerror
+
+/* loc_t is defined on some systems and too inviting for some
+   programmers to avoid.  */
+#undef loc_t
+ #pragma GCC poison loc_t
 
 /* Old target macros that have moved to the target hooks structure.  */
  #pragma GCC poison ASM_OPEN_PAREN ASM_CLOSE_PAREN			\
@@ -807,7 +899,11 @@ extern void fancy_abort (const char *, int, const char *) ATTRIBUTE_NORETURN;
 	LABEL_ALIGN_AFTER_BARRIER_MAX_SKIP JUMP_ALIGN_MAX_SKIP 		\
 	CAN_DEBUG_WITHOUT_FP UNLIKELY_EXECUTED_TEXT_SECTION_NAME	\
 	HOT_TEXT_SECTION_NAME LEGITIMATE_CONSTANT_P ALWAYS_STRIP_DOTDOT	\
-	OUTPUT_ADDR_CONST_EXTRA SMALL_REGISTER_CLASSES
+	OUTPUT_ADDR_CONST_EXTRA SMALL_REGISTER_CLASSES ASM_OUTPUT_IDENT	\
+	ASM_BYTE_OP MEMBER_TYPE_FORCES_BLK LIBGCC2_HAS_SF_MODE		\
+	LIBGCC2_HAS_DF_MODE LIBGCC2_HAS_XF_MODE LIBGCC2_HAS_TF_MODE	\
+	CLEAR_BY_PIECES_P MOVE_BY_PIECES_P SET_BY_PIECES_P		\
+	STORE_BY_PIECES_P TARGET_FLT_EVAL_METHOD
 
 /* Target macros only used for code built for the target, that have
    moved to libgcc-tm.h or have never been present elsewhere.  */
@@ -878,7 +974,28 @@ extern void fancy_abort (const char *, int, const char *) ATTRIBUTE_NORETURN;
 	MACHINE_TYPE TARGET_HAS_TARGETCM ASM_OUTPUT_BSS			   \
 	SETJMP_VIA_SAVE_AREA FORBIDDEN_INC_DEC_CLASSES			   \
 	PREFERRED_OUTPUT_RELOAD_CLASS SYSTEM_INCLUDE_DIR		   \
-	STANDARD_INCLUDE_DIR STANDARD_INCLUDE_COMPONENT
+	STANDARD_INCLUDE_DIR STANDARD_INCLUDE_COMPONENT			   \
+	LINK_ELIMINATE_DUPLICATE_LDIRECTORIES MIPS_DEBUGGING_INFO	   \
+	IDENT_ASM_OP ALL_COP_ADDITIONAL_REGISTER_NAMES DBX_OUTPUT_LBRAC	   \
+	DBX_OUTPUT_NFUN DBX_OUTPUT_RBRAC RANGE_TEST_NON_SHORT_CIRCUIT	   \
+	REAL_VALUE_TRUNCATE REVERSE_CONDEXEC_PREDICATES_P		   \
+	TARGET_ALIGN_ANON_BITFIELDS TARGET_NARROW_VOLATILE_BITFIELDS	   \
+	IDENT_ASM_OP UNALIGNED_SHORT_ASM_OP UNALIGNED_INT_ASM_OP	   \
+	UNALIGNED_LONG_ASM_OP UNALIGNED_DOUBLE_INT_ASM_OP		   \
+	USE_COMMON_FOR_ONE_ONLY IFCVT_EXTRA_FIELDS IFCVT_INIT_EXTRA_FIELDS \
+	CASE_USE_BIT_TESTS FIXUNS_TRUNC_LIKE_FIX_TRUNC                     \
+        GO_IF_MODE_DEPENDENT_ADDRESS DELAY_SLOTS_FOR_EPILOGUE              \
+        ELIGIBLE_FOR_EPILOGUE_DELAY TARGET_C99_FUNCTIONS TARGET_HAS_SINCOS \
+	REG_CLASS_FROM_LETTER CONST_OK_FOR_LETTER_P			   \
+	CONST_DOUBLE_OK_FOR_LETTER_P EXTRA_CONSTRAINT			   \
+	REG_CLASS_FROM_CONSTRAINT REG_CLASS_FOR_CONSTRAINT		   \
+	EXTRA_CONSTRAINT_STR EXTRA_MEMORY_CONSTRAINT			   \
+	EXTRA_ADDRESS_CONSTRAINT CONST_DOUBLE_OK_FOR_CONSTRAINT_P	   \
+	CALLER_SAVE_PROFITABLE LARGEST_EXPONENT_IS_NORMAL		   \
+	ROUND_TOWARDS_ZERO SF_SIZE DF_SIZE XF_SIZE TF_SIZE LIBGCC2_TF_CEXT \
+	LIBGCC2_LONG_DOUBLE_TYPE_SIZE STRUCT_VALUE			   \
+	EH_FRAME_IN_DATA_SECTION TARGET_FLT_EVAL_METHOD_NON_DEFAULT	   \
+	JCR_SECTION_NAME TARGET_USE_JCR_SECTION
 
 /* Hooks that are no longer used.  */
  #pragma GCC poison LANG_HOOKS_FUNCTION_MARK LANG_HOOKS_FUNCTION_FREE	\
@@ -890,7 +1007,13 @@ extern void fancy_abort (const char *, int, const char *) ATTRIBUTE_NORETURN;
 	TARGET_PROMOTE_FUNCTION_ARGS TARGET_PROMOTE_FUNCTION_RETURN \
 	LANG_HOOKS_MISSING_ARGUMENT LANG_HOOKS_HASH_TYPES \
 	TARGET_HANDLE_OFAST TARGET_OPTION_OPTIMIZATION \
-        TARGET_IRA_COVER_CLASSES TARGET_HELP
+	TARGET_IRA_COVER_CLASSES TARGET_HELP \
+	TARGET_HANDLE_PRAGMA_EXTERN_PREFIX \
+	TARGET_VECTORIZE_BUILTIN_MUL_WIDEN_EVEN \
+	TARGET_VECTORIZE_BUILTIN_MUL_WIDEN_ODD \
+	TARGET_MD_ASM_CLOBBERS TARGET_RELAXED_ORDERING \
+	EXTENDED_SDB_BASIC_TYPES TARGET_INVALID_PARAMETER_TYPE \
+	TARGET_INVALID_RETURN_TYPE
 
 /* Arrays that were deleted in favor of a functional interface.  */
  #pragma GCC poison built_in_decls implicit_built_in_decls
@@ -928,6 +1051,10 @@ extern void fancy_abort (const char *, int, const char *) ATTRIBUTE_NORETURN;
 #undef bcmp
 #undef rindex
  #pragma GCC poison bcopy bzero bcmp rindex
+
+/* Poison ENABLE_CHECKING macro that should be replaced with
+   'if (flag_checking)', or with CHECKING_P macro.  */
+#pragma GCC poison ENABLE_CHECKING
 
 #endif /* GCC >= 3.0 */
 
@@ -972,11 +1099,12 @@ helper_const_non_const_cast (const char *p)
 #define CONST_CAST2(TOTYPE,FROMTYPE,X) ((TOTYPE)(FROMTYPE)(X))
 #endif
 #endif
-#define CONST_CAST(TYPE,X) CONST_CAST2(TYPE, const TYPE, (X))
-#define CONST_CAST_TREE(X) CONST_CAST(union tree_node *, (X))
-#define CONST_CAST_RTX(X) CONST_CAST(struct rtx_def *, (X))
-#define CONST_CAST_BB(X) CONST_CAST(struct basic_block_def *, (X))
-#define CONST_CAST_GIMPLE(X) CONST_CAST(union gimple_statement_d *, (X))
+#define CONST_CAST(TYPE,X) CONST_CAST2 (TYPE, const TYPE, (X))
+#define CONST_CAST_TREE(X) CONST_CAST (union tree_node *, (X))
+#define CONST_CAST_RTX(X) CONST_CAST (struct rtx_def *, (X))
+#define CONST_CAST_RTX_INSN(X) CONST_CAST (struct rtx_insn *, (X))
+#define CONST_CAST_BB(X) CONST_CAST (struct basic_block_def *, (X))
+#define CONST_CAST_GIMPLE(X) CONST_CAST (gimple *, (X))
 
 /* Activate certain diagnostics as warnings (not errors via the
    -Werror flag).  */
@@ -988,7 +1116,7 @@ helper_const_non_const_cast (const char *p)
 #endif
 #endif
 
-#ifdef ENABLE_VALGRIND_CHECKING
+#ifdef ENABLE_VALGRIND_ANNOTATIONS
 # ifdef HAVE_VALGRIND_MEMCHECK_H
 #  include <valgrind/memcheck.h>
 # elif defined HAVE_MEMCHECK_H
@@ -1013,6 +1141,18 @@ helper_const_non_const_cast (const char *p)
 #define VALGRIND_FREELIKE_BLOCK(x,y)
 #endif
 
+/* Macros to temporarily ignore some warnings.  */
+#if GCC_VERSION >= 6000
+#define GCC_DIAGNOSTIC_STRINGIFY(x) #x
+#define GCC_DIAGNOSTIC_PUSH_IGNORED(x) \
+  _Pragma ("GCC diagnostic push") \
+  _Pragma (GCC_DIAGNOSTIC_STRINGIFY (GCC diagnostic ignored #x))
+#define GCC_DIAGNOSTIC_POP _Pragma ("GCC diagnostic pop")
+#else
+#define GCC_DIAGNOSTIC_PUSH_IGNORED(x)
+#define GCC_DIAGNOSTIC_POP
+#endif
+
 /* In LTO -fwhole-program build we still want to keep the debug functions available
    for debugger.  Mark them as used to prevent removal.  */
 #if (GCC_VERSION > 4000)
@@ -1022,5 +1162,11 @@ helper_const_non_const_cast (const char *p)
 #define DEBUG_FUNCTION
 #define DEBUG_VARIABLE
 #endif
+
+/* General macro to extract bit Y of X.  */
+#define TEST_BIT(X, Y) (((X) >> (Y)) & 1)
+
+/* Get definitions of HOST_WIDE_INT.  */
+#include "hwint.h"
 
 #endif /* ! GCC_SYSTEM_H */

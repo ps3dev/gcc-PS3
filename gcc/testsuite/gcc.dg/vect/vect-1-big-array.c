@@ -10,6 +10,7 @@ void sbar (short *);
 
 /* multiple loops */
 
+void
 foo (int n)
 {
   float a[N+1];
@@ -87,4 +88,3 @@ foo (int n)
 
 /* { dg-final { scan-tree-dump-times "vectorized 6 loops" 1 "vect" { target vect_strided2 } } } */
 /* { dg-final { scan-tree-dump-times "vectorized 5 loops" 1 "vect" { xfail vect_strided2 } } } */
-/* { dg-final { cleanup-tree-dump "vect" } } */

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- This specification is derived from the Ada Reference Manual for use with --
 -- GNAT. The copyright notice above, and the license provisions that follow --
@@ -56,7 +56,7 @@
    --     reallocation when all of the following requirements are met:
    --      - the shared data object is no longer used by anyone else;
    --      - the size is sufficient to store the new value;
-   --      - the gap after reuse is less then a defined threshold.
+   --      - the gap after reuse is less than a defined threshold.
 
    --   - Memory preallocation. Most of used memory allocation algorithms
    --     align allocated segments on the some boundary, thus some amount of
@@ -64,9 +64,9 @@
    --     preallocated memory can used later by Append/Insert operations
    --     without reallocation.
 
-   --  Reference counting uses GCC builtin atomic operations, which allows to
-   --  safely share internal data between Ada tasks. Nevertheless, this doesn't
-   --  make objects of Unbounded_String thread-safe: each instance can't be
+   --  Reference counting uses GCC builtin atomic operations, which allows safe
+   --  sharing of internal data between Ada tasks. Nevertheless, this does not
+   --  make objects of Unbounded_String thread-safe: an instance cannot be
    --  accessed by several tasks simultaneously.
 
 with Ada.Strings.Maps;
@@ -449,14 +449,15 @@ private
    --  Decrement reference counter, deallocate Item when counter goes to zero
 
    function Can_Be_Reused
-     (Item   : Shared_String_Access;
+     (Item   : not null Shared_String_Access;
       Length : Natural) return Boolean;
    --  Returns True if Shared_String can be reused. There are two criteria when
    --  Shared_String can be reused: its reference counter must be one (thus
    --  Shared_String is owned exclusively) and its size is sufficient to
    --  store string with specified length effectively.
 
-   function Allocate (Max_Length : Natural) return Shared_String_Access;
+   function Allocate
+     (Max_Length : Natural) return not null Shared_String_Access;
    --  Allocates new Shared_String with at least specified maximum length.
    --  Actual maximum length of the allocated Shared_String can be slightly
    --  greater. Returns reference to Empty_Shared_String when requested length
@@ -469,7 +470,7 @@ private
    --  This renames are here only to be used in the pragma Stream_Convert
 
    type Unbounded_String is new AF.Controlled with record
-      Reference : Shared_String_Access := Empty_Shared_String'Access;
+      Reference : not null Shared_String_Access := Empty_Shared_String'Access;
    end record;
 
    pragma Stream_Convert (Unbounded_String, To_Unbounded, To_String);

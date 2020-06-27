@@ -1,6 +1,5 @@
 /* Implementation of the DATE_AND_TIME intrinsic.
-   Copyright (C) 2003, 2004, 2005, 2006, 2007, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 2003-2017 Free Software Foundation, Inc.
    Contributed by Steven Bosscher.
 
 This file is part of the GNU Fortran runtime library (libgfortran).
@@ -27,7 +26,6 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #include "libgfortran.h"
 #include <string.h>
 #include <assert.h>
-#include <stdlib.h>
 
 #include "time_1.h"
 
@@ -208,14 +206,14 @@ date_and_time (char *__date, char *__time, char *__zone,
       /* Cope with different type kinds.  */
       if (elt_size == 4)
         {
-	  GFC_INTEGER_4 *vptr4 = __values->data;
+	  GFC_INTEGER_4 *vptr4 = __values->base_addr;
 
 	  for (i = 0; i < VALUES_SIZE; i++, vptr4 += delta)
 	    *vptr4 = values[i];
 	}
       else if (elt_size == 8)
         {
-	  GFC_INTEGER_8 *vptr8 = (GFC_INTEGER_8 *)__values->data;
+	  GFC_INTEGER_8 *vptr8 = (GFC_INTEGER_8 *)__values->base_addr;
 
 	  for (i = 0; i < VALUES_SIZE; i++, vptr8 += delta)
 	    {
@@ -270,8 +268,8 @@ secnds (GFC_REAL_4 *x)
   GFC_REAL_4 temp1, temp2;
 
   /* Make the INTEGER*4 array for passing to date_and_time.  */
-  gfc_array_i4 *avalues = internal_malloc_size (sizeof (gfc_array_i4));
-  avalues->data = &values[0];
+  gfc_array_i4 *avalues = xmalloc (sizeof (gfc_array_i4));
+  avalues->base_addr = &values[0];
   GFC_DESCRIPTOR_DTYPE (avalues) = ((BT_REAL << GFC_DTYPE_TYPE_SHIFT)
 				        & GFC_DTYPE_TYPE_MASK) +
 				    (4 << GFC_DTYPE_SIZE_SHIFT);
@@ -336,7 +334,7 @@ itime_i4 (gfc_array_i4 *__values)
   if (delta == 0)
     delta = 1;
 
-  vptr = __values->data;
+  vptr = __values->base_addr;
   for (i = 0; i < 3; i++, vptr += delta)
     *vptr = x[i];
 }
@@ -362,7 +360,7 @@ itime_i8 (gfc_array_i8 *__values)
   if (delta == 0)
     delta = 1;
 
-  vptr = __values->data;
+  vptr = __values->base_addr;
   for (i = 0; i < 3; i++, vptr += delta)
     *vptr = x[i];
 }
@@ -414,7 +412,7 @@ idate_i4 (gfc_array_i4 *__values)
   if (delta == 0)
     delta = 1;
 
-  vptr = __values->data;
+  vptr = __values->base_addr;
   for (i = 0; i < 3; i++, vptr += delta)
     *vptr = x[i];
 }
@@ -440,7 +438,7 @@ idate_i8 (gfc_array_i8 *__values)
   if (delta == 0)
     delta = 1;
 
-  vptr = __values->data;
+  vptr = __values->base_addr;
   for (i = 0; i < 3; i++, vptr += delta)
     *vptr = x[i];
 }
@@ -457,11 +455,11 @@ idate_i8 (gfc_array_i8 *__values)
       1. Seconds after the minute, range 0-59 or 0-61 to allow for leap seconds
       2. Minutes after the hour, range 0-59
       3. Hours past midnight, range 0-23
-      4. Day of month, range 0-31
+      4. Day of month, range 1-31
       5. Number of months since January, range 0-11
       6. Years since 1900
       7. Number of days since Sunday, range 0-6
-      8. Days since January 1
+      8. Days since January 1, range 0-365
       9. Daylight savings indicator: positive if daylight savings is in effect,
          zero if not, and negative if the information isn't available.  */
 
@@ -504,7 +502,7 @@ gmtime_i4 (GFC_INTEGER_4 * t, gfc_array_i4 * tarray)
   if (delta == 0)
     delta = 1;
 
-  vptr = tarray->data;
+  vptr = tarray->base_addr;
   for (i = 0; i < 9; i++, vptr += delta)
     *vptr = x[i];
 }
@@ -531,7 +529,7 @@ gmtime_i8 (GFC_INTEGER_8 * t, gfc_array_i8 * tarray)
   if (delta == 0)
     delta = 1;
 
-  vptr = tarray->data;
+  vptr = tarray->base_addr;
   for (i = 0; i < 9; i++, vptr += delta)
     *vptr = x[i];
 }
@@ -549,11 +547,11 @@ gmtime_i8 (GFC_INTEGER_8 * t, gfc_array_i8 * tarray)
       1. Seconds after the minute, range 0-59 or 0-61 to allow for leap seconds
       2. Minutes after the hour, range 0-59
       3. Hours past midnight, range 0-23
-      4. Day of month, range 0-31
+      4. Day of month, range 1-31
       5. Number of months since January, range 0-11
       6. Years since 1900
       7. Number of days since Sunday, range 0-6
-      8. Days since January 1
+      8. Days since January 1, range 0-365
       9. Daylight savings indicator: positive if daylight savings is in effect,
          zero if not, and negative if the information isn't available.  */
 
@@ -596,7 +594,7 @@ ltime_i4 (GFC_INTEGER_4 * t, gfc_array_i4 * tarray)
   if (delta == 0)
     delta = 1;
 
-  vptr = tarray->data;
+  vptr = tarray->base_addr;
   for (i = 0; i < 9; i++, vptr += delta)
     *vptr = x[i];
 }
@@ -623,7 +621,7 @@ ltime_i8 (GFC_INTEGER_8 * t, gfc_array_i8 * tarray)
   if (delta == 0)
     delta = 1;
 
-  vptr = tarray->data;
+  vptr = tarray->base_addr;
   for (i = 0; i < 9; i++, vptr += delta)
     *vptr = x[i];
 }

@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-options "-O2 -Winline --param large-stack-frame=10 --param large-stack-frame-growth=2" } */
+/* { dg-options "-O2 -Winline --param large-stack-frame=10 --param large-stack-frame-growth=2 -fgnu89-inline" } */
 
 int a,b;
 void test(char *);
@@ -16,10 +16,11 @@ int bb (void) /* { dg-warning "large-stack-frame" "" } */
   test(t);
 }
 
+int
 t()
 {
   if (a)
     aa();
   if (b)
-    bb(); 			/* { dg-warning "called from here" "" } */
+    bb(); 			/* { dg-message "called from here" } */
 }

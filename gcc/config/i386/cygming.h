@@ -1,8 +1,6 @@
 /* Operating system specific defines to be used when targeting GCC for
    hosting on Windows32, using a Unix style C library and tools.
-   Copyright (C) 1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003,
-   2004, 2005, 2007, 2008, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 1995-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -41,6 +39,11 @@ along with GCC; see the file COPYING3.  If not see
 #undef MAX_STACK_ALIGNMENT
 #define MAX_STACK_ALIGNMENT  (TARGET_SEH ? 128 : MAX_OFILE_ALIGNMENT)
 
+/* 32-bit Windows aligns the stack on a 4-byte boundary but SSE instructions
+   may require 16-byte alignment.  */
+#undef STACK_REALIGN_DEFAULT
+#define STACK_REALIGN_DEFAULT TARGET_SSE
+
 /* Support hooks for SEH.  */
 #undef  TARGET_ASM_UNWIND_EMIT
 #define TARGET_ASM_UNWIND_EMIT  i386_pe_seh_unwind_emit
@@ -48,10 +51,17 @@ along with GCC; see the file COPYING3.  If not see
 #define TARGET_ASM_UNWIND_EMIT_BEFORE_INSN  false
 #undef  TARGET_ASM_FUNCTION_END_PROLOGUE
 #define TARGET_ASM_FUNCTION_END_PROLOGUE  i386_pe_seh_end_prologue
+#undef  TARGET_ASM_EMIT_EXCEPT_PERSONALITY
+#define TARGET_ASM_EMIT_EXCEPT_PERSONALITY i386_pe_seh_emit_except_personality
+#undef  TARGET_ASM_INIT_SECTIONS
+#define TARGET_ASM_INIT_SECTIONS  i386_pe_seh_init_sections
 #define SUBTARGET_ASM_UNWIND_INIT  i386_pe_seh_init
 
 #undef DEFAULT_ABI
 #define DEFAULT_ABI (TARGET_64BIT ? MS_ABI : SYSV_ABI)
+
+#undef TARGET_PECOFF
+#define TARGET_PECOFF 1
 
 #if ! defined (USE_MINGW64_LEADING_UNDERSCORES)
 #undef USER_LABEL_PREFIX
@@ -92,13 +102,16 @@ along with GCC; see the file COPYING3.  If not see
 /* Use section relative relocations for debugging offsets.  Unlike
    other targets that fake this by putting the section VMA at 0, PE
    won't allow it.  */
-#define ASM_OUTPUT_DWARF_OFFSET(FILE, SIZE, LABEL, SECTION)	\
+#define ASM_OUTPUT_DWARF_OFFSET(FILE, SIZE, LABEL, OFFSET, SECTION) \
   do {								\
     switch (SIZE)						\
       {								\
       case 4:							\
 	fputs ("\t.secrel32\t", FILE);				\
 	assemble_name (FILE, LABEL);				\
+	if ((OFFSET) != 0)					\
+	  fprintf (FILE, "+" HOST_WIDE_INT_PRINT_DEC,		\
+		   (HOST_WIDE_INT) (OFFSET));			\
 	break;							\
       case 8:							\
 	/* This is a hack.  There is no 64-bit section relative	\
@@ -108,6 +121,9 @@ along with GCC; see the file COPYING3.  If not see
 	   Fake the 64-bit offset by zero-extending it.  */	\
 	fputs ("\t.secrel32\t", FILE);				\
 	assemble_name (FILE, LABEL);				\
+	if ((OFFSET) != 0)					\
+	  fprintf (FILE, "+" HOST_WIDE_INT_PRINT_DEC,		\
+		   (HOST_WIDE_INT) (OFFSET));			\
 	fputs ("\n\t.long\t0", FILE);				\
 	break;							\
       default:							\
@@ -166,6 +182,9 @@ along with GCC; see the file COPYING3.  If not see
 #undef MATH_LIBRARY
 #define MATH_LIBRARY ""
 
+#undef TARGET_LIBC_HAS_FUNCTION
+#define TARGET_LIBC_HAS_FUNCTION no_c99_libc_has_function
+
 #define SIZE_TYPE (TARGET_64BIT ? "long long unsigned int" : "unsigned int")
 #define PTRDIFF_TYPE (TARGET_64BIT ? "long long int" : "int")
 
@@ -190,20 +209,7 @@ along with GCC; see the file COPYING3.  If not see
 #undef  SUBTARGET_OVERRIDE_OPTIONS
 #define SUBTARGET_OVERRIDE_OPTIONS					\
 do {									\
-  if (TARGET_64BIT && flag_pic != 1)					\
-    {									\
-      if (flag_pic > 1)							\
-        warning (0,							\
-	         "-fPIC ignored for target (all code is position independent)"\
-                 );                         				\
-      flag_pic = 1;							\
-    }									\
-  else if (!TARGET_64BIT && flag_pic)					\
-    {									\
-      warning (0, "-f%s ignored for target (all code is position independent)",\
-	       (flag_pic > 1) ? "PIC" : "pic");				\
-      flag_pic = 0;							\
-    }									\
+  flag_pic = TARGET_64BIT ? 1 : 0;                                      \
 } while (0)
 
 /* Define this macro if references to a symbol must be treated
@@ -224,6 +230,11 @@ do {									\
    Note that we can be called twice on the same decl.  */
 
 #define SUBTARGET_ENCODE_SECTION_INFO  i386_pe_encode_section_info
+
+/* Local and global relocs can be placed always into readonly memory
+   for PE-COFF targets.  */
+#undef TARGET_ASM_RELOC_RW_MASK
+#define TARGET_ASM_RELOC_RW_MASK i386_pe_reloc_rw_mask
 
 /* Output a common block.  */
 #undef ASM_OUTPUT_ALIGNED_DECL_COMMON
@@ -326,12 +337,6 @@ do {						\
 #define ASM_OUTPUT_ALIGNED_BSS(FILE, DECL, NAME, SIZE, ALIGN) \
   asm_output_aligned_bss ((FILE), (DECL), (NAME), (SIZE), (ALIGN))
 
-/* Put all *tf routines in libgcc.  */
-#undef LIBGCC2_HAS_TF_MODE
-#define LIBGCC2_HAS_TF_MODE 1
-#define LIBGCC2_TF_CEXT q
-#define TF_SIZE 113
-
 /* Output function declarations at the end of the file.  */
 #undef TARGET_ASM_FILE_END
 #define TARGET_ASM_FILE_END i386_pe_file_end
@@ -340,16 +345,13 @@ do {						\
 #define ASM_COMMENT_START " #"
 
 #ifndef DWARF2_UNWIND_INFO
-/* If configured with --disable-sjlj-exceptions, use DWARF2, else
-   default to SJLJ.  */
+/* If configured with --disable-sjlj-exceptions, use DWARF2 for 32-bit
+   mode else default to SJLJ.  64-bit code uses SEH unless you request
+   SJLJ.  */
 #if  (defined (CONFIG_SJLJ_EXCEPTIONS) && !CONFIG_SJLJ_EXCEPTIONS)
 /* The logic of this #if must be kept synchronised with the logic
-   for selecting the tmake_eh_file fragment in config.gcc.  */
+   for selecting the tmake_eh_file fragment in libgcc/config.host.  */
 #define DWARF2_UNWIND_INFO 1
-/* If multilib is selected break build as sjlj is required.  */
-#if defined (TARGET_BI_ARCH)
-#error For 64-bit windows and 32-bit based multilib version of gcc just SJLJ exceptions are supported.
-#endif
 #else
 #define DWARF2_UNWIND_INFO 0
 #endif
@@ -438,12 +440,8 @@ do {						\
       fputc ('\n', (FILE));           \
     }                                 \
   while (0)
-#endif /* HAVE_GAS_WEAK */
 
-/* FIXME: SUPPORTS_WEAK && TARGET_HAVE_NAMED_SECTIONS is true,
-   but for .jcr section to work we also need crtbegin and crtend
-   objects.  */
-#define TARGET_USE_JCR_SECTION 1
+#endif /* HAVE_GAS_WEAK */
 
 /* Decide whether it is safe to use a local alias for a virtual function
    when constructing thunks.  */
@@ -462,10 +460,13 @@ do {						\
 
 #define TARGET_VALID_DLLIMPORT_ATTRIBUTE_P i386_pe_valid_dllimport_attribute_p
 #define TARGET_CXX_ADJUST_CLASS_AT_DEFINITION i386_pe_adjust_class_at_definition
-#define TARGET_MANGLE_DECL_ASSEMBLER_NAME i386_pe_mangle_decl_assembler_name
+#define SUBTARGET_MANGLE_DECL_ASSEMBLER_NAME i386_pe_mangle_decl_assembler_name
 
 #undef TARGET_ASM_ASSEMBLE_VISIBILITY
 #define TARGET_ASM_ASSEMBLE_VISIBILITY i386_pe_assemble_visibility
+
+#undef SUB_TARGET_RECORD_STUB
+#define SUB_TARGET_RECORD_STUB i386_pe_record_stub
 
 /* Static stack checking is supported by means of probes.  */
 #define STACK_CHECK_STATIC_BUILTIN 1

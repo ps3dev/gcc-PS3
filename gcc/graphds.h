@@ -1,6 +1,5 @@
 /* Graph representation.
-   Copyright (C) 2007, 2008
-   Free Software Foundation, Inc.
+   Copyright (C) 2007-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -17,6 +16,9 @@ for more details.
 You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
+
+#ifndef GCC_GRAPHDS_H
+#define GCC_GRAPHDS_H
 
 /* Structure representing edge of a graph.  */
 
@@ -44,10 +46,9 @@ struct vertex
 
 struct graph
 {
-  int n_vertices;	/* Number of vertices.  */
-  struct vertex *vertices;
-			/* The vertices.  */
-  htab_t indices;	/* Fast lookup for indices.  */
+  int n_vertices;	   /* Number of vertices.  */
+  struct vertex *vertices; /* The vertices.  */
+  struct obstack ob;	   /* Obstack for vertex and edge allocation.  */
 };
 
 struct graph *new_graph (int);
@@ -55,9 +56,11 @@ void dump_graph (FILE *, struct graph *);
 struct graph_edge *add_edge (struct graph *, int, int);
 void identify_vertices (struct graph *, int, int);
 int graphds_dfs (struct graph *, int *, int,
-		 VEC (int, heap) **, bool, bitmap);
+		 vec<int> *, bool, bitmap);
 int graphds_scc (struct graph *, bitmap);
 void graphds_domtree (struct graph *, int, int *, int *, int *);
 typedef void (*graphds_edge_callback) (struct graph *, struct graph_edge *);
 void for_each_edge (struct graph *, graphds_edge_callback);
 void free_graph (struct graph *g);
+
+#endif /* GCC_GRAPHDS_H */

@@ -1,5 +1,5 @@
 /* Definitions of target machine for gcc for Super-H using sh-superh-elf.
-   Copyright (C) 2001, 2006, 2007, 2011 Free Software Foundation, Inc.
+   Copyright (C) 2001-2017 Free Software Foundation, Inc.
 
 This file is part of GNU CC.
 
@@ -20,7 +20,7 @@ along with GCC; see the file COPYING3.  If not see
 
 /* This header file is used when the vendor name is set to 'superh'.
    config.gcc already configured the compiler for SH4 only and switched
-   the default endianess to little (although big endian is still available).
+   the default endianness to little (although big endian is still available).
    This file configures the spec file to the default board configuration
    but in such a way that it can be overridden by a boardspecs file
    (using the -specs= option). This file is expected to disable the
@@ -28,7 +28,6 @@ along with GCC; see the file COPYING3.  If not see
    which are required by the SuperH configuration of GNU ld.
 
    This file is intended to override sh.h.  */
-
 
 #ifndef _SUPERH_H
 #define _SUPERH_H
@@ -55,7 +54,8 @@ along with GCC; see the file COPYING3.  If not see
 #endif
 
 
-/* This is used by the link spec if the boardspecs file is not used (for whatever reason).
+/* This is used by the link spec if the boardspecs file is not used
+   (for whatever reason).
    If the boardspecs file overrides this then an alternative can be used. */
 #undef SUBTARGET_EXTRA_SPECS
 #define SUBTARGET_EXTRA_SPECS \

@@ -1,4 +1,6 @@
 /* Verify whether math functions are simplified.  */
+/* { dg-require-effective-target c99_runtime } */
+/* { dg-require-weak } */
 double sin(double);
 double floor(double);
 float 
@@ -28,27 +30,27 @@ main()
 #endif
 	return 0;
 }
-__attribute__ ((noinline))
+__attribute__ ((weak))
 double
 floor(double a)
 {
 	abort ();
 }
-__attribute__ ((noinline))
+__attribute__ ((weak))
 float
 floorf(float a)
 {
 	return a;
 }
-__attribute__ ((noinline))
+__attribute__ ((weak))
 double
 sin(double a)
 {
-	abort ();
+	return a;
 }
-__attribute__ ((noinline))
+__attribute__ ((weak))
 float
 sinf(float a)
 {
-	return a;
+	abort ();
 }

@@ -1,5 +1,4 @@
-/* Copyright (C) 1989, 1997, 1998, 1999, 2000, 2002, 2004, 2009, 2011
-   Free Software Foundation, Inc.
+/* Copyright (C) 1989-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -41,8 +40,6 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #define _STDDEF_H_
 /* snaroff@next.com says the NeXT needs this.  */
 #define _ANSI_STDDEF_H
-/* Irix 5.1 needs this.  */
-#define __STDDEF_H__
 #endif
 
 #ifndef __sys_stdtypes_h
@@ -136,6 +133,7 @@ _TYPE_wchar_t;
 #ifndef _BSD_PTRDIFF_T_
 #ifndef ___int_ptrdiff_t_h
 #ifndef _GCC_PTRDIFF_T
+#ifndef _PTRDIFF_T_DECLARED /* DragonFly */
 #define _PTRDIFF_T
 #define _T_PTRDIFF_
 #define _T_PTRDIFF
@@ -144,10 +142,12 @@ _TYPE_wchar_t;
 #define _BSD_PTRDIFF_T_
 #define ___int_ptrdiff_t_h
 #define _GCC_PTRDIFF_T
+#define _PTRDIFF_T_DECLARED
 #ifndef __PTRDIFF_TYPE__
 #define __PTRDIFF_TYPE__ long int
 #endif
 typedef __PTRDIFF_TYPE__ ptrdiff_t;
+#endif /* _PTRDIFF_T_DECLARED */
 #endif /* _GCC_PTRDIFF_T */
 #endif /* ___int_ptrdiff_t_h */
 #endif /* _BSD_PTRDIFF_T_ */
@@ -201,8 +201,11 @@ typedef __PTRDIFF_TYPE__ ptrdiff_t;
 #define _GCC_SIZE_T
 #define _SIZET_
 #if (defined (__FreeBSD__) && (__FreeBSD__ >= 5)) \
+  || defined(__DragonFly__) \
   || defined(__FreeBSD_kernel__)
 /* __size_t is a typedef on FreeBSD 5, must not trash it. */
+#elif defined (__VMS__)
+/* __size_t is also a typedef on VMS.  */
 #else
 #define __size_t
 #endif
@@ -423,9 +426,24 @@ typedef __WINT_TYPE__ wint_t;
 typedef struct {
   long long __max_align_ll __attribute__((__aligned__(__alignof__(long long))));
   long double __max_align_ld __attribute__((__aligned__(__alignof__(long double))));
+  /* _Float128 is defined as a basic type, so max_align_t must be
+     sufficiently aligned for it.  This code must work in C++, so we
+     use __float128 here; that is only available on some
+     architectures, but only on i386 is extra alignment needed for
+     __float128.  */
+#ifdef __i386__
+  __float128 __max_align_f128 __attribute__((__aligned__(__alignof(__float128))));
+#endif
 } max_align_t;
 #endif
 #endif /* C11 or C++11.  */
+
+#if defined(__cplusplus) && __cplusplus >= 201103L
+#ifndef _GXX_NULLPTR_T
+#define _GXX_NULLPTR_T
+  typedef decltype(nullptr) nullptr_t;
+#endif
+#endif /* C++11.  */
 
 #endif /* _STDDEF_H was defined this time */
 

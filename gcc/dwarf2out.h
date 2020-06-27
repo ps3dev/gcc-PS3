@@ -1,6 +1,5 @@
 /* dwarf2out.h - Various declarations for functions found in dwarf2out.c
-   Copyright (C) 1998, 1999, 2000, 2003, 2007, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 1998-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -26,10 +25,12 @@ along with GCC; see the file COPYING3.  If not see
 typedef struct die_struct *dw_die_ref;
 typedef const struct die_struct *const_dw_die_ref;
 
-typedef struct dw_val_struct *dw_val_ref;
-typedef struct dw_cfi_struct *dw_cfi_ref;
-typedef struct dw_loc_descr_struct *dw_loc_descr_ref;
+typedef struct dw_val_node *dw_val_ref;
+typedef struct dw_cfi_node *dw_cfi_ref;
+typedef struct dw_loc_descr_node *dw_loc_descr_ref;
 typedef struct dw_loc_list_struct *dw_loc_list_ref;
+typedef struct dw_discr_list_node *dw_discr_list_ref;
+typedef wide_int *wide_int_ptr;
 
 
 /* Call frames are described using a sequence of Call Frame
@@ -45,30 +46,25 @@ enum dw_cfi_oprnd_type {
   dw_cfi_oprnd_loc
 };
 
-typedef union GTY(()) dw_cfi_oprnd_struct {
+typedef union GTY(()) {
   unsigned int GTY ((tag ("dw_cfi_oprnd_reg_num"))) dw_cfi_reg_num;
   HOST_WIDE_INT GTY ((tag ("dw_cfi_oprnd_offset"))) dw_cfi_offset;
   const char * GTY ((tag ("dw_cfi_oprnd_addr"))) dw_cfi_addr;
-  struct dw_loc_descr_struct * GTY ((tag ("dw_cfi_oprnd_loc"))) dw_cfi_loc;
-}
-dw_cfi_oprnd;
+  struct dw_loc_descr_node * GTY ((tag ("dw_cfi_oprnd_loc"))) dw_cfi_loc;
+} dw_cfi_oprnd;
 
-typedef struct GTY(()) dw_cfi_struct {
+struct GTY(()) dw_cfi_node {
   enum dwarf_call_frame_info dw_cfi_opc;
   dw_cfi_oprnd GTY ((desc ("dw_cfi_oprnd1_desc (%1.dw_cfi_opc)")))
     dw_cfi_oprnd1;
   dw_cfi_oprnd GTY ((desc ("dw_cfi_oprnd2_desc (%1.dw_cfi_opc)")))
     dw_cfi_oprnd2;
-}
-dw_cfi_node;
+};
 
-DEF_VEC_P (dw_cfi_ref);
-DEF_VEC_ALLOC_P (dw_cfi_ref, heap);
-DEF_VEC_ALLOC_P (dw_cfi_ref, gc);
 
-typedef VEC(dw_cfi_ref, gc) *cfi_vec;
+typedef vec<dw_cfi_ref, va_gc> *cfi_vec;
 
-typedef struct dw_fde_struct *dw_fde_ref;
+typedef struct dw_fde_node *dw_fde_ref;
 
 /* All call frame descriptions (FDE's) in the GCC generated DWARF
    refer to a single Common Information Entry (CIE), defined at
@@ -76,7 +72,7 @@ typedef struct dw_fde_struct *dw_fde_ref;
    CIE obviates the need to keep track of multiple CIE's
    in the DWARF generation routines below.  */
 
-typedef struct GTY(()) dw_fde_struct {
+struct GTY(()) dw_fde_node {
   tree decl;
   const char *dw_fde_begin;
   const char *dw_fde_current_label;
@@ -109,8 +105,7 @@ typedef struct GTY(()) dw_fde_struct {
   /* True iff dw_fde_second_begin label is in text_section or
      cold_text_section.  */
   unsigned second_in_std_section : 1;
-}
-dw_fde_node;
+};
 
 
 /* This is how we define the location of the CFA. We use to handle it
@@ -118,14 +113,14 @@ dw_fde_node;
    It can now be either REG + CFA_OFFSET or *(REG + BASE_OFFSET) + CFA_OFFSET.
    Instead of passing around REG and OFFSET, we pass a copy
    of this structure.  */
-typedef struct GTY(()) cfa_loc {
+struct GTY(()) dw_cfa_location {
   HOST_WIDE_INT offset;
   HOST_WIDE_INT base_offset;
   /* REG is in DWARF_FRAME_REGNUM space, *not* normal REGNO space.  */
   unsigned int reg;
   BOOL_BITFIELD indirect : 1;  /* 1 if CFA is accessed via a dereference.  */
   BOOL_BITFIELD in_use : 1;    /* 1 if a saved cfa is stored here.  */
-} dw_cfa_location;
+};
 
 
 /* Each DIE may have a series of attribute/value pairs.  Values
@@ -143,6 +138,7 @@ enum dw_val_class
   dw_val_class_const,
   dw_val_class_unsigned_const,
   dw_val_class_const_double,
+  dw_val_class_wide_int,
   dw_val_class_vec,
   dw_val_class_flag,
   dw_val_class_die_ref,
@@ -151,26 +147,54 @@ enum dw_val_class
   dw_val_class_lineptr,
   dw_val_class_str,
   dw_val_class_macptr,
+  dw_val_class_loclistsptr,
   dw_val_class_file,
   dw_val_class_data8,
   dw_val_class_decl_ref,
-  dw_val_class_vms_delta
+  dw_val_class_vms_delta,
+  dw_val_class_high_pc,
+  dw_val_class_discr_value,
+  dw_val_class_discr_list,
+  dw_val_class_const_implicit,
+  dw_val_class_unsigned_const_implicit,
+  dw_val_class_file_implicit
 };
 
 /* Describe a floating point constant value, or a vector constant value.  */
 
-typedef struct GTY(()) dw_vec_struct {
-  unsigned char * GTY((length ("%h.length"))) array;
+struct GTY(()) dw_vec_const {
+  void * GTY((atomic)) array;
   unsigned length;
   unsigned elt_size;
-}
-dw_vec_const;
+};
+
+/* Describe a single value that a discriminant can match.
+
+   Discriminants (in the "record variant part" meaning) are scalars.
+   dw_discr_list_ref and dw_discr_value are a mean to describe a set of
+   discriminant values that are matched by a particular variant.
+
+   Discriminants can be signed or unsigned scalars, and can be discriminants
+   values.  Both have to be consistent, though.  */
+
+struct GTY(()) dw_discr_value {
+  int pos; /* Whether the discriminant value is positive (unsigned).  */
+  union
+    {
+      HOST_WIDE_INT GTY ((tag ("0"))) sval;
+      unsigned HOST_WIDE_INT GTY ((tag ("1"))) uval;
+    }
+  GTY ((desc ("%1.pos"))) v;
+};
+
+struct addr_table_entry;
 
 /* The dw_val_node describes an attribute's value, as it is
    represented internally.  */
 
-typedef struct GTY(()) dw_val_struct {
+struct GTY(()) dw_val_node {
   enum dw_val_class val_class;
+  struct addr_table_entry * GTY(()) val_entry;
   union dw_val_struct_union
     {
       rtx GTY ((tag ("dw_val_class_addr"))) val_addr;
@@ -178,8 +202,10 @@ typedef struct GTY(()) dw_val_struct {
       dw_loc_list_ref GTY ((tag ("dw_val_class_loc_list"))) val_loc_list;
       dw_loc_descr_ref GTY ((tag ("dw_val_class_loc"))) val_loc;
       HOST_WIDE_INT GTY ((default)) val_int;
-      unsigned HOST_WIDE_INT GTY ((tag ("dw_val_class_unsigned_const"))) val_unsigned;
+      unsigned HOST_WIDE_INT
+	GTY ((tag ("dw_val_class_unsigned_const"))) val_unsigned;
       double_int GTY ((tag ("dw_val_class_const_double"))) val_double;
+      wide_int_ptr GTY ((tag ("dw_val_class_wide_int"))) val_wide;
       dw_vec_const GTY ((tag ("dw_val_class_vec"))) val_vec;
       struct dw_val_die_union
 	{
@@ -191,6 +217,8 @@ typedef struct GTY(()) dw_val_struct {
       char * GTY ((tag ("dw_val_class_lbl_id"))) val_lbl_id;
       unsigned char GTY ((tag ("dw_val_class_flag"))) val_flag;
       struct dwarf_file_data * GTY ((tag ("dw_val_class_file"))) val_file;
+      struct dwarf_file_data *
+	GTY ((tag ("dw_val_class_file_implicit"))) val_file_implicit;
       unsigned char GTY ((tag ("dw_val_class_data8"))) val_data8[8];
       tree GTY ((tag ("dw_val_class_decl_ref"))) val_decl_ref;
       struct dw_val_vms_delta_union
@@ -198,37 +226,54 @@ typedef struct GTY(()) dw_val_struct {
 	  char * lbl1;
 	  char * lbl2;
 	} GTY ((tag ("dw_val_class_vms_delta"))) val_vms_delta;
+      dw_discr_value GTY ((tag ("dw_val_class_discr_value"))) val_discr_value;
+      dw_discr_list_ref GTY ((tag ("dw_val_class_discr_list"))) val_discr_list;
     }
   GTY ((desc ("%1.val_class"))) v;
-}
-dw_val_node;
+};
 
 /* Locations in memory are described using a sequence of stack machine
    operations.  */
 
-typedef struct GTY(()) dw_loc_descr_struct {
+struct GTY((chain_next ("%h.dw_loc_next"))) dw_loc_descr_node {
   dw_loc_descr_ref dw_loc_next;
   ENUM_BITFIELD (dwarf_location_atom) dw_loc_opc : 8;
   /* Used to distinguish DW_OP_addr with a direct symbol relocation
      from DW_OP_addr with a dtp-relative symbol relocation.  */
   unsigned int dtprel : 1;
+  /* For DW_OP_pick, DW_OP_dup and DW_OP_over operations: true iff.
+     it targets a DWARF prodecure argument.  In this case, it needs to be
+     relocated according to the current frame offset.  */
+  unsigned int frame_offset_rel : 1;
   int dw_loc_addr;
   dw_val_node dw_loc_oprnd1;
   dw_val_node dw_loc_oprnd2;
-}
-dw_loc_descr_node;
+};
 
+/* A variant (inside a record variant part) is selected when the corresponding
+   discriminant matches its set of values (see the comment for dw_discr_value).
+   The following datastructure holds such matching information.  */
+
+struct GTY(()) dw_discr_list_node {
+  dw_discr_list_ref dw_discr_next;
+
+  dw_discr_value dw_discr_lower_bound;
+  dw_discr_value dw_discr_upper_bound;
+  /* This node represents only the value in dw_discr_lower_bound when it's
+     zero.  It represents the range between the two fields (bounds included)
+     otherwise.  */
+  int dw_discr_range;
+};
 
 /* Interface from dwarf2out.c to dwarf2cfi.c.  */
-extern struct dw_loc_descr_struct *build_cfa_loc
+extern struct dw_loc_descr_node *build_cfa_loc
   (dw_cfa_location *, HOST_WIDE_INT);
-extern struct dw_loc_descr_struct *build_cfa_aligned_loc
+extern struct dw_loc_descr_node *build_cfa_aligned_loc
   (dw_cfa_location *, HOST_WIDE_INT offset, HOST_WIDE_INT alignment);
-extern struct dw_loc_descr_struct *mem_loc_descriptor
-  (rtx, enum machine_mode mode, enum machine_mode mem_mode,
+extern struct dw_loc_descr_node *mem_loc_descriptor
+  (rtx, machine_mode mode, machine_mode mem_mode,
    enum var_init_status);
 extern bool loc_descr_equal_p (dw_loc_descr_ref, dw_loc_descr_ref);
-extern enum machine_mode get_address_mode (rtx mem);
 extern dw_fde_ref dwarf2out_alloc_current_fde (void);
 
 extern unsigned long size_of_locs (dw_loc_descr_ref);
@@ -250,33 +295,86 @@ extern enum dw_cfi_oprnd_type dw_cfi_oprnd1_desc
 extern enum dw_cfi_oprnd_type dw_cfi_oprnd2_desc
   (enum dwarf_call_frame_info cfi);
 
-extern void output_cfi_directive (FILE *f, struct dw_cfi_struct *cfi);
+extern void output_cfi_directive (FILE *f, struct dw_cfi_node *cfi);
 
-extern void dwarf2out_decl (tree);
 extern void dwarf2out_emit_cfi (dw_cfi_ref cfi);
 
 extern void debug_dwarf (void);
 struct die_struct;
 extern void debug_dwarf_die (struct die_struct *);
+extern void debug_dwarf_loc_descr (dw_loc_descr_ref);
+extern void debug (die_struct &ref);
+extern void debug (die_struct *ptr);
 extern void dwarf2out_set_demangle_name_func (const char *(*) (const char *));
 #ifdef VMS_DEBUGGING_INFO
 extern void dwarf2out_vms_debug_main_pointer (void);
 #endif
 
+enum array_descr_ordering
+{
+  array_descr_ordering_default,
+  array_descr_ordering_row_major,
+  array_descr_ordering_column_major
+};
+
+#define DWARF2OUT_ARRAY_DESCR_INFO_MAX_DIMEN 16
+
 struct array_descr_info
 {
   int ndimensions;
+  enum array_descr_ordering ordering;
   tree element_type;
   tree base_decl;
   tree data_location;
   tree allocated;
   tree associated;
+  tree stride;
+  tree rank;
+  bool stride_in_bits;
   struct array_descr_dimen
     {
+      /* GCC uses sizetype for array indices, so lower_bound and upper_bound
+	 will likely be "sizetype" values. However, bounds may have another
+	 type in the original source code.  */
+      tree bounds_type;
       tree lower_bound;
       tree upper_bound;
+
+      /* Only Fortran uses more than one dimension for array types.  For other
+	 languages, the stride can be rather specified for the whole array.  */
       tree stride;
-    } dimen[10];
+    } dimen[DWARF2OUT_ARRAY_DESCR_INFO_MAX_DIMEN];
 };
+
+enum fixed_point_scale_factor
+{
+  fixed_point_scale_factor_binary,
+  fixed_point_scale_factor_decimal,
+  fixed_point_scale_factor_arbitrary
+};
+
+struct fixed_point_type_info
+{
+  /* A scale factor is the value one has to multiply with physical data in
+     order to get the fixed point logical data.  The DWARF standard enables one
+     to encode it in three ways.  */
+  enum fixed_point_scale_factor scale_factor_kind;
+  union
+    {
+      /* For binary scale factor, the scale factor is: 2 ** binary.  */
+      int binary;
+      /* For decimal scale factor, the scale factor is: 10 ** binary.  */
+      int decimal;
+      /* For arbitrary scale factor, the scale factor is:
+	 numerator / denominator.  */
+      struct
+	{
+	  unsigned HOST_WIDE_INT numerator;
+	  HOST_WIDE_INT denominator;
+	} arbitrary;
+    } scale_factor;
+};
+
+void dwarf2out_c_finalize (void);
 
 #endif /* GCC_DWARF2OUT_H */

@@ -1,5 +1,4 @@
-# Copyright (C) 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002,
-# 2003, 2004, 2006, 2008, 2009, 2011 Free Software Foundation, Inc.
+# Copyright (C) 1993-2017 Free Software Foundation, Inc.
 #
 # This file is part of GCC.
 #
@@ -46,7 +45,7 @@ sdivsi3_i4i-Os-4-200.o: $(srcdir)/config/sh/lib1funcs-Os-4-200.S
 	$(gcc_compile) -c -DL_sdivsi3_i4i $<
 udivsi3_i4i-Os-4-200.o: $(srcdir)/config/sh/lib1funcs-Os-4-200.S
 	$(gcc_compile) -c -DL_udivsi3_i4i $<
-unwind-dw2-Os-4-200.o: $(srcdir)/unwind-dw2.c
+unwind-dw2-Os-4-200.o: $(srcdir)/unwind-dw2.c $(LIBGCC_LINKS)
 	$(gcc_compile) $(LIBGCC2_CFLAGS) $(vis_hide) -fexceptions -Os -c $<
 
 OBJS_Os_4_200=sdivsi3_i4i-Os-4-200.o udivsi3_i4i-Os-4-200.o unwind-dw2-Os-4-200.o
@@ -58,6 +57,4 @@ div_table-4-300.o: $(srcdir)/config/sh/lib1funcs-4-300.S
 
 libgcc-4-300.a: div_table-4-300.o
 	$(AR_CREATE_FOR_TARGET) $@ div_table-4-300.o
-
-HOST_LIBGCC2_CFLAGS += -mieee
 

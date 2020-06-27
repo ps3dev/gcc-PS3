@@ -1,6 +1,5 @@
 /* Expression parser.
-   Copyright (C) 2000, 2001, 2002, 2004, 2005, 2006, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2000-2017 Free Software Foundation, Inc.
    Contributed by Andy Vaught
 
 This file is part of GCC.
@@ -21,11 +20,12 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "config.h"
 #include "system.h"
+#include "coretypes.h"
 #include "gfortran.h"
 #include "arith.h"
 #include "match.h"
 
-static char expression_syntax[] = N_("Syntax error in expression at %C");
+static const char expression_syntax[] = N_("Syntax error in expression at %C");
 
 
 /* Match a user-defined operator name.  This is a normal name with a
@@ -69,7 +69,7 @@ gfc_match_defined_op_name (char *result, int error_flag)
   for (i = 0; name[i]; i++)
     if (!ISALPHA (name[i]))
       {
-	gfc_error ("Bad character '%c' in OPERATOR name at %C", name[i]);
+	gfc_error ("Bad character %qc in OPERATOR name at %C", name[i]);
 	return MATCH_ERROR;
       }
 
@@ -77,7 +77,7 @@ gfc_match_defined_op_name (char *result, int error_flag)
   return MATCH_YES;
 
 error:
-  gfc_error ("The name '%s' cannot be used as a defined operator at %C",
+  gfc_error ("The name %qs cannot be used as a defined operator at %C",
 	     name);
 
   gfc_current_locus = old_loc;
@@ -258,7 +258,9 @@ match_add_op (void)
 static match
 match_mult_operand (gfc_expr **result)
 {
-  gfc_expr *e, *exp, *r;
+  /* Workaround -Wmaybe-uninitialized false positive during
+     profiledbootstrap by initializing them.  */
+  gfc_expr *e = NULL, *exp, *r;
   locus where;
   match m;
 
@@ -319,7 +321,7 @@ match_ext_mult_operand (gfc_expr **result)
       return MATCH_ERROR;
     }
   else
-    gfc_warning ("Extension: Unary operator following "
+    gfc_warning (0, "Extension: Unary operator following "
 		 "arithmetic operator (use parentheses) at %C");
 
   m = match_ext_mult_operand (&e);
@@ -428,7 +430,7 @@ match_ext_add_operand (gfc_expr **result)
       return MATCH_ERROR;
     }
   else
-    gfc_warning ("Extension: Unary operator following "
+    gfc_warning (0, "Extension: Unary operator following "
 		"arithmetic operator (use parentheses) at %C");
 
   m = match_ext_add_operand (&e);
@@ -542,7 +544,7 @@ match_level_2 (gfc_expr **result)
 static match
 match_level_3 (gfc_expr **result)
 {
-  gfc_expr *all, *e, *total;
+  gfc_expr *all, *e, *total = NULL;
   locus where;
   match m;
 
@@ -559,12 +561,12 @@ match_level_3 (gfc_expr **result)
 
       m = match_level_2 (&e);
       if (m == MATCH_NO)
-	{
-	  gfc_error (expression_syntax);
-	  gfc_free_expr (all);
-	}
+	gfc_error (expression_syntax);
       if (m != MATCH_YES)
-	return MATCH_ERROR;
+	{
+	  gfc_free_expr (all);
+	  return MATCH_ERROR;
+	}
 
       total = gfc_concat (all, e);
       if (total == NULL)

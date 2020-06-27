@@ -1,7 +1,6 @@
 // Bitmap Allocator. -*- C++ -*-
 
-// Copyright (C) 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011
-// Free Software Foundation, Inc.
+// Copyright (C) 2004-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -649,7 +648,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
      *  equal to that requested.
      */
     size_t*
-    _M_get(size_t __sz) throw(std::bad_alloc);
+    _M_get(size_t __sz) _GLIBCXX_THROW(std::bad_alloc);
 
     /** @brief  This function just clears the internal Free List, and
      *  gives back all the memory to the OS.
@@ -702,6 +701,12 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	{
 	  typedef bitmap_allocator<_Tp1> other;
 	};
+
+#if __cplusplus >= 201103L
+      // _GLIBCXX_RESOLVE_LIB_DEFECTS
+      // 2103. propagate_on_container_move_assignment
+      typedef std::true_type propagate_on_container_move_assignment;
+#endif
 
     private:
       template<size_t _BSize, size_t _AlignSize>
@@ -761,7 +766,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
        *  the newly acquired block. Having a tight bound.
        */
       void 
-      _S_refill_pool() throw(std::bad_alloc)
+      _S_refill_pool() _GLIBCXX_THROW(std::bad_alloc)
       {
 #if defined _GLIBCXX_DEBUG
 	_S_check_for_free_blocks();
@@ -819,7 +824,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
        *  Amortized Constant time.
        */
       pointer 
-      _M_allocate_single_object() throw(std::bad_alloc)
+      _M_allocate_single_object() _GLIBCXX_THROW(std::bad_alloc)
       {
 #if defined __GTHREADS
 	__scoped_lock __bit_lock(_S_mut);
@@ -1013,6 +1018,15 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	if (__n > this->max_size())
 	  std::__throw_bad_alloc();
 
+#if __cpp_aligned_new
+	if (alignof(value_type) > __STDCPP_DEFAULT_NEW_ALIGNMENT__)
+	  {
+	    const size_type __b = __n * sizeof(value_type);
+	    std::align_val_t __al = std::align_val_t(alignof(value_type));
+	    return static_cast<pointer>(::operator new(__b, __al));
+	  }
+#endif
+
 	if (__builtin_expect(__n == 1, true))
 	  return this->_M_allocate_single_object();
 	else
@@ -1031,6 +1045,15 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       {
 	if (__builtin_expect(__p != 0, true))
 	  {
+#if __cpp_aligned_new
+	    // Types with extended alignment are handled by operator delete.
+	    if (alignof(value_type) > __STDCPP_DEFAULT_NEW_ALIGNMENT__)
+	      {
+		::operator delete(__p, std::align_val_t(alignof(value_type)));
+		return;
+	      }
+#endif
+
 	    if (__builtin_expect(__n == 1, true))
 	      this->_M_deallocate_single_object(__p);
 	    else
@@ -1050,7 +1073,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       max_size() const _GLIBCXX_USE_NOEXCEPT
       { return size_type(-1) / sizeof(value_type); }
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
       template<typename _Up, typename... _Args>
         void
         construct(_Up* __p, _Args&&... __args)

@@ -1,4 +1,5 @@
 ! { dg-do compile }
+! { dg-require-visibility "" }
 !
 ! PR fortran/32867 - nested initialization expression not simplified
 !
@@ -28,5 +29,3 @@ end select
 
 END SUBROUTINE Parser
 END MODULE Readdata_mod
-
-! { dg-final { cleanup-modules "readdata_mod" } }

@@ -1,7 +1,8 @@
-/* Copyright (C) 2005, 2008, 2009 Free Software Foundation, Inc.
+/* Copyright (C) 2005-2017 Free Software Foundation, Inc.
    Contributed by Richard Henderson <rth@redhat.com>.
 
-   This file is part of the GNU OpenMP Library (libgomp).
+   This file is part of the GNU Offloading and Multi Processing Library
+   (libgomp).
 
    Libgomp is free software; you can redistribute it and/or modify it
    under the terms of the GNU General Public License as published by
@@ -29,7 +30,7 @@
 
 
 static inline long
-sys_futex0(int *addr, long op, int val)
+sys_futex0(int *addr, int op, int val)
 {
   register long out0 asm ("out0") = (long) addr;
   register long out1 asm ("out1") = op;

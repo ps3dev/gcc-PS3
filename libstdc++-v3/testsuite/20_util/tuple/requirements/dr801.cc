@@ -1,7 +1,6 @@
-// { dg-do compile }
-// { dg-options "-std=gnu++0x" }
+// { dg-do compile { target c++11 } }
 
-// Copyright (C) 2010 Free Software Foundation, Inc.
+// Copyright (C) 2010-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -27,19 +26,15 @@ void test_trivial()
   // PODType, TType, NType, SLType, LType, NLType, LTypeDerived
   typedef std::tuple<int, int> tuple_type;
   // static_assert(std::is_literal_type<tuple_type>::value, "! literal");
-  static_assert(std::has_trivial_copy_constructor<tuple_type>::value,
+  static_assert(std::is_trivially_copy_constructible<tuple_type>::value,
 		"! triv copy");
-  static_assert(std::has_trivial_destructor<tuple_type>::value,
+  static_assert(std::is_trivially_destructible<tuple_type>::value,
 		"! triv destructor");
   // static_assert(std::is_standard_layout<tuple_type>::value,
   //		   "! standard layout");
 
   // Negative
   /*
-  static_assert(std::has_trivial_default_constructor<tuple_type>::value,
-		"! triv default");
-  static_assert(std::has_trivial_copy_assign<tuple_type>::value,
-		"! triv assign");
   static_assert(std::is_trivial<tuple_type>::value, "! triv");
   static_assert(std::is_pod<tuple_type>::value, "! pod");
   */

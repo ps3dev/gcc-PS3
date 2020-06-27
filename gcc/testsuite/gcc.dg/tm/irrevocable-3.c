@@ -3,6 +3,7 @@
 
 extern void bar(void) __attribute__((transaction_callable));
 
+void
 foo()
 {
 	__transaction_relaxed {
@@ -10,5 +11,4 @@ foo()
 	}
 }
 
-/* { dg-final { scan-tree-dump-times "GTMA_MAY_ENTER_IRREVOCABLE" 1 "tmmark" } } */
-/* { dg-final { cleanup-tree-dump "tmmark" } } */
+/* { dg-final { scan-tree-dump-times "doesGoIrrevocable" 1 "tmmark" } } */

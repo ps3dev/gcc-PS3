@@ -1,8 +1,8 @@
-// Copyright 2010 The Go Authors.  All rights reserved.
+// Copyright 2010 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build darwin freebsd linux netbsd openbsd
+// +build darwin dragonfly freebsd linux nacl netbsd openbsd plan9 solaris
 
 // Unix cryptographically secure pseudorandom number
 // generator.
@@ -15,14 +15,23 @@ import (
 	"crypto/cipher"
 	"io"
 	"os"
+	"runtime"
 	"sync"
 	"time"
 )
 
+const urandomDevice = "/dev/urandom"
+
 // Easy implementation: read from /dev/urandom.
 // This is sufficient on Linux, OS X, and FreeBSD.
 
-func init() { Reader = &devReader{name: "/dev/urandom"} }
+func init() {
+	if runtime.GOOS == "plan9" {
+		Reader = newReader(nil)
+	} else {
+		Reader = &devReader{name: urandomDevice}
+	}
+}
 
 // A devReader satisfies reads by reading the file named name.
 type devReader struct {
@@ -31,7 +40,14 @@ type devReader struct {
 	mu   sync.Mutex
 }
 
+// altGetRandom if non-nil specifies an OS-specific function to get
+// urandom-style randomness.
+var altGetRandom func([]byte) (ok bool)
+
 func (r *devReader) Read(b []byte) (n int, err error) {
+	if altGetRandom != nil && r.name == urandomDevice && altGetRandom(b) {
+		return len(b), nil
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.f == nil {
@@ -39,17 +55,36 @@ func (r *devReader) Read(b []byte) (n int, err error) {
 		if f == nil {
 			return 0, err
 		}
-		r.f = bufio.NewReader(f)
+		if runtime.GOOS == "plan9" {
+			r.f = f
+		} else {
+			r.f = bufio.NewReader(hideAgainReader{f})
+		}
 	}
 	return r.f.Read(b)
 }
 
+var isEAGAIN func(error) bool // set by eagain.go on unix systems
+
+// hideAgainReader masks EAGAIN reads from /dev/urandom.
+// See golang.org/issue/9205
+type hideAgainReader struct {
+	r io.Reader
+}
+
+func (hr hideAgainReader) Read(p []byte) (n int, err error) {
+	n, err = hr.r.Read(p)
+	if err != nil && isEAGAIN != nil && isEAGAIN(err) {
+		err = nil
+	}
+	return
+}
+
 // Alternate pseudo-random implementation for use on
-// systems without a reliable /dev/urandom.  So far we
-// haven't needed it.
+// systems without a reliable /dev/urandom.
 
 // newReader returns a new pseudorandom generator that
-// seeds itself by reading from entropy.  If entropy == nil,
+// seeds itself by reading from entropy. If entropy == nil,
 // the generator seeds itself by reading from the system's
 // random number generator, typically /dev/random.
 // The Read method on the returned reader always returns

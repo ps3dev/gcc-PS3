@@ -5,9 +5,7 @@
 package big
 
 import (
-	"bytes"
-	"encoding/gob"
-	"fmt"
+	"math"
 	"testing"
 )
 
@@ -49,111 +47,6 @@ func TestZeroRat(t *testing.T) {
 		}
 	}()
 	z.Quo(&x, &y)
-}
-
-var setStringTests = []struct {
-	in, out string
-	ok      bool
-}{
-	{"0", "0", true},
-	{"-0", "0", true},
-	{"1", "1", true},
-	{"-1", "-1", true},
-	{"1.", "1", true},
-	{"1e0", "1", true},
-	{"1.e1", "10", true},
-	{in: "1e", ok: false},
-	{in: "1.e", ok: false},
-	{in: "1e+14e-5", ok: false},
-	{in: "1e4.5", ok: false},
-	{in: "r", ok: false},
-	{in: "a/b", ok: false},
-	{in: "a.b", ok: false},
-	{"-0.1", "-1/10", true},
-	{"-.1", "-1/10", true},
-	{"2/4", "1/2", true},
-	{".25", "1/4", true},
-	{"-1/5", "-1/5", true},
-	{"8129567.7690E14", "812956776900000000000", true},
-	{"78189e+4", "781890000", true},
-	{"553019.8935e+8", "55301989350000", true},
-	{"98765432109876543210987654321e-10", "98765432109876543210987654321/10000000000", true},
-	{"9877861857500000E-7", "3951144743/4", true},
-	{"2169378.417e-3", "2169378417/1000000", true},
-	{"884243222337379604041632732738665534", "884243222337379604041632732738665534", true},
-	{"53/70893980658822810696", "53/70893980658822810696", true},
-	{"106/141787961317645621392", "53/70893980658822810696", true},
-	{"204211327800791583.81095", "4084226556015831676219/20000", true},
-}
-
-func TestRatSetString(t *testing.T) {
-	for i, test := range setStringTests {
-		x, ok := new(Rat).SetString(test.in)
-
-		if ok {
-			if !test.ok {
-				t.Errorf("#%d SetString(%q) expected failure", i, test.in)
-			} else if x.RatString() != test.out {
-				t.Errorf("#%d SetString(%q) got %s want %s", i, test.in, x.RatString(), test.out)
-			}
-		} else if x != nil {
-			t.Errorf("#%d SetString(%q) got %p want nil", i, test.in, x)
-		}
-	}
-}
-
-func TestRatScan(t *testing.T) {
-	var buf bytes.Buffer
-	for i, test := range setStringTests {
-		x := new(Rat)
-		buf.Reset()
-		buf.WriteString(test.in)
-
-		_, err := fmt.Fscanf(&buf, "%v", x)
-		if err == nil != test.ok {
-			if test.ok {
-				t.Errorf("#%d error: %s", i, err)
-			} else {
-				t.Errorf("#%d expected error", i)
-			}
-			continue
-		}
-		if err == nil && x.RatString() != test.out {
-			t.Errorf("#%d got %s want %s", i, x.RatString(), test.out)
-		}
-	}
-}
-
-var floatStringTests = []struct {
-	in   string
-	prec int
-	out  string
-}{
-	{"0", 0, "0"},
-	{"0", 4, "0.0000"},
-	{"1", 0, "1"},
-	{"1", 2, "1.00"},
-	{"-1", 0, "-1"},
-	{".25", 2, "0.25"},
-	{".25", 1, "0.3"},
-	{".25", 3, "0.250"},
-	{"-1/3", 3, "-0.333"},
-	{"-2/3", 4, "-0.6667"},
-	{"0.96", 1, "1.0"},
-	{"0.999", 2, "1.00"},
-	{"0.9", 0, "1"},
-	{".25", -1, "0"},
-	{".55", -1, "1"},
-}
-
-func TestFloatString(t *testing.T) {
-	for i, test := range floatStringTests {
-		x, _ := new(Rat).SetString(test.in)
-
-		if x.FloatString(test.prec) != test.out {
-			t.Errorf("#%d got %s want %s", i, x.FloatString(test.prec), test.out)
-		}
-	}
 }
 
 func TestRatSign(t *testing.T) {
@@ -383,38 +276,6 @@ func TestRatSetFrac64Rat(t *testing.T) {
 	}
 }
 
-func TestRatGobEncoding(t *testing.T) {
-	var medium bytes.Buffer
-	enc := gob.NewEncoder(&medium)
-	dec := gob.NewDecoder(&medium)
-	for i, test := range gobEncodingTests {
-		for j := 0; j < 4; j++ {
-			medium.Reset() // empty buffer for each test case (in case of failures)
-			stest := test
-			if j&1 != 0 {
-				// negative numbers
-				stest = "-" + test
-			}
-			if j%2 != 0 {
-				// fractions
-				stest = stest + "." + test
-			}
-			var tx Rat
-			tx.SetString(stest)
-			if err := enc.Encode(&tx); err != nil {
-				t.Errorf("#%d%c: encoding failed: %s", i, 'a'+j, err)
-			}
-			var rx Rat
-			if err := dec.Decode(&rx); err != nil {
-				t.Errorf("#%d%c: decoding failed: %s", i, 'a'+j, err)
-			}
-			if rx.Cmp(&tx) != 0 {
-				t.Errorf("#%d%c: transmission failed: got %s want %s", i, 'a'+j, &rx, &tx)
-			}
-		}
-	}
-}
-
 func TestIssue2379(t *testing.T) {
 	// 1) no aliasing
 	q := NewRat(3, 2)
@@ -452,5 +313,310 @@ func TestIssue2379(t *testing.T) {
 	x.SetFrac(n, n)
 	if x.Cmp(q) != 0 {
 		t.Errorf("5) got %s want %s", x, q)
+	}
+}
+
+func TestIssue3521(t *testing.T) {
+	a := new(Int)
+	b := new(Int)
+	a.SetString("64375784358435883458348587", 0)
+	b.SetString("4789759874531", 0)
+
+	// 0) a raw zero value has 1 as denominator
+	zero := new(Rat)
+	one := NewInt(1)
+	if zero.Denom().Cmp(one) != 0 {
+		t.Errorf("0) got %s want %s", zero.Denom(), one)
+	}
+
+	// 1a) a zero value remains zero independent of denominator
+	x := new(Rat)
+	x.Denom().Set(new(Int).Neg(b))
+	if x.Cmp(zero) != 0 {
+		t.Errorf("1a) got %s want %s", x, zero)
+	}
+
+	// 1b) a zero value may have a denominator != 0 and != 1
+	x.Num().Set(a)
+	qab := new(Rat).SetFrac(a, b)
+	if x.Cmp(qab) != 0 {
+		t.Errorf("1b) got %s want %s", x, qab)
+	}
+
+	// 2a) an integral value becomes a fraction depending on denominator
+	x.SetFrac64(10, 2)
+	x.Denom().SetInt64(3)
+	q53 := NewRat(5, 3)
+	if x.Cmp(q53) != 0 {
+		t.Errorf("2a) got %s want %s", x, q53)
+	}
+
+	// 2b) an integral value becomes a fraction depending on denominator
+	x = NewRat(10, 2)
+	x.Denom().SetInt64(3)
+	if x.Cmp(q53) != 0 {
+		t.Errorf("2b) got %s want %s", x, q53)
+	}
+
+	// 3) changing the numerator/denominator of a Rat changes the Rat
+	x.SetFrac(a, b)
+	a = x.Num()
+	b = x.Denom()
+	a.SetInt64(5)
+	b.SetInt64(3)
+	if x.Cmp(q53) != 0 {
+		t.Errorf("3) got %s want %s", x, q53)
+	}
+}
+
+func TestFloat32Distribution(t *testing.T) {
+	// Generate a distribution of (sign, mantissa, exp) values
+	// broader than the float32 range, and check Rat.Float32()
+	// always picks the closest float32 approximation.
+	var add = []int64{
+		0,
+		1,
+		3,
+		5,
+		7,
+		9,
+		11,
+	}
+	var winc, einc = uint64(5), 15 // quick test (~60ms on x86-64)
+	if *long {
+		winc, einc = uint64(1), 1 // soak test (~1.5s on x86-64)
+	}
+
+	for _, sign := range "+-" {
+		for _, a := range add {
+			for wid := uint64(0); wid < 30; wid += winc {
+				b := 1<<wid + a
+				if sign == '-' {
+					b = -b
+				}
+				for exp := -150; exp < 150; exp += einc {
+					num, den := NewInt(b), NewInt(1)
+					if exp > 0 {
+						num.Lsh(num, uint(exp))
+					} else {
+						den.Lsh(den, uint(-exp))
+					}
+					r := new(Rat).SetFrac(num, den)
+					f, _ := r.Float32()
+
+					if !checkIsBestApprox32(t, f, r) {
+						// Append context information.
+						t.Errorf("(input was mantissa %#x, exp %d; f = %g (%b); f ~ %g; r = %v)",
+							b, exp, f, f, math.Ldexp(float64(b), exp), r)
+					}
+
+					checkNonLossyRoundtrip32(t, f)
+				}
+			}
+		}
+	}
+}
+
+func TestFloat64Distribution(t *testing.T) {
+	// Generate a distribution of (sign, mantissa, exp) values
+	// broader than the float64 range, and check Rat.Float64()
+	// always picks the closest float64 approximation.
+	var add = []int64{
+		0,
+		1,
+		3,
+		5,
+		7,
+		9,
+		11,
+	}
+	var winc, einc = uint64(10), 500 // quick test (~12ms on x86-64)
+	if *long {
+		winc, einc = uint64(1), 1 // soak test (~75s on x86-64)
+	}
+
+	for _, sign := range "+-" {
+		for _, a := range add {
+			for wid := uint64(0); wid < 60; wid += winc {
+				b := 1<<wid + a
+				if sign == '-' {
+					b = -b
+				}
+				for exp := -1100; exp < 1100; exp += einc {
+					num, den := NewInt(b), NewInt(1)
+					if exp > 0 {
+						num.Lsh(num, uint(exp))
+					} else {
+						den.Lsh(den, uint(-exp))
+					}
+					r := new(Rat).SetFrac(num, den)
+					f, _ := r.Float64()
+
+					if !checkIsBestApprox64(t, f, r) {
+						// Append context information.
+						t.Errorf("(input was mantissa %#x, exp %d; f = %g (%b); f ~ %g; r = %v)",
+							b, exp, f, f, math.Ldexp(float64(b), exp), r)
+					}
+
+					checkNonLossyRoundtrip64(t, f)
+				}
+			}
+		}
+	}
+}
+
+// TestSetFloat64NonFinite checks that SetFloat64 of a non-finite value
+// returns nil.
+func TestSetFloat64NonFinite(t *testing.T) {
+	for _, f := range []float64{math.NaN(), math.Inf(+1), math.Inf(-1)} {
+		var r Rat
+		if r2 := r.SetFloat64(f); r2 != nil {
+			t.Errorf("SetFloat64(%g) was %v, want nil", f, r2)
+		}
+	}
+}
+
+// checkNonLossyRoundtrip32 checks that a float->Rat->float roundtrip is
+// non-lossy for finite f.
+func checkNonLossyRoundtrip32(t *testing.T, f float32) {
+	if !isFinite(float64(f)) {
+		return
+	}
+	r := new(Rat).SetFloat64(float64(f))
+	if r == nil {
+		t.Errorf("Rat.SetFloat64(float64(%g) (%b)) == nil", f, f)
+		return
+	}
+	f2, exact := r.Float32()
+	if f != f2 || !exact {
+		t.Errorf("Rat.SetFloat64(float64(%g)).Float32() = %g (%b), %v, want %g (%b), %v; delta = %b",
+			f, f2, f2, exact, f, f, true, f2-f)
+	}
+}
+
+// checkNonLossyRoundtrip64 checks that a float->Rat->float roundtrip is
+// non-lossy for finite f.
+func checkNonLossyRoundtrip64(t *testing.T, f float64) {
+	if !isFinite(f) {
+		return
+	}
+	r := new(Rat).SetFloat64(f)
+	if r == nil {
+		t.Errorf("Rat.SetFloat64(%g (%b)) == nil", f, f)
+		return
+	}
+	f2, exact := r.Float64()
+	if f != f2 || !exact {
+		t.Errorf("Rat.SetFloat64(%g).Float64() = %g (%b), %v, want %g (%b), %v; delta = %b",
+			f, f2, f2, exact, f, f, true, f2-f)
+	}
+}
+
+// delta returns the absolute difference between r and f.
+func delta(r *Rat, f float64) *Rat {
+	d := new(Rat).Sub(r, new(Rat).SetFloat64(f))
+	return d.Abs(d)
+}
+
+// checkIsBestApprox32 checks that f is the best possible float32
+// approximation of r.
+// Returns true on success.
+func checkIsBestApprox32(t *testing.T, f float32, r *Rat) bool {
+	if math.Abs(float64(f)) >= math.MaxFloat32 {
+		// Cannot check +Inf, -Inf, nor the float next to them (MaxFloat32).
+		// But we have tests for these special cases.
+		return true
+	}
+
+	// r must be strictly between f0 and f1, the floats bracketing f.
+	f0 := math.Nextafter32(f, float32(math.Inf(-1)))
+	f1 := math.Nextafter32(f, float32(math.Inf(+1)))
+
+	// For f to be correct, r must be closer to f than to f0 or f1.
+	df := delta(r, float64(f))
+	df0 := delta(r, float64(f0))
+	df1 := delta(r, float64(f1))
+	if df.Cmp(df0) > 0 {
+		t.Errorf("Rat(%v).Float32() = %g (%b), but previous float32 %g (%b) is closer", r, f, f, f0, f0)
+		return false
+	}
+	if df.Cmp(df1) > 0 {
+		t.Errorf("Rat(%v).Float32() = %g (%b), but next float32 %g (%b) is closer", r, f, f, f1, f1)
+		return false
+	}
+	if df.Cmp(df0) == 0 && !isEven32(f) {
+		t.Errorf("Rat(%v).Float32() = %g (%b); halfway should have rounded to %g (%b) instead", r, f, f, f0, f0)
+		return false
+	}
+	if df.Cmp(df1) == 0 && !isEven32(f) {
+		t.Errorf("Rat(%v).Float32() = %g (%b); halfway should have rounded to %g (%b) instead", r, f, f, f1, f1)
+		return false
+	}
+	return true
+}
+
+// checkIsBestApprox64 checks that f is the best possible float64
+// approximation of r.
+// Returns true on success.
+func checkIsBestApprox64(t *testing.T, f float64, r *Rat) bool {
+	if math.Abs(f) >= math.MaxFloat64 {
+		// Cannot check +Inf, -Inf, nor the float next to them (MaxFloat64).
+		// But we have tests for these special cases.
+		return true
+	}
+
+	// r must be strictly between f0 and f1, the floats bracketing f.
+	f0 := math.Nextafter(f, math.Inf(-1))
+	f1 := math.Nextafter(f, math.Inf(+1))
+
+	// For f to be correct, r must be closer to f than to f0 or f1.
+	df := delta(r, f)
+	df0 := delta(r, f0)
+	df1 := delta(r, f1)
+	if df.Cmp(df0) > 0 {
+		t.Errorf("Rat(%v).Float64() = %g (%b), but previous float64 %g (%b) is closer", r, f, f, f0, f0)
+		return false
+	}
+	if df.Cmp(df1) > 0 {
+		t.Errorf("Rat(%v).Float64() = %g (%b), but next float64 %g (%b) is closer", r, f, f, f1, f1)
+		return false
+	}
+	if df.Cmp(df0) == 0 && !isEven64(f) {
+		t.Errorf("Rat(%v).Float64() = %g (%b); halfway should have rounded to %g (%b) instead", r, f, f, f0, f0)
+		return false
+	}
+	if df.Cmp(df1) == 0 && !isEven64(f) {
+		t.Errorf("Rat(%v).Float64() = %g (%b); halfway should have rounded to %g (%b) instead", r, f, f, f1, f1)
+		return false
+	}
+	return true
+}
+
+func isEven32(f float32) bool { return math.Float32bits(f)&1 == 0 }
+func isEven64(f float64) bool { return math.Float64bits(f)&1 == 0 }
+
+func TestIsFinite(t *testing.T) {
+	finites := []float64{
+		1.0 / 3,
+		4891559871276714924261e+222,
+		math.MaxFloat64,
+		math.SmallestNonzeroFloat64,
+		-math.MaxFloat64,
+		-math.SmallestNonzeroFloat64,
+	}
+	for _, f := range finites {
+		if !isFinite(f) {
+			t.Errorf("!IsFinite(%g (%b))", f, f)
+		}
+	}
+	nonfinites := []float64{
+		math.NaN(),
+		math.Inf(-1),
+		math.Inf(+1),
+	}
+	for _, f := range nonfinites {
+		if isFinite(f) {
+			t.Errorf("IsFinite(%g, (%b))", f, f)
+		}
 	}
 }

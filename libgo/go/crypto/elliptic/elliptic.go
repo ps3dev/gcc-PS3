@@ -24,17 +24,17 @@ import (
 type Curve interface {
 	// Params returns the parameters for the curve.
 	Params() *CurveParams
-	// IsOnCurve returns true if the given (x,y) lies on the curve.
+	// IsOnCurve reports whether the given (x,y) lies on the curve.
 	IsOnCurve(x, y *big.Int) bool
 	// Add returns the sum of (x1,y1) and (x2,y2)
 	Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int)
 	// Double returns 2*(x,y)
 	Double(x1, y1 *big.Int) (x, y *big.Int)
 	// ScalarMult returns k*(Bx,By) where k is a number in big-endian form.
-	ScalarMult(x1, y1 *big.Int, scalar []byte) (x, y *big.Int)
-	// ScalarBaseMult returns k*G, where G is the base point of the group and k
-	// is an integer in big-endian form.
-	ScalarBaseMult(scalar []byte) (x, y *big.Int)
+	ScalarMult(x1, y1 *big.Int, k []byte) (x, y *big.Int)
+	// ScalarBaseMult returns k*G, where G is the base point of the group
+	// and k is an integer in big-endian form.
+	ScalarBaseMult(k []byte) (x, y *big.Int)
 }
 
 // CurveParams contains the parameters of an elliptic curve and also provides
@@ -45,6 +45,7 @@ type CurveParams struct {
 	B       *big.Int // the constant of the curve equation
 	Gx, Gy  *big.Int // (x,y) of the base point
 	BitSize int      // the size of the underlying field
+	Name    string   // the canonical name of the curve
 }
 
 func (curve *CurveParams) Params() *CurveParams {
@@ -69,9 +70,24 @@ func (curve *CurveParams) IsOnCurve(x, y *big.Int) bool {
 	return x3.Cmp(y2) == 0
 }
 
+// zForAffine returns a Jacobian Z value for the affine point (x, y). If x and
+// y are zero, it assumes that they represent the point at infinity because (0,
+// 0) is not on the any of the curves handled here.
+func zForAffine(x, y *big.Int) *big.Int {
+	z := new(big.Int)
+	if x.Sign() != 0 || y.Sign() != 0 {
+		z.SetInt64(1)
+	}
+	return z
+}
+
 // affineFromJacobian reverses the Jacobian transform. See the comment at the
-// top of the file.
+// top of the file. If the point is ∞ it returns 0, 0.
 func (curve *CurveParams) affineFromJacobian(x, y, z *big.Int) (xOut, yOut *big.Int) {
+	if z.Sign() == 0 {
+		return new(big.Int), new(big.Int)
+	}
+
 	zinv := new(big.Int).ModInverse(z, curve.P)
 	zinvsq := new(big.Int).Mul(zinv, zinv)
 
@@ -84,14 +100,29 @@ func (curve *CurveParams) affineFromJacobian(x, y, z *big.Int) (xOut, yOut *big.
 }
 
 func (curve *CurveParams) Add(x1, y1, x2, y2 *big.Int) (*big.Int, *big.Int) {
-	z := new(big.Int).SetInt64(1)
-	return curve.affineFromJacobian(curve.addJacobian(x1, y1, z, x2, y2, z))
+	z1 := zForAffine(x1, y1)
+	z2 := zForAffine(x2, y2)
+	return curve.affineFromJacobian(curve.addJacobian(x1, y1, z1, x2, y2, z2))
 }
 
 // addJacobian takes two points in Jacobian coordinates, (x1, y1, z1) and
 // (x2, y2, z2) and returns their sum, also in Jacobian form.
 func (curve *CurveParams) addJacobian(x1, y1, z1, x2, y2, z2 *big.Int) (*big.Int, *big.Int, *big.Int) {
 	// See http://hyperelliptic.org/EFD/g1p/auto-shortw-jacobian-3.html#addition-add-2007-bl
+	x3, y3, z3 := new(big.Int), new(big.Int), new(big.Int)
+	if z1.Sign() == 0 {
+		x3.Set(x2)
+		y3.Set(y2)
+		z3.Set(z2)
+		return x3, y3, z3
+	}
+	if z2.Sign() == 0 {
+		x3.Set(x1)
+		y3.Set(y1)
+		z3.Set(z1)
+		return x3, y3, z3
+	}
+
 	z1z1 := new(big.Int).Mul(z1, z1)
 	z1z1.Mod(z1z1, curve.P)
 	z2z2 := new(big.Int).Mul(z2, z2)
@@ -102,6 +133,7 @@ func (curve *CurveParams) addJacobian(x1, y1, z1, x2, y2, z2 *big.Int) (*big.Int
 	u2 := new(big.Int).Mul(x2, z1z1)
 	u2.Mod(u2, curve.P)
 	h := new(big.Int).Sub(u2, u1)
+	xEqual := h.Sign() == 0
 	if h.Sign() == -1 {
 		h.Add(h, curve.P)
 	}
@@ -119,17 +151,21 @@ func (curve *CurveParams) addJacobian(x1, y1, z1, x2, y2, z2 *big.Int) (*big.Int
 	if r.Sign() == -1 {
 		r.Add(r, curve.P)
 	}
+	yEqual := r.Sign() == 0
+	if xEqual && yEqual {
+		return curve.doubleJacobian(x1, y1, z1)
+	}
 	r.Lsh(r, 1)
 	v := new(big.Int).Mul(u1, i)
 
-	x3 := new(big.Int).Set(r)
+	x3.Set(r)
 	x3.Mul(x3, x3)
 	x3.Sub(x3, j)
 	x3.Sub(x3, v)
 	x3.Sub(x3, v)
 	x3.Mod(x3, curve.P)
 
-	y3 := new(big.Int).Set(r)
+	y3.Set(r)
 	v.Sub(v, x3)
 	y3.Mul(y3, v)
 	s1.Mul(s1, j)
@@ -137,16 +173,10 @@ func (curve *CurveParams) addJacobian(x1, y1, z1, x2, y2, z2 *big.Int) (*big.Int
 	y3.Sub(y3, s1)
 	y3.Mod(y3, curve.P)
 
-	z3 := new(big.Int).Add(z1, z2)
+	z3.Add(z1, z2)
 	z3.Mul(z3, z3)
 	z3.Sub(z3, z1z1)
-	if z3.Sign() == -1 {
-		z3.Add(z3, curve.P)
-	}
 	z3.Sub(z3, z2z2)
-	if z3.Sign() == -1 {
-		z3.Add(z3, curve.P)
-	}
 	z3.Mul(z3, h)
 	z3.Mod(z3, curve.P)
 
@@ -154,7 +184,7 @@ func (curve *CurveParams) addJacobian(x1, y1, z1, x2, y2, z2 *big.Int) (*big.Int
 }
 
 func (curve *CurveParams) Double(x1, y1 *big.Int) (*big.Int, *big.Int) {
-	z1 := new(big.Int).SetInt64(1)
+	z1 := zForAffine(x1, y1)
 	return curve.affineFromJacobian(curve.doubleJacobian(x1, y1, z1))
 }
 
@@ -219,38 +249,17 @@ func (curve *CurveParams) doubleJacobian(x, y, z *big.Int) (*big.Int, *big.Int, 
 }
 
 func (curve *CurveParams) ScalarMult(Bx, By *big.Int, k []byte) (*big.Int, *big.Int) {
-	// We have a slight problem in that the identity of the group (the
-	// point at infinity) cannot be represented in (x, y) form on a finite
-	// machine. Thus the standard add/double algorithm has to be tweaked
-	// slightly: our initial state is not the identity, but x, and we
-	// ignore the first true bit in |k|.  If we don't find any true bits in
-	// |k|, then we return nil, nil, because we cannot return the identity
-	// element.
-
 	Bz := new(big.Int).SetInt64(1)
-	x := Bx
-	y := By
-	z := Bz
+	x, y, z := new(big.Int), new(big.Int), new(big.Int)
 
-	seenFirstTrue := false
 	for _, byte := range k {
 		for bitNum := 0; bitNum < 8; bitNum++ {
-			if seenFirstTrue {
-				x, y, z = curve.doubleJacobian(x, y, z)
-			}
+			x, y, z = curve.doubleJacobian(x, y, z)
 			if byte&0x80 == 0x80 {
-				if !seenFirstTrue {
-					seenFirstTrue = true
-				} else {
-					x, y, z = curve.addJacobian(Bx, By, Bz, x, y, z)
-				}
+				x, y, z = curve.addJacobian(Bx, By, Bz, x, y, z)
 			}
 			byte <<= 1
 		}
-	}
-
-	if !seenFirstTrue {
-		return nil, nil
 	}
 
 	return curve.affineFromJacobian(x, y, z)
@@ -265,7 +274,8 @@ var mask = []byte{0xff, 0x1, 0x3, 0x7, 0xf, 0x1f, 0x3f, 0x7f}
 // GenerateKey returns a public/private key pair. The private key is
 // generated using the given reader, which must return random data.
 func GenerateKey(curve Curve, rand io.Reader) (priv []byte, x, y *big.Int, err error) {
-	bitSize := curve.Params().BitSize
+	N := curve.Params().N
+	bitSize := N.BitLen()
 	byteLen := (bitSize + 7) >> 3
 	priv = make([]byte, byteLen)
 
@@ -280,6 +290,12 @@ func GenerateKey(curve Curve, rand io.Reader) (priv []byte, x, y *big.Int, err e
 		// This is because, in tests, rand will return all zeros and we don't
 		// want to get the point at infinity and loop forever.
 		priv[1] ^= 0x42
+
+		// If the scalar is out of range, sample another random number.
+		if new(big.Int).SetBytes(priv).Cmp(N) >= 0 {
+			continue
+		}
+
 		x, y = curve.ScalarBaseMult(priv)
 	}
 	return
@@ -299,7 +315,8 @@ func Marshal(curve Curve, x, y *big.Int) []byte {
 	return ret
 }
 
-// Unmarshal converts a point, serialized by Marshal, into an x, y pair. On error, x = nil.
+// Unmarshal converts a point, serialized by Marshal, into an x, y pair.
+// It is an error if the point is not on the curve. On error, x = nil.
 func Unmarshal(curve Curve, data []byte) (x, y *big.Int) {
 	byteLen := (curve.Params().BitSize + 7) >> 3
 	if len(data) != 1+2*byteLen {
@@ -310,11 +327,13 @@ func Unmarshal(curve Curve, data []byte) (x, y *big.Int) {
 	}
 	x = new(big.Int).SetBytes(data[1 : 1+byteLen])
 	y = new(big.Int).SetBytes(data[1+byteLen:])
+	if !curve.IsOnCurve(x, y) {
+		x, y = nil, nil
+	}
 	return
 }
 
 var initonce sync.Once
-var p256 *CurveParams
 var p384 *CurveParams
 var p521 *CurveParams
 
@@ -325,20 +344,9 @@ func initAll() {
 	initP521()
 }
 
-func initP256() {
-	// See FIPS 186-3, section D.2.3
-	p256 = new(CurveParams)
-	p256.P, _ = new(big.Int).SetString("115792089210356248762697446949407573530086143415290314195533631308867097853951", 10)
-	p256.N, _ = new(big.Int).SetString("115792089210356248762697446949407573529996955224135760342422259061068512044369", 10)
-	p256.B, _ = new(big.Int).SetString("5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b", 16)
-	p256.Gx, _ = new(big.Int).SetString("6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296", 16)
-	p256.Gy, _ = new(big.Int).SetString("4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5", 16)
-	p256.BitSize = 256
-}
-
 func initP384() {
 	// See FIPS 186-3, section D.2.4
-	p384 = new(CurveParams)
+	p384 = &CurveParams{Name: "P-384"}
 	p384.P, _ = new(big.Int).SetString("39402006196394479212279040100143613805079739270465446667948293404245721771496870329047266088258938001861606973112319", 10)
 	p384.N, _ = new(big.Int).SetString("39402006196394479212279040100143613805079739270465446667946905279627659399113263569398956308152294913554433653942643", 10)
 	p384.B, _ = new(big.Int).SetString("b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef", 16)
@@ -349,7 +357,7 @@ func initP384() {
 
 func initP521() {
 	// See FIPS 186-3, section D.2.5
-	p521 = new(CurveParams)
+	p521 = &CurveParams{Name: "P-521"}
 	p521.P, _ = new(big.Int).SetString("6864797660130609714981900799081393217269435300143305409394463459185543183397656052122559640661454554977296311391480858037121987999716643812574028291115057151", 10)
 	p521.N, _ = new(big.Int).SetString("6864797660130609714981900799081393217269435300143305409394463459185543183397655394245057746333217197532963996371363321113864768612440380340372808892707005449", 10)
 	p521.B, _ = new(big.Int).SetString("051953eb9618e1c9a1f929a21a0b68540eea2da725b99b315f3b8b489918ef109e156193951ec7e937b1652c0bd3bb1bf073573df883d2c34f1ef451fd46b503f00", 16)
@@ -359,18 +367,24 @@ func initP521() {
 }
 
 // P256 returns a Curve which implements P-256 (see FIPS 186-3, section D.2.3)
+//
+// The cryptographic operations are implemented using constant-time algorithms.
 func P256() Curve {
 	initonce.Do(initAll)
 	return p256
 }
 
 // P384 returns a Curve which implements P-384 (see FIPS 186-3, section D.2.4)
+//
+// The cryptographic operations do not use constant-time algorithms.
 func P384() Curve {
 	initonce.Do(initAll)
 	return p384
 }
 
-// P256 returns a Curve which implements P-521 (see FIPS 186-3, section D.2.5)
+// P521 returns a Curve which implements P-521 (see FIPS 186-3, section D.2.5)
+//
+// The cryptographic operations do not use constant-time algorithms.
 func P521() Curve {
 	initonce.Do(initAll)
 	return p521

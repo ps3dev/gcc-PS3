@@ -1,8 +1,7 @@
 // Test for errors in range-based for loops
 // with member begin/end
 
-// { dg-do compile }
-// { dg-options "-std=c++0x" }
+// { dg-do compile { target c++11 } }
 
 //These should not be used
 template<typename T> int *begin(T &t)
@@ -29,8 +28,8 @@ struct container2
 struct container3
 {
 private:
-    int *begin(); // { dg-error "is private" }
-    int *end(); // { dg-error "is private" }
+    int *begin(); // { dg-message "private" }
+    int *end(); // { dg-message "private" }
 };
 
 struct container4
@@ -71,7 +70,7 @@ struct container8
 struct private_callable
 {
 private:
-    int *operator()(); // { dg-error "is private" }
+    int *operator()(); // { dg-message "private" }
 };
 
 struct container9

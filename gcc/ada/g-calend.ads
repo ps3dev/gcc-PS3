@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1999-2010, Free Software Foundation, Inc.         --
+--          Copyright (C) 1999-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -39,7 +39,7 @@
 --  Second_Duration. Other functions are to access more advanced values like
 --  Day_Of_Week, Day_In_Year and Week_In_Year.
 
-with Ada.Calendar;
+with Ada.Calendar.Formatting;
 with Interfaces.C;
 
 package GNAT.Calendar is
@@ -83,8 +83,25 @@ package GNAT.Calendar is
       Minute     : out Minute_Number;
       Second     : out Second_Number;
       Sub_Second : out Second_Duration);
-   --  Split the standard Ada.Calendar.Time data in date data (Year, Month,
-   --  Day) and Time data (Hour, Minute, Second, Sub_Second)
+   --  Split a standard Ada.Calendar.Time value in date data (Year, Month, Day)
+   --  and Time data (Hour, Minute, Second, Sub_Second).
+
+   procedure Split_At_Locale
+     (Date       : Ada.Calendar.Time;
+      Year       : out Ada.Calendar.Year_Number;
+      Month      : out Ada.Calendar.Month_Number;
+      Day        : out Ada.Calendar.Day_Number;
+      Hour       : out Hour_Number;
+      Minute     : out Minute_Number;
+      Second     : out Second_Number;
+      Sub_Second : out Second_Duration);
+   --  Split a standard Ada.Calendar.Time value in date data (Year, Month, Day)
+   --  and Time data (Hour, Minute, Second, Sub_Second). This version of Split
+   --  utilizes the time zone and DST bias of the locale (equivalent to Clock).
+   --  Due to this simplified behavior, the implementation does not require
+   --  expensive system calls on targets such as Windows.
+   --  WARNING: Split_At_Locale is no longer aware of historic events and may
+   --  produce inaccurate results over DST changes which occurred in the past.
 
    function Time_Of
      (Year       : Ada.Calendar.Year_Number;
@@ -95,6 +112,22 @@ package GNAT.Calendar is
       Second     : Second_Number;
       Sub_Second : Second_Duration := 0.0) return Ada.Calendar.Time;
    --  Return an Ada.Calendar.Time data built from the date and time values
+
+   function Time_Of_At_Locale
+     (Year       : Ada.Calendar.Year_Number;
+      Month      : Ada.Calendar.Month_Number;
+      Day        : Ada.Calendar.Day_Number;
+      Hour       : Hour_Number;
+      Minute     : Minute_Number;
+      Second     : Second_Number;
+      Sub_Second : Second_Duration := 0.0) return Ada.Calendar.Time;
+   --  Return an Ada.Calendar.Time data built from the date and time values.
+   --  This version of Time_Of utilizes the time zone and DST bias of the
+   --  locale (equivalent to Clock). Due to this simplified behavior, the
+   --  implementation does not require expensive system calls on targets such
+   --  as Windows.
+   --  WARNING: Split_At_Locale is no longer aware of historic events and may
+   --  produce inaccurate results over DST changes which occurred in the past.
 
    function Week_In_Year (Date : Ada.Calendar.Time) return Week_In_Year_Number;
    --  Return the week number as defined in ISO 8601. A week always starts on
@@ -129,7 +162,7 @@ private
    --  This is a dummy declaration that should be the largest possible timeval
    --  structure of all supported targets.
 
-   type timeval is array (1 .. 2) of Interfaces.C.long;
+   type timeval is array (1 .. 3) of Interfaces.C.long;
 
    function Julian_Day
      (Year  : Ada.Calendar.Year_Number;
@@ -142,9 +175,11 @@ private
    --  Robert G. Tantzen.
 
    No_Time : constant Ada.Calendar.Time :=
-               Ada.Calendar.Time_Of
+               Ada.Calendar.Formatting.Time_Of
                  (Ada.Calendar.Year_Number'First,
                   Ada.Calendar.Month_Number'First,
-                  Ada.Calendar.Day_Number'First);
+                  Ada.Calendar.Day_Number'First,
+                  Time_Zone => 0);
+   --  Use Time_Zone => 0 to be the same binary representation in any timezone
 
 end GNAT.Calendar;

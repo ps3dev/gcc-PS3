@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-options "-O2 -fdump-tree-vrp1-details" } */
+/* { dg-options "-O2 -fno-tree-forwprop -fdump-tree-vrp1-details" } */
 
 
 struct rtx_def;
@@ -18,6 +18,11 @@ struct rtx_def
   } u;
 };
 
+void arf (void);
+void nit (void);
+void frob (void);
+
+void
 sss (rtx insn, int code1, int code2, int code3)
 {
   _Bool D1562;
@@ -87,5 +92,4 @@ L7:
    as the only way to reach the tests is when n_sets <= 1 and the only
    value which satisfies both conditions is n_sets == 1.  */
 /* { dg-final { scan-tree-dump-times "Simplified relational" 2 "vrp1" } } */
-/* { dg-final { cleanup-tree-dump "vrp1" } } */
 

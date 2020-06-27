@@ -1,6 +1,5 @@
 /* Definitions for non-Linux based ARM systems using ELF
-   Copyright (C) 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2007, 2008, 2010,
-   2011 Free Software Foundation, Inc.
+   Copyright (C) 1998-2017 Free Software Foundation, Inc.
    Contributed by Catherine Moore <clm@cygnus.com>
 
    This file is part of GCC.
@@ -33,7 +32,9 @@
 #define UNKNOWN_ELF_STARTFILE_SPEC	" crti%O%s crtbegin%O%s crt0%O%s"
 
 #undef  STARTFILE_SPEC
-#define STARTFILE_SPEC	UNKNOWN_ELF_STARTFILE_SPEC
+#define STARTFILE_SPEC	\
+  "%{Ofast|ffast-math|funsafe-math-optimizations:crtfastmath.o%s} "	\
+  UNKNOWN_ELF_STARTFILE_SPEC
 
 #define UNKNOWN_ELF_ENDFILE_SPEC	"crtend%O%s crtn%O%s"
 
@@ -51,7 +52,7 @@
 /* Return a nonzero value if DECL has a section attribute.  */
 #define IN_NAMED_SECTION_P(DECL)					\
   ((TREE_CODE (DECL) == FUNCTION_DECL || TREE_CODE (DECL) == VAR_DECL)	\
-   && DECL_SECTION_NAME (DECL) != NULL_TREE)
+   && DECL_SECTION_NAME (DECL) != NULL)
 
 #undef  ASM_OUTPUT_ALIGNED_BSS
 #define ASM_OUTPUT_ALIGNED_BSS(FILE, DECL, NAME, SIZE, ALIGN)   	\
@@ -81,13 +82,11 @@
 									\
       ASM_OUTPUT_ALIGN (FILE, floor_log2 (ALIGN / BITS_PER_UNIT));	\
       ASM_OUTPUT_LABEL (FILE, NAME);					\
-      fprintf (FILE, "\t.space\t%d\n", SIZE ? (int)(SIZE) : 1);		\
+      fprintf (FILE, "\t.space\t%d\n", SIZE ? (int) SIZE : 1);		\
+      fprintf (FILE, "\t.size\t%s, %d\n",				\
+	       NAME, SIZE ? (int) SIZE : 1);				\
     }									\
   while (0)
-
-#ifndef SUBTARGET_CPU_DEFAULT
-#define SUBTARGET_CPU_DEFAULT 		TARGET_CPU_arm7tdmi
-#endif
 
 /* The libgcc udivmod functions may throw exceptions.  If newlib is
    configured to support long longs in I/O, then printf will depend on

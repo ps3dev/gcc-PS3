@@ -29,7 +29,7 @@ can be safely embedded in an HTML document. The escaping is contextual, so
 actions can appear within JavaScript, CSS, and URI contexts.
 
 The security model used by this package assumes that template authors are
-trusted, while text/template Execute's data parameter is not. More details are
+trusted, while Execute's data parameter is not. More details are
 provided below.
 
 Example
@@ -119,7 +119,7 @@ If {{.}} is the innocuous word, `left`, then it can appear more widely,
 Non-string values can be used in JavaScript contexts.
 If {{.}} is
 
-  []struct{A,B string}{ "foo", "bar" }
+  struct{A,B string}{ "foo", "bar" }
 
 in the escaped template
 
@@ -129,7 +129,7 @@ then the template output is
 
   <script>var pair = {"A": "foo", "B": "bar"};</script>
 
-See package json to understand how non-string content is marshalled for
+See package json to understand how non-string content is marshaled for
 embedding in JavaScript contexts.
 
 
@@ -151,7 +151,7 @@ The template
 
 can be invoked with
 
-  tmpl.Execute(out, HTML(`<b>World</b>`))
+  tmpl.Execute(out, template.HTML(`<b>World</b>`))
 
 to produce
 
@@ -166,7 +166,7 @@ that would have been produced if {{.}} was a regular string.
 
 Security Model
 
-http://js-quasis-libraries-and-repl.googlecode.com/svn/trunk/safetemplate.html#problem_definition defines "safe" as used by this package.
+https://rawgit.com/mikesamuel/sanitized-jquery-templates/trunk/safetemplate.html#problem_definition defines "safe" as used by this package.
 
 This package assumes that template authors are trusted, that Execute's data
 parameter is not, and seeks to preserve the properties below in the face

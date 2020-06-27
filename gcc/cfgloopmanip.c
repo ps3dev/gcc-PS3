@@ -1,6 +1,5 @@
 /* Loop manipulation code for GNU compiler.
-   Copyright (C) 2002, 2003, 2004, 2005, 2007, 2008, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 2002-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -21,16 +20,17 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
+#include "backend.h"
 #include "rtl.h"
-#include "hard-reg-set.h"
-#include "obstack.h"
-#include "basic-block.h"
-#include "cfgloop.h"
-#include "cfglayout.h"
+#include "tree.h"
+#include "gimple.h"
 #include "cfghooks.h"
-#include "output.h"
-#include "tree-flow.h"
+#include "cfganal.h"
+#include "cfgloop.h"
+#include "gimple-iterator.h"
+#include "gimplify-me.h"
+#include "tree-ssa-loop-manip.h"
+#include "dumpfile.h"
 
 static void copy_loops_to (struct loop **, int,
 			   struct loop *);
@@ -40,10 +40,7 @@ static bool rpe_enum_p (const_basic_block, const void *);
 static int find_path (edge, basic_block **);
 static void fix_loop_placements (struct loop *, bool *);
 static bool fix_bb_placement (basic_block);
-static void fix_bb_placements (basic_block, bool *);
-static void unloop (struct loop *, bool *);
-
-#define RDIV(X,Y) (((X) + (Y) / 2) / (Y))
+static void fix_bb_placements (basic_block, bool *, bitmap);
 
 /* Checks whether basic block BB is dominated by DATA.  */
 static bool
@@ -75,9 +72,9 @@ find_path (edge e, basic_block **bbs)
   gcc_assert (EDGE_COUNT (e->dest->preds) <= 1);
 
   /* Find bbs in the path.  */
-  *bbs = XCNEWVEC (basic_block, n_basic_blocks);
+  *bbs = XNEWVEC (basic_block, n_basic_blocks_for_fn (cfun));
   return dfs_enumerate_from (e->dest, 0, rpe_enum_p, *bbs,
-			     n_basic_blocks, e->dest);
+			     n_basic_blocks_for_fn (cfun), e->dest);
 }
 
 /* Fix placement of basic block BB inside loop hierarchy --
@@ -96,7 +93,7 @@ fix_bb_placement (basic_block bb)
 
   FOR_EACH_EDGE (e, ei, bb->succs)
     {
-      if (e->dest == EXIT_BLOCK_PTR)
+      if (e->dest == EXIT_BLOCK_PTR_FOR_FN (cfun))
 	continue;
 
       act = e->dest->loop_father;
@@ -119,18 +116,21 @@ fix_bb_placement (basic_block bb)
 /* Fix placement of LOOP inside loop tree, i.e. find the innermost superloop
    of LOOP to that leads at least one exit edge of LOOP, and set it
    as the immediate superloop of LOOP.  Return true if the immediate superloop
-   of LOOP changed.  */
+   of LOOP changed.
+
+   IRRED_INVALIDATED is set to true if a change in the loop structures might
+   invalidate the information about irreducible regions.  */
 
 static bool
-fix_loop_placement (struct loop *loop)
+fix_loop_placement (struct loop *loop, bool *irred_invalidated)
 {
   unsigned i;
   edge e;
-  VEC (edge, heap) *exits = get_loop_exit_edges (loop);
+  vec<edge> exits = get_loop_exit_edges (loop);
   struct loop *father = current_loops->tree_root, *act;
   bool ret = false;
 
-  FOR_EACH_VEC_ELT (edge, exits, i, e)
+  FOR_EACH_VEC_ELT (exits, i, e)
     {
       act = find_common_loop (loop, e->dest->loop_father);
       if (flow_loop_nested_p (father, act))
@@ -146,18 +146,23 @@ fix_loop_placement (struct loop *loop)
 
       /* The exit edges of LOOP no longer exits its original immediate
 	 superloops; remove them from the appropriate exit lists.  */
-      FOR_EACH_VEC_ELT (edge, exits, i, e)
-	rescan_loop_exit (e, false, false);
+      FOR_EACH_VEC_ELT (exits, i, e)
+	{
+	  /* We may need to recompute irreducible loops.  */
+	  if (e->flags & EDGE_IRREDUCIBLE_LOOP)
+	    *irred_invalidated = true;
+	  rescan_loop_exit (e, false, false);
+	}
 
       ret = true;
     }
 
-  VEC_free (edge, heap, exits);
+  exits.release ();
   return ret;
 }
 
 /* Fix placements of basic blocks inside loop hierarchy stored in loops; i.e.
-   enforce condition condition stated in description of fix_bb_placement. We
+   enforce condition stated in description of fix_bb_placement. We
    start from basic block FROM that had some of its successors removed, so that
    his placement no longer has to be correct, and iteratively fix placement of
    its predecessors that may change if placement of FROM changed.  Also fix
@@ -166,13 +171,16 @@ fix_loop_placement (struct loop *loop)
    successors we consider edges coming out of the loops.
 
    If the changes may invalidate the information about irreducible regions,
-   IRRED_INVALIDATED is set to true.  */
+   IRRED_INVALIDATED is set to true.  
+
+   If LOOP_CLOSED_SSA_INVLIDATED is non-zero then all basic blocks with
+   changed loop_father are collected there. */
 
 static void
 fix_bb_placements (basic_block from,
-		   bool *irred_invalidated)
+		   bool *irred_invalidated,
+		   bitmap loop_closed_ssa_invalidated)
 {
-  sbitmap in_queue;
   basic_block *queue, *qtop, *qbeg, *qend;
   struct loop *base_loop, *target_loop;
   edge e;
@@ -192,11 +200,11 @@ fix_bb_placements (basic_block from,
       || from == base_loop->header)
     return;
 
-  in_queue = sbitmap_alloc (last_basic_block);
-  sbitmap_zero (in_queue);
-  SET_BIT (in_queue, from->index);
+  auto_sbitmap in_queue (last_basic_block_for_fn (cfun));
+  bitmap_clear (in_queue);
+  bitmap_set_bit (in_queue, from->index);
   /* Prevent us from going out of the base_loop.  */
-  SET_BIT (in_queue, base_loop->header->index);
+  bitmap_set_bit (in_queue, base_loop->header->index);
 
   queue = XNEWVEC (basic_block, base_loop->num_nodes + 1);
   qtop = queue + base_loop->num_nodes + 1;
@@ -211,14 +219,21 @@ fix_bb_placements (basic_block from,
       qbeg++;
       if (qbeg == qtop)
 	qbeg = queue;
-      RESET_BIT (in_queue, from->index);
+      bitmap_clear_bit (in_queue, from->index);
 
       if (from->loop_father->header == from)
 	{
 	  /* Subloop header, maybe move the loop upward.  */
-	  if (!fix_loop_placement (from->loop_father))
+	  if (!fix_loop_placement (from->loop_father, irred_invalidated))
 	    continue;
 	  target_loop = loop_outer (from->loop_father);
+	  if (loop_closed_ssa_invalidated)
+	    {
+	      basic_block *bbs = get_loop_body (from->loop_father);
+	      for (unsigned i = 0; i < from->loop_father->num_nodes; ++i)
+		bitmap_set_bit (loop_closed_ssa_invalidated, bbs[i]->index);
+	      free (bbs);
+	    }
 	}
       else
 	{
@@ -226,6 +241,8 @@ fix_bb_placements (basic_block from,
 	  if (!fix_bb_placement (from))
 	    continue;
 	  target_loop = from->loop_father;
+	  if (loop_closed_ssa_invalidated)
+	    bitmap_set_bit (loop_closed_ssa_invalidated, from->index);
 	}
 
       FOR_EACH_EDGE (e, ei, from->succs)
@@ -243,7 +260,7 @@ fix_bb_placements (basic_block from,
 	  if (e->flags & EDGE_IRREDUCIBLE_LOOP)
 	    *irred_invalidated = true;
 
-	  if (TEST_BIT (in_queue, pred->index))
+	  if (bitmap_bit_p (in_queue, pred->index))
 	    continue;
 
 	  /* If it is subloop, then it either was not moved, or
@@ -263,7 +280,7 @@ fix_bb_placements (basic_block from,
 	      continue;
 	    }
 
-	  if (TEST_BIT (in_queue, pred->index))
+	  if (bitmap_bit_p (in_queue, pred->index))
 	    continue;
 
 	  /* Schedule the basic block.  */
@@ -271,10 +288,9 @@ fix_bb_placements (basic_block from,
 	  qend++;
 	  if (qend == qtop)
 	    qend = queue;
-	  SET_BIT (in_queue, pred->index);
+	  bitmap_set_bit (in_queue, pred->index);
 	}
     }
-  free (in_queue);
   free (queue);
 }
 
@@ -282,16 +298,19 @@ fix_bb_placements (basic_block from,
    and update loop structures and dominators.  Return true if we were able
    to remove the path, false otherwise (and nothing is affected then).  */
 bool
-remove_path (edge e)
+remove_path (edge e, bool *irred_invalidated,
+	     bitmap loop_closed_ssa_invalidated)
 {
   edge ae;
   basic_block *rem_bbs, *bord_bbs, from, bb;
-  VEC (basic_block, heap) *dom_bbs;
+  vec<basic_block> dom_bbs;
   int i, nrem, n_bord_bbs;
-  sbitmap seen;
-  bool irred_invalidated = false;
+  bool local_irred_invalidated = false;
   edge_iterator ei;
   struct loop *l, *f;
+
+  if (! irred_invalidated)
+    irred_invalidated = &local_irred_invalidated;
 
   if (!can_remove_branch_p (e))
     return false;
@@ -302,7 +321,7 @@ remove_path (edge e)
      that is inside an irreducible region is changed, or if such a loop is
      removed.  */
   if (e->flags & EDGE_IRREDUCIBLE_LOOP)
-    irred_invalidated = true;
+    *irred_invalidated = true;
 
   /* We need to check whether basic blocks are dominated by the edge
      e, but we only have basic block dominators.  This is easy to
@@ -319,43 +338,49 @@ remove_path (edge e)
     {
       f = loop_outer (l);
       if (dominated_by_p (CDI_DOMINATORS, l->latch, e->dest))
-        unloop (l, &irred_invalidated);
+        unloop (l, irred_invalidated, loop_closed_ssa_invalidated);
     }
 
   /* Identify the path.  */
   nrem = find_path (e, &rem_bbs);
 
   n_bord_bbs = 0;
-  bord_bbs = XCNEWVEC (basic_block, n_basic_blocks);
-  seen = sbitmap_alloc (last_basic_block);
-  sbitmap_zero (seen);
+  bord_bbs = XNEWVEC (basic_block, n_basic_blocks_for_fn (cfun));
+  auto_sbitmap seen (last_basic_block_for_fn (cfun));
+  bitmap_clear (seen);
 
   /* Find "border" hexes -- i.e. those with predecessor in removed path.  */
   for (i = 0; i < nrem; i++)
-    SET_BIT (seen, rem_bbs[i]->index);
-  if (!irred_invalidated)
+    bitmap_set_bit (seen, rem_bbs[i]->index);
+  if (!*irred_invalidated)
     FOR_EACH_EDGE (ae, ei, e->src->succs)
-      if (ae != e && ae->dest != EXIT_BLOCK_PTR && !TEST_BIT (seen, ae->dest->index)
+      if (ae != e && ae->dest != EXIT_BLOCK_PTR_FOR_FN (cfun)
+	  && !bitmap_bit_p (seen, ae->dest->index)
 	  && ae->flags & EDGE_IRREDUCIBLE_LOOP)
-	irred_invalidated = true;
+	{
+	  *irred_invalidated = true;
+	  break;
+	}
+
   for (i = 0; i < nrem; i++)
     {
       bb = rem_bbs[i];
       FOR_EACH_EDGE (ae, ei, rem_bbs[i]->succs)
-	if (ae->dest != EXIT_BLOCK_PTR && !TEST_BIT (seen, ae->dest->index))
+	if (ae->dest != EXIT_BLOCK_PTR_FOR_FN (cfun)
+	    && !bitmap_bit_p (seen, ae->dest->index))
 	  {
-	    SET_BIT (seen, ae->dest->index);
+	    bitmap_set_bit (seen, ae->dest->index);
 	    bord_bbs[n_bord_bbs++] = ae->dest;
 
 	    if (ae->flags & EDGE_IRREDUCIBLE_LOOP)
-	      irred_invalidated = true;
+	      *irred_invalidated = true;
 	  }
     }
 
   /* Remove the path.  */
   from = e->src;
   remove_branch (e);
-  dom_bbs = NULL;
+  dom_bbs.create (0);
 
   /* Cancel loops contained in the path.  */
   for (i = 0; i < nrem; i++)
@@ -366,49 +391,47 @@ remove_path (edge e)
   free (rem_bbs);
 
   /* Find blocks whose dominators may be affected.  */
-  sbitmap_zero (seen);
+  bitmap_clear (seen);
   for (i = 0; i < n_bord_bbs; i++)
     {
       basic_block ldom;
 
       bb = get_immediate_dominator (CDI_DOMINATORS, bord_bbs[i]);
-      if (TEST_BIT (seen, bb->index))
+      if (bitmap_bit_p (seen, bb->index))
 	continue;
-      SET_BIT (seen, bb->index);
+      bitmap_set_bit (seen, bb->index);
 
       for (ldom = first_dom_son (CDI_DOMINATORS, bb);
 	   ldom;
 	   ldom = next_dom_son (CDI_DOMINATORS, ldom))
 	if (!dominated_by_p (CDI_DOMINATORS, from, ldom))
-	  VEC_safe_push (basic_block, heap, dom_bbs, ldom);
+	  dom_bbs.safe_push (ldom);
     }
-
-  free (seen);
 
   /* Recount dominators.  */
   iterate_fix_dominators (CDI_DOMINATORS, dom_bbs, true);
-  VEC_free (basic_block, heap, dom_bbs);
+  dom_bbs.release ();
   free (bord_bbs);
 
   /* Fix placements of basic blocks inside loops and the placement of
      loops in the loop tree.  */
-  fix_bb_placements (from, &irred_invalidated);
-  fix_loop_placements (from->loop_father, &irred_invalidated);
+  fix_bb_placements (from, irred_invalidated, loop_closed_ssa_invalidated);
+  fix_loop_placements (from->loop_father, irred_invalidated);
 
-  if (irred_invalidated
+  if (local_irred_invalidated
       && loops_state_satisfies_p (LOOPS_HAVE_MARKED_IRREDUCIBLE_REGIONS))
     mark_irreducible_loops ();
 
   return true;
 }
 
-/* Creates place for a new LOOP in loops structure.  */
+/* Creates place for a new LOOP in loops structure of FN.  */
 
-static void
-place_new_loop (struct loop *loop)
+void
+place_new_loop (struct function *fn, struct loop *loop)
 {
-  loop->num = number_of_loops ();
-  VEC_safe_push (loop_p, gc, current_loops->larray, loop);
+  loop->num = number_of_loops (fn);
+  vec_safe_push (loops_for_fn (fn)->larray, loop);
 }
 
 /* Given LOOP structure with filled header and latch, find the body of the
@@ -425,12 +448,12 @@ add_loop (struct loop *loop, struct loop *outer)
   edge_iterator ei;
 
   /* Add it to loop structure.  */
-  place_new_loop (loop);
+  place_new_loop (cfun, loop);
   flow_loop_tree_node_add (outer, loop);
 
   /* Find its nodes.  */
-  bbs = XNEWVEC (basic_block, n_basic_blocks);
-  n = get_loop_body_with_size (loop, bbs, n_basic_blocks);
+  bbs = XNEWVEC (basic_block, n_basic_blocks_for_fn (cfun));
+  n = get_loop_body_with_size (loop, bbs, n_basic_blocks_for_fn (cfun));
 
   for (i = 0; i < n; i++)
     {
@@ -466,6 +489,7 @@ add_loop (struct loop *loop, struct loop *outer)
 }
 
 /* Multiply all frequencies in LOOP by NUM/DEN.  */
+
 void
 scale_loop_frequencies (struct loop *loop, int num, int den)
 {
@@ -476,22 +500,130 @@ scale_loop_frequencies (struct loop *loop, int num, int den)
   free (bbs);
 }
 
+/* Multiply all frequencies in LOOP by SCALE/REG_BR_PROB_BASE.
+   If ITERATION_BOUND is non-zero, scale even further if loop is predicted
+   to iterate too many times.  */
+
+void
+scale_loop_profile (struct loop *loop, int scale, gcov_type iteration_bound)
+{
+  gcov_type iterations = expected_loop_iterations_unbounded (loop);
+  edge e;
+  edge_iterator ei;
+
+  if (dump_file && (dump_flags & TDF_DETAILS))
+    fprintf (dump_file, ";; Scaling loop %i with scale %f, "
+	     "bounding iterations to %i from guessed %i\n",
+	     loop->num, (double)scale / REG_BR_PROB_BASE,
+	     (int)iteration_bound, (int)iterations);
+
+  /* See if loop is predicted to iterate too many times.  */
+  if (iteration_bound && iterations > 0
+      && apply_probability (iterations, scale) > iteration_bound)
+    {
+      /* Fixing loop profile for different trip count is not trivial; the exit
+	 probabilities has to be updated to match and frequencies propagated down
+	 to the loop body.
+
+	 We fully update only the simple case of loop with single exit that is
+	 either from the latch or BB just before latch and leads from BB with
+	 simple conditional jump.   This is OK for use in vectorizer.  */
+      e = single_exit (loop);
+      if (e)
+	{
+	  edge other_e;
+	  int freq_delta;
+	  gcov_type count_delta;
+
+          FOR_EACH_EDGE (other_e, ei, e->src->succs)
+	    if (!(other_e->flags & (EDGE_ABNORMAL | EDGE_FAKE))
+		&& e != other_e)
+	      break;
+
+	  /* Probability of exit must be 1/iterations.  */
+	  freq_delta = EDGE_FREQUENCY (e);
+	  e->probability = REG_BR_PROB_BASE / iteration_bound;
+	  other_e->probability = inverse_probability (e->probability);
+	  freq_delta -= EDGE_FREQUENCY (e);
+
+	  /* Adjust counts accordingly.  */
+	  count_delta = e->count;
+	  e->count = apply_probability (e->src->count, e->probability);
+	  other_e->count = apply_probability (e->src->count, other_e->probability);
+	  count_delta -= e->count;
+
+	  /* If latch exists, change its frequency and count, since we changed
+	     probability of exit.  Theoretically we should update everything from
+	     source of exit edge to latch, but for vectorizer this is enough.  */
+	  if (loop->latch
+	      && loop->latch != e->src)
+	    {
+	      loop->latch->frequency += freq_delta;
+	      if (loop->latch->frequency < 0)
+		loop->latch->frequency = 0;
+	      loop->latch->count += count_delta;
+	      if (loop->latch->count < 0)
+		loop->latch->count = 0;
+	    }
+	}
+
+      /* Roughly speaking we want to reduce the loop body profile by the
+	 difference of loop iterations.  We however can do better if
+	 we look at the actual profile, if it is available.  */
+      scale = RDIV (iteration_bound * scale, iterations);
+      if (loop->header->count)
+	{
+	  gcov_type count_in = 0;
+
+	  FOR_EACH_EDGE (e, ei, loop->header->preds)
+	    if (e->src != loop->latch)
+	      count_in += e->count;
+
+	  if (count_in != 0)
+	    scale = GCOV_COMPUTE_SCALE (count_in * iteration_bound,
+                                        loop->header->count);
+	}
+      else if (loop->header->frequency)
+	{
+	  int freq_in = 0;
+
+	  FOR_EACH_EDGE (e, ei, loop->header->preds)
+	    if (e->src != loop->latch)
+	      freq_in += EDGE_FREQUENCY (e);
+
+	  if (freq_in != 0)
+	    scale = GCOV_COMPUTE_SCALE (freq_in * iteration_bound,
+                                        loop->header->frequency);
+	}
+      if (!scale)
+	scale = 1;
+    }
+
+  if (scale == REG_BR_PROB_BASE)
+    return;
+
+  /* Scale the actual probabilities.  */
+  scale_loop_frequencies (loop, scale, REG_BR_PROB_BASE);
+  if (dump_file && (dump_flags & TDF_DETAILS))
+    fprintf (dump_file, ";; guessed iterations are now %i\n",
+	     (int)expected_loop_iterations_unbounded (loop));
+}
+
 /* Recompute dominance information for basic blocks outside LOOP.  */
 
 static void
 update_dominators_in_loop (struct loop *loop)
 {
-  VEC (basic_block, heap) *dom_bbs = NULL;
-  sbitmap seen;
+  vec<basic_block> dom_bbs = vNULL;
   basic_block *body;
   unsigned i;
 
-  seen = sbitmap_alloc (last_basic_block);
-  sbitmap_zero (seen);
+  auto_sbitmap seen (last_basic_block_for_fn (cfun));
+  bitmap_clear (seen);
   body = get_loop_body (loop);
 
   for (i = 0; i < loop->num_nodes; i++)
-    SET_BIT (seen, body[i]->index);
+    bitmap_set_bit (seen, body[i]->index);
 
   for (i = 0; i < loop->num_nodes; i++)
     {
@@ -500,17 +632,16 @@ update_dominators_in_loop (struct loop *loop)
       for (ldom = first_dom_son (CDI_DOMINATORS, body[i]);
 	   ldom;
 	   ldom = next_dom_son (CDI_DOMINATORS, ldom))
-	if (!TEST_BIT (seen, ldom->index))
+	if (!bitmap_bit_p (seen, ldom->index))
 	  {
-	    SET_BIT (seen, ldom->index);
-	    VEC_safe_push (basic_block, heap, dom_bbs, ldom);
+	    bitmap_set_bit (seen, ldom->index);
+	    dom_bbs.safe_push (ldom);
 	  }
     }
 
   iterate_fix_dominators (CDI_DOMINATORS, dom_bbs, false);
   free (body);
-  free (seen);
-  VEC_free (basic_block, heap, dom_bbs);
+  dom_bbs.release ();
 }
 
 /* Creates an if region as shown above. CONDITION is used to create
@@ -553,7 +684,7 @@ create_empty_if_region_on_edge (edge entry_edge, tree condition)
 
   basic_block cond_bb, true_bb, false_bb, join_bb;
   edge e_true, e_false, exit_edge;
-  gimple cond_stmt;
+  gcond *cond_stmt;
   tree simple_cond;
   gimple_stmt_iterator gsi;
 
@@ -639,7 +770,7 @@ create_empty_loop_on_edge (edge entry_edge,
   struct loop *loop;
   gimple_stmt_iterator gsi;
   gimple_seq stmts;
-  gimple cond_expr;
+  gcond *cond_expr;
   tree exit_test;
   edge exit_e;
   int prob;
@@ -776,7 +907,7 @@ loopify (edge latch_edge, edge header_edge,
       switch_bb->count = cnt;
       FOR_EACH_EDGE (e, ei, switch_bb->succs)
 	{
-	  e->count = (switch_bb->count * e->probability) / REG_BR_PROB_BASE;
+	  e->count = apply_probability (switch_bb->count, e->probability);
 	}
     }
   scale_loop_frequencies (loop, false_scale, REG_BR_PROB_BASE);
@@ -791,10 +922,14 @@ loopify (edge latch_edge, edge header_edge,
    have no successor, which caller is expected to fix somehow.
 
    If this may cause the information about irreducible regions to become
-   invalid, IRRED_INVALIDATED is set to true.  */
+   invalid, IRRED_INVALIDATED is set to true.  
 
-static void
-unloop (struct loop *loop, bool *irred_invalidated)
+   LOOP_CLOSED_SSA_INVALIDATED, if non-NULL, is a bitmap where we store
+   basic blocks that had non-trivial update on their loop_father.*/
+
+void
+unloop (struct loop *loop, bool *irred_invalidated,
+	bitmap loop_closed_ssa_invalidated)
 {
   basic_block *body;
   struct loop *ploop;
@@ -819,7 +954,7 @@ unloop (struct loop *loop, bool *irred_invalidated)
 	remove_bb_from_loops (body[i]);
 	add_bb_to_loop (body[i], loop_outer (loop));
       }
-  free(body);
+  free (body);
 
   while (loop->inner)
     {
@@ -836,7 +971,7 @@ unloop (struct loop *loop, bool *irred_invalidated)
   /* We do not pass IRRED_INVALIDATED to fix_bb_placements here, as even if
      there is an irreducible region inside the cancelled loop, the flags will
      be still correct.  */
-  fix_bb_placements (latch, &dummy);
+  fix_bb_placements (latch, &dummy, loop_closed_ssa_invalidated);
 }
 
 /* Fix placement of superloops of LOOP inside loop tree, i.e. ensure that
@@ -855,7 +990,7 @@ fix_loop_placements (struct loop *loop, bool *irred_invalidated)
   while (loop_outer (loop))
     {
       outer = loop_outer (loop);
-      if (!fix_loop_placement (loop))
+      if (!fix_loop_placement (loop, irred_invalidated))
 	break;
 
       /* Changing the placement of a loop in the loop tree may alter the
@@ -864,9 +999,30 @@ fix_loop_placements (struct loop *loop, bool *irred_invalidated)
 	 to the loop.  So call fix_bb_placements to fix up the placement
 	 of the preheader and (possibly) of its predecessors.  */
       fix_bb_placements (loop_preheader_edge (loop)->src,
-			 irred_invalidated);
+			 irred_invalidated, NULL);
       loop = outer;
     }
+}
+
+/* Duplicate loop bounds and other information we store about
+   the loop into its duplicate.  */
+
+void
+copy_loop_info (struct loop *loop, struct loop *target)
+{
+  gcc_checking_assert (!target->any_upper_bound && !target->any_estimate);
+  target->any_upper_bound = loop->any_upper_bound;
+  target->nb_iterations_upper_bound = loop->nb_iterations_upper_bound;
+  target->any_likely_upper_bound = loop->any_likely_upper_bound;
+  target->nb_iterations_likely_upper_bound
+    = loop->nb_iterations_likely_upper_bound;
+  target->any_estimate = loop->any_estimate;
+  target->nb_iterations_estimate = loop->nb_iterations_estimate;
+  target->estimate_state = loop->estimate_state;
+  target->constraints = loop->constraints;
+  target->warned_aggressive_loop_optimizations
+    |= loop->warned_aggressive_loop_optimizations;
+  target->in_oacc_kernels_region = loop->in_oacc_kernels_region;
 }
 
 /* Copies copy of LOOP as subloop of TARGET loop, placing newly
@@ -876,7 +1032,9 @@ duplicate_loop (struct loop *loop, struct loop *target)
 {
   struct loop *cloop;
   cloop = alloc_loop ();
-  place_new_loop (cloop);
+  place_new_loop (cfun, cloop);
+ 
+  copy_loop_info (loop, cloop);
 
   /* Mark the new loop as copy of LOOP.  */
   set_loop_copy (loop, cloop);
@@ -988,7 +1146,7 @@ set_zero_probability (edge e)
 bool
 duplicate_loop_to_header_edge (struct loop *loop, edge e,
 			       unsigned int ndupl, sbitmap wont_exit,
-			       edge orig, VEC (edge, heap) **to_remove,
+			       edge orig, vec<edge> *to_remove,
 			       int flags)
 {
   struct loop *target, *aloop;
@@ -1065,8 +1223,9 @@ duplicate_loop_to_header_edge (struct loop *loop, edge e,
 	{
 	  /* The blocks that are dominated by a removed exit edge ORIG have
 	     frequencies scaled by this.  */
-	  scale_after_exit = RDIV (REG_BR_PROB_BASE * REG_BR_PROB_BASE,
-				   REG_BR_PROB_BASE - orig->probability);
+	  scale_after_exit
+              = GCOV_COMPUTE_SCALE (REG_BR_PROB_BASE,
+                                    REG_BR_PROB_BASE - orig->probability);
 	  bbs_to_scale = BITMAP_ALLOC (NULL);
 	  for (i = 0; i < n; i++)
 	    {
@@ -1079,7 +1238,7 @@ duplicate_loop_to_header_edge (struct loop *loop, edge e,
       scale_step = XNEWVEC (int, ndupl);
 
       for (i = 1; i <= ndupl; i++)
-	scale_step[i - 1] = TEST_BIT (wont_exit, i)
+	scale_step[i - 1] = bitmap_bit_p (wont_exit, i)
 				? prob_pass_wont_exit
 				: prob_pass_thru;
 
@@ -1097,16 +1256,16 @@ duplicate_loop_to_header_edge (struct loop *loop, edge e,
 	     frequency should be reduced by prob_pass_wont_exit.  Caller
 	     should've managed the flags so all except for original loop
 	     has won't exist set.  */
-	  scale_act = RDIV (wanted_freq * REG_BR_PROB_BASE, freq_in);
+	  scale_act = GCOV_COMPUTE_SCALE (wanted_freq, freq_in);
 	  /* Now simulate the duplication adjustments and compute header
 	     frequency of the last copy.  */
 	  for (i = 0; i < ndupl; i++)
-	    wanted_freq = RDIV (wanted_freq * scale_step[i], REG_BR_PROB_BASE);
-	  scale_main = RDIV (wanted_freq * REG_BR_PROB_BASE, freq_in);
+	    wanted_freq = combine_probabilities (wanted_freq, scale_step[i]);
+	  scale_main = GCOV_COMPUTE_SCALE (wanted_freq, freq_in);
 	}
       else if (is_latch)
 	{
-	  prob_pass_main = TEST_BIT (wont_exit, 0)
+	  prob_pass_main = bitmap_bit_p (wont_exit, 0)
 				? prob_pass_wont_exit
 				: prob_pass_thru;
 	  p = prob_pass_main;
@@ -1114,17 +1273,20 @@ duplicate_loop_to_header_edge (struct loop *loop, edge e,
 	  for (i = 0; i < ndupl; i++)
 	    {
 	      scale_main += p;
-	      p = RDIV (p * scale_step[i], REG_BR_PROB_BASE);
+	      p = combine_probabilities (p, scale_step[i]);
 	    }
-	  scale_main = RDIV (REG_BR_PROB_BASE * REG_BR_PROB_BASE, scale_main);
-	  scale_act = RDIV (scale_main * prob_pass_main, REG_BR_PROB_BASE);
+	  scale_main = GCOV_COMPUTE_SCALE (REG_BR_PROB_BASE, scale_main);
+	  scale_act = combine_probabilities (scale_main, prob_pass_main);
 	}
       else
 	{
+	  int preheader_freq = EDGE_FREQUENCY (e);
 	  scale_main = REG_BR_PROB_BASE;
 	  for (i = 0; i < ndupl; i++)
-	    scale_main = RDIV (scale_main * scale_step[i], REG_BR_PROB_BASE);
-	  scale_act = REG_BR_PROB_BASE - prob_pass_thru;
+	    scale_main = combine_probabilities (scale_main, scale_step[i]);
+	  if (preheader_freq > freq_in)
+	    preheader_freq = freq_in;
+	  scale_act = GCOV_COMPUTE_SCALE (preheader_freq, freq_in);
 	}
       for (i = 0; i < ndupl; i++)
 	gcc_assert (scale_step[i] >= 0 && scale_step[i] <= REG_BR_PROB_BASE);
@@ -1139,7 +1301,7 @@ duplicate_loop_to_header_edge (struct loop *loop, edge e,
   n_orig_loops = 0;
   for (aloop = loop->inner; aloop; aloop = aloop->next)
     n_orig_loops++;
-  orig_loops = XCNEWVEC (struct loop *, n_orig_loops);
+  orig_loops = XNEWVEC (struct loop *, n_orig_loops);
   for (aloop = loop->inner, i = 0; aloop; aloop = aloop->next, i++)
     orig_loops[i] = aloop;
 
@@ -1163,7 +1325,7 @@ duplicate_loop_to_header_edge (struct loop *loop, edge e,
 
       /* Copy bbs.  */
       copy_bbs (bbs, n, new_bbs, spec_edges, 2, new_spec_edges, loop,
-		place_after);
+		place_after, true);
       place_after = new_spec_edges[SE_LATCH]->src;
 
       if (flags & DLTHE_RECORD_COPY_NUMBER)
@@ -1215,10 +1377,10 @@ duplicate_loop_to_header_edge (struct loop *loop, edge e,
 	}
 
       /* Record exit edge in this copy.  */
-      if (orig && TEST_BIT (wont_exit, j + 1))
+      if (orig && bitmap_bit_p (wont_exit, j + 1))
 	{
 	  if (to_remove)
-	    VEC_safe_push (edge, heap, *to_remove, new_spec_edges[SE_ORIG]);
+	    to_remove->safe_push (new_spec_edges[SE_ORIG]);
 	  set_zero_probability (new_spec_edges[SE_ORIG]);
 
 	  /* Scale the frequencies of the blocks dominated by the exit.  */
@@ -1244,17 +1406,17 @@ duplicate_loop_to_header_edge (struct loop *loop, edge e,
       if (flags & DLTHE_FLAG_UPDATE_FREQ)
 	{
 	  scale_bbs_frequencies_int (new_bbs, n, scale_act, REG_BR_PROB_BASE);
-	  scale_act = RDIV (scale_act * scale_step[j], REG_BR_PROB_BASE);
+	  scale_act = combine_probabilities (scale_act, scale_step[j]);
 	}
     }
   free (new_bbs);
   free (orig_loops);
 
   /* Record the exit edge in the original loop body, and update the frequencies.  */
-  if (orig && TEST_BIT (wont_exit, 0))
+  if (orig && bitmap_bit_p (wont_exit, 0))
     {
       if (to_remove)
-	VEC_safe_push (edge, heap, *to_remove, orig);
+	to_remove->safe_push (orig);
       set_zero_probability (orig);
 
       /* Scale the frequencies of the blocks dominated by the exit.  */
@@ -1281,14 +1443,14 @@ duplicate_loop_to_header_edge (struct loop *loop, edge e,
   for (i = 0; i < n; i++)
     {
       basic_block dominated, dom_bb;
-      VEC (basic_block, heap) *dom_bbs;
+      vec<basic_block> dom_bbs;
       unsigned j;
 
       bb = bbs[i];
       bb->aux = 0;
 
       dom_bbs = get_dominated_by (CDI_DOMINATORS, bb);
-      FOR_EACH_VEC_ELT (basic_block, dom_bbs, j, dominated)
+      FOR_EACH_VEC_ELT (dom_bbs, j, dominated)
 	{
 	  if (flow_bb_inside_loop_p (loop, dominated))
 	    continue;
@@ -1296,7 +1458,7 @@ duplicate_loop_to_header_edge (struct loop *loop, edge e,
 			CDI_DOMINATORS, first_active[i], first_active_latch);
 	  set_immediate_dominator (CDI_DOMINATORS, dominated, dom_bb);
 	}
-      VEC_free (basic_block, heap, dom_bbs);
+      dom_bbs.release ();
     }
   free (first_active);
 
@@ -1342,7 +1504,7 @@ has_preds_from_loop (basic_block block, struct loop *loop)
 basic_block
 create_preheader (struct loop *loop, int flags)
 {
-  edge e, fallthru;
+  edge e;
   basic_block dummy;
   int nentry = 0;
   bool irred = false;
@@ -1367,7 +1529,7 @@ create_preheader (struct loop *loop, int flags)
 
       /* We do not allow entry block to be the loop preheader, since we
 	     cannot emit code there.  */
-      if (single_entry->src == ENTRY_BLOCK_PTR)
+      if (single_entry->src == ENTRY_BLOCK_PTR_FOR_FN (cfun))
         need_forwarder_block = true;
       else
         {
@@ -1389,9 +1551,14 @@ create_preheader (struct loop *loop, int flags)
 
   mfb_kj_edge = loop_latch_edge (loop);
   latch_edge_was_fallthru = (mfb_kj_edge->flags & EDGE_FALLTHRU) != 0;
-  fallthru = make_forwarder_block (loop->header, mfb_keep_just, NULL);
-  dummy = fallthru->src;
-  loop->header = fallthru->dest;
+  if (nentry == 1)
+    dummy = split_edge (single_entry);
+  else
+    {
+      edge fallthru = make_forwarder_block (loop->header, mfb_keep_just, NULL);
+      dummy = fallthru->src;
+      loop->header = fallthru->dest;
+    }
 
   /* Try to be clever in placing the newly created preheader.  The idea is to
      avoid breaking any "fallthruness" relationship between blocks.
@@ -1433,13 +1600,12 @@ create_preheader (struct loop *loop, int flags)
 void
 create_preheaders (int flags)
 {
-  loop_iterator li;
   struct loop *loop;
 
   if (!current_loops)
     return;
 
-  FOR_EACH_LOOP (li, loop, 0)
+  FOR_EACH_LOOP (loop, 0)
     create_preheader (loop, flags);
   loops_state_set (LOOPS_HAVE_PREHEADERS);
 }
@@ -1449,16 +1615,16 @@ create_preheaders (int flags)
 void
 force_single_succ_latches (void)
 {
-  loop_iterator li;
   struct loop *loop;
   edge e;
 
-  FOR_EACH_LOOP (li, loop, 0)
+  FOR_EACH_LOOP (loop, 0)
     {
       if (loop->latch != loop->header && single_succ_p (loop->latch))
 	continue;
 
       e = find_edge (loop->latch, loop->header);
+      gcc_checking_assert (e != NULL);
 
       split_edge (e);
     }
@@ -1479,11 +1645,14 @@ force_single_succ_latches (void)
 			|
 			+---------> [second_head]
 
-  THEN_PROB is the probability of then branch of the condition.  */
+  THEN_PROB is the probability of then branch of the condition.
+  ELSE_PROB is the probability of else branch. Note that they may be both
+  REG_BR_PROB_BASE when condition is IFN_LOOP_VECTORIZED.  */
 
 static basic_block
 lv_adjust_loop_entry_edge (basic_block first_head, basic_block second_head,
-			   edge e, void *cond_expr, unsigned then_prob)
+			   edge e, void *cond_expr, unsigned then_prob,
+			   unsigned else_prob)
 {
   basic_block new_head = NULL;
   edge e1;
@@ -1502,9 +1671,9 @@ lv_adjust_loop_entry_edge (basic_block first_head, basic_block second_head,
   e1 = make_edge (new_head, first_head,
 		  current_ir_type () == IR_GIMPLE ? EDGE_TRUE_VALUE : 0);
   e1->probability = then_prob;
-  e->probability = REG_BR_PROB_BASE - then_prob;
-  e1->count = RDIV (e->count * e1->probability, REG_BR_PROB_BASE);
-  e->count = RDIV (e->count * e->probability, REG_BR_PROB_BASE);
+  e->probability = else_prob;
+  e1->count = apply_probability (e->count, e1->probability);
+  e->count = apply_probability (e->count, e->probability);
 
   set_immediate_dominator (CDI_DOMINATORS, first_head, new_head);
   set_immediate_dominator (CDI_DOMINATORS, second_head, new_head);
@@ -1520,9 +1689,12 @@ lv_adjust_loop_entry_edge (basic_block first_head, basic_block second_head,
    This transformation given a condition and a loop, creates
    -if (condition) { loop_copy1 } else { loop_copy2 },
    where loop_copy1 is the loop transformed in one way, and loop_copy2
-   is the loop transformed in another way (or unchanged). 'condition'
+   is the loop transformed in another way (or unchanged). COND_EXPR
    may be a run time test for things that were not resolved by static
    analysis (overlapping ranges (anti-aliasing), alignment, etc.).
+
+   If non-NULL, CONDITION_BB is set to the basic block containing the
+   condition.
 
    THEN_PROB is the probability of the then edge of the if.  THEN_SCALE
    is the ratio by that the frequencies in the original loop should
@@ -1535,7 +1707,8 @@ lv_adjust_loop_entry_edge (basic_block first_head, basic_block second_head,
 struct loop *
 loop_version (struct loop *loop,
 	      void *cond_expr, basic_block *condition_bb,
-	      unsigned then_prob, unsigned then_scale, unsigned else_scale,
+	      unsigned then_prob, unsigned else_prob,
+	      unsigned then_scale, unsigned else_scale,
 	      bool place_after)
 {
   basic_block first_head, second_head;
@@ -1566,7 +1739,7 @@ loop_version (struct loop *loop,
 
   /* Split loop entry edge and insert new block with cond expr.  */
   cond_bb =  lv_adjust_loop_entry_edge (first_head, second_head,
-					entry, cond_expr, then_prob);
+					entry, cond_expr, then_prob, else_prob);
   if (condition_bb)
     *condition_bb = cond_bb;
 
@@ -1584,6 +1757,8 @@ loop_version (struct loop *loop,
 		   cond_bb, true_edge, false_edge,
 		   false /* Do not redirect all edges.  */,
 		   then_scale, else_scale);
+
+  copy_loop_info (loop, nloop);
 
   /* loopify redirected latch_edge. Update its PENDING_STMTS.  */
   lv_flush_pending_stmts (latch_edge);
@@ -1622,113 +1797,4 @@ loop_version (struct loop *loop,
   split_edge (loop_preheader_edge (nloop));
 
   return nloop;
-}
-
-/* The structure of loops might have changed.  Some loops might get removed
-   (and their headers and latches were set to NULL), loop exists might get
-   removed (thus the loop nesting may be wrong), and some blocks and edges
-   were changed (so the information about bb --> loop mapping does not have
-   to be correct).  But still for the remaining loops the header dominates
-   the latch, and loops did not get new subloops (new loops might possibly
-   get created, but we are not interested in them).  Fix up the mess.
-
-   If CHANGED_BBS is not NULL, basic blocks whose loop has changed are
-   marked in it.  */
-
-void
-fix_loop_structure (bitmap changed_bbs)
-{
-  basic_block bb;
-  struct loop *loop, *ploop;
-  loop_iterator li;
-  bool record_exits = false;
-  struct loop **superloop = XNEWVEC (struct loop *, number_of_loops ());
-
-  /* Remove the old bb -> loop mapping.  Remember the depth of the blocks in
-     the loop hierarchy, so that we can recognize blocks whose loop nesting
-     relationship has changed.  */
-  FOR_EACH_BB (bb)
-    {
-      if (changed_bbs)
-	bb->aux = (void *) (size_t) loop_depth (bb->loop_father);
-      bb->loop_father = current_loops->tree_root;
-    }
-
-  if (loops_state_satisfies_p (LOOPS_HAVE_RECORDED_EXITS))
-    {
-      release_recorded_exits ();
-      record_exits = true;
-    }
-
-  /* Remove the dead loops from structures.  We start from the innermost
-     loops, so that when we remove the loops, we know that the loops inside
-     are preserved, and do not waste time relinking loops that will be
-     removed later.  */
-  FOR_EACH_LOOP (li, loop, LI_FROM_INNERMOST)
-    {
-      if (loop->header)
-	continue;
-
-      while (loop->inner)
-	{
-	  ploop = loop->inner;
-	  flow_loop_tree_node_remove (ploop);
-	  flow_loop_tree_node_add (loop_outer (loop), ploop);
-	}
-
-      /* Remove the loop and free its data.  */
-      delete_loop (loop);
-    }
-
-  /* Rescan the bodies of loops, starting from the outermost ones.  We assume
-     that no optimization interchanges the order of the loops, i.e., it cannot
-     happen that L1 was superloop of L2 before and it is subloop of L2 now
-     (without explicitly updating loop information).  At the same time, we also
-     determine the new loop structure.  */
-  current_loops->tree_root->num_nodes = n_basic_blocks;
-  FOR_EACH_LOOP (li, loop, 0)
-    {
-      superloop[loop->num] = loop->header->loop_father;
-      loop->num_nodes = flow_loop_nodes_find (loop->header, loop);
-    }
-
-  /* Now fix the loop nesting.  */
-  FOR_EACH_LOOP (li, loop, 0)
-    {
-      ploop = superloop[loop->num];
-      if (ploop != loop_outer (loop))
-	{
-	  flow_loop_tree_node_remove (loop);
-	  flow_loop_tree_node_add (ploop, loop);
-	}
-    }
-  free (superloop);
-
-  /* Mark the blocks whose loop has changed.  */
-  if (changed_bbs)
-    {
-      FOR_EACH_BB (bb)
-	{
-	  if ((void *) (size_t) loop_depth (bb->loop_father) != bb->aux)
-	    bitmap_set_bit (changed_bbs, bb->index);
-
-    	  bb->aux = NULL;
-	}
-    }
-
-  if (loops_state_satisfies_p (LOOPS_HAVE_PREHEADERS))
-    create_preheaders (CP_SIMPLE_PREHEADERS);
-
-  if (loops_state_satisfies_p (LOOPS_HAVE_SIMPLE_LATCHES))
-    force_single_succ_latches ();
-
-  if (loops_state_satisfies_p (LOOPS_HAVE_MARKED_IRREDUCIBLE_REGIONS))
-    mark_irreducible_loops ();
-
-  if (record_exits)
-    record_loop_exits ();
-
-#ifdef ENABLE_CHECKING
-  verify_loop_structure ();
-#endif
 }

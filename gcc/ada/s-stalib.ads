@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2010, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -44,7 +44,7 @@
 --  package and the packages it references are included in all Ada programs,
 --  together with the included data.
 
-pragma Compiler_Unit;
+pragma Compiler_Unit_Warning;
 
 pragma Polling (Off);
 --  We must turn polling off for this unit, because otherwise we get
@@ -53,9 +53,11 @@ pragma Polling (Off);
 with Ada.Unchecked_Conversion;
 
 package System.Standard_Library is
-   pragma Warnings (Off);
-   pragma Preelaborate_05;
-   pragma Warnings (On);
+
+   --  Historical note: pragma Preelaborate was surrounded by a pair of pragma
+   --  Warnings (Off/On) to circumvent a bootstrap issue.
+
+   pragma Preelaborate;
 
    subtype Big_String is String (1 .. Positive'Last);
    pragma Suppress_Initialization (Big_String);
@@ -74,26 +76,6 @@ package System.Standard_Library is
    function To_Ptr is
      new Ada.Unchecked_Conversion (System.Address, Big_String_Ptr);
 
-   ---------------------------------------------
-   -- Type For Enumeration Image Index Tables --
-   ---------------------------------------------
-
-   --  Note: these types are declared at the start of this unit, since
-   --  they must appear before any enumeration types declared in this
-   --  unit. Note that the spec of system is already elaborated at
-   --  this point (since we are a child of system), which means that
-   --  enumeration types in package System cannot use these types.
-
-   type Image_Index_Table_8 is
-     array (Integer range <>) of Short_Short_Integer;
-   type Image_Index_Table_16 is
-     array (Integer range <>) of Short_Integer;
-   type Image_Index_Table_32 is
-     array (Integer range <>) of Integer;
-   --  These types are used to generate the index vector used for enumeration
-   --  type image tables. See spec of Exp_Imgv in the main GNAT sources for a
-   --  full description of the data structures that are used here.
-
    -------------------------------------
    -- Exception Declarations and Data --
    -------------------------------------
@@ -105,23 +87,9 @@ package System.Standard_Library is
    type Exception_Data_Ptr is access all Exception_Data;
    --  An equivalent of Exception_Id that is public
 
-   type Exception_Code is mod 2 ** Integer'Size;
-   --  A scalar value bound to some exception data. Typically used for
-   --  imported or exported exceptions on VMS. Having a separate type for this
-   --  is useful to enforce consistency throughout the various run-time units
-   --  handling such codes, and having it unsigned is the most appropriate
-   --  choice for it's currently single use on VMS.
-
-   --  ??? The construction in Cstand has no way to access the proper type
-   --  node for Exception_Code, and currently uses Standard_Unsigned as a
-   --  fallback. The representations shall match, and the size clause below
-   --  is aimed at ensuring that.
-
-   for Exception_Code'Size use Integer'Size;
-
    --  The following record defines the underlying representation of exceptions
 
-   --  WARNING! Any changes to this may need to be reflected in the following
+   --  WARNING: Any changes to this may need to be reflected in the following
    --  locations in the compiler and runtime code:
 
    --    1. The Internal_Exception routine in s-exctab.adb
@@ -140,7 +108,7 @@ package System.Standard_Library is
       Lang : Character;
       --  A character indicating the language raising the exception.
       --  Set to "A" for exceptions defined by an Ada program.
-      --  Set to "V" for imported VMS exceptions.
+      --  Set to "C" for imported C++ exceptions.
 
       Name_Length : Natural;
       --  Length of fully expanded name of exception
@@ -154,11 +122,9 @@ package System.Standard_Library is
       --  built (by Register_Exception in s-exctab.adb) for converting between
       --  identities and names.
 
-      Import_Code : Exception_Code;
-      --  Value for imported exceptions. Needed only for the handling of
-      --  Import/Export_Exception for the VMS case, but present in all
-      --  implementations (we might well extend this mechanism for other
-      --  systems in the future).
+      Foreign_Data : Address;
+      --  Data for imported exceptions. Not used in the Ada case. This
+      --  represents the address of the RTTI for the C++ case.
 
       Raise_Hook : Raise_Action;
       --  This field can be used to place a "hook" on an exception. If the
@@ -189,7 +155,7 @@ package System.Standard_Library is
       Name_Length           => Constraint_Error_Name'Length,
       Full_Name             => Constraint_Error_Name'Address,
       HTable_Ptr            => null,
-      Import_Code           => 0,
+      Foreign_Data          => Null_Address,
       Raise_Hook            => null);
 
    Numeric_Error_Def : aliased Exception_Data :=
@@ -198,7 +164,7 @@ package System.Standard_Library is
       Name_Length           => Numeric_Error_Name'Length,
       Full_Name             => Numeric_Error_Name'Address,
       HTable_Ptr            => null,
-      Import_Code           => 0,
+      Foreign_Data          => Null_Address,
       Raise_Hook            => null);
 
    Program_Error_Def : aliased Exception_Data :=
@@ -207,7 +173,7 @@ package System.Standard_Library is
       Name_Length           => Program_Error_Name'Length,
       Full_Name             => Program_Error_Name'Address,
       HTable_Ptr            => null,
-      Import_Code           => 0,
+      Foreign_Data          => Null_Address,
       Raise_Hook            => null);
 
    Storage_Error_Def : aliased Exception_Data :=
@@ -216,7 +182,7 @@ package System.Standard_Library is
       Name_Length           => Storage_Error_Name'Length,
       Full_Name             => Storage_Error_Name'Address,
       HTable_Ptr            => null,
-      Import_Code           => 0,
+      Foreign_Data          => Null_Address,
       Raise_Hook            => null);
 
    Tasking_Error_Def : aliased Exception_Data :=
@@ -225,7 +191,7 @@ package System.Standard_Library is
       Name_Length           => Tasking_Error_Name'Length,
       Full_Name             => Tasking_Error_Name'Address,
       HTable_Ptr            => null,
-      Import_Code           => 0,
+      Foreign_Data          => Null_Address,
       Raise_Hook            => null);
 
    Abort_Signal_Def : aliased Exception_Data :=
@@ -234,7 +200,7 @@ package System.Standard_Library is
       Name_Length           => Abort_Signal_Name'Length,
       Full_Name             => Abort_Signal_Name'Address,
       HTable_Ptr            => null,
-      Import_Code           => 0,
+      Foreign_Data          => Null_Address,
       Raise_Hook            => null);
 
    pragma Export (C, Constraint_Error_Def, "constraint_error");
@@ -256,12 +222,23 @@ package System.Standard_Library is
       --  This is the default behavior.
 
       Every_Raise,
-      --  Denotes every possible raise event, either explicit or due to
-      --  a specific language rule, within the context of a task or not.
+      --  Denotes the initial raise event for any exception occurrence, either
+      --  explicit or due to a specific language rule, within the context of a
+      --  task or not.
 
-      Unhandled_Raise
-      --  Denotes the raise events corresponding to exceptions for which
-      --  there is no user defined handler.
+      Unhandled_Raise,
+      --  Denotes the raise events corresponding to exceptions for which there
+      --  is no user defined handler. This includes unhandled exceptions in
+      --  task bodies.
+
+      Unhandled_Raise_In_Main
+      --  Same as Unhandled_Raise, except exceptions in task bodies are not
+      --  included. Same as RM_Convention, except (1) the message is printed as
+      --  soon as the environment task completes due to an unhandled exception
+      --  (before awaiting the termination of dependent tasks, and before
+      --  library-level finalization), and (2) a symbolic traceback is given
+      --  if possible. This is the default behavior if the binder switch -E is
+      --  used.
      );
    --  Provide a way to denote different kinds of automatic traces related
    --  to exceptions that can be requested.

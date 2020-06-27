@@ -1,4 +1,5 @@
 /* { dg-require-effective-target vect_condition } */
+/* { dg-additional-options "-fdump-tree-vect-details" } */
 
 #include "tree-vect.h"
 
@@ -41,6 +42,10 @@ int main ()
   return 0;
 }
 
-/* { dg-final { scan-tree-dump-times "basic block vectorized using SLP" 1 "slp" { target vect_element_align } } } */
-/* { dg-final { cleanup-tree-dump "slp" } } */
+/* Basic blocks of if-converted loops are vectorized from within the loop
+   vectorizer pass.  In this case it is really a deficiency in loop
+   vectorization data dependence analysis that causes us to require
+   basic block vectorization in the first place.  */
+
+/* { dg-final { scan-tree-dump-times "basic block vectorized" 1 "vect" { target vect_element_align } } } */
 

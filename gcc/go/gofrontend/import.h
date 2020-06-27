@@ -124,8 +124,10 @@ class Import
   // Find import data.  This searches the file system for FILENAME and
   // returns a pointer to a Stream object to read the data that it
   // exports.  LOCATION is the location of the import statement.
+  // RELATIVE_IMPORT_PATH is used as a prefix for a relative import.
   static Stream*
-  open_package(const std::string& filename, Location location);
+  open_package(const std::string& filename, Location location,
+	       const std::string& relative_import_path);
 
   // Constructor.
   Import(Stream*, Location);
@@ -146,6 +148,11 @@ class Import
   Location
   location() const
   { return this->location_; }
+
+  // Return the package we are importing.
+  Package*
+  package() const
+  { return this->package_; }
 
   // Return the next character.
   int
@@ -190,6 +197,10 @@ class Import
   Type*
   read_type();
 
+  // Read an escape note.
+  std::string
+  read_escape();
+
  private:
   static Stream*
   try_package_in_directory(const std::string&, Location);
@@ -213,11 +224,15 @@ class Import
   find_archive_export_data(const std::string& filename, int fd,
 			   Location);
 
+  // Read a package line.
+  void
+  read_one_package();
+
   // Read an import line.
   void
   read_one_import();
 
-  // Read the import control functions.
+  // Read the import control functions and init graph.
   void
   read_import_init_fns(Gogo*);
 
@@ -245,6 +260,21 @@ class Import
   bool
   string_to_int(const std::string&, bool is_neg_ok, int* ret);
 
+  // Get an unsigned integer from a string.
+  bool
+  string_to_unsigned(const std::string& s, unsigned* ret)
+  {
+    int ivalue;
+    if (!this->string_to_int(s, false, &ivalue))
+      return false;
+    *ret = static_cast<unsigned>(ivalue);
+    return true;
+  }
+
+  // Return the version number of the export data we're reading.
+  Export_data_version
+  version() const { return this->version_; }
+
   // The general IR.
   Gogo* gogo_;
   // The stream from which to read import data.
@@ -260,6 +290,8 @@ class Import
   std::vector<Named_type*> builtin_types_;
   // Mapping from exported type codes to Type structures.
   std::vector<Type*> types_;
+  // Version of export data we're reading.
+  Export_data_version version_;
 };
 
 // Read import data from a string.

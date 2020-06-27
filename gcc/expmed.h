@@ -1,13 +1,11 @@
 /* Target-dependent costs for expmed.c.
-   Copyright (C) 1987, 1988, 1989, 1992, 1993, 1994, 1995, 1996, 1997, 1998,
-   1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 1987-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
 GCC is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free
-Software Foundation; either version 3, or (at your option; any later
+Software Foundation; either version 3, or (at your option) any later
 version.
 
 GCC is distributed in the hope that it will be useful, but WITHOUT ANY
@@ -22,6 +20,8 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef EXPMED_H
 #define EXPMED_H 1
 
+#include "insn-codes.h"
+
 enum alg_code {
   alg_unknown,
   alg_zero,
@@ -34,6 +34,15 @@ enum alg_code {
   alg_sub_t2_m,
   alg_impossible
 };
+
+/* Indicates the type of fixup needed after a constant multiplication.
+   BASIC_VARIANT means no fixup is needed, NEGATE_VARIANT means that
+   the result should be negated, and ADD_VARIANT means that the
+   multiplicand should be added to the result.  */
+enum mult_variant {basic_variant, negate_variant, add_variant};
+
+bool choose_mult_variant (machine_mode, HOST_WIDE_INT,
+			  struct algorithm *, enum mult_variant *, int);
 
 /* This structure holds the "cost" of a multiply sequence.  The
    "cost" field holds the total rtx_cost of every operator in the
@@ -103,7 +112,7 @@ struct alg_hash_entry {
   unsigned HOST_WIDE_INT t;
 
   /* The mode in which we are multiplying something by T.  */
-  enum machine_mode mode;
+  machine_mode mode;
 
   /* The best multiplication algorithm for t.  */
   enum alg_code alg;
@@ -124,6 +133,26 @@ struct alg_hash_entry {
 #define NUM_ALG_HASH_ENTRIES 307
 #endif
 
+#define NUM_MODE_INT \
+  (MAX_MODE_INT - MIN_MODE_INT + 1)
+#define NUM_MODE_PARTIAL_INT \
+  (MIN_MODE_PARTIAL_INT == VOIDmode ? 0 \
+   : MAX_MODE_PARTIAL_INT - MIN_MODE_PARTIAL_INT + 1)
+#define NUM_MODE_VECTOR_INT \
+  (MIN_MODE_VECTOR_INT == VOIDmode ? 0 \
+   : MAX_MODE_VECTOR_INT - MIN_MODE_VECTOR_INT + 1)
+
+#define NUM_MODE_IP_INT (NUM_MODE_INT + NUM_MODE_PARTIAL_INT)
+#define NUM_MODE_IPV_INT (NUM_MODE_IP_INT + NUM_MODE_VECTOR_INT)
+
+struct expmed_op_cheap {
+  bool cheap[2][NUM_MODE_IPV_INT];
+};
+
+struct expmed_op_costs {
+  int cost[2][NUM_MODE_IPV_INT];
+};
+
 /* Target-dependent globals.  */
 struct target_expmed {
   /* Each entry of ALG_HASH caches alg_code for some integer.  This is
@@ -138,23 +167,28 @@ struct target_expmed {
      powers of two, so don't use branches; emit the operation instead.
      Usually, this will mean that the MD file will emit non-branch
      sequences.  */
-  bool x_sdiv_pow2_cheap[2][NUM_MACHINE_MODES];
-  bool x_smod_pow2_cheap[2][NUM_MACHINE_MODES];
+  struct expmed_op_cheap x_sdiv_pow2_cheap;
+  struct expmed_op_cheap x_smod_pow2_cheap;
 
   /* Cost of various pieces of RTL.  Note that some of these are indexed by
      shift count and some by mode.  */
   int x_zero_cost[2];
-  int x_add_cost[2][NUM_MACHINE_MODES];
-  int x_neg_cost[2][NUM_MACHINE_MODES];
-  int x_shift_cost[2][NUM_MACHINE_MODES][MAX_BITS_PER_WORD];
-  int x_shiftadd_cost[2][NUM_MACHINE_MODES][MAX_BITS_PER_WORD];
-  int x_shiftsub0_cost[2][NUM_MACHINE_MODES][MAX_BITS_PER_WORD];
-  int x_shiftsub1_cost[2][NUM_MACHINE_MODES][MAX_BITS_PER_WORD];
-  int x_mul_cost[2][NUM_MACHINE_MODES];
-  int x_sdiv_cost[2][NUM_MACHINE_MODES];
-  int x_udiv_cost[2][NUM_MACHINE_MODES];
-  int x_mul_widen_cost[2][NUM_MACHINE_MODES];
-  int x_mul_highpart_cost[2][NUM_MACHINE_MODES];
+  struct expmed_op_costs x_add_cost;
+  struct expmed_op_costs x_neg_cost;
+  struct expmed_op_costs x_shift_cost[MAX_BITS_PER_WORD];
+  struct expmed_op_costs x_shiftadd_cost[MAX_BITS_PER_WORD];
+  struct expmed_op_costs x_shiftsub0_cost[MAX_BITS_PER_WORD];
+  struct expmed_op_costs x_shiftsub1_cost[MAX_BITS_PER_WORD];
+  struct expmed_op_costs x_mul_cost;
+  struct expmed_op_costs x_sdiv_cost;
+  struct expmed_op_costs x_udiv_cost;
+  int x_mul_widen_cost[2][NUM_MODE_INT];
+  int x_mul_highpart_cost[2][NUM_MODE_INT];
+
+  /* Conversion costs are only defined between two scalar integer modes
+     of different sizes.  The first machine mode is the destination mode,
+     and the second is the source mode.  */
+  int x_convert_cost[2][NUM_MODE_IP_INT][NUM_MODE_IP_INT];
 };
 
 extern struct target_expmed default_target_expmed;
@@ -164,37 +198,536 @@ extern struct target_expmed *this_target_expmed;
 #define this_target_expmed (&default_target_expmed)
 #endif
 
-#define alg_hash \
-  (this_target_expmed->x_alg_hash)
-#define alg_hash_used_p \
-  (this_target_expmed->x_alg_hash_used_p)
-#define sdiv_pow2_cheap \
-  (this_target_expmed->x_sdiv_pow2_cheap)
-#define smod_pow2_cheap \
-  (this_target_expmed->x_smod_pow2_cheap)
-#define zero_cost \
-  (this_target_expmed->x_zero_cost)
-#define add_cost \
-  (this_target_expmed->x_add_cost)
-#define neg_cost \
-  (this_target_expmed->x_neg_cost)
-#define shift_cost \
-  (this_target_expmed->x_shift_cost)
-#define shiftadd_cost \
-  (this_target_expmed->x_shiftadd_cost)
-#define shiftsub0_cost \
-  (this_target_expmed->x_shiftsub0_cost)
-#define shiftsub1_cost \
-  (this_target_expmed->x_shiftsub1_cost)
-#define mul_cost \
-  (this_target_expmed->x_mul_cost)
-#define sdiv_cost \
-  (this_target_expmed->x_sdiv_cost)
-#define udiv_cost \
-  (this_target_expmed->x_udiv_cost)
-#define mul_widen_cost \
-  (this_target_expmed->x_mul_widen_cost)
-#define mul_highpart_cost \
-  (this_target_expmed->x_mul_highpart_cost)
+/* Return a pointer to the alg_hash_entry at IDX.  */
 
+static inline struct alg_hash_entry *
+alg_hash_entry_ptr (int idx)
+{
+  return &this_target_expmed->x_alg_hash[idx];
+}
+
+/* Return true if the x_alg_hash field might have been used.  */
+
+static inline bool
+alg_hash_used_p (void)
+{
+  return this_target_expmed->x_alg_hash_used_p;
+}
+
+/* Set whether the x_alg_hash field might have been used.  */
+
+static inline void
+set_alg_hash_used_p (bool usedp)
+{
+  this_target_expmed->x_alg_hash_used_p = usedp;
+}
+
+/* Compute an index into the cost arrays by mode class.  */
+
+static inline int
+expmed_mode_index (machine_mode mode)
+{
+  switch (GET_MODE_CLASS (mode))
+    {
+    case MODE_INT:
+      return mode - MIN_MODE_INT;
+    case MODE_PARTIAL_INT:
+      /* If there are no partial integer modes, help the compiler
+	 to figure out this will never happen.  See PR59934.  */
+      if (MIN_MODE_PARTIAL_INT != VOIDmode)
+	return mode - MIN_MODE_PARTIAL_INT + NUM_MODE_INT;
+      break;
+    case MODE_VECTOR_INT:
+      /* If there are no vector integer modes, help the compiler
+	 to figure out this will never happen.  See PR59934.  */
+      if (MIN_MODE_VECTOR_INT != VOIDmode)
+	return mode - MIN_MODE_VECTOR_INT + NUM_MODE_IP_INT;
+      break;
+    default:
+      break;
+    }
+  gcc_unreachable ();
+}
+
+/* Return a pointer to a boolean contained in EOC indicating whether
+   a particular operation performed in MODE is cheap when optimizing
+   for SPEED.  */
+
+static inline bool *
+expmed_op_cheap_ptr (struct expmed_op_cheap *eoc, bool speed,
+		     machine_mode mode)
+{
+  int idx = expmed_mode_index (mode);
+  return &eoc->cheap[speed][idx];
+}
+
+/* Return a pointer to a cost contained in COSTS when a particular
+   operation is performed in MODE when optimizing for SPEED.  */
+
+static inline int *
+expmed_op_cost_ptr (struct expmed_op_costs *costs, bool speed,
+		    machine_mode mode)
+{
+  int idx = expmed_mode_index (mode);
+  return &costs->cost[speed][idx];
+}
+
+/* Subroutine of {set_,}sdiv_pow2_cheap.  Not to be used otherwise.  */
+
+static inline bool *
+sdiv_pow2_cheap_ptr (bool speed, machine_mode mode)
+{
+  return expmed_op_cheap_ptr (&this_target_expmed->x_sdiv_pow2_cheap,
+			      speed, mode);
+}
+
+/* Set whether a signed division by a power of 2 is cheap in MODE
+   when optimizing for SPEED.  */
+
+static inline void
+set_sdiv_pow2_cheap (bool speed, machine_mode mode, bool cheap_p)
+{
+  *sdiv_pow2_cheap_ptr (speed, mode) = cheap_p;
+}
+
+/* Return whether a signed division by a power of 2 is cheap in MODE
+   when optimizing for SPEED.  */
+
+static inline bool
+sdiv_pow2_cheap (bool speed, machine_mode mode)
+{
+  return *sdiv_pow2_cheap_ptr (speed, mode);
+}
+
+/* Subroutine of {set_,}smod_pow2_cheap.  Not to be used otherwise.  */
+
+static inline bool *
+smod_pow2_cheap_ptr (bool speed, machine_mode mode)
+{
+  return expmed_op_cheap_ptr (&this_target_expmed->x_smod_pow2_cheap,
+			      speed, mode);
+}
+
+/* Set whether a signed modulo by a power of 2 is CHEAP in MODE when
+   optimizing for SPEED.  */
+
+static inline void
+set_smod_pow2_cheap (bool speed, machine_mode mode, bool cheap)
+{
+  *smod_pow2_cheap_ptr (speed, mode) = cheap;
+}
+
+/* Return whether a signed modulo by a power of 2 is cheap in MODE
+   when optimizing for SPEED.  */
+
+static inline bool
+smod_pow2_cheap (bool speed, machine_mode mode)
+{
+  return *smod_pow2_cheap_ptr (speed, mode);
+}
+
+/* Subroutine of {set_,}zero_cost.  Not to be used otherwise.  */
+
+static inline int *
+zero_cost_ptr (bool speed)
+{
+  return &this_target_expmed->x_zero_cost[speed];
+}
+
+/* Set the COST of loading zero when optimizing for SPEED.  */
+
+static inline void
+set_zero_cost (bool speed, int cost)
+{
+  *zero_cost_ptr (speed) = cost;
+}
+
+/* Return the COST of loading zero when optimizing for SPEED.  */
+
+static inline int
+zero_cost (bool speed)
+{
+  return *zero_cost_ptr (speed);
+}
+
+/* Subroutine of {set_,}add_cost.  Not to be used otherwise.  */
+
+static inline int *
+add_cost_ptr (bool speed, machine_mode mode)
+{
+  return expmed_op_cost_ptr (&this_target_expmed->x_add_cost, speed, mode);
+}
+
+/* Set the COST of computing an add in MODE when optimizing for SPEED.  */
+
+static inline void
+set_add_cost (bool speed, machine_mode mode, int cost)
+{
+  *add_cost_ptr (speed, mode) = cost;
+}
+
+/* Return the cost of computing an add in MODE when optimizing for SPEED.  */
+
+static inline int
+add_cost (bool speed, machine_mode mode)
+{
+  return *add_cost_ptr (speed, mode);
+}
+
+/* Subroutine of {set_,}neg_cost.  Not to be used otherwise.  */
+
+static inline int *
+neg_cost_ptr (bool speed, machine_mode mode)
+{
+  return expmed_op_cost_ptr (&this_target_expmed->x_neg_cost, speed, mode);
+}
+
+/* Set the COST of computing a negation in MODE when optimizing for SPEED.  */
+
+static inline void
+set_neg_cost (bool speed, machine_mode mode, int cost)
+{
+  *neg_cost_ptr (speed, mode) = cost;
+}
+
+/* Return the cost of computing a negation in MODE when optimizing for
+   SPEED.  */
+
+static inline int
+neg_cost (bool speed, machine_mode mode)
+{
+  return *neg_cost_ptr (speed, mode);
+}
+
+/* Subroutine of {set_,}shift_cost.  Not to be used otherwise.  */
+
+static inline int *
+shift_cost_ptr (bool speed, machine_mode mode, int bits)
+{
+  return expmed_op_cost_ptr (&this_target_expmed->x_shift_cost[bits],
+			     speed, mode);
+}
+
+/* Set the COST of doing a shift in MODE by BITS when optimizing for SPEED.  */
+
+static inline void
+set_shift_cost (bool speed, machine_mode mode, int bits, int cost)
+{
+  *shift_cost_ptr (speed, mode, bits) = cost;
+}
+
+/* Return the cost of doing a shift in MODE by BITS when optimizing for
+   SPEED.  */
+
+static inline int
+shift_cost (bool speed, machine_mode mode, int bits)
+{
+  return *shift_cost_ptr (speed, mode, bits);
+}
+
+/* Subroutine of {set_,}shiftadd_cost.  Not to be used otherwise.  */
+
+static inline int *
+shiftadd_cost_ptr (bool speed, machine_mode mode, int bits)
+{
+  return expmed_op_cost_ptr (&this_target_expmed->x_shiftadd_cost[bits],
+			     speed, mode);
+}
+
+/* Set the COST of doing a shift in MODE by BITS followed by an add when
+   optimizing for SPEED.  */
+
+static inline void
+set_shiftadd_cost (bool speed, machine_mode mode, int bits, int cost)
+{
+  *shiftadd_cost_ptr (speed, mode, bits) = cost;
+}
+
+/* Return the cost of doing a shift in MODE by BITS followed by an add
+   when optimizing for SPEED.  */
+
+static inline int
+shiftadd_cost (bool speed, machine_mode mode, int bits)
+{
+  return *shiftadd_cost_ptr (speed, mode, bits);
+}
+
+/* Subroutine of {set_,}shiftsub0_cost.  Not to be used otherwise.  */
+
+static inline int *
+shiftsub0_cost_ptr (bool speed, machine_mode mode, int bits)
+{
+  return expmed_op_cost_ptr (&this_target_expmed->x_shiftsub0_cost[bits],
+			     speed, mode);
+}
+
+/* Set the COST of doing a shift in MODE by BITS and then subtracting a
+   value when optimizing for SPEED.  */
+
+static inline void
+set_shiftsub0_cost (bool speed, machine_mode mode, int bits, int cost)
+{
+  *shiftsub0_cost_ptr (speed, mode, bits) = cost;
+}
+
+/* Return the cost of doing a shift in MODE by BITS and then subtracting
+   a value when optimizing for SPEED.  */
+
+static inline int
+shiftsub0_cost (bool speed, machine_mode mode, int bits)
+{
+  return *shiftsub0_cost_ptr (speed, mode, bits);
+}
+
+/* Subroutine of {set_,}shiftsub1_cost.  Not to be used otherwise.  */
+
+static inline int *
+shiftsub1_cost_ptr (bool speed, machine_mode mode, int bits)
+{
+  return expmed_op_cost_ptr (&this_target_expmed->x_shiftsub1_cost[bits],
+			     speed, mode);
+}
+
+/* Set the COST of subtracting a shift in MODE by BITS from a value when
+   optimizing for SPEED.  */
+
+static inline void
+set_shiftsub1_cost (bool speed, machine_mode mode, int bits, int cost)
+{
+  *shiftsub1_cost_ptr (speed, mode, bits) = cost;
+}
+
+/* Return the cost of subtracting a shift in MODE by BITS from a value
+   when optimizing for SPEED.  */
+
+static inline int
+shiftsub1_cost (bool speed, machine_mode mode, int bits)
+{
+  return *shiftsub1_cost_ptr (speed, mode, bits);
+}
+
+/* Subroutine of {set_,}mul_cost.  Not to be used otherwise.  */
+
+static inline int *
+mul_cost_ptr (bool speed, machine_mode mode)
+{
+  return expmed_op_cost_ptr (&this_target_expmed->x_mul_cost, speed, mode);
+}
+
+/* Set the COST of doing a multiplication in MODE when optimizing for
+   SPEED.  */
+
+static inline void
+set_mul_cost (bool speed, machine_mode mode, int cost)
+{
+  *mul_cost_ptr (speed, mode) = cost;
+}
+
+/* Return the cost of doing a multiplication in MODE when optimizing
+   for SPEED.  */
+
+static inline int
+mul_cost (bool speed, machine_mode mode)
+{
+  return *mul_cost_ptr (speed, mode);
+}
+
+/* Subroutine of {set_,}sdiv_cost.  Not to be used otherwise.  */
+
+static inline int *
+sdiv_cost_ptr (bool speed, machine_mode mode)
+{
+  return expmed_op_cost_ptr (&this_target_expmed->x_sdiv_cost, speed, mode);
+}
+
+/* Set the COST of doing a signed division in MODE when optimizing
+   for SPEED.  */
+
+static inline void
+set_sdiv_cost (bool speed, machine_mode mode, int cost)
+{
+  *sdiv_cost_ptr (speed, mode) = cost;
+}
+
+/* Return the cost of doing a signed division in MODE when optimizing
+   for SPEED.  */
+
+static inline int
+sdiv_cost (bool speed, machine_mode mode)
+{
+  return *sdiv_cost_ptr (speed, mode);
+}
+
+/* Subroutine of {set_,}udiv_cost.  Not to be used otherwise.  */
+
+static inline int *
+udiv_cost_ptr (bool speed, machine_mode mode)
+{
+  return expmed_op_cost_ptr (&this_target_expmed->x_udiv_cost, speed, mode);
+}
+
+/* Set the COST of doing an unsigned division in MODE when optimizing
+   for SPEED.  */
+
+static inline void
+set_udiv_cost (bool speed, machine_mode mode, int cost)
+{
+  *udiv_cost_ptr (speed, mode) = cost;
+}
+
+/* Return the cost of doing an unsigned division in MODE when
+   optimizing for SPEED.  */
+
+static inline int
+udiv_cost (bool speed, machine_mode mode)
+{
+  return *udiv_cost_ptr (speed, mode);
+}
+
+/* Subroutine of {set_,}mul_widen_cost.  Not to be used otherwise.  */
+
+static inline int *
+mul_widen_cost_ptr (bool speed, machine_mode mode)
+{
+  gcc_assert (GET_MODE_CLASS (mode) == MODE_INT);
+
+  return &this_target_expmed->x_mul_widen_cost[speed][mode - MIN_MODE_INT];
+}
+
+/* Set the COST for computing a widening multiplication in MODE when
+   optimizing for SPEED.  */
+
+static inline void
+set_mul_widen_cost (bool speed, machine_mode mode, int cost)
+{
+  *mul_widen_cost_ptr (speed, mode) = cost;
+}
+
+/* Return the cost for computing a widening multiplication in MODE when
+   optimizing for SPEED.  */
+
+static inline int
+mul_widen_cost (bool speed, machine_mode mode)
+{
+  return *mul_widen_cost_ptr (speed, mode);
+}
+
+/* Subroutine of {set_,}mul_highpart_cost.  Not to be used otherwise.  */
+
+static inline int *
+mul_highpart_cost_ptr (bool speed, machine_mode mode)
+{
+  gcc_assert (GET_MODE_CLASS (mode) == MODE_INT);
+  int m = mode - MIN_MODE_INT;
+  gcc_assert (m < NUM_MODE_INT);
+
+  return &this_target_expmed->x_mul_highpart_cost[speed][m];
+}
+
+/* Set the COST for computing the high part of a multiplication in MODE
+   when optimizing for SPEED.  */
+
+static inline void
+set_mul_highpart_cost (bool speed, machine_mode mode, int cost)
+{
+  *mul_highpart_cost_ptr (speed, mode) = cost;
+}
+
+/* Return the cost for computing the high part of a multiplication in MODE
+   when optimizing for SPEED.  */
+
+static inline int
+mul_highpart_cost (bool speed, machine_mode mode)
+{
+  return *mul_highpart_cost_ptr (speed, mode);
+}
+
+/* Subroutine of {set_,}convert_cost.  Not to be used otherwise.  */
+
+static inline int *
+convert_cost_ptr (machine_mode to_mode, machine_mode from_mode,
+		  bool speed)
+{
+  int to_idx = expmed_mode_index (to_mode);
+  int from_idx = expmed_mode_index (from_mode);
+
+  gcc_assert (IN_RANGE (to_idx, 0, NUM_MODE_IP_INT - 1));
+  gcc_assert (IN_RANGE (from_idx, 0, NUM_MODE_IP_INT - 1));
+
+  return &this_target_expmed->x_convert_cost[speed][to_idx][from_idx];
+}
+
+/* Set the COST for converting from FROM_MODE to TO_MODE when optimizing
+   for SPEED.  */
+
+static inline void
+set_convert_cost (machine_mode to_mode, machine_mode from_mode,
+		  bool speed, int cost)
+{
+  *convert_cost_ptr (to_mode, from_mode, speed) = cost;
+}
+
+/* Return the cost for converting from FROM_MODE to TO_MODE when optimizing
+   for SPEED.  */
+
+static inline int
+convert_cost (machine_mode to_mode, machine_mode from_mode,
+	      bool speed)
+{
+  return *convert_cost_ptr (to_mode, from_mode, speed);
+}
+
+extern int mult_by_coeff_cost (HOST_WIDE_INT, machine_mode, bool);
+extern rtx emit_cstore (rtx target, enum insn_code icode, enum rtx_code code,
+			enum machine_mode mode, enum machine_mode compare_mode,
+			int unsignedp, rtx x, rtx y, int normalizep,
+			enum machine_mode target_mode);
+
+/* Arguments MODE, RTX: return an rtx for the negation of that value.
+   May emit insns.  */
+extern rtx negate_rtx (machine_mode, rtx);
+
+/* Arguments MODE, RTX: return an rtx for the flipping of that value.
+   May emit insns.  */
+extern rtx flip_storage_order (enum machine_mode, rtx);
+
+/* Expand a logical AND operation.  */
+extern rtx expand_and (machine_mode, rtx, rtx, rtx);
+
+/* Emit a store-flag operation.  */
+extern rtx emit_store_flag (rtx, enum rtx_code, rtx, rtx, machine_mode,
+			    int, int);
+
+/* Like emit_store_flag, but always succeeds.  */
+extern rtx emit_store_flag_force (rtx, enum rtx_code, rtx, rtx,
+				  machine_mode, int, int);
+
+/* Choose a minimal N + 1 bit approximation to 1/D that can be used to
+   replace division by D, and put the least significant N bits of the result
+   in *MULTIPLIER_PTR and return the most significant bit.  */
+extern unsigned HOST_WIDE_INT choose_multiplier (unsigned HOST_WIDE_INT, int,
+						 int, unsigned HOST_WIDE_INT *,
+						 int *, int *);
+
+#ifdef TREE_CODE
+extern rtx expand_variable_shift (enum tree_code, machine_mode,
+				  rtx, tree, rtx, int);
+extern rtx expand_shift (enum tree_code, machine_mode, rtx, int, rtx,
+			     int);
+extern rtx expand_divmod (int, enum tree_code, machine_mode, rtx, rtx,
+			  rtx, int);
 #endif
+
+extern void store_bit_field (rtx, unsigned HOST_WIDE_INT,
+			     unsigned HOST_WIDE_INT,
+			     unsigned HOST_WIDE_INT,
+			     unsigned HOST_WIDE_INT,
+			     machine_mode, rtx, bool);
+extern rtx extract_bit_field (rtx, unsigned HOST_WIDE_INT,
+			      unsigned HOST_WIDE_INT, int, rtx,
+			      machine_mode, machine_mode, bool);
+extern rtx extract_low_bits (machine_mode, machine_mode, rtx);
+extern rtx expand_mult (machine_mode, rtx, rtx, rtx, int);
+extern rtx expand_mult_highpart_adjust (machine_mode, rtx, rtx, rtx, rtx, int);
+
+#endif  // EXPMED_H

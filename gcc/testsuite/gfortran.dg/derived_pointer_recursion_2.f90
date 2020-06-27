@@ -12,7 +12,7 @@ TYPE :: atom_list
 END TYPE
 
 TYPE :: atom_private
-  TYPE(atom_list) :: neighbours
+  TYPE(atom_list) :: neighbors
   LOGICAL         :: initialized = .true.
 END TYPE
 
@@ -43,6 +43,3 @@ program pr40594
   if (ap%initialized .neqv. .false.) call abort()
 
 END
-
-! { dg-final { cleanup-modules "atom_types" } }
-

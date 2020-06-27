@@ -1,6 +1,5 @@
 /* Set up combined include path for the preprocessor.
-   Copyright (C) 2003, 2004, 2005, 2006, 2007, 2008
-   Free Software Foundation, Inc.
+   Copyright (C) 2003-2017 Free Software Foundation, Inc.
 
    This program is free software; you can redistribute it and/or modify it
    under the terms of the GNU General Public License as published by the
@@ -15,6 +14,9 @@
    You should have received a copy of the GNU General Public License
    along with this program; see the file COPYING3.  If not see
    <http://www.gnu.org/licenses/>.  */
+
+#ifndef GCC_INCPATH_H
+#define GCC_INCPATH_H
 
 extern void split_quote_chain (void);
 extern void add_path (char *, int, int, bool);
@@ -33,3 +35,5 @@ struct target_c_incpath_s {
 extern struct target_c_incpath_s target_c_incpath;
 
 enum { QUOTE = 0, BRACKET, SYSTEM, AFTER };
+
+#endif /* GCC_INCPATH_H */

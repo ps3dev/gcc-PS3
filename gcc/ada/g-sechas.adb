@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---           Copyright (C) 2009, Free Software Foundation, Inc.             --
+--          Copyright (C) 2009-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -33,8 +33,6 @@ with System;     use System;
 with Interfaces; use Interfaces;
 
 package body GNAT.Secure_Hashes is
-
-   use Ada.Streams;
 
    Hex_Digit : constant array (Stream_Element range 0 .. 15) of Character :=
                  "0123456789abcdef";
@@ -186,18 +184,42 @@ package body GNAT.Secure_Hashes is
          return Digest (C);
       end Digest;
 
+      function Digest (C : Context) return Binary_Message_Digest is
+         Hash_Bits : Stream_Element_Array
+                       (1 .. Stream_Element_Offset (Hash_Length));
+      begin
+         Final (C, Hash_Bits);
+         return Hash_Bits;
+      end Digest;
+
+      function Digest (S : String) return Binary_Message_Digest is
+         C : Context;
+      begin
+         Update (C, S);
+         return Digest (C);
+      end Digest;
+
+      function Digest
+        (A : Stream_Element_Array) return Binary_Message_Digest
+      is
+         C : Context;
+      begin
+         Update (C, A);
+         return Digest (C);
+      end Digest;
+
       -----------
       -- Final --
       -----------
 
-      --  Once a complete message has been processed, it is padded with one
-      --  1 bit followed by enough 0 bits so that the last block is
-      --  2 * Word'Size bits short of being completed. The last 2 * Word'Size
-      --  bits are set to the message size in bits (excluding padding).
+      --  Once a complete message has been processed, it is padded with one 1
+      --  bit followed by enough 0 bits so that the last block is 2 * Word'Size
+      --  bits short of being completed. The last 2 * Word'Size bits are set to
+      --  the message size in bits (excluding padding).
 
       procedure Final
-        (C          : Context;
-         Hash_Bits  : out Stream_Element_Array)
+        (C         : Context;
+         Hash_Bits : out Stream_Element_Array)
       is
          FC : Context := C;
 
@@ -231,7 +253,7 @@ package body GNAT.Secure_Hashes is
                if Index = First_Index then
 
                   --  Message_Length is in bytes, but we need to store it as
-                  --  a bit count).
+                  --  a bit count.
 
                   Pad (Index) := Character'Val
                                    (Shift_Left (Message_Length and 16#1f#, 3));
@@ -252,7 +274,86 @@ package body GNAT.Secure_Hashes is
          pragma Assert (FC.M_State.Last = 0);
 
          Hash_State.To_Hash (FC.H_State, Hash_Bits);
+
+         --  HMAC case: hash outer pad
+
+         if C.KL /= 0 then
+            declare
+               Outer_C : Context;
+               Opad    : Stream_Element_Array :=
+                 (1 .. Stream_Element_Offset (Block_Length) => 16#5c#);
+
+            begin
+               for J in C.Key'Range loop
+                  Opad (J) := Opad (J) xor C.Key (J);
+               end loop;
+
+               Update (Outer_C, Opad);
+               Update (Outer_C, Hash_Bits);
+
+               Final (Outer_C, Hash_Bits);
+            end;
+         end if;
       end Final;
+
+      --------------------------
+      -- HMAC_Initial_Context --
+      --------------------------
+
+      function HMAC_Initial_Context (Key : String) return Context is
+      begin
+         if Key'Length = 0 then
+            raise Constraint_Error with "null key";
+         end if;
+
+         return C : Context (KL => (if Key'Length <= Key_Length'Last
+                                    then Key'Length
+                                    else Stream_Element_Offset (Hash_Length)))
+         do
+            --  Set Key (if longer than block length, first hash it)
+
+            if C.KL = Key'Length then
+               declare
+                  SK : String (1 .. Key'Length);
+                  for SK'Address use C.Key'Address;
+                  pragma Import (Ada, SK);
+               begin
+                  SK := Key;
+               end;
+
+            else
+               C.Key := Digest (Key);
+            end if;
+
+            --  Hash inner pad
+
+            declare
+               Ipad : Stream_Element_Array :=
+                 (1 .. Stream_Element_Offset (Block_Length) => 16#36#);
+
+            begin
+               for J in C.Key'Range loop
+                  Ipad (J) := Ipad (J) xor C.Key (J);
+               end loop;
+
+               Update (C, Ipad);
+            end;
+         end return;
+      end HMAC_Initial_Context;
+
+      ----------
+      -- Read --
+      ----------
+
+      procedure Read
+        (Stream : in out Hash_Stream;
+         Item   : out Stream_Element_Array;
+         Last   : out Stream_Element_Offset)
+      is
+         pragma Unreferenced (Stream, Item, Last);
+      begin
+         raise Program_Error with "Hash_Stream is write-only";
+      end Read;
 
       ------------
       -- Update --
@@ -263,11 +364,12 @@ package body GNAT.Secure_Hashes is
          S           : String;
          Fill_Buffer : Fill_Buffer_Access)
       is
-         Last : Natural := S'First - 1;
+         Last : Natural;
 
       begin
          C.M_State.Length := C.M_State.Length + S'Length;
 
+         Last := S'First - 1;
          while Last < S'Last loop
             Fill_Buffer (C.M_State, S, Last + 1, Last);
 
@@ -276,7 +378,6 @@ package body GNAT.Secure_Hashes is
                C.M_State.Last := 0;
             end if;
          end loop;
-
       end Update;
 
       ------------
@@ -326,6 +427,25 @@ package body GNAT.Secure_Hashes is
          Wide_Update (C, W);
          return Digest (C);
       end Wide_Digest;
+
+      function Wide_Digest (W : Wide_String) return Binary_Message_Digest is
+         C : Context;
+      begin
+         Wide_Update (C, W);
+         return Digest (C);
+      end Wide_Digest;
+
+      -----------
+      -- Write --
+      -----------
+
+      procedure Write
+         (Stream : in out Hash_Stream;
+          Item   : Stream_Element_Array)
+      is
+      begin
+         Update (Stream.C.all, Item);
+      end Write;
 
    end H;
 

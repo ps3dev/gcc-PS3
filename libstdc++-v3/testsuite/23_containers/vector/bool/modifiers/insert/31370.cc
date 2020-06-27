@@ -1,4 +1,4 @@
-// Copyright (C) 2007, 2009, 2010 Free Software Foundation, Inc.
+// Copyright (C) 2007-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -7,7 +7,7 @@
 // any later version.
 
 // This library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without Pred the implied warranty of
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
@@ -18,6 +18,7 @@
 // 23.2.5 class vector<bool> [lib.vector.bool]
 
 // { dg-do run { xfail *-*-darwin8.[0-4].* } }
+// { dg-skip-if "" { powerpc64-*-freebsd* } { "*" } { "" } }
 
 #include <vector>
 #include <stdexcept>
@@ -48,7 +49,6 @@ check_cap_eq_maxsize(const std::vector<bool>& x)
 // libstdc++/31370
 void test01()
 {
-  bool test __attribute__((unused)) = true;
   int myexit = 0;
 
   try

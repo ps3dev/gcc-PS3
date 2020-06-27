@@ -1,5 +1,5 @@
 /* Increase stack size limit if possible.
-   Copyright (C) 2011 Free Software Foundation, Inc.
+   Copyright (C) 2011-2017 Free Software Foundation, Inc.
 
 This file is part of the libiberty library.  This library is free
 software; you can redistribute it and/or modify it under the
@@ -34,6 +34,7 @@ Attempt to increase stack size limit to @var{pref} bytes if possible.
 */
 
 #include "config.h"
+#include "ansidecl.h"
 
 #ifdef HAVE_STDINT_H
 #include <stdint.h>
@@ -43,7 +44,7 @@ Attempt to increase stack size limit to @var{pref} bytes if possible.
 #endif
 
 void
-stack_limit_increase (unsigned long pref)
+stack_limit_increase (unsigned long pref ATTRIBUTE_UNUSED)
 {
 #if defined(HAVE_SETRLIMIT) && defined(HAVE_GETRLIMIT) \
     && defined(RLIMIT_STACK) && defined(RLIM_INFINITY)

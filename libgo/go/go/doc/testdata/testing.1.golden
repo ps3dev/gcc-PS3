@@ -25,8 +25,8 @@ VARIABLES
 	// 
 	var (
 		// The short flag requests that tests run more quickly, but its functionality
-		// is provided by test writers themselves.  The testing package is just its
-		// home.  The all.bash installation script sets it to make installation more
+		// is provided by test writers themselves. The testing package is just its
+		// home. The all.bash installation script sets it to make installation more
 		// efficient, but by default the flag is off so a plain "go test" will do a
 		// full test of the package.
 		short	= flag.Bool("test.short", false, "run smaller test suite to save time")
@@ -45,7 +45,7 @@ VARIABLES
 	)
 
 	// 
-	var benchTime = flag.Float64("test.benchtime", 1, "approximate run time for each benchmark, in seconds")
+	var benchTime = flag.Duration("test.benchtime", 1*time.Second, "approximate run time for each benchmark")
 
 	// 
 	var matchBenchmarks = flag.String("test.bench", "", "regular expression to select benchmarks to run")
@@ -130,7 +130,7 @@ TYPES
 	// FailNow marks the function as having failed and stops its ...
 	func (c *B) FailNow()
 
-	// Failed returns whether the function has failed. 
+	// Failed reports whether the function has failed. 
 	func (c *B) Failed() bool
 
 	// Fatal is equivalent to Log() followed by FailNow(). 
@@ -151,13 +151,13 @@ TYPES
 	// SetBytes records the number of bytes processed in a single ...
 	func (b *B) SetBytes(n int64)
 
-	// StartTimer starts timing a test.  This function is called ...
+	// StartTimer starts timing a test. This function is called ...
 	func (b *B) StartTimer()
 
-	// StopTimer stops timing a test.  This can be used to pause the ...
+	// StopTimer stops timing a test. This can be used to pause the ...
 	func (b *B) StopTimer()
 
-	// launch launches the benchmark function.  It gradually increases ...
+	// launch launches the benchmark function. It gradually increases ...
 	func (b *B) launch()
 
 	// log generates the output. It's always at the same stack depth. 
@@ -232,7 +232,7 @@ TYPES
 	// FailNow marks the function as having failed and stops its ...
 	func (c *T) FailNow()
 
-	// Failed returns whether the function has failed. 
+	// Failed reports whether the function has failed. 
 	func (c *T) Failed() bool
 
 	// Fatal is equivalent to Log() followed by FailNow(). 
@@ -278,7 +278,7 @@ TYPES
 	// FailNow marks the function as having failed and stops its ...
 	func (c *common) FailNow()
 
-	// Failed returns whether the function has failed. 
+	// Failed reports whether the function has failed. 
 	func (c *common) Failed() bool
 
 	// Fatal is equivalent to Log() followed by FailNow(). 

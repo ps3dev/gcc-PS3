@@ -1,7 +1,6 @@
 /* Definitions of target machine for GNU compiler.
    Matsushita MN10300 series
-   Copyright (C) 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005,
-   2007, 2008, 2009, 2010, 2011 Free Software Foundation, Inc.
+   Copyright (C) 1996-2017 Free Software Foundation, Inc.
    Contributed by Jeff Law (law@cygnus.com).
 
    This file is part of GCC.
@@ -347,7 +346,8 @@ enum reg_class
    They give nonzero only if REGNO is a hard reg of the suitable class
    or a pseudo reg currently allocated to a suitable hard reg.
    Since they use reg_renumber, they are safe only once reg_renumber
-   has been allocated, which happens in local-alloc.c.  */
+   has been allocated, which happens in reginfo.c during register
+   allocation.  */
 
 #ifndef REG_OK_STRICT
 # define REG_STRICT 0
@@ -404,7 +404,7 @@ enum reg_class
 /* Define this if pushing a word on the stack
    makes the stack pointer a smaller address.  */
 
-#define STACK_GROWS_DOWNWARD
+#define STACK_GROWS_DOWNWARD 1
 
 /* Define this to nonzero if the nominal address of the stack frame
    is at the high-address end of the local variables;
@@ -516,7 +516,7 @@ struct cum_arg
 /* The return address is saved both in the stack and in MDR.  Using
    the stack location is handiest for what unwinding needs.  */
 #define INCOMING_RETURN_ADDR_RTX \
-  gen_rtx_MEM (VOIDmode, gen_rtx_REG (VOIDmode, STACK_POINTER_REGNUM))
+  gen_rtx_MEM (Pmode, gen_rtx_REG (Pmode, STACK_POINTER_REGNUM))
 
 /* Maximum number of registers that can appear in a valid memory address.  */
 
@@ -579,7 +579,7 @@ do {									     \
    than accessing full words.  */
 #define SLOW_BYTE_ACCESS 1
 
-#define NO_FUNCTION_CSE
+#define NO_FUNCTION_CSE 1
 
 /* According expr.c, a value of around 6 should minimize code size, and
    for the MN10300 series, that's our primary concern.  */
@@ -699,13 +699,9 @@ do {									     \
 
 /* Define if operations between registers always perform the operation
    on the full register even if a narrower mode is specified.  */
-#define WORD_REGISTER_OPERATIONS
+#define WORD_REGISTER_OPERATIONS 1
 
 #define LOAD_EXTEND_OP(MODE) ZERO_EXTEND
-
-/* This flag, if defined, says the same insns that convert to a signed fixnum
-   also convert validly to an unsigned one.  */
-#define FIXUNS_TRUNC_LIKE_FIX_TRUNC
 
 /* Max number of bytes we can move from memory to memory
    in one reasonably fast instruction.  */

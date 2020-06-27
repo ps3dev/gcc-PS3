@@ -1,15 +1,8 @@
 /* { dg-do compile } */
-/* { dg-options "" } */
+/* { dg-options "-std=gnu90" } */
 
-/* Check for application of ~ on vector types.  */
-
-#define vector __attribute__((vector_size(16) ))
-
-vector float a;
-vector int a1;
-
-int f(void)
+typedef int V __attribute__ ((vector_size(4)));
+void fn1 ()
 {
- a =  ~a; /* { dg-error "" } */
- a1 =  ~a1;
+  (V){(1,0)}[0] = 0;
 }

@@ -1,5 +1,4 @@
-/* Copyright (C) 2011
-   Free Software Foundation, Inc.
+/* Copyright (C) 2011-2017 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -25,6 +24,15 @@
 #ifndef _IMMINTRIN_H_INCLUDED
 # error "Never use <avx2intrin.h> directly; include <immintrin.h> instead."
 #endif
+
+#ifndef _AVX2INTRIN_H_INCLUDED
+#define _AVX2INTRIN_H_INCLUDED
+
+#ifndef __AVX2__
+#pragma GCC push_options
+#pragma GCC target("avx2")
+#define __DISABLE_AVX2__
+#endif /* __AVX2__ */
 
 /* Sum absolute 8-bit integer difference of adjacent groups of 4
    byte integers in the first 2 operands.  Starting offsets within
@@ -96,28 +104,28 @@ extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_add_epi8 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_paddb256 ((__v32qi)__A, (__v32qi)__B);
+  return (__m256i) ((__v32qu)__A + (__v32qu)__B);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_add_epi16 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_paddw256 ((__v16hi)__A, (__v16hi)__B);
+  return (__m256i) ((__v16hu)__A + (__v16hu)__B);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_add_epi32 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_paddd256 ((__v8si)__A, (__v8si)__B);
+  return (__m256i) ((__v8su)__A + (__v8su)__B);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_add_epi64 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_paddq256 ((__v4di)__A, (__v4di)__B);
+  return (__m256i) ((__v4du)__A + (__v4du)__B);
 }
 
 extern __inline __m256i
@@ -170,7 +178,7 @@ extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_and_si256 (__m256i __A, __m256i __B)
 {
-  return (__m256i) __builtin_ia32_andsi256 ((__v4di)__A, (__v4di)__B);
+  return (__m256i) ((__v4du)__A & (__v4du)__B);
 }
 
 extern __inline __m256i
@@ -222,59 +230,56 @@ extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_cmpeq_epi8 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_pcmpeqb256 ((__v32qi)__A, (__v32qi)__B);
+  return (__m256i) ((__v32qi)__A == (__v32qi)__B);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_cmpeq_epi16 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_pcmpeqw256 ((__v16hi)__A, (__v16hi)__B);
+  return (__m256i) ((__v16hi)__A == (__v16hi)__B);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_cmpeq_epi32 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_pcmpeqd256 ((__v8si)__A, (__v8si)__B);
+  return (__m256i) ((__v8si)__A == (__v8si)__B);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_cmpeq_epi64 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_pcmpeqq256 ((__v4di)__A, (__v4di)__B);
+  return (__m256i) ((__v4di)__A == (__v4di)__B);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_cmpgt_epi8 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_pcmpgtb256 ((__v32qi)__A,
-					     (__v32qi)__B);
+  return (__m256i) ((__v32qi)__A > (__v32qi)__B);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_cmpgt_epi16 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_pcmpgtw256 ((__v16hi)__A,
-					     (__v16hi)__B);
+  return (__m256i) ((__v16hi)__A > (__v16hi)__B);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_cmpgt_epi32 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_pcmpgtd256 ((__v8si)__A,
-					     (__v8si)__B);
+  return (__m256i) ((__v8si)__A > (__v8si)__B);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_cmpgt_epi64 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_pcmpgtq256 ((__v4di)__A, (__v4di)__B);
+  return (__m256i) ((__v4di)__A > (__v4di)__B);
 }
 
 extern __inline __m256i
@@ -547,14 +552,14 @@ extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_mullo_epi16 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_pmullw256 ((__v16hi)__A, (__v16hi)__B);
+  return (__m256i) ((__v16hu)__A * (__v16hu)__B);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_mullo_epi32 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_pmulld256 ((__v8si)__A, (__v8si)__B);
+  return (__m256i) ((__v8su)__A * (__v8su)__B);
 }
 
 extern __inline __m256i
@@ -568,7 +573,7 @@ extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_or_si256 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_por256 ((__v4di)__A, (__v4di)__B);
+  return (__m256i) ((__v4du)__A | (__v4du)__B);
 }
 
 extern __inline __m256i
@@ -640,11 +645,20 @@ _mm256_sign_epi32 (__m256i __X, __m256i __Y)
 #ifdef __OPTIMIZE__
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
+_mm256_bslli_epi128 (__m256i __A, const int __N)
+{
+  return (__m256i)__builtin_ia32_pslldqi256 (__A, __N * 8);
+}
+
+extern __inline __m256i
+__attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_slli_si256 (__m256i __A, const int __N)
 {
   return (__m256i)__builtin_ia32_pslldqi256 (__A, __N * 8);
 }
 #else
+#define _mm256_bslli_epi128(A, N) \
+  ((__m256i)__builtin_ia32_pslldqi256 ((__m256i)(A), (int)(N) * 8))
 #define _mm256_slli_si256(A, N) \
   ((__m256i)__builtin_ia32_pslldqi256 ((__m256i)(A), (int)(N) * 8))
 #endif
@@ -722,11 +736,20 @@ _mm256_sra_epi32 (__m256i __A, __m128i __B)
 #ifdef __OPTIMIZE__
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
+_mm256_bsrli_epi128 (__m256i __A, const int __N)
+{
+  return (__m256i)__builtin_ia32_psrldqi256 (__A, __N * 8);
+}
+
+extern __inline __m256i
+__attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_srli_si256 (__m256i __A, const int __N)
 {
   return (__m256i)__builtin_ia32_psrldqi256 (__A, __N * 8);
 }
 #else
+#define _mm256_bsrli_epi128(A, N) \
+  ((__m256i)__builtin_ia32_psrldqi256 ((__m256i)(A), (int)(N) * 8))
 #define _mm256_srli_si256(A, N) \
   ((__m256i)__builtin_ia32_psrldqi256 ((__m256i)(A), (int)(N) * 8))
 #endif
@@ -777,28 +800,28 @@ extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_sub_epi8 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_psubb256 ((__v32qi)__A, (__v32qi)__B);
+  return (__m256i) ((__v32qu)__A - (__v32qu)__B);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_sub_epi16 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_psubw256 ((__v16hi)__A, (__v16hi)__B);
+  return (__m256i) ((__v16hu)__A - (__v16hu)__B);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_sub_epi32 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_psubd256 ((__v8si)__A, (__v8si)__B);
+  return (__m256i) ((__v8su)__A - (__v8su)__B);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_sub_epi64 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_psubq256 ((__v4di)__A, (__v4di)__B);
+  return (__m256i) ((__v4du)__A - (__v4du)__B);
 }
 
 extern __inline __m256i
@@ -889,7 +912,7 @@ extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_xor_si256 (__m256i __A, __m256i __B)
 {
-  return (__m256i)__builtin_ia32_pxor256 ((__v4di)__A, (__v4di)__B);
+  return (__m256i) ((__v4du)__A ^ (__v4du)__B);
 }
 
 extern __inline __m256i
@@ -922,7 +945,7 @@ _mm256_broadcastsd_pd (__m128d __X)
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm_broadcastsi128_si256 (__m128i __X)
+_mm256_broadcastsi128_si256 (__m128i __X)
 {
   return (__m256i) __builtin_ia32_vbroadcastsi256 ((__v2di)__X);
 }
@@ -1034,9 +1057,9 @@ _mm256_permute4x64_pd (__m256d __X, const int __M)
 
 extern __inline __m256
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm256_permutevar8x32_ps (__m256 __X, __m256 __Y)
+_mm256_permutevar8x32_ps (__m256 __X, __m256i __Y)
 {
-  return (__m256) __builtin_ia32_permvarsf256 ((__v8sf)__X,(__v8sf)__Y);
+  return (__m256) __builtin_ia32_permvarsf256 ((__v8sf)__X, (__v8si)__Y);
 }
 
 #ifdef __OPTIMIZE__
@@ -1223,422 +1246,426 @@ _mm_srlv_epi64 (__m128i __X, __m128i __Y)
 #ifdef __OPTIMIZE__
 extern __inline __m128d
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm_i32gather_pd (double const *base, __m128i index, const int scale)
+_mm_i32gather_pd (double const *__base, __m128i __index, const int __scale)
 {
-  __v2df src = _mm_setzero_pd ();
-  __v2df mask = _mm_cmpeq_pd (src, src);
+  __v2df __zero = _mm_setzero_pd ();
+  __v2df __mask = _mm_cmpeq_pd (__zero, __zero);
 
-  return (__m128d) __builtin_ia32_gathersiv2df (src,
-						base,
-						(__v4si)index,
-						mask,
-						scale);
+  return (__m128d) __builtin_ia32_gathersiv2df (_mm_undefined_pd (),
+						__base,
+						(__v4si)__index,
+						__mask,
+						__scale);
 }
 
 extern __inline __m128d
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm_mask_i32gather_pd (__m128d src, double const *base, __m128i index,
-		       __m128d mask, const int scale)
+_mm_mask_i32gather_pd (__m128d __src, double const *__base, __m128i __index,
+		       __m128d __mask, const int __scale)
 {
-  return (__m128d) __builtin_ia32_gathersiv2df ((__v2df)src,
-						base,
-						(__v4si)index,
-						(__v2df)mask,
-						scale);
+  return (__m128d) __builtin_ia32_gathersiv2df ((__v2df)__src,
+						__base,
+						(__v4si)__index,
+						(__v2df)__mask,
+						__scale);
 }
 
 extern __inline __m256d
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm256_i32gather_pd (double const *base, __m128i index, const int scale)
+_mm256_i32gather_pd (double const *__base, __m128i __index, const int __scale)
 {
-  __v4df src = _mm256_setzero_pd ();
-  __v4df mask = _mm256_cmp_pd (src, src, _CMP_EQ_OQ);
+  __v4df __zero = _mm256_setzero_pd ();
+  __v4df __mask = _mm256_cmp_pd (__zero, __zero, _CMP_EQ_OQ);
 
-  return (__m256d) __builtin_ia32_gathersiv4df (src,
-						base,
-						(__v4si)index,
-						mask,
-						scale);
+  return (__m256d) __builtin_ia32_gathersiv4df (_mm256_undefined_pd (),
+						__base,
+						(__v4si)__index,
+						__mask,
+						__scale);
 }
 
 extern __inline __m256d
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm256_mask_i32gather_pd (__m256d src, double const *base,
-			  __m128i index, __m256d mask, const int scale)
+_mm256_mask_i32gather_pd (__m256d __src, double const *__base,
+			  __m128i __index, __m256d __mask, const int __scale)
 {
-  return (__m256d) __builtin_ia32_gathersiv4df ((__v4df)src,
-						base,
-						(__v4si)index,
-						(__v4df)mask,
-						scale);
+  return (__m256d) __builtin_ia32_gathersiv4df ((__v4df)__src,
+						__base,
+						(__v4si)__index,
+						(__v4df)__mask,
+						__scale);
 }
 
 extern __inline __m128d
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm_i64gather_pd (double const *base, __m128i index, const int scale)
+_mm_i64gather_pd (double const *__base, __m128i __index, const int __scale)
 {
-  __v2df src = _mm_setzero_pd ();
-  __v2df mask = _mm_cmpeq_pd (src, src);
+  __v2df __src = _mm_setzero_pd ();
+  __v2df __mask = _mm_cmpeq_pd (__src, __src);
 
-  return (__m128d) __builtin_ia32_gatherdiv2df (src,
-						base,
-						(__v2di)index,
-						mask,
-						scale);
+  return (__m128d) __builtin_ia32_gatherdiv2df (__src,
+						__base,
+						(__v2di)__index,
+						__mask,
+						__scale);
 }
 
 extern __inline __m128d
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm_mask_i64gather_pd (__m128d src, double const *base, __m128i index,
-		       __m128d mask, const int scale)
+_mm_mask_i64gather_pd (__m128d __src, double const *__base, __m128i __index,
+		       __m128d __mask, const int __scale)
 {
-  return (__m128d) __builtin_ia32_gatherdiv2df ((__v2df)src,
-						base,
-						(__v2di)index,
-						(__v2df)mask,
-						scale);
+  return (__m128d) __builtin_ia32_gatherdiv2df ((__v2df)__src,
+						__base,
+						(__v2di)__index,
+						(__v2df)__mask,
+						__scale);
 }
 
 extern __inline __m256d
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm256_i64gather_pd (double const *base, __m256i index, const int scale)
+_mm256_i64gather_pd (double const *__base, __m256i __index, const int __scale)
 {
-  __v4df src = _mm256_setzero_pd ();
-  __v4df mask = _mm256_cmp_pd (src, src, _CMP_EQ_OQ);
+  __v4df __src = _mm256_setzero_pd ();
+  __v4df __mask = _mm256_cmp_pd (__src, __src, _CMP_EQ_OQ);
 
-  return (__m256d) __builtin_ia32_gatherdiv4df (src,
-						base,
-						(__v4di)index,
-						mask,
-						scale);
+  return (__m256d) __builtin_ia32_gatherdiv4df (__src,
+						__base,
+						(__v4di)__index,
+						__mask,
+						__scale);
 }
 
 extern __inline __m256d
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm256_mask_i64gather_pd (__m256d src, double const *base,
-			  __m256i index, __m256d mask, const int scale)
+_mm256_mask_i64gather_pd (__m256d __src, double const *__base,
+			  __m256i __index, __m256d __mask, const int __scale)
 {
-  return (__m256d) __builtin_ia32_gatherdiv4df ((__v4df)src,
-						base,
-						(__v4di)index,
-						(__v4df)mask,
-						scale);
+  return (__m256d) __builtin_ia32_gatherdiv4df ((__v4df)__src,
+						__base,
+						(__v4di)__index,
+						(__v4df)__mask,
+						__scale);
 }
 
 extern __inline __m128
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm_i32gather_ps (float const *base, __m128i index, const int scale)
+_mm_i32gather_ps (float const *__base, __m128i __index, const int __scale)
 {
-  __v4sf src = _mm_setzero_ps ();
-  __v4sf mask = _mm_cmpeq_ps (src, src);
+  __v4sf __src = _mm_setzero_ps ();
+  __v4sf __mask = _mm_cmpeq_ps (__src, __src);
 
-  return (__m128) __builtin_ia32_gathersiv4sf (src,
-					       base,
-					       (__v4si)index,
-					       mask,
-					       scale);
+  return (__m128) __builtin_ia32_gathersiv4sf (__src,
+					       __base,
+					       (__v4si)__index,
+					       __mask,
+					       __scale);
 }
 
 extern __inline __m128
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm_mask_i32gather_ps (__m128 src, float const *base, __m128i index,
-		       __m128 mask, const int scale)
+_mm_mask_i32gather_ps (__m128 __src, float const *__base, __m128i __index,
+		       __m128 __mask, const int __scale)
 {
-  return (__m128) __builtin_ia32_gathersiv4sf ((__v4sf)src,
-					       base,
-					       (__v4si)index,
-					       (__v4sf)mask,
-					       scale);
+  return (__m128) __builtin_ia32_gathersiv4sf ((__v4sf)__src,
+					       __base,
+					       (__v4si)__index,
+					       (__v4sf)__mask,
+					       __scale);
 }
 
 extern __inline __m256
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm256_i32gather_ps (float const *base, __m256i index, const int scale)
+_mm256_i32gather_ps (float const *__base, __m256i __index, const int __scale)
 {
-  __v8sf src = _mm256_setzero_ps ();
-  __v8sf mask = _mm256_cmp_ps (src, src, _CMP_EQ_OQ);
+  __v8sf __src = _mm256_setzero_ps ();
+  __v8sf __mask = _mm256_cmp_ps (__src, __src, _CMP_EQ_OQ);
 
-  return (__m256) __builtin_ia32_gathersiv8sf (src,
-					       base,
-					       (__v8si)index,
-					       mask,
-					       scale);
+  return (__m256) __builtin_ia32_gathersiv8sf (__src,
+					       __base,
+					       (__v8si)__index,
+					       __mask,
+					       __scale);
 }
 
 extern __inline __m256
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm256_mask_i32gather_ps (__m256 src, float const *base,
-			  __m256i index, __m256 mask, const int scale)
+_mm256_mask_i32gather_ps (__m256 __src, float const *__base,
+			  __m256i __index, __m256 __mask, const int __scale)
 {
-  return (__m256) __builtin_ia32_gathersiv8sf ((__v8sf)src,
-					       base,
-					       (__v8si)index,
-					       (__v8sf)mask,
-					       scale);
+  return (__m256) __builtin_ia32_gathersiv8sf ((__v8sf)__src,
+					       __base,
+					       (__v8si)__index,
+					       (__v8sf)__mask,
+					       __scale);
 }
 
 extern __inline __m128
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm_i64gather_ps (float const *base, __m128i index, const int scale)
+_mm_i64gather_ps (float const *__base, __m128i __index, const int __scale)
 {
-  __v4sf src = _mm_setzero_ps ();
-  __v4sf mask = _mm_cmpeq_ps (src, src);
+  __v4sf __src = _mm_setzero_ps ();
+  __v4sf __mask = _mm_cmpeq_ps (__src, __src);
 
-  return (__m128) __builtin_ia32_gatherdiv4sf (src,
-					       base,
-					       (__v2di)index,
-					       mask,
-					       scale);
+  return (__m128) __builtin_ia32_gatherdiv4sf (__src,
+					       __base,
+					       (__v2di)__index,
+					       __mask,
+					       __scale);
 }
 
 extern __inline __m128
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm_mask_i64gather_ps (__m128 src, float const *base, __m128i index,
-		       __m128 mask, const int scale)
+_mm_mask_i64gather_ps (__m128 __src, float const *__base, __m128i __index,
+		       __m128 __mask, const int __scale)
 {
-  return (__m128) __builtin_ia32_gatherdiv4sf ((__v4sf)src,
-						base,
-						(__v2di)index,
-						(__v4sf)mask,
-						scale);
+  return (__m128) __builtin_ia32_gatherdiv4sf ((__v4sf)__src,
+						__base,
+						(__v2di)__index,
+						(__v4sf)__mask,
+						__scale);
 }
 
 extern __inline __m128
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm256_i64gather_ps (float const *base, __m256i index, const int scale)
+_mm256_i64gather_ps (float const *__base, __m256i __index, const int __scale)
 {
-  __v4sf src = _mm_setzero_ps ();
-  __v4sf mask = _mm_cmpeq_ps (src, src);
+  __v4sf __src = _mm_setzero_ps ();
+  __v4sf __mask = _mm_cmpeq_ps (__src, __src);
 
-  return (__m128) __builtin_ia32_gatherdiv4sf256 (src,
-						  base,
-						  (__v4di)index,
-						  mask,
-						  scale);
+  return (__m128) __builtin_ia32_gatherdiv4sf256 (__src,
+						  __base,
+						  (__v4di)__index,
+						  __mask,
+						  __scale);
 }
 
 extern __inline __m128
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm256_mask_i64gather_ps (__m128 src, float const *base,
-			  __m256i index, __m128 mask, const int scale)
+_mm256_mask_i64gather_ps (__m128 __src, float const *__base,
+			  __m256i __index, __m128 __mask, const int __scale)
 {
-  return (__m128) __builtin_ia32_gatherdiv4sf256 ((__v4sf)src,
-						  base,
-						  (__v4di)index,
-						  (__v4sf)mask,
-						  scale);
+  return (__m128) __builtin_ia32_gatherdiv4sf256 ((__v4sf)__src,
+						  __base,
+						  (__v4di)__index,
+						  (__v4sf)__mask,
+						  __scale);
 }
 
 extern __inline __m128i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm_i32gather_epi64 (long long int const *base,
-		     __m128i index, const int scale)
+_mm_i32gather_epi64 (long long int const *__base,
+		     __m128i __index, const int __scale)
 {
-  __v2di src = __extension__ (__v2di){ 0, 0 };
-  __v2di mask = __extension__ (__v2di){ ~0, ~0 };
+  __v2di __src = __extension__ (__v2di){ 0, 0 };
+  __v2di __mask = __extension__ (__v2di){ ~0, ~0 };
 
-  return (__m128i) __builtin_ia32_gathersiv2di (src,
-						base,
-						(__v4si)index,
-						mask,
-						scale);
+  return (__m128i) __builtin_ia32_gathersiv2di (__src,
+						__base,
+						(__v4si)__index,
+						__mask,
+						__scale);
 }
 
 extern __inline __m128i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm_mask_i32gather_epi64 (__m128i src, long long int const *base,
-			  __m128i index, __m128i mask, const int scale)
+_mm_mask_i32gather_epi64 (__m128i __src, long long int const *__base,
+			  __m128i __index, __m128i __mask, const int __scale)
 {
-  return (__m128i) __builtin_ia32_gathersiv2di ((__v2di)src,
-						base,
-						(__v4si)index,
-						(__v2di)mask,
-						scale);
+  return (__m128i) __builtin_ia32_gathersiv2di ((__v2di)__src,
+						__base,
+						(__v4si)__index,
+						(__v2di)__mask,
+						__scale);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm256_i32gather_epi64 (long long int const *base,
-			__m128i index, const int scale)
+_mm256_i32gather_epi64 (long long int const *__base,
+			__m128i __index, const int __scale)
 {
-  __v4di src = __extension__ (__v4di){ 0, 0, 0, 0 };
-  __v4di mask = __extension__ (__v4di){ ~0, ~0, ~0, ~0 };
+  __v4di __src = __extension__ (__v4di){ 0, 0, 0, 0 };
+  __v4di __mask = __extension__ (__v4di){ ~0, ~0, ~0, ~0 };
 
-  return (__m256i) __builtin_ia32_gathersiv4di (src,
-						base,
-						(__v4si)index,
-						mask,
-						scale);
+  return (__m256i) __builtin_ia32_gathersiv4di (__src,
+						__base,
+						(__v4si)__index,
+						__mask,
+						__scale);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm256_mask_i32gather_epi64 (__m256i src, long long int const *base,
-			     __m128i index, __m256i mask, const int scale)
+_mm256_mask_i32gather_epi64 (__m256i __src, long long int const *__base,
+			     __m128i __index, __m256i __mask,
+			     const int __scale)
 {
-  return (__m256i) __builtin_ia32_gathersiv4di ((__v4di)src,
-						base,
-						(__v4si)index,
-						(__v4di)mask,
-						scale);
+  return (__m256i) __builtin_ia32_gathersiv4di ((__v4di)__src,
+						__base,
+						(__v4si)__index,
+						(__v4di)__mask,
+						__scale);
 }
 
 extern __inline __m128i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm_i64gather_epi64 (long long int const *base,
-		     __m128i index, const int scale)
+_mm_i64gather_epi64 (long long int const *__base,
+		     __m128i __index, const int __scale)
 {
-  __v2di src = __extension__ (__v2di){ 0, 0 };
-  __v2di mask = __extension__ (__v2di){ ~0, ~0 };
+  __v2di __src = __extension__ (__v2di){ 0, 0 };
+  __v2di __mask = __extension__ (__v2di){ ~0, ~0 };
 
-  return (__m128i) __builtin_ia32_gatherdiv2di (src,
-						base,
-						(__v2di)index,
-						mask,
-						scale);
+  return (__m128i) __builtin_ia32_gatherdiv2di (__src,
+						__base,
+						(__v2di)__index,
+						__mask,
+						__scale);
 }
 
 extern __inline __m128i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm_mask_i64gather_epi64 (__m128i src, long long int const *base, __m128i index,
-			  __m128i mask, const int scale)
+_mm_mask_i64gather_epi64 (__m128i __src, long long int const *__base,
+			  __m128i __index, __m128i __mask, const int __scale)
 {
-  return (__m128i) __builtin_ia32_gatherdiv2di ((__v2di)src,
-						base,
-						(__v2di)index,
-						(__v2di)mask,
-						scale);
+  return (__m128i) __builtin_ia32_gatherdiv2di ((__v2di)__src,
+						__base,
+						(__v2di)__index,
+						(__v2di)__mask,
+						__scale);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm256_i64gather_epi64 (long long int const *base,
-			__m256i index, const int scale)
+_mm256_i64gather_epi64 (long long int const *__base,
+			__m256i __index, const int __scale)
 {
-  __v4di src = __extension__ (__v4di){ 0, 0, 0, 0 };
-  __v4di mask = __extension__ (__v4di){ ~0, ~0, ~0, ~0 };
+  __v4di __src = __extension__ (__v4di){ 0, 0, 0, 0 };
+  __v4di __mask = __extension__ (__v4di){ ~0, ~0, ~0, ~0 };
 
-  return (__m256i) __builtin_ia32_gatherdiv4di (src,
-						base,
-						(__v4di)index,
-						mask,
-						scale);
+  return (__m256i) __builtin_ia32_gatherdiv4di (__src,
+						__base,
+						(__v4di)__index,
+						__mask,
+						__scale);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm256_mask_i64gather_epi64 (__m256i src, long long int const *base,
-			     __m256i index, __m256i mask, const int scale)
+_mm256_mask_i64gather_epi64 (__m256i __src, long long int const *__base,
+			     __m256i __index, __m256i __mask,
+			     const int __scale)
 {
-  return (__m256i) __builtin_ia32_gatherdiv4di ((__v4di)src,
-						base,
-						(__v4di)index,
-						(__v4di)mask,
-						scale);
+  return (__m256i) __builtin_ia32_gatherdiv4di ((__v4di)__src,
+						__base,
+						(__v4di)__index,
+						(__v4di)__mask,
+						__scale);
 }
 
 extern __inline __m128i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm_i32gather_epi32 (int const *base, __m128i index, const int scale)
+_mm_i32gather_epi32 (int const *__base, __m128i __index, const int __scale)
 {
-  __v4si src = __extension__ (__v4si){ 0, 0, 0, 0 };
-  __v4si mask = __extension__ (__v4si){ ~0, ~0, ~0, ~0 };
+  __v4si __src = __extension__ (__v4si){ 0, 0, 0, 0 };
+  __v4si __mask = __extension__ (__v4si){ ~0, ~0, ~0, ~0 };
 
-  return (__m128i) __builtin_ia32_gathersiv4si (src,
-					       base,
-					       (__v4si)index,
-					       mask,
-					       scale);
+  return (__m128i) __builtin_ia32_gathersiv4si (__src,
+						__base,
+						(__v4si)__index,
+						__mask,
+						__scale);
 }
 
 extern __inline __m128i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm_mask_i32gather_epi32 (__m128i src, int const *base, __m128i index,
-			  __m128i mask, const int scale)
+_mm_mask_i32gather_epi32 (__m128i __src, int const *__base, __m128i __index,
+			  __m128i __mask, const int __scale)
 {
-  return (__m128i) __builtin_ia32_gathersiv4si ((__v4si)src,
-						base,
-						(__v4si)index,
-						(__v4si)mask,
-						scale);
+  return (__m128i) __builtin_ia32_gathersiv4si ((__v4si)__src,
+						__base,
+						(__v4si)__index,
+						(__v4si)__mask,
+						__scale);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm256_i32gather_epi32 (int const *base, __m256i index, const int scale)
+_mm256_i32gather_epi32 (int const *__base, __m256i __index, const int __scale)
 {
-  __v8si src = __extension__ (__v8si){ 0, 0, 0, 0, 0, 0, 0, 0 };
-  __v8si mask = __extension__ (__v8si){ ~0, ~0, ~0, ~0, ~0, ~0, ~0, ~0 };
+  __v8si __src = __extension__ (__v8si){ 0, 0, 0, 0, 0, 0, 0, 0 };
+  __v8si __mask = __extension__ (__v8si){ ~0, ~0, ~0, ~0, ~0, ~0, ~0, ~0 };
 
-  return (__m256i) __builtin_ia32_gathersiv8si (src,
-						base,
-						(__v8si)index,
-						mask,
-						scale);
+  return (__m256i) __builtin_ia32_gathersiv8si (__src,
+						__base,
+						(__v8si)__index,
+						__mask,
+						__scale);
 }
 
 extern __inline __m256i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm256_mask_i32gather_epi32 (__m256i src, int const *base,
-			     __m256i index, __m256i mask, const int scale)
+_mm256_mask_i32gather_epi32 (__m256i __src, int const *__base,
+			     __m256i __index, __m256i __mask,
+			     const int __scale)
 {
-  return (__m256i) __builtin_ia32_gathersiv8si ((__v8si)src,
-						base,
-						(__v8si)index,
-						(__v8si)mask,
-						scale);
+  return (__m256i) __builtin_ia32_gathersiv8si ((__v8si)__src,
+						__base,
+						(__v8si)__index,
+						(__v8si)__mask,
+						__scale);
 }
 
 extern __inline __m128i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm_i64gather_epi32 (int const *base, __m128i index, const int scale)
+_mm_i64gather_epi32 (int const *__base, __m128i __index, const int __scale)
 {
-  __v4si src = __extension__ (__v4si){ 0, 0, 0, 0 };
-  __v4si mask = __extension__ (__v4si){ ~0, ~0, ~0, ~0 };
+  __v4si __src = __extension__ (__v4si){ 0, 0, 0, 0 };
+  __v4si __mask = __extension__ (__v4si){ ~0, ~0, ~0, ~0 };
 
-  return (__m128i) __builtin_ia32_gatherdiv4si (src,
-						base,
-						(__v2di)index,
-						mask,
-						scale);
+  return (__m128i) __builtin_ia32_gatherdiv4si (__src,
+						__base,
+						(__v2di)__index,
+						__mask,
+						__scale);
 }
 
 extern __inline __m128i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm_mask_i64gather_epi32 (__m128i src, int const *base, __m128i index,
-			  __m128i mask, const int scale)
+_mm_mask_i64gather_epi32 (__m128i __src, int const *__base, __m128i __index,
+			  __m128i __mask, const int __scale)
 {
-  return (__m128i) __builtin_ia32_gatherdiv4si ((__v4si)src,
-						base,
-						(__v2di)index,
-						(__v4si)mask,
-						scale);
+  return (__m128i) __builtin_ia32_gatherdiv4si ((__v4si)__src,
+						__base,
+						(__v2di)__index,
+						(__v4si)__mask,
+						__scale);
 }
 
 extern __inline __m128i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm256_i64gather_epi32 (int const *base, __m256i index, const int scale)
+_mm256_i64gather_epi32 (int const *__base, __m256i __index, const int __scale)
 {
-  __v4si src = __extension__ (__v4si){ 0, 0, 0, 0 };
-  __v4si mask = __extension__ (__v4si){ ~0, ~0, ~0, ~0 };
+  __v4si __src = __extension__ (__v4si){ 0, 0, 0, 0 };
+  __v4si __mask = __extension__ (__v4si){ ~0, ~0, ~0, ~0 };
 
-  return (__m128i) __builtin_ia32_gatherdiv4si256 (src,
-						  base,
-						  (__v4di)index,
-						  mask,
-						  scale);
+  return (__m128i) __builtin_ia32_gatherdiv4si256 (__src,
+						   __base,
+						   (__v4di)__index,
+						   __mask,
+						   __scale);
 }
 
 extern __inline __m128i
 __attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
-_mm256_mask_i64gather_epi32 (__m128i src, int const *base,
-			     __m256i index, __m128i mask, const int scale)
+_mm256_mask_i64gather_epi32 (__m128i __src, int const *__base,
+			     __m256i __index, __m128i __mask,
+			     const int __scale)
 {
-  return (__m128i) __builtin_ia32_gatherdiv4si256 ((__v4si)src,
-						   base,
-						   (__v4di)index,
-						   (__v4si)mask,
-						   scale);
+  return (__m128i) __builtin_ia32_gatherdiv4si256 ((__v4si)__src,
+						   __base,
+						   (__v4di)__index,
+						   (__v4si)__mask,
+						   __scale);
 }
 #else /* __OPTIMIZE__ */
 #define _mm_i32gather_pd(BASE, INDEX, SCALE)				\
@@ -1872,3 +1899,10 @@ _mm256_mask_i64gather_epi32 (__m128i src, int const *base,
 					   (__v4si)(__m128i)MASK,  \
 					   (int)SCALE)
 #endif  /* __OPTIMIZE__ */
+
+#ifdef __DISABLE_AVX2__
+#undef __DISABLE_AVX2__
+#pragma GCC pop_options
+#endif /* __DISABLE_AVX2__ */
+
+#endif /* _AVX2INTRIN_H_INCLUDED */

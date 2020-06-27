@@ -1,6 +1,5 @@
 /* Standard problems for dataflow support routines.
-   Copyright (C) 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007,
-   2008, 2009, 2010, 2011, 2012 Free Software Foundation, Inc.
+   Copyright (C) 1999-2017 Free Software Foundation, Inc.
    Originally contributed by Michael P. Hayes
              (m.hayes@elec.canterbury.ac.nz, mhayes@redhat.com)
    Major rewrite contributed by Danny Berlin (dberlin@dberlin.org)
@@ -25,74 +24,28 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
+#include "backend.h"
+#include "target.h"
 #include "rtl.h"
+#include "df.h"
+#include "memmodel.h"
 #include "tm_p.h"
 #include "insn-config.h"
-#include "recog.h"
-#include "function.h"
-#include "regs.h"
-#include "output.h"
-#include "alloc-pool.h"
-#include "flags.h"
-#include "hard-reg-set.h"
-#include "basic-block.h"
-#include "sbitmap.h"
-#include "bitmap.h"
-#include "target.h"
-#include "timevar.h"
-#include "df.h"
-#include "except.h"
+#include "cfganal.h"
 #include "dce.h"
-#include "vecprim.h"
+#include "valtrack.h"
+#include "dumpfile.h"
+#include "rtl-iter.h"
 
 /* Note that turning REG_DEAD_DEBUGGING on will cause
    gcc.c-torture/unsorted/dump-noaddr.c to fail because it prints
    addresses in the dumps.  */
-#if 0
-#define REG_DEAD_DEBUGGING
-#endif
+#define REG_DEAD_DEBUGGING 0
 
 #define DF_SPARSE_THRESHOLD 32
 
 static bitmap_head seen_in_block;
 static bitmap_head seen_in_insn;
-
-
-/*----------------------------------------------------------------------------
-   Public functions access functions for the dataflow problems.
-----------------------------------------------------------------------------*/
-/* Get the live at out set for BB no matter what problem happens to be
-   defined.  This function is used by the register allocators who
-   choose different dataflow problems depending on the optimization
-   level.  */
-
-bitmap
-df_get_live_out (basic_block bb)
-{
-  gcc_assert (df_lr);
-
-  if (df_live)
-    return DF_LIVE_OUT (bb);
-  else
-    return DF_LR_OUT (bb);
-}
-
-/* Get the live at in set for BB no matter what problem happens to be
-   defined.  This function is used by the register allocators who
-   choose different dataflow problems depending on the optimization
-   level.  */
-
-bitmap
-df_get_live_in (basic_block bb)
-{
-  gcc_assert (df_lr);
-
-  if (df_live)
-    return DF_LIVE_IN (bb);
-  else
-    return DF_LR_IN (bb);
-}
 
 /*----------------------------------------------------------------------------
    Utility functions.
@@ -153,6 +106,17 @@ df_print_bb_index (basic_block bb, FILE *file)
    pseudo reaches.  In and out bitvectors are built for each basic
    block.  The id field in the ref is used to index into these sets.
    See df.h for details.
+
+   If the DF_RD_PRUNE_DEAD_DEFS changeable flag is set, only DEFs reaching
+   existing uses are included in the global reaching DEFs set, or in other
+   words only DEFs that are still live.  This is a kind of pruned version
+   of the traditional reaching definitions problem that is much less
+   complex to compute and produces enough information to compute UD-chains.
+   In this context, live must be interpreted in the DF_LR sense: Uses that
+   are upward exposed but maybe not initialized on all paths through the
+   CFG.  For a USE that is not reached by a DEF on all paths, we still want
+   to make those DEFs that do reach the USE visible, and pruning based on
+   DF_LIVE would make that impossible.
    ----------------------------------------------------------------------------*/
 
 /* This problem plays a large number of games for the sake of
@@ -240,8 +204,7 @@ df_rd_alloc (bitmap all_blocks)
   df_grow_bb_info (df_rd);
 
   /* Because of the clustering of all use sites for the same pseudo,
-     we have to process all of the blocks before doing the
-     analysis.  */
+     we have to process all of the blocks before doing the analysis.  */
 
   EXECUTE_IF_SET_IN_BITMAP (all_blocks, 0, bb_index, bi)
     {
@@ -274,35 +237,30 @@ void
 df_rd_simulate_artificial_defs_at_top (basic_block bb, bitmap local_rd)
 {
   int bb_index = bb->index;
-  df_ref *def_rec;
-  for (def_rec = df_get_artificial_defs (bb_index); *def_rec; def_rec++)
-    {
-      df_ref def = *def_rec;
-      if (DF_REF_FLAGS (def) & DF_REF_AT_TOP)
-	{
-	  unsigned int dregno = DF_REF_REGNO (def);
-	  if (!(DF_REF_FLAGS (def) & (DF_REF_PARTIAL | DF_REF_CONDITIONAL)))
-	    bitmap_clear_range (local_rd,
-				DF_DEFS_BEGIN (dregno),
-				DF_DEFS_COUNT (dregno));
-	  bitmap_set_bit (local_rd, DF_REF_ID (def));
-	}
-    }
+  df_ref def;
+  FOR_EACH_ARTIFICIAL_DEF (def, bb_index)
+    if (DF_REF_FLAGS (def) & DF_REF_AT_TOP)
+      {
+	unsigned int dregno = DF_REF_REGNO (def);
+	if (!(DF_REF_FLAGS (def) & (DF_REF_PARTIAL | DF_REF_CONDITIONAL)))
+	  bitmap_clear_range (local_rd,
+			      DF_DEFS_BEGIN (dregno),
+			      DF_DEFS_COUNT (dregno));
+	bitmap_set_bit (local_rd, DF_REF_ID (def));
+      }
 }
 
 /* Add the effect of the defs of INSN to the reaching definitions bitmap
    LOCAL_RD.  */
 
 void
-df_rd_simulate_one_insn (basic_block bb ATTRIBUTE_UNUSED, rtx insn,
+df_rd_simulate_one_insn (basic_block bb ATTRIBUTE_UNUSED, rtx_insn *insn,
 			 bitmap local_rd)
 {
-  unsigned uid = INSN_UID (insn);
-  df_ref *def_rec;
+  df_ref def;
 
-  for (def_rec = DF_INSN_UID_DEFS (uid); *def_rec; def_rec++)
+  FOR_EACH_INSN_DEF (def, insn)
     {
-      df_ref def = *def_rec;
       unsigned int dregno = DF_REF_REGNO (def);
       if ((!(df->changeable_flags & DF_NO_HARD_REGS))
           || (dregno >= FIRST_PSEUDO_REGISTER))
@@ -325,12 +283,11 @@ df_rd_simulate_one_insn (basic_block bb ATTRIBUTE_UNUSED, rtx insn,
 
 static void
 df_rd_bb_local_compute_process_def (struct df_rd_bb_info *bb_info,
-				    df_ref *def_rec,
+				    df_ref def,
 				    int top_flag)
 {
-  while (*def_rec)
+  for (; def; def = DF_REF_NEXT_LOC (def))
     {
-      df_ref def = *def_rec;
       if (top_flag == (DF_REF_FLAGS (def) & DF_REF_AT_TOP))
 	{
 	  unsigned int regno = DF_REF_REGNO (def);
@@ -355,7 +312,7 @@ df_rd_bb_local_compute_process_def (struct df_rd_bb_info *bb_info,
 		      if (n_defs > DF_SPARSE_THRESHOLD)
 			{
 			  bitmap_set_bit (&bb_info->sparse_kill, regno);
-			  bitmap_clear_range(&bb_info->gen, begin, n_defs);
+			  bitmap_clear_range (&bb_info->gen, begin, n_defs);
 			}
 		      else
 			{
@@ -373,7 +330,6 @@ df_rd_bb_local_compute_process_def (struct df_rd_bb_info *bb_info,
 		}
 	    }
 	}
-      def_rec++;
     }
 }
 
@@ -382,9 +338,9 @@ df_rd_bb_local_compute_process_def (struct df_rd_bb_info *bb_info,
 static void
 df_rd_bb_local_compute (unsigned int bb_index)
 {
-  basic_block bb = BASIC_BLOCK (bb_index);
+  basic_block bb = BASIC_BLOCK_FOR_FN (cfun, bb_index);
   struct df_rd_bb_info *bb_info = df_rd_get_bb_info (bb_index);
-  rtx insn;
+  rtx_insn *insn;
 
   bitmap_clear (&seen_in_block);
   bitmap_clear (&seen_in_insn);
@@ -451,12 +407,16 @@ df_rd_local_compute (bitmap all_blocks)
   /* Set up the knockout bit vectors to be applied across EH_EDGES.  */
   EXECUTE_IF_SET_IN_BITMAP (regs_invalidated_by_call_regset, 0, regno, bi)
     {
-      if (DF_DEFS_COUNT (regno) > DF_SPARSE_THRESHOLD)
-	bitmap_set_bit (sparse_invalidated, regno);
-      else
-	bitmap_set_range (dense_invalidated,
-			  DF_DEFS_BEGIN (regno),
-			  DF_DEFS_COUNT (regno));
+      if (! HARD_REGISTER_NUM_P (regno)
+	  || !(df->changeable_flags & DF_NO_HARD_REGS))
+	{
+	  if (DF_DEFS_COUNT (regno) > DF_SPARSE_THRESHOLD)
+	    bitmap_set_bit (sparse_invalidated, regno);
+	  else
+	    bitmap_set_range (dense_invalidated,
+			      DF_DEFS_BEGIN (regno),
+			      DF_DEFS_COUNT (regno));
+	}
     }
 
   bitmap_clear (&seen_in_block);
@@ -504,8 +464,7 @@ df_rd_confluence_n (edge e)
       bitmap_head tmp;
 
       bitmap_initialize (&tmp, &df_bitmap_obstack);
-      bitmap_copy (&tmp, op2);
-      bitmap_and_compl_into (&tmp, dense_invalidated);
+      bitmap_and_compl (&tmp, op2, dense_invalidated);
 
       EXECUTE_IF_SET_IN_BITMAP (sparse_invalidated, 0, regno, bi)
  	{
@@ -535,13 +494,13 @@ df_rd_transfer_function (int bb_index)
   bitmap gen = &bb_info->gen;
   bitmap kill = &bb_info->kill;
   bitmap sparse_kill = &bb_info->sparse_kill;
+  bool changed = false;
 
   if (bitmap_empty_p (sparse_kill))
-    return  bitmap_ior_and_compl (out, gen, in, kill);
+    changed = bitmap_ior_and_compl (out, gen, in, kill);
   else
     {
       struct df_rd_problem_data *problem_data;
-      bool changed = false;
       bitmap_head tmp;
 
       /* Note that TMP is _not_ a temporary bitmap if we end up replacing
@@ -549,27 +508,43 @@ df_rd_transfer_function (int bb_index)
       problem_data = (struct df_rd_problem_data *) df_rd->problem_data;
       bitmap_initialize (&tmp, &problem_data->rd_bitmaps);
 
-      bitmap_copy (&tmp, in);
+      bitmap_and_compl (&tmp, in, kill);
       EXECUTE_IF_SET_IN_BITMAP (sparse_kill, 0, regno, bi)
 	{
 	  bitmap_clear_range (&tmp,
 			      DF_DEFS_BEGIN (regno),
 			      DF_DEFS_COUNT (regno));
 	}
-      bitmap_and_compl_into (&tmp, kill);
       bitmap_ior_into (&tmp, gen);
       changed = !bitmap_equal_p (&tmp, out);
       if (changed)
-	{
-	  bitmap_clear (out);
-	  bb_info->out = tmp;
-	}
+	bitmap_move (out, &tmp);
       else
-	  bitmap_clear (&tmp);
-      return changed;
+	bitmap_clear (&tmp);
     }
-}
 
+  if (df->changeable_flags & DF_RD_PRUNE_DEAD_DEFS)
+    {
+      /* Create a mask of DEFs for all registers live at the end of this
+	 basic block, and mask out DEFs of registers that are not live.
+	 Computing the mask looks costly, but the benefit of the pruning
+	 outweighs the cost.  */
+      struct df_rd_bb_info *bb_info = df_rd_get_bb_info (bb_index);
+      bitmap regs_live_out = &df_lr_get_bb_info (bb_index)->out;
+      bitmap live_defs = BITMAP_ALLOC (&df_bitmap_obstack);
+      unsigned int regno;
+      bitmap_iterator bi;
+
+      EXECUTE_IF_SET_IN_BITMAP (regs_live_out, 0, regno, bi)
+	bitmap_set_range (live_defs,
+			  DF_DEFS_BEGIN (regno),
+			  DF_DEFS_COUNT (regno));
+      changed |= bitmap_and_into (&bb_info->out, live_defs);
+      BITMAP_FREE (live_defs);
+    }
+
+  return changed;
+}
 
 /* Free all storage associated with the problem.  */
 
@@ -599,28 +574,71 @@ df_rd_start_dump (FILE *file)
 {
   struct df_rd_problem_data *problem_data
     = (struct df_rd_problem_data *) df_rd->problem_data;
-  unsigned int m = DF_REG_SIZE(df);
+  unsigned int m = DF_REG_SIZE (df);
   unsigned int regno;
 
   if (!df_rd->block_info)
     return;
 
-  fprintf (file, ";; Reaching defs:\n\n");
+  fprintf (file, ";; Reaching defs:\n");
 
-  fprintf (file, "  sparse invalidated \t");
+  fprintf (file, ";;  sparse invalidated \t");
   dump_bitmap (file, &problem_data->sparse_invalidated_by_call);
-  fprintf (file, "  dense invalidated \t");
+  fprintf (file, ";;  dense invalidated \t");
   dump_bitmap (file, &problem_data->dense_invalidated_by_call);
 
+  fprintf (file, ";;  reg->defs[] map:\t");
   for (regno = 0; regno < m; regno++)
     if (DF_DEFS_COUNT (regno))
       fprintf (file, "%d[%d,%d] ", regno,
 	       DF_DEFS_BEGIN (regno),
-	       DF_DEFS_COUNT (regno));
+	       DF_DEFS_BEGIN (regno) + DF_DEFS_COUNT (regno) - 1);
   fprintf (file, "\n");
-
 }
 
+
+static void
+df_rd_dump_defs_set (bitmap defs_set, const char *prefix, FILE *file)
+{
+  bitmap_head tmp;
+  unsigned int regno;
+  unsigned int m = DF_REG_SIZE (df);
+  bool first_reg = true;
+
+  fprintf (file, "%s\t(%d) ", prefix, (int) bitmap_count_bits (defs_set));
+
+  bitmap_initialize (&tmp, &df_bitmap_obstack);
+  for (regno = 0; regno < m; regno++)
+    {
+      if (HARD_REGISTER_NUM_P (regno)
+	  && (df->changeable_flags & DF_NO_HARD_REGS))
+	continue;
+      bitmap_set_range (&tmp, DF_DEFS_BEGIN (regno), DF_DEFS_COUNT (regno));
+      bitmap_and_into (&tmp, defs_set);
+      if (! bitmap_empty_p (&tmp))
+	{
+	  bitmap_iterator bi;
+	  unsigned int ix;
+	  bool first_def = true;
+
+	  if (! first_reg)
+	    fprintf (file, ",");
+	  first_reg = false;
+
+	  fprintf (file, "%u[", regno);
+	  EXECUTE_IF_SET_IN_BITMAP (&tmp, 0, ix, bi)
+	    {
+	      fprintf (file, "%s%u", first_def ? "" : ",", ix);
+	      first_def = false;
+	    }
+	  fprintf (file, "]");
+	}
+      bitmap_clear (&tmp);
+    }
+
+  fprintf (file, "\n");
+  bitmap_clear (&tmp);
+}
 
 /* Debugging info at top of bb.  */
 
@@ -631,16 +649,13 @@ df_rd_top_dump (basic_block bb, FILE *file)
   if (!bb_info)
     return;
 
-  fprintf (file, ";; rd  in  \t(%d)\n", (int) bitmap_count_bits (&bb_info->in));
-  dump_bitmap (file, &bb_info->in);
-  fprintf (file, ";; rd  gen \t(%d)\n", (int) bitmap_count_bits (&bb_info->gen));
-  dump_bitmap (file, &bb_info->gen);
-  fprintf (file, ";; rd  kill\t(%d)\n", (int) bitmap_count_bits (&bb_info->kill));
-  dump_bitmap (file, &bb_info->kill);
+  df_rd_dump_defs_set (&bb_info->in, ";; rd  in  ", file);
+  df_rd_dump_defs_set (&bb_info->gen, ";; rd  gen ", file);
+  df_rd_dump_defs_set (&bb_info->kill, ";; rd  kill", file);
 }
 
 
-/* Debugging info at top of bb.  */
+/* Debugging info at bottom of bb.  */
 
 static void
 df_rd_bottom_dump (basic_block bb, FILE *file)
@@ -649,13 +664,12 @@ df_rd_bottom_dump (basic_block bb, FILE *file)
   if (!bb_info)
     return;
 
-  fprintf (file, ";; rd  out \t(%d)\n", (int) bitmap_count_bits (&bb_info->out));
-  dump_bitmap (file, &bb_info->out);
+  df_rd_dump_defs_set (&bb_info->out, ";; rd  out ", file);
 }
 
 /* All of the information associated with every instance of the problem.  */
 
-static struct df_problem problem_RD =
+static const struct df_problem problem_RD =
 {
   DF_RD,                      /* Problem id.  */
   DF_FORWARD,                 /* Direction.  */
@@ -674,6 +688,8 @@ static struct df_problem problem_RD =
   df_rd_start_dump,           /* Debugging.  */
   df_rd_top_dump,             /* Debugging start block.  */
   df_rd_bottom_dump,          /* Debugging end block.  */
+  NULL,                       /* Debugging start insn.  */
+  NULL,                       /* Debugging end insn.  */
   NULL,                       /* Incremental solution verify start.  */
   NULL,                       /* Incremental solution verify end.  */
   NULL,                       /* Dependent problem.  */
@@ -799,84 +815,64 @@ df_lr_reset (bitmap all_blocks)
 static void
 df_lr_bb_local_compute (unsigned int bb_index)
 {
-  basic_block bb = BASIC_BLOCK (bb_index);
+  basic_block bb = BASIC_BLOCK_FOR_FN (cfun, bb_index);
   struct df_lr_bb_info *bb_info = df_lr_get_bb_info (bb_index);
-  rtx insn;
-  df_ref *def_rec;
-  df_ref *use_rec;
+  rtx_insn *insn;
+  df_ref def, use;
 
   /* Process the registers set in an exception handler.  */
-  for (def_rec = df_get_artificial_defs (bb_index); *def_rec; def_rec++)
-    {
-      df_ref def = *def_rec;
-      if ((DF_REF_FLAGS (def) & DF_REF_AT_TOP) == 0)
-	{
-	  unsigned int dregno = DF_REF_REGNO (def);
-	  bitmap_set_bit (&bb_info->def, dregno);
-	  bitmap_clear_bit (&bb_info->use, dregno);
-	}
-    }
+  FOR_EACH_ARTIFICIAL_DEF (def, bb_index)
+    if ((DF_REF_FLAGS (def) & DF_REF_AT_TOP) == 0)
+      {
+	unsigned int dregno = DF_REF_REGNO (def);
+	bitmap_set_bit (&bb_info->def, dregno);
+	bitmap_clear_bit (&bb_info->use, dregno);
+      }
 
   /* Process the hardware registers that are always live.  */
-  for (use_rec = df_get_artificial_uses (bb_index); *use_rec; use_rec++)
-    {
-      df_ref use = *use_rec;
-      /* Add use to set of uses in this BB.  */
-      if ((DF_REF_FLAGS (use) & DF_REF_AT_TOP) == 0)
-	bitmap_set_bit (&bb_info->use, DF_REF_REGNO (use));
-    }
+  FOR_EACH_ARTIFICIAL_USE (use, bb_index)
+    /* Add use to set of uses in this BB.  */
+    if ((DF_REF_FLAGS (use) & DF_REF_AT_TOP) == 0)
+      bitmap_set_bit (&bb_info->use, DF_REF_REGNO (use));
 
   FOR_BB_INSNS_REVERSE (bb, insn)
     {
-      unsigned int uid = INSN_UID (insn);
-
       if (!NONDEBUG_INSN_P (insn))
 	continue;
 
-      for (def_rec = DF_INSN_UID_DEFS (uid); *def_rec; def_rec++)
-	{
-	  df_ref def = *def_rec;
-	  /* If the def is to only part of the reg, it does
-	     not kill the other defs that reach here.  */
-	  if (!(DF_REF_FLAGS (def) & (DF_REF_PARTIAL | DF_REF_CONDITIONAL)))
-	    {
-	      unsigned int dregno = DF_REF_REGNO (def);
-	      bitmap_set_bit (&bb_info->def, dregno);
-	      bitmap_clear_bit (&bb_info->use, dregno);
-	    }
-	}
+      df_insn_info *insn_info = DF_INSN_INFO_GET (insn);
+      FOR_EACH_INSN_INFO_DEF (def, insn_info)
+	/* If the def is to only part of the reg, it does
+	   not kill the other defs that reach here.  */
+	if (!(DF_REF_FLAGS (def) & (DF_REF_PARTIAL | DF_REF_CONDITIONAL)))
+	  {
+	    unsigned int dregno = DF_REF_REGNO (def);
+	    bitmap_set_bit (&bb_info->def, dregno);
+	    bitmap_clear_bit (&bb_info->use, dregno);
+	  }
 
-      for (use_rec = DF_INSN_UID_USES (uid); *use_rec; use_rec++)
-	{
-	  df_ref use = *use_rec;
-	  /* Add use to set of uses in this BB.  */
-	  bitmap_set_bit (&bb_info->use, DF_REF_REGNO (use));
-	}
+      FOR_EACH_INSN_INFO_USE (use, insn_info)
+	/* Add use to set of uses in this BB.  */
+	bitmap_set_bit (&bb_info->use, DF_REF_REGNO (use));
     }
 
   /* Process the registers set in an exception handler or the hard
      frame pointer if this block is the target of a non local
      goto.  */
-  for (def_rec = df_get_artificial_defs (bb_index); *def_rec; def_rec++)
-    {
-      df_ref def = *def_rec;
-      if (DF_REF_FLAGS (def) & DF_REF_AT_TOP)
-	{
-	  unsigned int dregno = DF_REF_REGNO (def);
-	  bitmap_set_bit (&bb_info->def, dregno);
-	  bitmap_clear_bit (&bb_info->use, dregno);
-	}
-    }
+  FOR_EACH_ARTIFICIAL_DEF (def, bb_index)
+    if (DF_REF_FLAGS (def) & DF_REF_AT_TOP)
+      {
+	unsigned int dregno = DF_REF_REGNO (def);
+	bitmap_set_bit (&bb_info->def, dregno);
+	bitmap_clear_bit (&bb_info->use, dregno);
+      }
 
 #ifdef EH_USES
   /* Process the uses that are live into an exception handler.  */
-  for (use_rec = df_get_artificial_uses (bb_index); *use_rec; use_rec++)
-    {
-      df_ref use = *use_rec;
-      /* Add use to set of uses in this BB.  */
-      if (DF_REF_FLAGS (use) & DF_REF_AT_TOP)
-	bitmap_set_bit (&bb_info->use, DF_REF_REGNO (use));
-    }
+  FOR_EACH_ARTIFICIAL_USE (use, bb_index)
+    /* Add use to set of uses in this BB.  */
+    if (DF_REF_FLAGS (use) & DF_REF_AT_TOP)
+      bitmap_set_bit (&bb_info->use, DF_REF_REGNO (use));
 #endif
 
   /* If the df_live problem is not defined, such as at -O0 and -O1, we
@@ -893,13 +889,18 @@ df_lr_bb_local_compute (unsigned int bb_index)
 static void
 df_lr_local_compute (bitmap all_blocks ATTRIBUTE_UNUSED)
 {
-  unsigned int bb_index;
+  unsigned int bb_index, i;
   bitmap_iterator bi;
 
   bitmap_clear (&df->hardware_regs_used);
 
   /* The all-important stack pointer must always be live.  */
   bitmap_set_bit (&df->hardware_regs_used, STACK_POINTER_REGNUM);
+
+  /* Global regs are always live, too.  */
+  for (i = 0; i < FIRST_PSEUDO_REGISTER; i++)
+    if (global_regs[i])
+      bitmap_set_bit (&df->hardware_regs_used, i);
 
   /* Before reload, there are a few registers that must be forced
      live everywhere -- which might not already be the case for
@@ -911,12 +912,11 @@ df_lr_local_compute (bitmap all_blocks ATTRIBUTE_UNUSED)
 	 reference of the frame pointer.  */
       bitmap_set_bit (&df->hardware_regs_used, FRAME_POINTER_REGNUM);
 
-#if FRAME_POINTER_REGNUM != ARG_POINTER_REGNUM
       /* Pseudos with argument area equivalences may require
 	 reloading via the argument pointer.  */
-      if (fixed_regs[ARG_POINTER_REGNUM])
+      if (FRAME_POINTER_REGNUM != ARG_POINTER_REGNUM
+	  && fixed_regs[ARG_POINTER_REGNUM])
 	bitmap_set_bit (&df->hardware_regs_used, ARG_POINTER_REGNUM);
-#endif
 
       /* Any constant, or pseudo with constant equivalences, may
 	 require reloading from memory using the pic register.  */
@@ -966,7 +966,7 @@ static void
 df_lr_confluence_0 (basic_block bb)
 {
   bitmap op1 = &df_lr_get_bb_info (bb->index)->out;
-  if (bb != EXIT_BLOCK_PTR)
+  if (bb != EXIT_BLOCK_PTR_FOR_FN (cfun))
     bitmap_copy (op1, &df->hardware_regs_used);
 }
 
@@ -1132,10 +1132,10 @@ df_lr_verify_solution_start (void)
   df_lr->solutions_dirty = true;
 
   problem_data = (struct df_lr_problem_data *)df_lr->problem_data;
-  problem_data->in = XNEWVEC (bitmap_head, last_basic_block);
-  problem_data->out = XNEWVEC (bitmap_head, last_basic_block);
+  problem_data->in = XNEWVEC (bitmap_head, last_basic_block_for_fn (cfun));
+  problem_data->out = XNEWVEC (bitmap_head, last_basic_block_for_fn (cfun));
 
-  FOR_ALL_BB (bb)
+  FOR_ALL_BB_FN (bb, cfun)
     {
       bitmap_initialize (&problem_data->in[bb->index], &problem_data->lr_bitmaps);
       bitmap_initialize (&problem_data->out[bb->index], &problem_data->lr_bitmaps);
@@ -1164,7 +1164,7 @@ df_lr_verify_solution_end (void)
        in df_lr_finalize for details.  */
     df_lr->solutions_dirty = false;
   else
-    FOR_ALL_BB (bb)
+    FOR_ALL_BB_FN (bb, cfun)
       {
 	if ((!bitmap_equal_p (&problem_data->in[bb->index], DF_LR_IN (bb)))
 	    || (!bitmap_equal_p (&problem_data->out[bb->index], DF_LR_OUT (bb))))
@@ -1176,7 +1176,7 @@ df_lr_verify_solution_end (void)
 
   /* Cannot delete them immediately because you may want to dump them
      if the comparison fails.  */
-  FOR_ALL_BB (bb)
+  FOR_ALL_BB_FN (bb, cfun)
     {
       bitmap_clear (&problem_data->in[bb->index]);
       bitmap_clear (&problem_data->out[bb->index]);
@@ -1191,7 +1191,7 @@ df_lr_verify_solution_end (void)
 
 /* All of the information associated with every instance of the problem.  */
 
-static struct df_problem problem_LR =
+static const struct df_problem problem_LR =
 {
   DF_LR,                      /* Problem id.  */
   DF_BACKWARD,                /* Direction.  */
@@ -1210,6 +1210,8 @@ static struct df_problem problem_LR =
   NULL,                       /* Debugging.  */
   df_lr_top_dump,             /* Debugging start block.  */
   df_lr_bottom_dump,          /* Debugging end block.  */
+  NULL,                       /* Debugging start insn.  */
+  NULL,                       /* Debugging end insn.  */
   df_lr_verify_solution_start,/* Incremental solution verify start.  */
   df_lr_verify_solution_end,  /* Incremental solution verify end.  */
   NULL,                       /* Dependent problem.  */
@@ -1229,7 +1231,7 @@ df_lr_add_problem (void)
   df_add_problem (&problem_LR);
   /* These will be initialized when df_scan_blocks processes each
      block.  */
-  df_lr->out_of_date_transfer_functions = BITMAP_ALLOC (NULL);
+  df_lr->out_of_date_transfer_functions = BITMAP_ALLOC (&df_bitmap_obstack);
 }
 
 
@@ -1251,7 +1253,7 @@ df_lr_verify_transfer_functions (void)
   bitmap_initialize (&saved_use, &bitmap_default_obstack);
   bitmap_initialize (&all_blocks, &bitmap_default_obstack);
 
-  FOR_ALL_BB (bb)
+  FOR_ALL_BB_FN (bb, cfun)
     {
       struct df_lr_bb_info *bb_info = df_lr_get_bb_info (bb->index);
       bitmap_set_bit (&all_blocks, bb->index);
@@ -1299,22 +1301,23 @@ df_lr_verify_transfer_functions (void)
 
 
 /*----------------------------------------------------------------------------
-   LIVE AND MUST-INITIALIZED REGISTERS.
+   LIVE AND MAY-INITIALIZED REGISTERS.
 
    This problem first computes the IN and OUT bitvectors for the
-   must-initialized registers problems, which is a forward problem.
-   It gives the set of registers for which we MUST have an available
-   definition on any path from the entry block to the entry/exit of
-   a basic block.  Sets generate a definition, while clobbers kill
+   may-initialized registers problems, which is a forward problem.
+   It gives the set of registers for which we MAY have an available
+   definition, i.e. for which there is an available definition on
+   at least one path from the entry block to the entry/exit of a
+   basic block.  Sets generate a definition, while clobbers kill
    a definition.
 
    In and out bitvectors are built for each basic block and are indexed by
    regnum (see df.h for details).  In and out bitvectors in struct
-   df_live_bb_info actually refers to the must-initialized problem;
+   df_live_bb_info actually refers to the may-initialized problem;
 
    Then, the in and out sets for the LIVE problem itself are computed.
    These are the logical AND of the IN and OUT sets from the LR problem
-   and the must-initialized problem.
+   and the may-initialized problem.
 ----------------------------------------------------------------------------*/
 
 /* Private data used to verify the solution for this problem.  */
@@ -1419,10 +1422,10 @@ df_live_reset (bitmap all_blocks)
 static void
 df_live_bb_local_compute (unsigned int bb_index)
 {
-  basic_block bb = BASIC_BLOCK (bb_index);
+  basic_block bb = BASIC_BLOCK_FOR_FN (cfun, bb_index);
   struct df_live_bb_info *bb_info = df_live_get_bb_info (bb_index);
-  rtx insn;
-  df_ref *def_rec;
+  rtx_insn *insn;
+  df_ref def;
   int luid = 0;
 
   FOR_BB_INSNS (bb, insn)
@@ -1443,9 +1446,8 @@ df_live_bb_local_compute (unsigned int bb_index)
 	continue;
 
       luid++;
-      for (def_rec = DF_INSN_INFO_DEFS (insn_info); *def_rec; def_rec++)
+      FOR_EACH_INSN_INFO_DEF (def, insn_info)
 	{
-	  df_ref def = *def_rec;
 	  unsigned int regno = DF_REF_REGNO (def);
 
 	  if (DF_REF_FLAGS_IS_SET (def,
@@ -1462,11 +1464,8 @@ df_live_bb_local_compute (unsigned int bb_index)
 	}
     }
 
-  for (def_rec = df_get_artificial_defs (bb_index); *def_rec; def_rec++)
-    {
-      df_ref def = *def_rec;
-      bitmap_set_bit (&bb_info->gen, DF_REF_REGNO (def));
-    }
+  FOR_EACH_ARTIFICIAL_DEF (def, bb_index)
+    bitmap_set_bit (&bb_info->gen, DF_REF_REGNO (def));
 }
 
 
@@ -1525,7 +1524,7 @@ df_live_confluence_n (edge e)
 }
 
 
-/* Transfer function for the forwards must-initialized problem.  */
+/* Transfer function for the forwards may-initialized problem.  */
 
 static bool
 df_live_transfer_function (int bb_index)
@@ -1549,7 +1548,7 @@ df_live_transfer_function (int bb_index)
 }
 
 
-/* And the LR info with the must-initialized registers, to produce the LIVE info.  */
+/* And the LR info with the may-initialized registers to produce the LIVE info.  */
 
 static void
 df_live_finalize (bitmap all_blocks)
@@ -1667,10 +1666,10 @@ df_live_verify_solution_start (void)
   df_live->solutions_dirty = true;
 
   problem_data = (struct df_live_problem_data *)df_live->problem_data;
-  problem_data->in = XNEWVEC (bitmap_head, last_basic_block);
-  problem_data->out = XNEWVEC (bitmap_head, last_basic_block);
+  problem_data->in = XNEWVEC (bitmap_head, last_basic_block_for_fn (cfun));
+  problem_data->out = XNEWVEC (bitmap_head, last_basic_block_for_fn (cfun));
 
-  FOR_ALL_BB (bb)
+  FOR_ALL_BB_FN (bb, cfun)
     {
       bitmap_initialize (&problem_data->in[bb->index], &problem_data->live_bitmaps);
       bitmap_initialize (&problem_data->out[bb->index], &problem_data->live_bitmaps);
@@ -1693,7 +1692,7 @@ df_live_verify_solution_end (void)
   if (!problem_data->out)
     return;
 
-  FOR_ALL_BB (bb)
+  FOR_ALL_BB_FN (bb, cfun)
     {
       if ((!bitmap_equal_p (&problem_data->in[bb->index], DF_LIVE_IN (bb)))
 	  || (!bitmap_equal_p (&problem_data->out[bb->index], DF_LIVE_OUT (bb))))
@@ -1705,7 +1704,7 @@ df_live_verify_solution_end (void)
 
   /* Cannot delete them immediately because you may want to dump them
      if the comparison fails.  */
-  FOR_ALL_BB (bb)
+  FOR_ALL_BB_FN (bb, cfun)
     {
       bitmap_clear (&problem_data->in[bb->index]);
       bitmap_clear (&problem_data->out[bb->index]);
@@ -1720,7 +1719,7 @@ df_live_verify_solution_end (void)
 
 /* All of the information associated with every instance of the problem.  */
 
-static struct df_problem problem_LIVE =
+static const struct df_problem problem_LIVE =
 {
   DF_LIVE,                      /* Problem id.  */
   DF_FORWARD,                   /* Direction.  */
@@ -1739,6 +1738,8 @@ static struct df_problem problem_LIVE =
   NULL,                         /* Debugging.  */
   df_live_top_dump,             /* Debugging start block.  */
   df_live_bottom_dump,          /* Debugging end block.  */
+  NULL,                         /* Debugging start insn.  */
+  NULL,                         /* Debugging end insn.  */
   df_live_verify_solution_start,/* Incremental solution verify start.  */
   df_live_verify_solution_end,  /* Incremental solution verify end.  */
   &problem_LR,                  /* Dependent problem.  */
@@ -1758,7 +1759,7 @@ df_live_add_problem (void)
   df_add_problem (&problem_LIVE);
   /* These will be initialized when df_scan_blocks processes each
      block.  */
-  df_live->out_of_date_transfer_functions = BITMAP_ALLOC (NULL);
+  df_live->out_of_date_transfer_functions = BITMAP_ALLOC (&df_bitmap_obstack);
 }
 
 
@@ -1769,7 +1770,7 @@ void
 df_live_set_all_dirty (void)
 {
   basic_block bb;
-  FOR_ALL_BB (bb)
+  FOR_ALL_BB_FN (bb, cfun)
     bitmap_set_bit (df_live->out_of_date_transfer_functions,
 		    bb->index);
 }
@@ -1795,7 +1796,7 @@ df_live_verify_transfer_functions (void)
 
   df_grow_insn_info ();
 
-  FOR_ALL_BB (bb)
+  FOR_ALL_BB_FN (bb, cfun)
     {
       struct df_live_bb_info *bb_info = df_live_get_bb_info (bb->index);
       bitmap_set_bit (&all_blocks, bb->index);
@@ -1840,6 +1841,409 @@ df_live_verify_transfer_functions (void)
 }
 
 /*----------------------------------------------------------------------------
+   MUST-INITIALIZED REGISTERS.
+----------------------------------------------------------------------------*/
+
+/* Private data used to verify the solution for this problem.  */
+struct df_mir_problem_data
+{
+  bitmap_head *in;
+  bitmap_head *out;
+  /* An obstack for the bitmaps we need for this problem.  */
+  bitmap_obstack mir_bitmaps;
+};
+
+
+/* Free basic block info.  */
+
+static void
+df_mir_free_bb_info (basic_block bb ATTRIBUTE_UNUSED,
+		     void *vbb_info)
+{
+  struct df_mir_bb_info *bb_info = (struct df_mir_bb_info *) vbb_info;
+  if (bb_info)
+    {
+      bitmap_clear (&bb_info->gen);
+      bitmap_clear (&bb_info->kill);
+      bitmap_clear (&bb_info->in);
+      bitmap_clear (&bb_info->out);
+    }
+}
+
+
+/* Allocate or reset bitmaps for DF_MIR blocks. The solution bits are
+   not touched unless the block is new.  */
+
+static void
+df_mir_alloc (bitmap all_blocks)
+{
+  unsigned int bb_index;
+  bitmap_iterator bi;
+  struct df_mir_problem_data *problem_data;
+
+  if (df_mir->problem_data)
+    problem_data = (struct df_mir_problem_data *) df_mir->problem_data;
+  else
+    {
+      problem_data = XNEW (struct df_mir_problem_data);
+      df_mir->problem_data = problem_data;
+
+      problem_data->out = NULL;
+      problem_data->in = NULL;
+      bitmap_obstack_initialize (&problem_data->mir_bitmaps);
+    }
+
+  df_grow_bb_info (df_mir);
+
+  EXECUTE_IF_SET_IN_BITMAP (all_blocks, 0, bb_index, bi)
+    {
+      struct df_mir_bb_info *bb_info = df_mir_get_bb_info (bb_index);
+
+      /* When bitmaps are already initialized, just clear them.  */
+      if (bb_info->kill.obstack)
+	{
+	  bitmap_clear (&bb_info->kill);
+	  bitmap_clear (&bb_info->gen);
+	}
+      else
+	{
+	  bitmap_initialize (&bb_info->kill, &problem_data->mir_bitmaps);
+	  bitmap_initialize (&bb_info->gen, &problem_data->mir_bitmaps);
+	  bitmap_initialize (&bb_info->in, &problem_data->mir_bitmaps);
+	  bitmap_initialize (&bb_info->out, &problem_data->mir_bitmaps);
+	  bitmap_set_range (&bb_info->in, 0, DF_REG_SIZE (df));
+	  bitmap_set_range (&bb_info->out, 0, DF_REG_SIZE (df));
+	}
+    }
+
+  df_mir->optional_p = 1;
+}
+
+
+/* Reset the global solution for recalculation.  */
+
+static void
+df_mir_reset (bitmap all_blocks)
+{
+  unsigned int bb_index;
+  bitmap_iterator bi;
+
+  EXECUTE_IF_SET_IN_BITMAP (all_blocks, 0, bb_index, bi)
+    {
+      struct df_mir_bb_info *bb_info = df_mir_get_bb_info (bb_index);
+
+      gcc_assert (bb_info);
+
+      bitmap_clear (&bb_info->in);
+      bitmap_set_range (&bb_info->in, 0, DF_REG_SIZE (df));
+      bitmap_clear (&bb_info->out);
+      bitmap_set_range (&bb_info->out, 0, DF_REG_SIZE (df));
+    }
+}
+
+
+/* Compute local uninitialized register info for basic block BB.  */
+
+static void
+df_mir_bb_local_compute (unsigned int bb_index)
+{
+  basic_block bb = BASIC_BLOCK_FOR_FN (cfun, bb_index);
+  struct df_mir_bb_info *bb_info = df_mir_get_bb_info (bb_index);
+  rtx_insn *insn;
+  int luid = 0;
+
+  /* Ignoring artificial defs is intentional: these often pretend that some
+     registers carry incoming arguments (when they are FUNCTION_ARG_REGNO) even
+     though they are not used for that.  As a result, conservatively assume
+     they may be uninitialized.  */
+
+  FOR_BB_INSNS (bb, insn)
+    {
+      unsigned int uid = INSN_UID (insn);
+      struct df_insn_info *insn_info = DF_INSN_UID_GET (uid);
+
+      /* Inserting labels does not always trigger the incremental
+	 rescanning.  */
+      if (!insn_info)
+	{
+	  gcc_assert (!INSN_P (insn));
+	  insn_info = df_insn_create_insn_record (insn);
+	}
+
+      DF_INSN_INFO_LUID (insn_info) = luid;
+      if (!INSN_P (insn))
+	continue;
+
+      luid++;
+      df_mir_simulate_one_insn (bb, insn, &bb_info->kill, &bb_info->gen);
+    }
+}
+
+
+/* Compute local uninitialized register info.  */
+
+static void
+df_mir_local_compute (bitmap all_blocks)
+{
+  unsigned int bb_index;
+  bitmap_iterator bi;
+
+  df_grow_insn_info ();
+
+  EXECUTE_IF_SET_IN_BITMAP (all_blocks, 0, bb_index, bi)
+    {
+      df_mir_bb_local_compute (bb_index);
+    }
+}
+
+
+/* Initialize the solution vectors.  */
+
+static void
+df_mir_init (bitmap all_blocks)
+{
+  df_mir_reset (all_blocks);
+}
+
+
+/* Initialize IN sets for blocks with no predecessors: when landing on such
+   blocks, assume all registers are uninitialized.  */
+
+static void
+df_mir_confluence_0 (basic_block bb)
+{
+  struct df_mir_bb_info *bb_info = df_mir_get_bb_info (bb->index);
+
+  bitmap_clear (&bb_info->in);
+}
+
+
+/* Forward confluence function that ignores fake edges.  */
+
+static bool
+df_mir_confluence_n (edge e)
+{
+  bitmap op1 = &df_mir_get_bb_info (e->dest->index)->in;
+  bitmap op2 = &df_mir_get_bb_info (e->src->index)->out;
+
+  if (e->flags & EDGE_FAKE)
+    return false;
+
+  /* A register is must-initialized at the entry of a basic block iff it is
+     must-initialized at the exit of all the predecessors.  */
+  return bitmap_and_into (op1, op2);
+}
+
+
+/* Transfer function for the forwards must-initialized problem.  */
+
+static bool
+df_mir_transfer_function (int bb_index)
+{
+  struct df_mir_bb_info *bb_info = df_mir_get_bb_info (bb_index);
+  bitmap in = &bb_info->in;
+  bitmap out = &bb_info->out;
+  bitmap gen = &bb_info->gen;
+  bitmap kill = &bb_info->kill;
+
+  return bitmap_ior_and_compl (out, gen, in, kill);
+}
+
+
+/* Free all storage associated with the problem.  */
+
+static void
+df_mir_free (void)
+{
+  struct df_mir_problem_data *problem_data
+    = (struct df_mir_problem_data *) df_mir->problem_data;
+  if (df_mir->block_info)
+    {
+      df_mir->block_info_size = 0;
+      free (df_mir->block_info);
+      df_mir->block_info = NULL;
+      bitmap_obstack_release (&problem_data->mir_bitmaps);
+      free (problem_data);
+      df_mir->problem_data = NULL;
+    }
+  free (df_mir);
+}
+
+
+/* Debugging info at top of bb.  */
+
+static void
+df_mir_top_dump (basic_block bb, FILE *file)
+{
+  struct df_mir_bb_info *bb_info = df_mir_get_bb_info (bb->index);
+
+  if (!bb_info)
+    return;
+
+  fprintf (file, ";; mir   in  \t");
+  df_print_regset (file, &bb_info->in);
+  fprintf (file, ";; mir   kill\t");
+  df_print_regset (file, &bb_info->kill);
+  fprintf (file, ";; mir   gen \t");
+  df_print_regset (file, &bb_info->gen);
+}
+
+/* Debugging info at bottom of bb.  */
+
+static void
+df_mir_bottom_dump (basic_block bb, FILE *file)
+{
+  struct df_mir_bb_info *bb_info = df_mir_get_bb_info (bb->index);
+
+  if (!bb_info)
+    return;
+
+  fprintf (file, ";; mir   out \t");
+  df_print_regset (file, &bb_info->out);
+}
+
+
+/* Build the datastructure to verify that the solution to the dataflow
+   equations is not dirty.  */
+
+static void
+df_mir_verify_solution_start (void)
+{
+  basic_block bb;
+  struct df_mir_problem_data *problem_data;
+  if (df_mir->solutions_dirty)
+    return;
+
+  /* Set it true so that the solution is recomputed.  */
+  df_mir->solutions_dirty = true;
+
+  problem_data = (struct df_mir_problem_data *) df_mir->problem_data;
+  problem_data->in = XNEWVEC (bitmap_head, last_basic_block_for_fn (cfun));
+  problem_data->out = XNEWVEC (bitmap_head, last_basic_block_for_fn (cfun));
+  bitmap_obstack_initialize (&problem_data->mir_bitmaps);
+
+  FOR_ALL_BB_FN (bb, cfun)
+    {
+      bitmap_initialize (&problem_data->in[bb->index], &problem_data->mir_bitmaps);
+      bitmap_initialize (&problem_data->out[bb->index], &problem_data->mir_bitmaps);
+      bitmap_copy (&problem_data->in[bb->index], DF_MIR_IN (bb));
+      bitmap_copy (&problem_data->out[bb->index], DF_MIR_OUT (bb));
+    }
+}
+
+
+/* Compare the saved datastructure and the new solution to the dataflow
+   equations.  */
+
+static void
+df_mir_verify_solution_end (void)
+{
+  struct df_mir_problem_data *problem_data;
+  basic_block bb;
+
+  problem_data = (struct df_mir_problem_data *) df_mir->problem_data;
+  if (!problem_data->out)
+    return;
+
+  FOR_ALL_BB_FN (bb, cfun)
+    {
+      if ((!bitmap_equal_p (&problem_data->in[bb->index], DF_MIR_IN (bb)))
+	  || (!bitmap_equal_p (&problem_data->out[bb->index], DF_MIR_OUT (bb))))
+	gcc_unreachable ();
+    }
+
+  /* Cannot delete them immediately because you may want to dump them
+     if the comparison fails.  */
+  FOR_ALL_BB_FN (bb, cfun)
+    {
+      bitmap_clear (&problem_data->in[bb->index]);
+      bitmap_clear (&problem_data->out[bb->index]);
+    }
+
+  free (problem_data->in);
+  free (problem_data->out);
+  bitmap_obstack_release (&problem_data->mir_bitmaps);
+  free (problem_data);
+  df_mir->problem_data = NULL;
+}
+
+
+/* All of the information associated with every instance of the problem.  */
+
+static const struct df_problem problem_MIR =
+{
+  DF_MIR,                       /* Problem id.  */
+  DF_FORWARD,                   /* Direction.  */
+  df_mir_alloc,                 /* Allocate the problem specific data.  */
+  df_mir_reset,                 /* Reset global information.  */
+  df_mir_free_bb_info,          /* Free basic block info.  */
+  df_mir_local_compute,         /* Local compute function.  */
+  df_mir_init,                  /* Init the solution specific data.  */
+  df_worklist_dataflow,         /* Worklist solver.  */
+  df_mir_confluence_0,          /* Confluence operator 0.  */
+  df_mir_confluence_n,          /* Confluence operator n.  */
+  df_mir_transfer_function,     /* Transfer function.  */
+  NULL,                         /* Finalize function.  */
+  df_mir_free,                  /* Free all of the problem information.  */
+  df_mir_free,                  /* Remove this problem from the stack of dataflow problems.  */
+  NULL,                         /* Debugging.  */
+  df_mir_top_dump,              /* Debugging start block.  */
+  df_mir_bottom_dump,           /* Debugging end block.  */
+  NULL,                         /* Debugging start insn.  */
+  NULL,                         /* Debugging end insn.  */
+  df_mir_verify_solution_start, /* Incremental solution verify start.  */
+  df_mir_verify_solution_end,   /* Incremental solution verify end.  */
+  NULL,                         /* Dependent problem.  */
+  sizeof (struct df_mir_bb_info),/* Size of entry of block_info array.  */
+  TV_DF_MIR,                    /* Timing variable.  */
+  false                         /* Reset blocks on dropping out of blocks_to_analyze.  */
+};
+
+
+/* Create a new DATAFLOW instance and add it to an existing instance
+   of DF.  */
+
+void
+df_mir_add_problem (void)
+{
+  df_add_problem (&problem_MIR);
+  /* These will be initialized when df_scan_blocks processes each
+     block.  */
+  df_mir->out_of_date_transfer_functions = BITMAP_ALLOC (&df_bitmap_obstack);
+}
+
+
+/* Apply the effects of the gen/kills in INSN to the corresponding bitmaps.  */
+
+void
+df_mir_simulate_one_insn (basic_block bb ATTRIBUTE_UNUSED, rtx_insn *insn,
+			  bitmap kill, bitmap gen)
+{
+  df_ref def;
+
+  FOR_EACH_INSN_DEF (def, insn)
+    {
+      unsigned int regno = DF_REF_REGNO (def);
+
+      /* The order of GENs/KILLs matters, so if this def clobbers a reg, any
+	 previous gen is irrelevant (and reciprocally).  Also, claim that a
+	 register is GEN only if it is in all cases.  */
+      if (DF_REF_FLAGS_IS_SET (def, DF_REF_MUST_CLOBBER | DF_REF_MAY_CLOBBER))
+	{
+	  bitmap_set_bit (kill, regno);
+	  bitmap_clear_bit (gen, regno);
+	}
+      /* In the worst case, partial and conditional defs can leave bits
+	 uninitialized, so assume they do not change anything.  */
+      else if (!DF_REF_FLAGS_IS_SET (def, DF_REF_PARTIAL | DF_REF_CONDITIONAL))
+	{
+	  bitmap_set_bit (gen, regno);
+	  bitmap_clear_bit (kill, regno);
+	}
+    }
+}
+
+/*----------------------------------------------------------------------------
    CREATE DEF_USE (DU) and / or USE_DEF (UD) CHAINS
 
    Link either the defs to the uses and / or the uses to the defs.
@@ -1858,7 +2262,7 @@ struct df_link *
 df_chain_create (df_ref src, df_ref dst)
 {
   struct df_link *head = DF_REF_CHAIN (src);
-  struct df_link *link = (struct df_link *) pool_alloc (df_chain->block_pool);
+  struct df_link *link = df_chain->block_pool->allocate ();
 
   DF_REF_CHAIN (src) = link;
   link->next = head;
@@ -1883,7 +2287,7 @@ df_chain_unlink_1 (df_ref ref, df_ref target)
 	    prev->next = chain->next;
 	  else
 	    DF_REF_CHAIN (ref) = chain->next;
-	  pool_free (df_chain->block_pool, chain);
+	  df_chain->block_pool->remove (chain);
 	  return;
 	}
       prev = chain;
@@ -1903,7 +2307,7 @@ df_chain_unlink (df_ref ref)
       struct df_link *next = chain->next;
       /* Delete the other side if it exists.  */
       df_chain_unlink_1 (chain->ref, ref);
-      pool_free (df_chain->block_pool, chain);
+      df_chain->block_pool->remove (chain);
       chain = next;
     }
   DF_REF_CHAIN (ref) = NULL;
@@ -1935,40 +2339,36 @@ df_chain_remove_problem (void)
 
   /* Wholesale destruction of the old chains.  */
   if (df_chain->block_pool)
-    free_alloc_pool (df_chain->block_pool);
+    delete df_chain->block_pool;
 
   EXECUTE_IF_SET_IN_BITMAP (df_chain->out_of_date_transfer_functions, 0, bb_index, bi)
     {
-      rtx insn;
-      df_ref *def_rec;
-      df_ref *use_rec;
-      basic_block bb = BASIC_BLOCK (bb_index);
+      rtx_insn *insn;
+      df_ref def, use;
+      basic_block bb = BASIC_BLOCK_FOR_FN (cfun, bb_index);
 
       if (df_chain_problem_p (DF_DU_CHAIN))
-	for (def_rec = df_get_artificial_defs (bb->index); *def_rec; def_rec++)
-	  DF_REF_CHAIN (*def_rec) = NULL;
+	FOR_EACH_ARTIFICIAL_DEF (def, bb_index)
+	  DF_REF_CHAIN (def) = NULL;
       if (df_chain_problem_p (DF_UD_CHAIN))
-	for (use_rec = df_get_artificial_uses (bb->index); *use_rec; use_rec++)
-	  DF_REF_CHAIN (*use_rec) = NULL;
+	FOR_EACH_ARTIFICIAL_USE (use, bb_index)
+	  DF_REF_CHAIN (use) = NULL;
 
       FOR_BB_INSNS (bb, insn)
-	{
-	  unsigned int uid = INSN_UID (insn);
-
-	  if (INSN_P (insn))
-	    {
-	      if (df_chain_problem_p (DF_DU_CHAIN))
-		for (def_rec = DF_INSN_UID_DEFS (uid); *def_rec; def_rec++)
-		  DF_REF_CHAIN (*def_rec) = NULL;
-	      if (df_chain_problem_p (DF_UD_CHAIN))
-		{
-		  for (use_rec = DF_INSN_UID_USES (uid); *use_rec; use_rec++)
-		    DF_REF_CHAIN (*use_rec) = NULL;
-		  for (use_rec = DF_INSN_UID_EQ_USES (uid); *use_rec; use_rec++)
-		    DF_REF_CHAIN (*use_rec) = NULL;
-		}
-	    }
-	}
+	if (INSN_P (insn))
+	  {
+	    df_insn_info *insn_info = DF_INSN_INFO_GET (insn);
+	    if (df_chain_problem_p (DF_DU_CHAIN))
+	      FOR_EACH_INSN_INFO_DEF (def, insn_info)
+		DF_REF_CHAIN (def) = NULL;
+	    if (df_chain_problem_p (DF_UD_CHAIN))
+	      {
+		FOR_EACH_INSN_INFO_USE (use, insn_info)
+		  DF_REF_CHAIN (use) = NULL;
+		FOR_EACH_INSN_INFO_EQ_USE (use, insn_info)
+		  DF_REF_CHAIN (use) = NULL;
+	      }
+	  }
     }
 
   bitmap_clear (df_chain->out_of_date_transfer_functions);
@@ -1993,8 +2393,7 @@ static void
 df_chain_alloc (bitmap all_blocks ATTRIBUTE_UNUSED)
 {
   df_chain_remove_problem ();
-  df_chain->block_pool = create_alloc_pool ("df_chain_block pool",
-					 sizeof (struct df_link), 50);
+  df_chain->block_pool = new object_allocator<df_link> ("df_chain_block pool");
   df_chain->optional_p = true;
 }
 
@@ -2012,15 +2411,14 @@ df_chain_reset (bitmap blocks_to_clear ATTRIBUTE_UNUSED)
 
 static void
 df_chain_create_bb_process_use (bitmap local_rd,
-				df_ref *use_rec,
+				df_ref use,
 				int top_flag)
 {
   bitmap_iterator bi;
   unsigned int def_index;
 
-  while (*use_rec)
+  for (; use; use = DF_REF_NEXT_LOC (use))
     {
-      df_ref use = *use_rec;
       unsigned int uregno = DF_REF_REGNO (use);
       if ((!(df->changeable_flags & DF_NO_HARD_REGS))
 	  || (uregno >= FIRST_PSEUDO_REGISTER))
@@ -2049,8 +2447,6 @@ df_chain_create_bb_process_use (bitmap local_rd,
 		}
 	    }
 	}
-
-      use_rec++;
     }
 }
 
@@ -2060,9 +2456,9 @@ df_chain_create_bb_process_use (bitmap local_rd,
 static void
 df_chain_create_bb (unsigned int bb_index)
 {
-  basic_block bb = BASIC_BLOCK (bb_index);
+  basic_block bb = BASIC_BLOCK_FOR_FN (cfun, bb_index);
   struct df_rd_bb_info *bb_info = df_rd_get_bb_info (bb_index);
-  rtx insn;
+  rtx_insn *insn;
   bitmap_head cpy;
 
   bitmap_initialize (&cpy, &bitmap_default_obstack);
@@ -2132,7 +2528,7 @@ df_chain_finalize (bitmap all_blocks)
 static void
 df_chain_free (void)
 {
-  free_alloc_pool (df_chain->block_pool);
+  delete df_chain->block_pool;
   BITMAP_FREE (df_chain->out_of_date_transfer_functions);
   free (df_chain);
 }
@@ -2141,113 +2537,112 @@ df_chain_free (void)
 /* Debugging info.  */
 
 static void
-df_chain_top_dump (basic_block bb, FILE *file)
+df_chain_bb_dump (basic_block bb, FILE *file, bool top)
 {
+  /* Artificials are only hard regs.  */
+  if (df->changeable_flags & DF_NO_HARD_REGS)
+    return;
+  if (df_chain_problem_p (DF_UD_CHAIN))
+    {
+      df_ref use;
+
+      fprintf (file,
+	       ";;  UD chains for artificial uses at %s\n",
+	       top ? "top" : "bottom");
+      FOR_EACH_ARTIFICIAL_USE (use, bb->index)
+	if ((top && (DF_REF_FLAGS (use) & DF_REF_AT_TOP))
+	    || (!top && !(DF_REF_FLAGS (use) & DF_REF_AT_TOP)))
+	  {
+	    fprintf (file, ";;   reg %d ", DF_REF_REGNO (use));
+	    df_chain_dump (DF_REF_CHAIN (use), file);
+	    fprintf (file, "\n");
+	  }
+    }
   if (df_chain_problem_p (DF_DU_CHAIN))
     {
-      rtx insn;
-      df_ref *def_rec = df_get_artificial_defs (bb->index);
-      if (*def_rec)
-	{
+      df_ref def;
 
-	  fprintf (file, ";;  DU chains for artificial defs\n");
-	  while (*def_rec)
-	    {
-	      df_ref def = *def_rec;
-	      fprintf (file, ";;   reg %d ", DF_REF_REGNO (def));
-	      df_chain_dump (DF_REF_CHAIN (def), file);
-	      fprintf (file, "\n");
-	      def_rec++;
-	    }
-	}
-
-      FOR_BB_INSNS (bb, insn)
-	{
-	  if (INSN_P (insn))
-	    {
-	      struct df_insn_info *insn_info = DF_INSN_INFO_GET (insn);
-	      def_rec = DF_INSN_INFO_DEFS (insn_info);
-	      if (*def_rec)
-		{
-		  fprintf (file, ";;   DU chains for insn luid %d uid %d\n",
-			   DF_INSN_INFO_LUID (insn_info), INSN_UID (insn));
-
-		  while (*def_rec)
-		    {
-		      df_ref def = *def_rec;
-		      fprintf (file, ";;      reg %d ", DF_REF_REGNO (def));
-		      if (DF_REF_FLAGS (def) & DF_REF_READ_WRITE)
-			fprintf (file, "read/write ");
-		      df_chain_dump (DF_REF_CHAIN (def), file);
-		      fprintf (file, "\n");
-		      def_rec++;
-		    }
-		}
-	    }
-	}
+      fprintf (file,
+	       ";;  DU chains for artificial defs at %s\n",
+	       top ? "top" : "bottom");
+      FOR_EACH_ARTIFICIAL_DEF (def, bb->index)
+	if ((top && (DF_REF_FLAGS (def) & DF_REF_AT_TOP))
+	    || (!top && !(DF_REF_FLAGS (def) & DF_REF_AT_TOP)))
+	  {
+	    fprintf (file, ";;   reg %d ", DF_REF_REGNO (def));
+	    df_chain_dump (DF_REF_CHAIN (def), file);
+	    fprintf (file, "\n");
+	  }
     }
 }
 
+static void
+df_chain_top_dump (basic_block bb, FILE *file)
+{
+  df_chain_bb_dump (bb, file, /*top=*/true);
+}
 
 static void
 df_chain_bottom_dump (basic_block bb, FILE *file)
 {
-  if (df_chain_problem_p (DF_UD_CHAIN))
+  df_chain_bb_dump (bb, file, /*top=*/false);
+}
+
+static void
+df_chain_insn_top_dump (const rtx_insn *insn, FILE *file)
+{
+  if (df_chain_problem_p (DF_UD_CHAIN) && INSN_P (insn))
     {
-      rtx insn;
-      df_ref *use_rec = df_get_artificial_uses (bb->index);
+      struct df_insn_info *insn_info = DF_INSN_INFO_GET (insn);
+      df_ref use;
 
-      if (*use_rec)
-	{
-	  fprintf (file, ";;  UD chains for artificial uses\n");
-	  while (*use_rec)
-	    {
-	      df_ref use = *use_rec;
-	      fprintf (file, ";;   reg %d ", DF_REF_REGNO (use));
-	      df_chain_dump (DF_REF_CHAIN (use), file);
-	      fprintf (file, "\n");
-	      use_rec++;
-	    }
-	}
-
-      FOR_BB_INSNS (bb, insn)
-	{
-	  if (INSN_P (insn))
-	    {
-	      struct df_insn_info *insn_info = DF_INSN_INFO_GET (insn);
-	      df_ref *eq_use_rec = DF_INSN_INFO_EQ_USES (insn_info);
-	      use_rec = DF_INSN_INFO_USES (insn_info);
-	      if (*use_rec || *eq_use_rec)
-		{
-		  fprintf (file, ";;   UD chains for insn luid %d uid %d\n",
-			   DF_INSN_INFO_LUID (insn_info), INSN_UID (insn));
-
-		  while (*use_rec)
-		    {
-		      df_ref use = *use_rec;
-		      fprintf (file, ";;      reg %d ", DF_REF_REGNO (use));
-		      if (DF_REF_FLAGS (use) & DF_REF_READ_WRITE)
-			fprintf (file, "read/write ");
-		      df_chain_dump (DF_REF_CHAIN (use), file);
-		      fprintf (file, "\n");
-		      use_rec++;
-		    }
-		  while (*eq_use_rec)
-		    {
-		      df_ref use = *eq_use_rec;
-		      fprintf (file, ";;   eq_note reg %d ", DF_REF_REGNO (use));
-		      df_chain_dump (DF_REF_CHAIN (use), file);
-		      fprintf (file, "\n");
-		      eq_use_rec++;
-		    }
-		}
-	    }
-	}
+      fprintf (file, ";;   UD chains for insn luid %d uid %d\n",
+	       DF_INSN_INFO_LUID (insn_info), INSN_UID (insn));
+      FOR_EACH_INSN_INFO_USE (use, insn_info)
+	if (!HARD_REGISTER_NUM_P (DF_REF_REGNO (use))
+	    || !(df->changeable_flags & DF_NO_HARD_REGS))
+	  {
+	    fprintf (file, ";;      reg %d ", DF_REF_REGNO (use));
+	    if (DF_REF_FLAGS (use) & DF_REF_READ_WRITE)
+	      fprintf (file, "read/write ");
+	    df_chain_dump (DF_REF_CHAIN (use), file);
+	    fprintf (file, "\n");
+	  }
+      FOR_EACH_INSN_INFO_EQ_USE (use, insn_info)
+	if (!HARD_REGISTER_NUM_P (DF_REF_REGNO (use))
+	    || !(df->changeable_flags & DF_NO_HARD_REGS))
+	  {
+	    fprintf (file, ";;   eq_note reg %d ", DF_REF_REGNO (use));
+	    df_chain_dump (DF_REF_CHAIN (use), file);
+	    fprintf (file, "\n");
+	  }
     }
 }
 
+static void
+df_chain_insn_bottom_dump (const rtx_insn *insn, FILE *file)
+{
+  if (df_chain_problem_p (DF_DU_CHAIN) && INSN_P (insn))
+    {
+      struct df_insn_info *insn_info = DF_INSN_INFO_GET (insn);
+      df_ref def;
+      fprintf (file, ";;   DU chains for insn luid %d uid %d\n",
+	       DF_INSN_INFO_LUID (insn_info), INSN_UID (insn));
+      FOR_EACH_INSN_INFO_DEF (def, insn_info)
+	if (!HARD_REGISTER_NUM_P (DF_REF_REGNO (def))
+	    || !(df->changeable_flags & DF_NO_HARD_REGS))
+	  {
+	    fprintf (file, ";;      reg %d ", DF_REF_REGNO (def));
+	    if (DF_REF_FLAGS (def) & DF_REF_READ_WRITE)
+	      fprintf (file, "read/write ");
+	    df_chain_dump (DF_REF_CHAIN (def), file);
+	    fprintf (file, "\n");
+	  }
+      fprintf (file, "\n");
+    }
+}
 
-static struct df_problem problem_CHAIN =
+static const struct df_problem problem_CHAIN =
 {
   DF_CHAIN,                   /* Problem id.  */
   DF_NONE,                    /* Direction.  */
@@ -2266,6 +2661,8 @@ static struct df_problem problem_CHAIN =
   NULL,                       /* Debugging.  */
   df_chain_top_dump,          /* Debugging start block.  */
   df_chain_bottom_dump,       /* Debugging end block.  */
+  df_chain_insn_top_dump,     /* Debugging start insn.  */
+  df_chain_insn_bottom_dump,  /* Debugging end insn.  */
   NULL,                       /* Incremental solution verify start.  */
   NULL,                       /* Incremental solution verify end.  */
   &problem_RD,                /* Dependent problem.  */
@@ -2284,7 +2681,7 @@ df_chain_add_problem (unsigned int chain_flags)
 {
   df_add_problem (&problem_CHAIN);
   df_chain->local_flags = chain_flags;
-  df_chain->out_of_date_transfer_functions = BITMAP_ALLOC (NULL);
+  df_chain->out_of_date_transfer_functions = BITMAP_ALLOC (&df_bitmap_obstack);
 }
 
 #undef df_chain_problem_p
@@ -2350,7 +2747,7 @@ df_word_lr_alloc (bitmap all_blocks ATTRIBUTE_UNUSED)
 
   bitmap_obstack_initialize (&problem_data->word_lr_bitmaps);
 
-  FOR_EACH_BB (bb)
+  FOR_EACH_BB_FN (bb, cfun)
     bitmap_set_bit (df_word_lr->out_of_date_transfer_functions, bb->index);
 
   bitmap_set_bit (df_word_lr->out_of_date_transfer_functions, ENTRY_BLOCK);
@@ -2409,7 +2806,7 @@ df_word_lr_mark_ref (df_ref ref, bool is_set, regset live)
 {
   rtx orig_reg = DF_REF_REG (ref);
   rtx reg = orig_reg;
-  enum machine_mode reg_mode;
+  machine_mode reg_mode;
   unsigned regno;
   /* Left at -1 for whole accesses.  */
   int which_subword = -1;
@@ -2454,47 +2851,34 @@ df_word_lr_mark_ref (df_ref ref, bool is_set, regset live)
 static void
 df_word_lr_bb_local_compute (unsigned int bb_index)
 {
-  basic_block bb = BASIC_BLOCK (bb_index);
+  basic_block bb = BASIC_BLOCK_FOR_FN (cfun, bb_index);
   struct df_word_lr_bb_info *bb_info = df_word_lr_get_bb_info (bb_index);
-  rtx insn;
-  df_ref *def_rec;
-  df_ref *use_rec;
+  rtx_insn *insn;
+  df_ref def, use;
 
   /* Ensure that artificial refs don't contain references to pseudos.  */
-  for (def_rec = df_get_artificial_defs (bb_index); *def_rec; def_rec++)
-    {
-      df_ref def = *def_rec;
-      gcc_assert (DF_REF_REGNO (def) < FIRST_PSEUDO_REGISTER);
-    }
+  FOR_EACH_ARTIFICIAL_DEF (def, bb_index)
+    gcc_assert (DF_REF_REGNO (def) < FIRST_PSEUDO_REGISTER);
 
-  for (use_rec = df_get_artificial_uses (bb_index); *use_rec; use_rec++)
-    {
-      df_ref use = *use_rec;
-      gcc_assert (DF_REF_REGNO (use) < FIRST_PSEUDO_REGISTER);
-    }
+  FOR_EACH_ARTIFICIAL_USE (use, bb_index)
+    gcc_assert (DF_REF_REGNO (use) < FIRST_PSEUDO_REGISTER);
 
   FOR_BB_INSNS_REVERSE (bb, insn)
     {
-      unsigned int uid = INSN_UID (insn);
-
       if (!NONDEBUG_INSN_P (insn))
 	continue;
-      for (def_rec = DF_INSN_UID_DEFS (uid); *def_rec; def_rec++)
-	{
-	  df_ref def = *def_rec;
-	  /* If the def is to only part of the reg, it does
-	     not kill the other defs that reach here.  */
-	  if (!(DF_REF_FLAGS (def) & (DF_REF_CONDITIONAL)))
-	    {
-	      df_word_lr_mark_ref (def, true, &bb_info->def);
-	      df_word_lr_mark_ref (def, false, &bb_info->use);
-	    }
-	}
-      for (use_rec = DF_INSN_UID_USES (uid); *use_rec; use_rec++)
-	{
-	  df_ref use = *use_rec;
-	  df_word_lr_mark_ref (use, true, &bb_info->use);
-	}
+
+      df_insn_info *insn_info = DF_INSN_INFO_GET (insn);
+      FOR_EACH_INSN_INFO_DEF (def, insn_info)
+	/* If the def is to only part of the reg, it does
+	   not kill the other defs that reach here.  */
+	if (!(DF_REF_FLAGS (def) & (DF_REF_CONDITIONAL)))
+	  {
+	    df_word_lr_mark_ref (def, true, &bb_info->def);
+	    df_word_lr_mark_ref (def, false, &bb_info->use);
+	  }
+      FOR_EACH_INSN_INFO_USE (use, insn_info)
+	df_word_lr_mark_ref (use, true, &bb_info->use);
     }
 }
 
@@ -2625,7 +3009,7 @@ df_word_lr_bottom_dump (basic_block bb, FILE *file)
 
 /* All of the information associated with every instance of the problem.  */
 
-static struct df_problem problem_WORD_LR =
+static const struct df_problem problem_WORD_LR =
 {
   DF_WORD_LR,                      /* Problem id.  */
   DF_BACKWARD,                     /* Direction.  */
@@ -2644,9 +3028,11 @@ static struct df_problem problem_WORD_LR =
   NULL,                            /* Debugging.  */
   df_word_lr_top_dump,             /* Debugging start block.  */
   df_word_lr_bottom_dump,          /* Debugging end block.  */
+  NULL,                            /* Debugging start insn.  */
+  NULL,                            /* Debugging end insn.  */
   NULL,                            /* Incremental solution verify start.  */
   NULL,                            /* Incremental solution verify end.  */
-  NULL,                       /* Dependent problem.  */
+  NULL,                            /* Dependent problem.  */
   sizeof (struct df_word_lr_bb_info),/* Size of entry of block_info array.  */
   TV_DF_WORD_LR,                   /* Timing variable.  */
   false                            /* Reset blocks on dropping out of blocks_to_analyze.  */
@@ -2663,7 +3049,7 @@ df_word_lr_add_problem (void)
   df_add_problem (&problem_WORD_LR);
   /* These will be initialized when df_scan_blocks processes each
      block.  */
-  df_word_lr->out_of_date_transfer_functions = BITMAP_ALLOC (NULL);
+  df_word_lr->out_of_date_transfer_functions = BITMAP_ALLOC (&df_bitmap_obstack);
 }
 
 
@@ -2673,20 +3059,16 @@ df_word_lr_add_problem (void)
    an insn.  */
 
 bool
-df_word_lr_simulate_defs (rtx insn, bitmap live)
+df_word_lr_simulate_defs (rtx_insn *insn, bitmap live)
 {
   bool changed = false;
-  df_ref *def_rec;
-  unsigned int uid = INSN_UID (insn);
+  df_ref def;
 
-  for (def_rec = DF_INSN_UID_DEFS (uid); *def_rec; def_rec++)
-    {
-      df_ref def = *def_rec;
-      if (DF_REF_FLAGS (def) & DF_REF_CONDITIONAL)
-	changed = true;
-      else
-	changed |= df_word_lr_mark_ref (*def_rec, false, live);
-    }
+  FOR_EACH_INSN_DEF (def, insn)
+    if (DF_REF_FLAGS (def) & DF_REF_CONDITIONAL)
+      changed = true;
+    else
+      changed |= df_word_lr_mark_ref (def, false, live);
   return changed;
 }
 
@@ -2694,13 +3076,12 @@ df_word_lr_simulate_defs (rtx insn, bitmap live)
 /* Simulate the effects of the uses of INSN on LIVE.  */
 
 void
-df_word_lr_simulate_uses (rtx insn, bitmap live)
+df_word_lr_simulate_uses (rtx_insn *insn, bitmap live)
 {
-  df_ref *use_rec;
-  unsigned int uid = INSN_UID (insn);
+  df_ref use;
 
-  for (use_rec = DF_INSN_UID_USES (uid); *use_rec; use_rec++)
-    df_word_lr_mark_ref (*use_rec, true, live);
+  FOR_EACH_INSN_USE (use, insn)
+    df_word_lr_mark_ref (use, true, live);
 }
 
 /*----------------------------------------------------------------------------
@@ -2713,9 +3094,9 @@ df_note_alloc (bitmap all_blocks ATTRIBUTE_UNUSED)
   df_note->optional_p = true;
 }
 
-#ifdef REG_DEAD_DEBUGGING
+/* This is only used if REG_DEAD_DEBUGGING is in effect.  */
 static void
-df_print_note (const char *prefix, rtx insn, rtx note)
+df_print_note (const char *prefix, rtx_insn *insn, rtx note)
 {
   if (dump_file)
     {
@@ -2724,7 +3105,6 @@ df_print_note (const char *prefix, rtx insn, rtx note)
       fprintf (dump_file, "\n");
     }
 }
-#endif
 
 
 /* After reg-stack, the x86 floating point stack regs are difficult to
@@ -2747,13 +3127,10 @@ df_ignore_stack_reg (int regno ATTRIBUTE_UNUSED)
 #endif
 
 
-/* Remove all of the REG_DEAD or REG_UNUSED notes from INSN and add
-   them to OLD_DEAD_NOTES and OLD_UNUSED_NOTES.  Remove also
-   REG_EQUAL/REG_EQUIV notes referring to dead pseudos using LIVE
-   as the bitmap of currently live registers.  */
+/* Remove all of the REG_DEAD or REG_UNUSED notes from INSN.  */
 
 static void
-df_kill_notes (rtx insn, bitmap live)
+df_remove_dead_and_unused_notes (rtx_insn *insn)
 {
   rtx *pprev = &REG_NOTES (insn);
   rtx link = *pprev;
@@ -2773,9 +3150,8 @@ df_kill_notes (rtx insn, bitmap live)
 	  else
 	    {
 	      rtx next = XEXP (link, 1);
-#ifdef REG_DEAD_DEBUGGING
-	      df_print_note ("deleting: ", insn, link);
-#endif
+	      if (REG_DEAD_DEBUGGING)
+		df_print_note ("deleting: ", insn, link);
 	      free_EXPR_LIST_node (link);
 	      *pprev = link = next;
 	    }
@@ -2792,14 +3168,34 @@ df_kill_notes (rtx insn, bitmap live)
 	  else
 	    {
 	      rtx next = XEXP (link, 1);
-#ifdef REG_DEAD_DEBUGGING
-	      df_print_note ("deleting: ", insn, link);
-#endif
+	      if (REG_DEAD_DEBUGGING)
+		df_print_note ("deleting: ", insn, link);
 	      free_EXPR_LIST_node (link);
 	      *pprev = link = next;
 	    }
 	  break;
 
+	default:
+	  pprev = &XEXP (link, 1);
+	  link = *pprev;
+	  break;
+	}
+    }
+}
+
+/* Remove REG_EQUAL/REG_EQUIV notes referring to dead pseudos using LIVE
+   as the bitmap of currently live registers.  */
+
+static void
+df_remove_dead_eq_notes (rtx_insn *insn, bitmap live)
+{
+  rtx *pprev = &REG_NOTES (insn);
+  rtx link = *pprev;
+
+  while (link)
+    {
+      switch (REG_NOTE_KIND (link))
+	{
 	case REG_EQUAL:
 	case REG_EQUIV:
 	  {
@@ -2807,28 +3203,24 @@ df_kill_notes (rtx insn, bitmap live)
 	       one REG_EQUAL/EQUIV note, all of EQ_USES will refer to this note
 	       so we need to purge the complete EQ_USES vector when removing
 	       the note using df_notes_rescan.  */
-	    df_ref *use_rec;
+	    df_ref use;
 	    bool deleted = false;
 
-	    for (use_rec = DF_INSN_EQ_USES (insn); *use_rec; use_rec++)
-	      {
-		df_ref use = *use_rec;
-		if (DF_REF_REGNO (use) > FIRST_PSEUDO_REGISTER
-		    && DF_REF_LOC (use)
-		    && (DF_REF_FLAGS (use) & DF_REF_IN_NOTE)
-		    && ! bitmap_bit_p (live, DF_REF_REGNO (use))
-		    && loc_mentioned_in_p (DF_REF_LOC (use), XEXP (link, 0)))
-		  {
-		    deleted = true;
-		    break;
-		  }
-	      }
+	    FOR_EACH_INSN_EQ_USE (use, insn)
+	      if (DF_REF_REGNO (use) > FIRST_PSEUDO_REGISTER
+		  && DF_REF_LOC (use)
+		  && (DF_REF_FLAGS (use) & DF_REF_IN_NOTE)
+		  && !bitmap_bit_p (live, DF_REF_REGNO (use))
+		  && loc_mentioned_in_p (DF_REF_LOC (use), XEXP (link, 0)))
+		{
+		  deleted = true;
+		  break;
+		}
 	    if (deleted)
 	      {
 		rtx next;
-#ifdef REG_DEAD_DEBUGGING
-		df_print_note ("deleting: ", insn, link);
-#endif
+		if (REG_DEAD_DEBUGGING)
+		  df_print_note ("deleting: ", insn, link);
 		next = XEXP (link, 1);
 		free_EXPR_LIST_node (link);
 		*pprev = link = next;
@@ -2841,6 +3233,7 @@ df_kill_notes (rtx insn, bitmap live)
 	      }
 	    break;
 	  }
+
 	default:
 	  pprev = &XEXP (link, 1);
 	  link = *pprev;
@@ -2849,11 +3242,10 @@ df_kill_notes (rtx insn, bitmap live)
     }
 }
 
-
 /* Set a NOTE_TYPE note for REG in INSN.  */
 
 static inline void
-df_set_note (enum reg_note note_type, rtx insn, rtx reg)
+df_set_note (enum reg_note note_type, rtx_insn *insn, rtx reg)
 {
   gcc_checking_assert (!DEBUG_INSN_P (insn));
   add_reg_note (insn, note_type, reg);
@@ -2886,25 +3278,6 @@ df_whole_mw_reg_unused_p (struct df_mw_hardreg *mws,
 }
 
 
-/* Node of a linked list of uses of dead REGs in debug insns.  */
-struct dead_debug_use
-{
-  df_ref use;
-  struct dead_debug_use *next;
-};
-
-/* Linked list of the above, with a bitmap of the REGs in the
-   list.  */
-struct dead_debug
-{
-  struct dead_debug_use *head;
-  bitmap used;
-  bitmap to_rescan;
-};
-
-static void dead_debug_reset (struct dead_debug *, unsigned int);
-
-
 /* Set the REG_UNUSED notes for the multiword hardreg defs in INSN
    based on the bits in LIVE.  Do not generate notes for registers in
    artificial uses.  DO_NOT_GEN is updated so that REG_DEAD notes are
@@ -2913,28 +3286,26 @@ static void dead_debug_reset (struct dead_debug *, unsigned int);
 */
 
 static void
-df_set_unused_notes_for_mw (rtx insn, struct df_mw_hardreg *mws,
+df_set_unused_notes_for_mw (rtx_insn *insn, struct df_mw_hardreg *mws,
 			    bitmap live, bitmap do_not_gen,
 			    bitmap artificial_uses,
-			    struct dead_debug *debug)
+			    struct dead_debug_local *debug)
 {
   unsigned int r;
 
-#ifdef REG_DEAD_DEBUGGING
-  if (dump_file)
+  if (REG_DEAD_DEBUGGING && dump_file)
     fprintf (dump_file, "mw_set_unused looking at mws[%d..%d]\n",
 	     mws->start_regno, mws->end_regno);
-#endif
 
   if (df_whole_mw_reg_unused_p (mws, live, artificial_uses))
     {
       unsigned int regno = mws->start_regno;
       df_set_note (REG_UNUSED, insn, mws->mw_reg);
-      dead_debug_reset (debug, regno);
+      dead_debug_insert_temp (debug, regno, insn, DEBUG_TEMP_AFTER_WITH_REG);
 
-#ifdef REG_DEAD_DEBUGGING
-      df_print_note ("adding 1: ", insn, REG_NOTES (insn));
-#endif
+      if (REG_DEAD_DEBUGGING)
+	df_print_note ("adding 1: ", insn, REG_NOTES (insn));
+
       bitmap_set_bit (do_not_gen, regno);
       /* Only do this if the value is totally dead.  */
     }
@@ -2945,10 +3316,9 @@ df_set_unused_notes_for_mw (rtx insn, struct df_mw_hardreg *mws,
 	    && !bitmap_bit_p (artificial_uses, r))
 	  {
 	    df_set_note (REG_UNUSED, insn, regno_reg_rtx[r]);
-	    dead_debug_reset (debug, r);
-#ifdef REG_DEAD_DEBUGGING
-	    df_print_note ("adding 2: ", insn, REG_NOTES (insn));
-#endif
+	    dead_debug_insert_temp (debug, r, insn, DEBUG_TEMP_AFTER_WITH_REG);
+	    if (REG_DEAD_DEBUGGING)
+	      df_print_note ("adding 2: ", insn, REG_NOTES (insn));
 	  }
 	bitmap_set_bit (do_not_gen, r);
       }
@@ -2989,7 +3359,7 @@ df_whole_mw_reg_dead_p (struct df_mw_hardreg *mws,
    register.  */
 
 static void
-df_set_dead_notes_for_mw (rtx insn, struct df_mw_hardreg *mws,
+df_set_dead_notes_for_mw (rtx_insn *insn, struct df_mw_hardreg *mws,
 			  bitmap live, bitmap do_not_gen,
 			  bitmap artificial_uses, bool *added_notes_p)
 {
@@ -2998,8 +3368,7 @@ df_set_dead_notes_for_mw (rtx insn, struct df_mw_hardreg *mws,
 
   *added_notes_p = false;
 
-#ifdef REG_DEAD_DEBUGGING
-  if (dump_file)
+  if (REG_DEAD_DEBUGGING && dump_file)
     {
       fprintf (dump_file, "mw_set_dead looking at mws[%d..%d]\n  do_not_gen =",
 	       mws->start_regno, mws->end_regno);
@@ -3009,20 +3378,18 @@ df_set_dead_notes_for_mw (rtx insn, struct df_mw_hardreg *mws,
       fprintf (dump_file, "  artificial uses =");
       df_print_regset (dump_file, artificial_uses);
     }
-#endif
 
   if (df_whole_mw_reg_dead_p (mws, live, artificial_uses, do_not_gen))
     {
-      /* Add a dead note for the entire multi word register.  */
       if (is_debug)
 	{
 	  *added_notes_p = true;
 	  return;
 	}
+      /* Add a dead note for the entire multi word register.  */
       df_set_note (REG_DEAD, insn, mws->mw_reg);
-#ifdef REG_DEAD_DEBUGGING
-      df_print_note ("adding 1: ", insn, REG_NOTES (insn));
-#endif
+      if (REG_DEAD_DEBUGGING)
+	df_print_note ("adding 1: ", insn, REG_NOTES (insn));
     }
   else
     {
@@ -3037,9 +3404,8 @@ df_set_dead_notes_for_mw (rtx insn, struct df_mw_hardreg *mws,
 		return;
 	      }
 	    df_set_note (REG_DEAD, insn, regno_reg_rtx[r]);
-#ifdef REG_DEAD_DEBUGGING
-	    df_print_note ("adding 2: ", insn, REG_NOTES (insn));
-#endif
+	    if (REG_DEAD_DEBUGGING)
+	      df_print_note ("adding 2: ", insn, REG_NOTES (insn));
 	  }
     }
   return;
@@ -3050,19 +3416,17 @@ df_set_dead_notes_for_mw (rtx insn, struct df_mw_hardreg *mws,
    LIVE.  Do not generate notes for registers in ARTIFICIAL_USES.  */
 
 static void
-df_create_unused_note (rtx insn, df_ref def,
+df_create_unused_note (rtx_insn *insn, df_ref def,
 		       bitmap live, bitmap artificial_uses,
-		       struct dead_debug *debug)
+		       struct dead_debug_local *debug)
 {
   unsigned int dregno = DF_REF_REGNO (def);
 
-#ifdef REG_DEAD_DEBUGGING
-  if (dump_file)
+  if (REG_DEAD_DEBUGGING && dump_file)
     {
       fprintf (dump_file, "  regular looking at def ");
       df_ref_debug (def, dump_file);
     }
-#endif
 
   if (!((DF_REF_FLAGS (def) & DF_REF_MW_HARDREG)
 	|| bitmap_bit_p (live, dregno)
@@ -3072,200 +3436,14 @@ df_create_unused_note (rtx insn, df_ref def,
       rtx reg = (DF_REF_LOC (def))
                 ? *DF_REF_REAL_LOC (def): DF_REF_REG (def);
       df_set_note (REG_UNUSED, insn, reg);
-      dead_debug_reset (debug, dregno);
-#ifdef REG_DEAD_DEBUGGING
-      df_print_note ("adding 3: ", insn, REG_NOTES (insn));
-#endif
+      dead_debug_insert_temp (debug, dregno, insn, DEBUG_TEMP_AFTER_WITH_REG);
+      if (REG_DEAD_DEBUGGING)
+	df_print_note ("adding 3: ", insn, REG_NOTES (insn));
     }
 
   return;
 }
 
-
-/* Initialize DEBUG to an empty list, and clear USED, if given.  */
-static inline void
-dead_debug_init (struct dead_debug *debug, bitmap used)
-{
-  debug->head = NULL;
-  debug->used = used;
-  debug->to_rescan = NULL;
-  if (used)
-    bitmap_clear (used);
-}
-
-/* Reset all debug insns with pending uses.  Release the bitmap in it,
-   unless it is USED.  USED must be the same bitmap passed to
-   dead_debug_init.  */
-static inline void
-dead_debug_finish (struct dead_debug *debug, bitmap used)
-{
-  struct dead_debug_use *head;
-  rtx insn = NULL;
-
-  if (debug->used != used)
-    BITMAP_FREE (debug->used);
-
-  while ((head = debug->head))
-    {
-      insn = DF_REF_INSN (head->use);
-      if (!head->next || DF_REF_INSN (head->next->use) != insn)
-	{
-	  INSN_VAR_LOCATION_LOC (insn) = gen_rtx_UNKNOWN_VAR_LOC ();
-	  df_insn_rescan_debug_internal (insn);
-	  if (debug->to_rescan)
-	    bitmap_clear_bit (debug->to_rescan, INSN_UID (insn));
-	}
-      debug->head = head->next;
-      XDELETE (head);
-    }
-
-  if (debug->to_rescan)
-    {
-      bitmap_iterator bi;
-      unsigned int uid;
-
-      EXECUTE_IF_SET_IN_BITMAP (debug->to_rescan, 0, uid, bi)
-	{
-	  struct df_insn_info *insn_info = DF_INSN_UID_SAFE_GET (uid);
-	  if (insn_info)
-	    df_insn_rescan (insn_info->insn);
-	}
-      BITMAP_FREE (debug->to_rescan);
-    }
-}
-
-/* Reset DEBUG_INSNs with pending uses of DREGNO.  */
-static void
-dead_debug_reset (struct dead_debug *debug, unsigned int dregno)
-{
-  struct dead_debug_use **tailp = &debug->head;
-  struct dead_debug_use **insnp = &debug->head;
-  struct dead_debug_use *cur;
-  rtx insn;
-
-  if (!debug->used || !bitmap_clear_bit (debug->used, dregno))
-    return;
-
-  while ((cur = *tailp))
-    {
-      if (DF_REF_REGNO (cur->use) == dregno)
-	{
-	  *tailp = cur->next;
-	  insn = DF_REF_INSN (cur->use);
-	  INSN_VAR_LOCATION_LOC (insn) = gen_rtx_UNKNOWN_VAR_LOC ();
-	  if (debug->to_rescan == NULL)
-	    debug->to_rescan = BITMAP_ALLOC (NULL);
-	  bitmap_set_bit (debug->to_rescan, INSN_UID (insn));
-	  XDELETE (cur);
-	  /* If the current use isn't the first one attached to INSN, go back
-	     to this first use.  We assume that the uses attached to an insn
-	     are adjacent.  */                                                                       
-	  if (tailp != insnp && DF_REF_INSN ((*insnp)->use) == insn)
-	    tailp = insnp;
-	  /* Then remove all the other uses attached to INSN.  */
-	  while ((cur = *tailp) && DF_REF_INSN (cur->use) == insn)
-	    {
-	      *tailp = cur->next;
-	      XDELETE (cur);
-	    }
-	  insnp = tailp;
-	}
-      else
-	{
-	  if (DF_REF_INSN ((*insnp)->use) != DF_REF_INSN (cur->use))
-	    insnp = tailp;
-	  tailp = &(*tailp)->next;
-	}
-    }
-}
-
-/* Add USE to DEBUG.  It must be a dead reference to UREGNO in a debug
-   insn.  Create a bitmap for DEBUG as needed.  */
-static inline void
-dead_debug_add (struct dead_debug *debug, df_ref use, unsigned int uregno)
-{
-  struct dead_debug_use *newddu = XNEW (struct dead_debug_use);
-
-  newddu->use = use;
-  newddu->next = debug->head;
-  debug->head = newddu;
-
-  if (!debug->used)
-    debug->used = BITMAP_ALLOC (NULL);
-
-  bitmap_set_bit (debug->used, uregno);
-}
-
-/* If UREGNO is referenced by any entry in DEBUG, emit a debug insn
-   before INSN that binds the REG to a debug temp, and replace all
-   uses of UREGNO in DEBUG with uses of the debug temp.  INSN must be
-   the insn where UREGNO dies.  */
-static inline void
-dead_debug_insert_before (struct dead_debug *debug, unsigned int uregno,
-			  rtx insn)
-{
-  struct dead_debug_use **tailp = &debug->head;
-  struct dead_debug_use *cur;
-  struct dead_debug_use *uses = NULL;
-  struct dead_debug_use **usesp = &uses;
-  rtx reg = NULL;
-  rtx dval;
-  rtx bind;
-
-  if (!debug->used || !bitmap_clear_bit (debug->used, uregno))
-    return;
-
-  /* Move all uses of uregno from debug->head to uses, setting mode to
-     the widest referenced mode.  */
-  while ((cur = *tailp))
-    {
-      if (DF_REF_REGNO (cur->use) == uregno)
-	{
-	  *usesp = cur;
-	  usesp = &cur->next;
-	  *tailp = cur->next;
-	  cur->next = NULL;
-	  if (!reg
-	      || (GET_MODE_BITSIZE (GET_MODE (reg))
-		  < GET_MODE_BITSIZE (GET_MODE (*DF_REF_REAL_LOC (cur->use)))))
-	    reg = *DF_REF_REAL_LOC (cur->use);
-	}
-      else
-	tailp = &(*tailp)->next;
-    }
-
-  /* We may have dangling bits in debug->used for registers that were part
-     of a multi-register use, one component of which has been reset.  */
-  if (reg == NULL)
-    return;
-
-  /* Create DEBUG_EXPR (and DEBUG_EXPR_DECL).  */
-  dval = make_debug_expr_from_rtl (reg);
-
-  /* Emit a debug bind insn before the insn in which reg dies.  */
-  bind = gen_rtx_VAR_LOCATION (GET_MODE (reg),
-			       DEBUG_EXPR_TREE_DECL (dval), reg,
-			       VAR_INIT_STATUS_INITIALIZED);
-
-  bind = emit_debug_insn_before (bind, insn);
-  df_insn_rescan (bind);
-
-  /* Adjust all uses.  */
-  while ((cur = uses))
-    {
-      if (GET_MODE (*DF_REF_REAL_LOC (cur->use)) == GET_MODE (reg))
-	*DF_REF_REAL_LOC (cur->use) = dval;
-      else
-	*DF_REF_REAL_LOC (cur->use)
-	  = gen_lowpart_SUBREG (GET_MODE (*DF_REF_REAL_LOC (cur->use)), dval);
-      /* ??? Should we simplify subreg of subreg?  */
-      if (debug->to_rescan == NULL)
-	debug->to_rescan = BITMAP_ALLOC (NULL);
-      bitmap_set_bit (debug->to_rescan, INSN_UID (DF_REF_INSN (cur->use)));
-      uses = cur->next;
-      XDELETE (cur);
-    }
-}
 
 /* Recompute the REG_DEAD and REG_UNUSED notes and compute register
    info: lifetime, bb, and number of defs and uses for basic block
@@ -3275,104 +3453,86 @@ static void
 df_note_bb_compute (unsigned int bb_index,
 		    bitmap live, bitmap do_not_gen, bitmap artificial_uses)
 {
-  basic_block bb = BASIC_BLOCK (bb_index);
-  rtx insn;
-  df_ref *def_rec;
-  df_ref *use_rec;
-  struct dead_debug debug;
+  basic_block bb = BASIC_BLOCK_FOR_FN (cfun, bb_index);
+  rtx_insn *insn;
+  df_ref def, use;
+  struct dead_debug_local debug;
 
-  dead_debug_init (&debug, NULL);
+  dead_debug_local_init (&debug, NULL, NULL);
 
   bitmap_copy (live, df_get_live_out (bb));
   bitmap_clear (artificial_uses);
 
-#ifdef REG_DEAD_DEBUGGING
-  if (dump_file)
+  if (REG_DEAD_DEBUGGING && dump_file)
     {
       fprintf (dump_file, "live at bottom ");
       df_print_regset (dump_file, live);
     }
-#endif
 
   /* Process the artificial defs and uses at the bottom of the block
      to begin processing.  */
-  for (def_rec = df_get_artificial_defs (bb_index); *def_rec; def_rec++)
+  FOR_EACH_ARTIFICIAL_DEF (def, bb_index)
     {
-      df_ref def = *def_rec;
-#ifdef REG_DEAD_DEBUGGING
-      if (dump_file)
+      if (REG_DEAD_DEBUGGING && dump_file)
 	fprintf (dump_file, "artificial def %d\n", DF_REF_REGNO (def));
-#endif
 
       if ((DF_REF_FLAGS (def) & DF_REF_AT_TOP) == 0)
 	bitmap_clear_bit (live, DF_REF_REGNO (def));
     }
 
-  for (use_rec = df_get_artificial_uses (bb_index); *use_rec; use_rec++)
-    {
-      df_ref use = *use_rec;
-      if ((DF_REF_FLAGS (use) & DF_REF_AT_TOP) == 0)
-	{
-	  unsigned int regno = DF_REF_REGNO (use);
-	  bitmap_set_bit (live, regno);
+  FOR_EACH_ARTIFICIAL_USE (use, bb_index)
+    if ((DF_REF_FLAGS (use) & DF_REF_AT_TOP) == 0)
+      {
+	unsigned int regno = DF_REF_REGNO (use);
+	bitmap_set_bit (live, regno);
 
-	  /* Notes are not generated for any of the artificial registers
-	     at the bottom of the block.  */
-	  bitmap_set_bit (artificial_uses, regno);
-	}
-    }
+	/* Notes are not generated for any of the artificial registers
+	   at the bottom of the block.  */
+	bitmap_set_bit (artificial_uses, regno);
+      }
 
-#ifdef REG_DEAD_DEBUGGING
-  if (dump_file)
+  if (REG_DEAD_DEBUGGING && dump_file)
     {
       fprintf (dump_file, "live before artificials out ");
       df_print_regset (dump_file, live);
     }
-#endif
 
   FOR_BB_INSNS_REVERSE (bb, insn)
     {
-      unsigned int uid = INSN_UID (insn);
-      struct df_mw_hardreg **mws_rec;
-      int debug_insn;
-
       if (!INSN_P (insn))
 	continue;
+
+      df_insn_info *insn_info = DF_INSN_INFO_GET (insn);
+      df_mw_hardreg *mw;
+      int debug_insn;
 
       debug_insn = DEBUG_INSN_P (insn);
 
       bitmap_clear (do_not_gen);
-      df_kill_notes (insn, live);
+      df_remove_dead_and_unused_notes (insn);
 
       /* Process the defs.  */
       if (CALL_P (insn))
 	{
-#ifdef REG_DEAD_DEBUGGING
-	  if (dump_file)
+	  if (REG_DEAD_DEBUGGING && dump_file)
 	    {
-	      fprintf (dump_file, "processing call %d\n  live =", INSN_UID (insn));
+	      fprintf (dump_file, "processing call %d\n  live =",
+		       INSN_UID (insn));
 	      df_print_regset (dump_file, live);
 	    }
-#endif
+
 	  /* We only care about real sets for calls.  Clobbers cannot
 	     be depended on to really die.  */
-	  mws_rec = DF_INSN_UID_MWS (uid);
-	  while (*mws_rec)
-	    {
-	      struct df_mw_hardreg *mws = *mws_rec;
-	      if ((DF_MWS_REG_DEF_P (mws))
-		  && !df_ignore_stack_reg (mws->start_regno))
-	      df_set_unused_notes_for_mw (insn,
-					  mws, live, do_not_gen,
+	  FOR_EACH_INSN_INFO_MW (mw, insn_info)
+	    if ((DF_MWS_REG_DEF_P (mw))
+		&& !df_ignore_stack_reg (mw->start_regno))
+	      df_set_unused_notes_for_mw (insn, mw, live, do_not_gen,
 					  artificial_uses, &debug);
-	      mws_rec++;
-	    }
 
 	  /* All of the defs except the return value are some sort of
 	     clobber.  This code is for the return.  */
-	  for (def_rec = DF_INSN_UID_DEFS (uid); *def_rec; def_rec++)
+	  FOR_EACH_INSN_INFO_DEF (def, insn_info)
 	    {
-	      df_ref def = *def_rec;
 	      unsigned int dregno = DF_REF_REGNO (def);
 	      if (!DF_REF_FLAGS_IS_SET (def, DF_REF_MUST_CLOBBER | DF_REF_MAY_CLOBBER))
 		{
@@ -3388,20 +3548,13 @@ df_note_bb_compute (unsigned int bb_index,
       else
 	{
 	  /* Regular insn.  */
-	  mws_rec = DF_INSN_UID_MWS (uid);
-	  while (*mws_rec)
-	    {
-	      struct df_mw_hardreg *mws = *mws_rec;
-	      if (DF_MWS_REG_DEF_P (mws))
-		df_set_unused_notes_for_mw (insn,
-					    mws, live, do_not_gen,
-					    artificial_uses, &debug);
-	      mws_rec++;
-	    }
+	  FOR_EACH_INSN_INFO_MW (mw, insn_info)
+	    if (DF_MWS_REG_DEF_P (mw))
+	      df_set_unused_notes_for_mw (insn, mw, live, do_not_gen,
+					  artificial_uses, &debug);
 
-	  for (def_rec = DF_INSN_UID_DEFS (uid); *def_rec; def_rec++)
+	  FOR_EACH_INSN_INFO_DEF (def, insn_info)
 	    {
-	      df_ref def = *def_rec;
 	      unsigned int dregno = DF_REF_REGNO (def);
 	      df_create_unused_note (insn,
 				     def, live, artificial_uses, &debug);
@@ -3415,51 +3568,49 @@ df_note_bb_compute (unsigned int bb_index,
 	}
 
       /* Process the uses.  */
-      mws_rec = DF_INSN_UID_MWS (uid);
-      while (*mws_rec)
+      FOR_EACH_INSN_INFO_MW (mw, insn_info)
+	if (DF_MWS_REG_USE_P (mw)
+	    && !df_ignore_stack_reg (mw->start_regno))
+	  {
+	    bool really_add_notes = debug_insn != 0;
+
+	    df_set_dead_notes_for_mw (insn, mw, live, do_not_gen,
+				      artificial_uses,
+				      &really_add_notes);
+
+	    if (really_add_notes)
+	      debug_insn = -1;
+	  }
+
+      FOR_EACH_INSN_INFO_USE (use, insn_info)
 	{
-	  struct df_mw_hardreg *mws = *mws_rec;
-	  if (DF_MWS_REG_USE_P (mws)
-	      && !df_ignore_stack_reg (mws->start_regno))
-	    {
-	      bool really_add_notes = debug_insn != 0;
-
-	      df_set_dead_notes_for_mw (insn,
-					mws, live, do_not_gen,
-					artificial_uses,
-					&really_add_notes);
-
-	      if (really_add_notes)
-		debug_insn = -1;
-	    }
-	  mws_rec++;
-	}
-
-      for (use_rec = DF_INSN_UID_USES (uid); *use_rec; use_rec++)
-	{
-	  df_ref use = *use_rec;
 	  unsigned int uregno = DF_REF_REGNO (use);
 
-#ifdef REG_DEAD_DEBUGGING
-	  if (dump_file && !debug_insn)
+	  if (REG_DEAD_DEBUGGING && dump_file && !debug_insn)
 	    {
 	      fprintf (dump_file, "  regular looking at use ");
 	      df_ref_debug (use, dump_file);
 	    }
-#endif
+
 	  if (!bitmap_bit_p (live, uregno))
 	    {
 	      if (debug_insn)
 		{
 		  if (debug_insn > 0)
 		    {
-		      dead_debug_add (&debug, use, uregno);
+		      /* We won't add REG_UNUSED or REG_DEAD notes for
+			 these, so we don't have to mess with them in
+			 debug insns either.  */
+		      if (!bitmap_bit_p (artificial_uses, uregno)
+			  && !df_ignore_stack_reg (uregno))
+			dead_debug_add (&debug, use, uregno);
 		      continue;
 		    }
 		  break;
 		}
 	      else
-		dead_debug_insert_before (&debug, uregno, insn);
+		dead_debug_insert_temp (&debug, uregno, insn,
+					DEBUG_TEMP_BEFORE_WITH_REG);
 
 	      if ( (!(DF_REF_FLAGS (use)
 		      & (DF_REF_MW_HARDREG | DF_REF_READ_WRITE)))
@@ -3471,14 +3622,15 @@ df_note_bb_compute (unsigned int bb_index,
                             ? *DF_REF_REAL_LOC (use) : DF_REF_REG (use);
 		  df_set_note (REG_DEAD, insn, reg);
 
-#ifdef REG_DEAD_DEBUGGING
-		  df_print_note ("adding 4: ", insn, REG_NOTES (insn));
-#endif
+		  if (REG_DEAD_DEBUGGING)
+		    df_print_note ("adding 4: ", insn, REG_NOTES (insn));
 		}
 	      /* This register is now live.  */
 	      bitmap_set_bit (live, uregno);
 	    }
 	}
+
+      df_remove_dead_eq_notes (insn, live);
 
       if (debug_insn == -1)
 	{
@@ -3489,7 +3641,7 @@ df_note_bb_compute (unsigned int bb_index,
 	}
     }
 
-  dead_debug_finish (&debug, NULL);
+  dead_debug_local_finish (&debug, NULL);
 }
 
 
@@ -3505,13 +3657,13 @@ df_note_compute (bitmap all_blocks)
   bitmap_initialize (&do_not_gen, &df_bitmap_obstack);
   bitmap_initialize (&artificial_uses, &df_bitmap_obstack);
 
-#ifdef REG_DEAD_DEBUGGING
-  if (dump_file)
-    print_rtl_with_bb (dump_file, get_insns());
-#endif
-
   EXECUTE_IF_SET_IN_BITMAP (all_blocks, 0, bb_index, bi)
   {
+    /* ??? Unlike fast DCE, we don't use global_debug for uses of dead
+       pseudos in debug insns because we don't always (re)visit blocks
+       with death points after visiting dead uses.  Even changing this
+       loop to postorder would still leave room for visiting a death
+       point before visiting a subsequent debug use.  */
     df_note_bb_compute (bb_index, &live, &do_not_gen, &artificial_uses);
   }
 
@@ -3532,7 +3684,7 @@ df_note_free (void)
 
 /* All of the information associated every instance of the problem.  */
 
-static struct df_problem problem_NOTE =
+static const struct df_problem problem_NOTE =
 {
   DF_NOTE,                    /* Problem id.  */
   DF_NONE,                    /* Direction.  */
@@ -3551,6 +3703,8 @@ static struct df_problem problem_NOTE =
   NULL,                       /* Debugging.  */
   NULL,                       /* Debugging start block.  */
   NULL,                       /* Debugging end block.  */
+  NULL,                       /* Debugging start insn.  */
+  NULL,                       /* Debugging end insn.  */
   NULL,                       /* Incremental solution verify start.  */
   NULL,                       /* Incremental solution verify end.  */
   &problem_LR,                /* Dependent problem.  */
@@ -3594,67 +3748,51 @@ df_note_add_problem (void)
 /* Find the set of DEFs for INSN.  */
 
 void
-df_simulate_find_defs (rtx insn, bitmap defs)
+df_simulate_find_defs (rtx_insn *insn, bitmap defs)
 {
-  df_ref *def_rec;
-  unsigned int uid = INSN_UID (insn);
+  df_ref def;
 
-  for (def_rec = DF_INSN_UID_DEFS (uid); *def_rec; def_rec++)
-    {
-      df_ref def = *def_rec;
-      bitmap_set_bit (defs, DF_REF_REGNO (def));
-    }
+  FOR_EACH_INSN_DEF (def, insn)
+    bitmap_set_bit (defs, DF_REF_REGNO (def));
 }
 
 /* Find the set of uses for INSN.  This includes partial defs.  */
 
 static void
-df_simulate_find_uses (rtx insn, bitmap uses)
+df_simulate_find_uses (rtx_insn *insn, bitmap uses)
 {
-  df_ref *rec;
-  unsigned int uid = INSN_UID (insn);
+  df_ref def, use;
+  struct df_insn_info *insn_info = DF_INSN_INFO_GET (insn);
 
-  for (rec = DF_INSN_UID_DEFS (uid); *rec; rec++)
-    {
-      df_ref def = *rec;
-      if (DF_REF_FLAGS (def) & (DF_REF_PARTIAL | DF_REF_CONDITIONAL))
-	bitmap_set_bit (uses, DF_REF_REGNO (def));
-    }
-  for (rec = DF_INSN_UID_USES (uid); *rec; rec++)
-    {
-      df_ref use = *rec;
-      bitmap_set_bit (uses, DF_REF_REGNO (use));
-    }
+  FOR_EACH_INSN_INFO_DEF (def, insn_info)
+    if (DF_REF_FLAGS (def) & (DF_REF_PARTIAL | DF_REF_CONDITIONAL))
+      bitmap_set_bit (uses, DF_REF_REGNO (def));
+  FOR_EACH_INSN_INFO_USE (use, insn_info)
+    bitmap_set_bit (uses, DF_REF_REGNO (use));
 }
 
 /* Find the set of real DEFs, which are not clobbers, for INSN.  */
 
 void
-df_simulate_find_noclobber_defs (rtx insn, bitmap defs)
+df_simulate_find_noclobber_defs (rtx_insn *insn, bitmap defs)
 {
-  df_ref *def_rec;
-  unsigned int uid = INSN_UID (insn);
+  df_ref def;
 
-  for (def_rec = DF_INSN_UID_DEFS (uid); *def_rec; def_rec++)
-    {
-      df_ref def = *def_rec;
-      if (!(DF_REF_FLAGS (def) & (DF_REF_MUST_CLOBBER | DF_REF_MAY_CLOBBER)))
-	bitmap_set_bit (defs, DF_REF_REGNO (def));
-    }
+  FOR_EACH_INSN_DEF (def, insn)
+    if (!(DF_REF_FLAGS (def) & (DF_REF_MUST_CLOBBER | DF_REF_MAY_CLOBBER)))
+      bitmap_set_bit (defs, DF_REF_REGNO (def));
 }
 
 
 /* Simulate the effects of the defs of INSN on LIVE.  */
 
 void
-df_simulate_defs (rtx insn, bitmap live)
+df_simulate_defs (rtx_insn *insn, bitmap live)
 {
-  df_ref *def_rec;
-  unsigned int uid = INSN_UID (insn);
+  df_ref def;
 
-  for (def_rec = DF_INSN_UID_DEFS (uid); *def_rec; def_rec++)
+  FOR_EACH_INSN_DEF (def, insn)
     {
-      df_ref def = *def_rec;
       unsigned int dregno = DF_REF_REGNO (def);
 
       /* If the def is to only part of the reg, it does
@@ -3668,20 +3806,16 @@ df_simulate_defs (rtx insn, bitmap live)
 /* Simulate the effects of the uses of INSN on LIVE.  */
 
 void
-df_simulate_uses (rtx insn, bitmap live)
+df_simulate_uses (rtx_insn *insn, bitmap live)
 {
-  df_ref *use_rec;
-  unsigned int uid = INSN_UID (insn);
+  df_ref use;
 
   if (DEBUG_INSN_P (insn))
     return;
 
-  for (use_rec = DF_INSN_UID_USES (uid); *use_rec; use_rec++)
-    {
-      df_ref use = *use_rec;
-      /* Add use to set of uses in this BB.  */
-      bitmap_set_bit (live, DF_REF_REGNO (use));
-    }
+  FOR_EACH_INSN_USE (use, insn)
+    /* Add use to set of uses in this BB.  */
+    bitmap_set_bit (live, DF_REF_REGNO (use));
 }
 
 
@@ -3717,30 +3851,23 @@ df_simulate_fixup_sets (basic_block bb, bitmap live)
 void
 df_simulate_initialize_backwards (basic_block bb, bitmap live)
 {
-  df_ref *def_rec;
-  df_ref *use_rec;
+  df_ref def, use;
   int bb_index = bb->index;
 
-  for (def_rec = df_get_artificial_defs (bb_index); *def_rec; def_rec++)
-    {
-      df_ref def = *def_rec;
-      if ((DF_REF_FLAGS (def) & DF_REF_AT_TOP) == 0)
-	bitmap_clear_bit (live, DF_REF_REGNO (def));
-    }
+  FOR_EACH_ARTIFICIAL_DEF (def, bb_index)
+    if ((DF_REF_FLAGS (def) & DF_REF_AT_TOP) == 0)
+      bitmap_clear_bit (live, DF_REF_REGNO (def));
 
-  for (use_rec = df_get_artificial_uses (bb_index); *use_rec; use_rec++)
-    {
-      df_ref use = *use_rec;
-      if ((DF_REF_FLAGS (use) & DF_REF_AT_TOP) == 0)
-	bitmap_set_bit (live, DF_REF_REGNO (use));
-    }
+  FOR_EACH_ARTIFICIAL_USE (use, bb_index)
+    if ((DF_REF_FLAGS (use) & DF_REF_AT_TOP) == 0)
+      bitmap_set_bit (live, DF_REF_REGNO (use));
 }
 
 
 /* Simulate the backwards effects of INSN on the bitmap LIVE.  */
 
 void
-df_simulate_one_insn_backwards (basic_block bb, rtx insn, bitmap live)
+df_simulate_one_insn_backwards (basic_block bb, rtx_insn *insn, bitmap live)
 {
   if (!NONDEBUG_INSN_P (insn))
     return;
@@ -3757,26 +3884,20 @@ df_simulate_one_insn_backwards (basic_block bb, rtx insn, bitmap live)
 void
 df_simulate_finalize_backwards (basic_block bb, bitmap live)
 {
-  df_ref *def_rec;
+  df_ref def;
 #ifdef EH_USES
-  df_ref *use_rec;
+  df_ref use;
 #endif
   int bb_index = bb->index;
 
-  for (def_rec = df_get_artificial_defs (bb_index); *def_rec; def_rec++)
-    {
-      df_ref def = *def_rec;
-      if (DF_REF_FLAGS (def) & DF_REF_AT_TOP)
-	bitmap_clear_bit (live, DF_REF_REGNO (def));
-    }
+  FOR_EACH_ARTIFICIAL_DEF (def, bb_index)
+    if (DF_REF_FLAGS (def) & DF_REF_AT_TOP)
+      bitmap_clear_bit (live, DF_REF_REGNO (def));
 
 #ifdef EH_USES
-  for (use_rec = df_get_artificial_uses (bb_index); *use_rec; use_rec++)
-    {
-      df_ref use = *use_rec;
-      if (DF_REF_FLAGS (use) & DF_REF_AT_TOP)
-	bitmap_set_bit (live, DF_REF_REGNO (use));
-    }
+  FOR_EACH_ARTIFICIAL_USE (use, bb_index)
+    if (DF_REF_FLAGS (use) & DF_REF_AT_TOP)
+      bitmap_set_bit (live, DF_REF_REGNO (use));
 #endif
 }
 /*----------------------------------------------------------------------------
@@ -3798,21 +3919,18 @@ df_simulate_finalize_backwards (basic_block bb, bitmap live)
 void
 df_simulate_initialize_forwards (basic_block bb, bitmap live)
 {
-  df_ref *def_rec;
+  df_ref def;
   int bb_index = bb->index;
 
-  for (def_rec = df_get_artificial_defs (bb_index); *def_rec; def_rec++)
-    {
-      df_ref def = *def_rec;
-      if (DF_REF_FLAGS (def) & DF_REF_AT_TOP)
-	bitmap_set_bit (live, DF_REF_REGNO (def));
-    }
+  FOR_EACH_ARTIFICIAL_DEF (def, bb_index)
+    if (DF_REF_FLAGS (def) & DF_REF_AT_TOP)
+      bitmap_set_bit (live, DF_REF_REGNO (def));
 }
 
 /* Simulate the forwards effects of INSN on the bitmap LIVE.  */
 
 void
-df_simulate_one_insn_forwards (basic_block bb, rtx insn, bitmap live)
+df_simulate_one_insn_forwards (basic_block bb, rtx_insn *insn, bitmap live)
 {
   rtx link;
   if (! INSN_P (insn))
@@ -3837,12 +3955,7 @@ df_simulate_one_insn_forwards (basic_block bb, rtx insn, bitmap live)
 	case REG_UNUSED:
 	  {
 	    rtx reg = XEXP (link, 0);
-	    int regno = REGNO (reg);
-	    if (HARD_REGISTER_NUM_P (regno))
-	      bitmap_clear_range (live, regno,
-				  hard_regno_nregs[regno][GET_MODE (reg)]);
-	    else
-	      bitmap_clear_bit (live, regno);
+	    bitmap_clear_range (live, REGNO (reg), REG_NREGS (reg));
 	  }
 	  break;
 	default:
@@ -3857,25 +3970,27 @@ df_simulate_one_insn_forwards (basic_block bb, rtx insn, bitmap live)
 #define MEMREF_NORMAL 1
 #define MEMREF_VOLATILE 2
 
-/* A subroutine of can_move_insns_across_p called through for_each_rtx.
-   Return either MEMREF_NORMAL or MEMREF_VOLATILE if a memory is found.  */
+/* Return an OR of MEMREF_NORMAL or MEMREF_VOLATILE for the MEMs in X.  */
 
 static int
-find_memory (rtx *px, void *data ATTRIBUTE_UNUSED)
+find_memory (rtx_insn *insn)
 {
-  rtx x = *px;
-
-  if (GET_CODE (x) == ASM_OPERANDS && MEM_VOLATILE_P (x))
-    return MEMREF_VOLATILE;
-
-  if (!MEM_P (x))
-    return 0;
-  if (MEM_VOLATILE_P (x))
-    return MEMREF_VOLATILE;
-  if (MEM_READONLY_P (x))
-    return 0;
-
-  return MEMREF_NORMAL;
+  int flags = 0;
+  subrtx_iterator::array_type array;
+  FOR_EACH_SUBRTX (iter, array, PATTERN (insn), NONCONST)
+    {
+      const_rtx x = *iter;
+      if (GET_CODE (x) == ASM_OPERANDS && MEM_VOLATILE_P (x))
+	flags |= MEMREF_VOLATILE;
+      else if (MEM_P (x))
+	{
+	  if (MEM_VOLATILE_P (x))
+	    flags |= MEMREF_VOLATILE;
+	  else if (!MEM_READONLY_P (x))
+	    flags |= MEMREF_NORMAL;
+	}
+    }
+  return flags;
 }
 
 /* A subroutine of can_move_insns_across_p called through note_stores.
@@ -3905,7 +4020,7 @@ find_memory_stores (rtx x, const_rtx pat ATTRIBUTE_UNUSED,
 void
 simulate_backwards_to_point (basic_block bb, regset live, rtx point)
 {
-  rtx insn;
+  rtx_insn *insn;
   bitmap_copy (live, df_get_live_out (bb));
   df_simulate_initialize_backwards (bb, live);
 
@@ -3937,11 +4052,12 @@ simulate_backwards_to_point (basic_block bb, regset live, rtx point)
    is set to point at the last moveable insn in such a case.  */
 
 bool
-can_move_insns_across (rtx from, rtx to, rtx across_from, rtx across_to,
+can_move_insns_across (rtx_insn *from, rtx_insn *to,
+		       rtx_insn *across_from, rtx_insn *across_to,
 		       basic_block merge_bb, regset merge_live,
-		       regset other_branch_live, rtx *pmove_upto)
+		       regset other_branch_live, rtx_insn **pmove_upto)
 {
-  rtx insn, next, max_to;
+  rtx_insn *insn, *next, *max_to;
   bitmap merge_set, merge_use, local_merge_live;
   bitmap test_set, test_use;
   unsigned i, fail = 0;
@@ -3951,7 +4067,7 @@ can_move_insns_across (rtx from, rtx to, rtx across_from, rtx across_to,
   bool trapping_insns_in_across = false;
 
   if (pmove_upto != NULL)
-    *pmove_upto = NULL_RTX;
+    *pmove_upto = NULL;
 
   /* Find real bounds, ignoring debug insns.  */
   while (!NONDEBUG_INSN_P (from) && from != to)
@@ -3961,10 +4077,24 @@ can_move_insns_across (rtx from, rtx to, rtx across_from, rtx across_to,
 
   for (insn = across_to; ; insn = next)
     {
+      if (CALL_P (insn))
+	{
+	  if (RTL_CONST_OR_PURE_CALL_P (insn))
+	    /* Pure functions can read from memory.  Const functions can
+	       read from arguments that the ABI has forced onto the stack.
+	       Neither sort of read can be volatile.  */
+	    memrefs_in_across |= MEMREF_NORMAL;
+	  else
+	    {
+	      memrefs_in_across |= MEMREF_VOLATILE;
+	      mem_sets_in_across |= MEMREF_VOLATILE;
+	    }
+	}
       if (NONDEBUG_INSN_P (insn))
 	{
-	  memrefs_in_across |= for_each_rtx (&PATTERN (insn), find_memory,
-					     NULL);
+	  if (volatile_insn_p (PATTERN (insn)))
+	    return false;
+	  memrefs_in_across |= find_memory (insn);
 	  note_stores (PATTERN (insn), find_memory_stores,
 		       &mem_sets_in_across);
 	  /* This is used just to find sets of the stack pointer.  */
@@ -4012,7 +4142,7 @@ can_move_insns_across (rtx from, rtx to, rtx across_from, rtx across_to,
      the first insn in MERGE that sets a register in TEST_USE, or uses
      a register in TEST_SET.  We also check for calls, trapping operations,
      and memory references.  */
-  max_to = NULL_RTX;
+  max_to = NULL;
   for (insn = from; ; insn = next)
     {
       if (CALL_P (insn))
@@ -4022,7 +4152,9 @@ can_move_insns_across (rtx from, rtx to, rtx across_from, rtx across_to,
       if (NONDEBUG_INSN_P (insn))
 	{
 	  if (may_trap_or_fault_p (PATTERN (insn))
-	      && (trapping_insns_in_across || other_branch_live != NULL))
+	      && (trapping_insns_in_across
+		  || other_branch_live != NULL
+		  || volatile_insn_p (PATTERN (insn))))
 	    break;
 
 	  /* We cannot move memory stores past each other, or move memory
@@ -4044,8 +4176,7 @@ can_move_insns_across (rtx from, rtx to, rtx across_from, rtx across_to,
 	      int mem_ref_flags = 0;
 	      int mem_set_flags = 0;
 	      note_stores (PATTERN (insn), find_memory_stores, &mem_set_flags);
-	      mem_ref_flags = for_each_rtx (&PATTERN (insn), find_memory,
-					    NULL);
+	      mem_ref_flags = find_memory (insn);
 	      /* Catch sets of the stack pointer.  */
 	      mem_ref_flags |= mem_set_flags;
 
@@ -4065,9 +4196,7 @@ can_move_insns_across (rtx from, rtx to, rtx across_from, rtx across_to,
 	  if (bitmap_intersect_p (merge_set, test_use)
 	      || bitmap_intersect_p (merge_use, test_set))
 	    break;
-#ifdef HAVE_cc0
-	  if (!sets_cc0_p (insn))
-#endif
+	  if (!HAVE_cc0 || !sets_cc0_p (insn))
 	    max_to = insn;
 	}
       next = NEXT_INSN (insn);
@@ -4106,10 +4235,7 @@ can_move_insns_across (rtx from, rtx to, rtx across_from, rtx across_to,
       if (NONDEBUG_INSN_P (insn))
 	{
 	  if (!bitmap_intersect_p (test_set, local_merge_live)
-#ifdef HAVE_cc0
-	      && !sets_cc0_p (insn)
-#endif
-	      )
+	      && (!HAVE_cc0 || !sets_cc0_p (insn)))
 	    {
 	      max_to = insn;
 	      break;
@@ -4142,7 +4268,10 @@ can_move_insns_across (rtx from, rtx to, rtx across_from, rtx across_to,
 	  if (i < FIRST_PSEUDO_REGISTER
 	      && ! fixed_regs[i]
 	      && ! global_regs[i])
-	    fail = 1;
+	    {
+	      fail = 1;
+	      break;
+	    }
 	}
     }
 
@@ -4285,20 +4414,17 @@ void
 df_md_simulate_artificial_defs_at_top (basic_block bb, bitmap local_md)
 {
   int bb_index = bb->index;
-  df_ref *def_rec;
-  for (def_rec = df_get_artificial_defs (bb_index); *def_rec; def_rec++)
-    {
-      df_ref def = *def_rec;
-      if (DF_REF_FLAGS (def) & DF_REF_AT_TOP)
-	{
-	  unsigned int dregno = DF_REF_REGNO (def);
-	  if (DF_REF_FLAGS (def)
-	      & (DF_REF_PARTIAL | DF_REF_CONDITIONAL | DF_REF_MAY_CLOBBER))
-	    bitmap_set_bit (local_md, dregno);
-	  else
-	    bitmap_clear_bit (local_md, dregno);
-	}
-    }
+  df_ref def;
+  FOR_EACH_ARTIFICIAL_DEF (def, bb_index)
+    if (DF_REF_FLAGS (def) & DF_REF_AT_TOP)
+      {
+	unsigned int dregno = DF_REF_REGNO (def);
+	if (DF_REF_FLAGS (def)
+	    & (DF_REF_PARTIAL | DF_REF_CONDITIONAL | DF_REF_MAY_CLOBBER))
+	  bitmap_set_bit (local_md, dregno);
+	else
+	  bitmap_clear_bit (local_md, dregno);
+      }
 }
 
 
@@ -4306,15 +4432,13 @@ df_md_simulate_artificial_defs_at_top (basic_block bb, bitmap local_md)
    LOCAL_MD.  */
 
 void
-df_md_simulate_one_insn (basic_block bb ATTRIBUTE_UNUSED, rtx insn,
-                        bitmap local_md)
+df_md_simulate_one_insn (basic_block bb ATTRIBUTE_UNUSED, rtx_insn *insn,
+			 bitmap local_md)
 {
-  unsigned uid = INSN_UID (insn);
-  df_ref *def_rec;
+  df_ref def;
 
-  for (def_rec = DF_INSN_UID_DEFS (uid); *def_rec; def_rec++)
+  FOR_EACH_INSN_DEF (def, insn)
     {
-      df_ref def = *def_rec;
       unsigned int dregno = DF_REF_REGNO (def);
       if ((!(df->changeable_flags & DF_NO_HARD_REGS))
           || (dregno >= FIRST_PSEUDO_REGISTER))
@@ -4330,13 +4454,12 @@ df_md_simulate_one_insn (basic_block bb ATTRIBUTE_UNUSED, rtx insn,
 
 static void
 df_md_bb_local_compute_process_def (struct df_md_bb_info *bb_info,
-                                    df_ref *def_rec,
+                                    df_ref def,
                                     int top_flag)
 {
-  df_ref def;
   bitmap_clear (&seen_in_insn);
 
-  while ((def = *def_rec++) != NULL)
+  for (; def; def = DF_REF_NEXT_LOC (def))
     {
       unsigned int dregno = DF_REF_REGNO (def);
       if (((!(df->changeable_flags & DF_NO_HARD_REGS))
@@ -4370,9 +4493,9 @@ df_md_bb_local_compute_process_def (struct df_md_bb_info *bb_info,
 static void
 df_md_bb_local_compute (unsigned int bb_index)
 {
-  basic_block bb = BASIC_BLOCK (bb_index);
+  basic_block bb = BASIC_BLOCK_FOR_FN (cfun, bb_index);
   struct df_md_bb_info *bb_info = df_md_get_bb_info (bb_index);
-  rtx insn;
+  rtx_insn *insn;
 
   /* Artificials are only hard regs.  */
   if (!(df->changeable_flags & DF_NO_HARD_REGS))
@@ -4414,8 +4537,8 @@ df_md_local_compute (bitmap all_blocks)
 
   bitmap_clear (&seen_in_insn);
 
-  frontiers = XNEWVEC (bitmap_head, last_basic_block);
-  FOR_ALL_BB (bb)
+  frontiers = XNEWVEC (bitmap_head, last_basic_block_for_fn (cfun));
+  FOR_ALL_BB_FN (bb, cfun)
     bitmap_initialize (&frontiers[bb->index], &bitmap_default_obstack);
 
   compute_dominance_frontiers (frontiers);
@@ -4426,14 +4549,14 @@ df_md_local_compute (bitmap all_blocks)
       bitmap kill = &df_md_get_bb_info (bb_index)->kill;
       EXECUTE_IF_SET_IN_BITMAP (&frontiers[bb_index], 0, df_bb_index, bi2)
 	{
-	  basic_block bb = BASIC_BLOCK (df_bb_index);
+	  basic_block bb = BASIC_BLOCK_FOR_FN (cfun, df_bb_index);
 	  if (bitmap_bit_p (all_blocks, df_bb_index))
 	    bitmap_ior_and_into (&df_md_get_bb_info (df_bb_index)->init, kill,
 				 df_get_live_in (bb));
 	}
     }
 
-  FOR_ALL_BB (bb)
+  FOR_ALL_BB_FN (bb, cfun)
     bitmap_clear (&frontiers[bb->index]);
   free (frontiers);
 }
@@ -4459,7 +4582,7 @@ df_md_reset (bitmap all_blocks)
 static bool
 df_md_transfer_function (int bb_index)
 {
-  basic_block bb = BASIC_BLOCK (bb_index);
+  basic_block bb = BASIC_BLOCK_FOR_FN (cfun, bb_index);
   struct df_md_bb_info *bb_info = df_md_get_bb_info (bb_index);
   bitmap in = &bb_info->in;
   bitmap out = &bb_info->out;
@@ -4571,7 +4694,7 @@ df_md_bottom_dump (basic_block bb, FILE *file)
   df_print_regset (file, &bb_info->out);
 }
 
-static struct df_problem problem_MD =
+static const struct df_problem problem_MD =
 {
   DF_MD,                      /* Problem id.  */
   DF_FORWARD,                 /* Direction.  */
@@ -4590,6 +4713,8 @@ static struct df_problem problem_MD =
   NULL,                       /* Debugging.  */
   df_md_top_dump,             /* Debugging start block.  */
   df_md_bottom_dump,          /* Debugging end block.  */
+  NULL,                       /* Debugging start insn.  */
+  NULL,                       /* Debugging end insn.  */
   NULL,			      /* Incremental solution verify start.  */
   NULL,			      /* Incremental solution verify end.  */
   NULL,                       /* Dependent problem.  */

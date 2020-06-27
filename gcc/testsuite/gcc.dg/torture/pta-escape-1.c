@@ -9,7 +9,7 @@ bar (void)
   *p = 1;
 }
 int __attribute__((noinline,noclone))
-foo (__SIZE_TYPE__ addr)
+foo (__INTPTR_TYPE__ addr)
 {
   int i;
   /* q points to ANYTHING */
@@ -25,10 +25,9 @@ extern void abort (void);
 int
 main()
 {
-  if (foo ((__SIZE_TYPE__)&p) != 1)
+  if (foo ((__INTPTR_TYPE__)&p) != 1)
     abort ();
   return 0;
 }
 
 /* { dg-final { scan-tree-dump "ESCAPED = {\[^\n\}\]* i \[^\n\}\]*}" "alias" } } */
-/* { dg-final { cleanup-tree-dump "alias" } } */

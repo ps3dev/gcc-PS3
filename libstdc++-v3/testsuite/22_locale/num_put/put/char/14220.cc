@@ -1,6 +1,6 @@
 // 2004-04-30  Paolo Carlini  <pcarlini@suse.de>
 
-// Copyright (C) 2004, 2009, 2010, 2011, 2012 Free Software Foundation
+// Copyright (C) 2004-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -19,12 +19,6 @@
 
 // 22.2.2.2.1  num_put members
 
-// On Solaris 9/x86 and 32-bit Solaris 10/x86 before update 10, this test
-// crashes in libc.  Inside libstdc++, we call sprintf like so:
-//   sprintf (buffer, "%.*f", 1000, 1.0)
-// which crashes.
-// { dg-xfail-run-if "" i?86-*-solaris2.9 }
-
 #include <locale>
 #include <sstream>
 #include <testsuite_hooks.h>
@@ -33,7 +27,6 @@
 void test01()
 {
   using namespace std;
-  bool test __attribute__((unused)) = true;
 
   ostringstream oss;
   const num_put<char>& np = use_facet<num_put<char> >(oss.getloc());

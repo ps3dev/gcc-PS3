@@ -1,8 +1,6 @@
 // Stack implementation -*- C++ -*-
 
-// Copyright (C) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009,
-// 2010, 2011
-// Free Software Foundation, Inc.
+// Copyright (C) 2001-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -60,6 +58,9 @@
 
 #include <bits/concept_check.h>
 #include <debug/debug.h>
+#if __cplusplus >= 201103L
+# include <bits/uses_allocator.h>
+#endif
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
@@ -69,6 +70,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @brief  A standard container giving FILO behavior.
    *
    *  @ingroup sequences
+   *
+   *  @tparam _Tp  Type of element.
+   *  @tparam _Sequence  Type of underlying sequence, defaults to deque<_Tp>.
    *
    *  Meets many of the requirements of a
    *  <a href="tables.html#65">container</a>,
@@ -94,26 +98,36 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   template<typename _Tp, typename _Sequence = deque<_Tp> >
     class stack
     {
+#ifdef _GLIBCXX_CONCEPT_CHECKS
       // concept requirements
       typedef typename _Sequence::value_type _Sequence_value_type;
+# if __cplusplus < 201103L
       __glibcxx_class_requires(_Tp, _SGIAssignableConcept)
       __glibcxx_class_requires(_Sequence, _BackInsertionSequenceConcept)
+# endif
       __glibcxx_class_requires2(_Tp, _Sequence_value_type, _SameTypeConcept)
+#endif
 
       template<typename _Tp1, typename _Seq1>
-        friend bool
-        operator==(const stack<_Tp1, _Seq1>&, const stack<_Tp1, _Seq1>&);
+	friend bool
+	operator==(const stack<_Tp1, _Seq1>&, const stack<_Tp1, _Seq1>&);
 
       template<typename _Tp1, typename _Seq1>
-        friend bool
-        operator<(const stack<_Tp1, _Seq1>&, const stack<_Tp1, _Seq1>&);
+	friend bool
+	operator<(const stack<_Tp1, _Seq1>&, const stack<_Tp1, _Seq1>&);
+
+#if __cplusplus >= 201103L
+      template<typename _Alloc>
+	using _Uses = typename
+	  enable_if<uses_allocator<_Sequence, _Alloc>::value>::type;
+#endif
 
     public:
-      typedef typename _Sequence::value_type                value_type;
-      typedef typename _Sequence::reference                 reference;
-      typedef typename _Sequence::const_reference           const_reference;
-      typedef typename _Sequence::size_type                 size_type;
-      typedef          _Sequence                            container_type;
+      typedef typename _Sequence::value_type		value_type;
+      typedef typename _Sequence::reference		reference;
+      typedef typename _Sequence::const_reference	const_reference;
+      typedef typename _Sequence::size_type		size_type;
+      typedef	       _Sequence			container_type;
 
     protected:
       //  See queue::c for notes on this name.
@@ -124,18 +138,44 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       /**
        *  @brief  Default constructor creates no elements.
        */
-#ifndef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus < 201103L
       explicit
       stack(const _Sequence& __c = _Sequence())
       : c(__c) { }
 #else
+      template<typename _Seq = _Sequence, typename _Requires = typename
+	       enable_if<is_default_constructible<_Seq>::value>::type>
+	stack()
+	: c() { }
+
       explicit
       stack(const _Sequence& __c)
       : c(__c) { }
 
       explicit
-      stack(_Sequence&& __c = _Sequence())
+      stack(_Sequence&& __c)
       : c(std::move(__c)) { }
+
+      template<typename _Alloc, typename _Requires = _Uses<_Alloc>>
+	explicit
+	stack(const _Alloc& __a)
+	: c(__a) { }
+
+      template<typename _Alloc, typename _Requires = _Uses<_Alloc>>
+	stack(const _Sequence& __c, const _Alloc& __a)
+	: c(__c, __a) { }
+
+      template<typename _Alloc, typename _Requires = _Uses<_Alloc>>
+	stack(_Sequence&& __c, const _Alloc& __a)
+	: c(std::move(__c), __a) { }
+
+      template<typename _Alloc, typename _Requires = _Uses<_Alloc>>
+	stack(const stack& __q, const _Alloc& __a)
+	: c(__q.c, __a) { }
+
+      template<typename _Alloc, typename _Requires = _Uses<_Alloc>>
+	stack(stack&& __q, const _Alloc& __a)
+	: c(std::move(__q.c), __a) { }
 #endif
 
       /**
@@ -185,15 +225,22 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       push(const value_type& __x)
       { c.push_back(__x); }
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
       void
       push(value_type&& __x)
       { c.push_back(std::move(__x)); }
 
+#if __cplusplus > 201402L
       template<typename... _Args>
-        void
-        emplace(_Args&&... __args)
+	decltype(auto)
+	emplace(_Args&&... __args)
+	{ return c.emplace_back(std::forward<_Args>(__args)...); }
+#else
+      template<typename... _Args>
+	void
+	emplace(_Args&&... __args)
 	{ c.emplace_back(std::forward<_Args>(__args)...); }
+#endif
 #endif
 
       /**
@@ -214,15 +261,19 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	c.pop_back();
       }
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
       void
       swap(stack& __s)
-      noexcept(noexcept(swap(c, __s.c)))
+#if __cplusplus > 201402L || !defined(__STRICT_ANSI__) // c++1z or gnu++11
+      noexcept(__is_nothrow_swappable<_Sequence>::value)
+#else
+      noexcept(__is_nothrow_swappable<_Tp>::value)
+#endif
       {
 	using std::swap;
 	swap(c, __s.c);
       }
-#endif
+#endif // __cplusplus >= 201103L
     };
 
   /**
@@ -284,9 +335,15 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     operator>=(const stack<_Tp, _Seq>& __x, const stack<_Tp, _Seq>& __y)
     { return !(__x < __y); }
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
   template<typename _Tp, typename _Seq>
-    inline void
+    inline
+#if __cplusplus > 201402L || !defined(__STRICT_ANSI__) // c++1z or gnu++11
+    // Constrained free swap overload, see p0185r1
+    typename enable_if<__is_swappable<_Seq>::value>::type
+#else
+    void
+#endif
     swap(stack<_Tp, _Seq>& __x, stack<_Tp, _Seq>& __y)
     noexcept(noexcept(__x.swap(__y)))
     { __x.swap(__y); }
@@ -294,7 +351,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   template<typename _Tp, typename _Seq, typename _Alloc>
     struct uses_allocator<stack<_Tp, _Seq>, _Alloc>
     : public uses_allocator<_Seq, _Alloc>::type { };
-#endif
+#endif // __cplusplus >= 201103L
 
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace

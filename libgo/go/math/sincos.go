@@ -6,7 +6,7 @@ package math
 
 // Coefficients _sin[] and _cos[] are found in pkg/math/sin.go.
 
-// Sincos(x) returns Sin(x), Cos(x).
+// Sincos returns Sin(x), Cos(x).
 //
 // Special cases are:
 //	Sincos(±0) = ±0, 1
@@ -42,8 +42,8 @@ func sincos(x float64) (sin, cos float64) {
 	y := float64(j)      // integer part of x/(Pi/4), as float
 
 	if j&1 == 1 { // map zeros to origin
-		j += 1
-		y += 1
+		j++
+		y++
 	}
 	j &= 7     // octant modulo 2Pi radians (360 degrees)
 	if j > 3 { // reflect in x axis

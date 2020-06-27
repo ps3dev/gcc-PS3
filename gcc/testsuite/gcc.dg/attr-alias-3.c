@@ -1,5 +1,5 @@
 // { dg-do link }
-// { dg-xfail-if "" { "powerpc-ibm-aix*" } { "*" } { "" } }
+// { dg-skip-if "" { "powerpc-ibm-aix*" } { "*" } { "" } }
 // { dg-require-alias "" }
 // { dg-options "-O2 -fno-common" }
 
@@ -51,6 +51,7 @@ static void lf4(void) {}
 extern ftype Af4a __attribute__((alias ("lf4")));
 static ftype *pf4a = &Af4a;
 
+int
 main() {
 #ifdef __mips
   /* Use real asm for MIPS, to stop the assembler warning about

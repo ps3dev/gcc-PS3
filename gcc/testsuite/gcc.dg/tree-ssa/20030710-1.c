@@ -2,6 +2,7 @@
 /* { dg-options "-O1 -fdump-tree-dom2" } */
 
 extern void abort (void);
+extern void blah (void);
 union tree_node;
 typedef union tree_node *tree;
 struct tree_vec
@@ -52,4 +53,3 @@ record_component_aliases (type)
 /* There should be two loads of vec.length.  */
 /* { dg-final { scan-tree-dump-times "vec.length" 2 "dom2"} } */
 
-/* { dg-final { cleanup-tree-dump "dom2" } } */

@@ -6,7 +6,7 @@
  *                                                                          *
  *                              C Header File                               *
  *                                                                          *
- *          Copyright (C) 1992-2011, Free Software Foundation, Inc.         *
+ *          Copyright (C) 1992-2016, Free Software Foundation, Inc.         *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -36,7 +36,7 @@ extern "C" {
 #include <sys/stat.h>
 #include <stdio.h>
 
-#ifdef _WIN32
+#if defined (_WIN32) || defined (__CYGWIN__)
 #include "mingw32.h"
 #endif
 
@@ -51,14 +51,49 @@ extern "C" {
    determine at compile time what support the system offers for large files.
    For now we just list the platforms we have manually tested. */
 
-#if defined (__GLIBC__) || defined (sun)  || (defined (__sgi) && defined(_LFAPI))
+#if defined (__GLIBC__) || defined (__sun__)
 #define GNAT_FOPEN fopen64
+#define GNAT_OPEN open64
 #define GNAT_STAT stat64
 #define GNAT_FSTAT fstat64
 #define GNAT_LSTAT lstat64
 #define GNAT_STRUCT_STAT struct stat64
+
+#elif defined(_WIN32)
+#define GNAT_FOPEN fopen64
+#define GNAT_OPEN open
+#define GNAT_STAT stat64
+#define GNAT_FSTAT fstat64
+#define GNAT_LSTAT lstat
+#define GNAT_STRUCT_STAT struct stat64
+
+#elif defined(__APPLE__)
+
+# include <TargetConditionals.h>
+
+# if TARGET_IPHONE_SIMULATOR
+  /* On iOS (simulator or not), the stat structure is the 64 bit one.
+     But the simulator uses the MacOS X syscalls that aren't 64 bit.
+     Fix this interfacing issue here.  */
+    int fstat64(int, struct stat *);
+    int stat64(const char *, struct stat *);
+    int lstat64(const char *, struct stat *);
+#   define GNAT_STAT stat64
+#   define GNAT_FSTAT fstat64
+#   define GNAT_LSTAT lstat64
+# else
+#   define GNAT_STAT stat
+#   define GNAT_FSTAT fstat
+#   define GNAT_LSTAT lstat
+# endif
+
+#   define GNAT_FOPEN fopen
+#   define GNAT_OPEN open
+#   define GNAT_STRUCT_STAT struct stat
+
 #else
 #define GNAT_FOPEN fopen
+#define GNAT_OPEN open
 #define GNAT_STAT stat
 #define GNAT_FSTAT fstat
 #define GNAT_LSTAT lstat
@@ -72,12 +107,20 @@ typedef long long OS_Time;
 typedef long OS_Time;
 #endif
 
+#define __int64 long long
+GNAT_STRUCT_STAT;
+
 /* A lazy cache for the attributes of a file. On some systems, a single call to
    stat() will give all this information, so it is better than doing a system
    call every time. On other systems this require several system calls.
 */
 
 struct file_attributes {
+  int           error;
+  /* Errno value returned by stat()/fstat(). If non-zero, other fields should
+   * be considered as invalid.
+   */
+
   unsigned char exists;
 
   unsigned char writable;
@@ -89,7 +132,7 @@ struct file_attributes {
   unsigned char directory;
 
   OS_Time timestamp;
-  long file_length;
+  __int64 file_length;
 };
 /* WARNING: changing the size here might require changing the constant
  * File_Attributes_Size in osint.ads (which should be big enough to
@@ -102,6 +145,8 @@ extern void   __gnat_current_time_string           (char *);
 extern void   __gnat_to_gm_time			   (OS_Time *, int *, int *,
 				                    int *, int *,
 				                    int *, int *);
+extern void   __gnat_to_os_time                    (OS_Time *, int, int, int,
+                                                    int, int, int);
 extern int    __gnat_get_maximum_file_name_length  (void);
 extern int    __gnat_get_switches_case_sensitive   (void);
 extern int    __gnat_get_file_names_case_sensitive (void);
@@ -120,7 +165,7 @@ extern int    __gnat_symlink                       (char *, char *);
 extern int    __gnat_try_lock                      (char *, char *);
 extern int    __gnat_open_new                      (char *, int);
 extern int    __gnat_open_new_temp		   (char *, int);
-extern int    __gnat_mkdir			   (char *);
+extern int    __gnat_mkdir			   (char *, int);
 extern int    __gnat_stat			   (char *,
 						    GNAT_STRUCT_STAT *);
 extern int    __gnat_unlink                        (char *);
@@ -131,6 +176,7 @@ extern int    __gnat_rmdir                         (char *);
 extern FILE  *__gnat_fopen			   (char *, char *, int);
 extern FILE  *__gnat_freopen			   (char *, char *, FILE *,
 				                    int);
+extern int    __gnat_open                          (char *, int);
 extern int    __gnat_open_read                     (char *, int);
 extern int    __gnat_open_rw                       (char *, int);
 extern int    __gnat_open_create                   (char *, int);
@@ -138,8 +184,9 @@ extern int    __gnat_create_output_file            (char *);
 extern int    __gnat_create_output_file_new        (char *);
 
 extern int    __gnat_open_append                   (char *, int);
-extern long   __gnat_file_length                   (int);
-extern long   __gnat_named_file_length             (char *);
+extern long   __gnat_file_length_long              (int);
+extern __int64 __gnat_file_length                  (int);
+extern __int64 __gnat_named_file_length            (char *);
 extern void   __gnat_tmp_name			   (char *);
 extern DIR   *__gnat_opendir                       (char *);
 extern char  *__gnat_readdir                       (DIR *, char *, int *);
@@ -161,9 +208,12 @@ extern int    __gnat_is_directory		      (char *);
 extern int    __gnat_is_writable_file		   (char *);
 extern int    __gnat_is_readable_file		   (char *name);
 extern int    __gnat_is_executable_file      (char *name);
+extern int    __gnat_is_write_accessible_file	(char *name);
+extern int    __gnat_is_read_accessible_file	(char *name);
 
-extern void __gnat_reset_attributes (struct file_attributes* attr);
-extern long   __gnat_file_length_attr        (int, char *, struct file_attributes *);
+extern void   __gnat_reset_attributes (struct file_attributes *);
+extern int    __gnat_error_attributes (struct file_attributes *);
+extern __int64 __gnat_file_length_attr       (int, char *, struct file_attributes *);
 extern OS_Time __gnat_file_time_name_attr    (char *, struct file_attributes *);
 extern OS_Time __gnat_file_time_fd_attr      (int,    struct file_attributes *);
 extern int    __gnat_file_exists_attr        (char *, struct file_attributes *);
@@ -176,15 +226,16 @@ extern int    __gnat_is_symbolic_link_attr   (char *, struct file_attributes *);
 
 extern void   __gnat_set_non_writable              (char *name);
 extern void   __gnat_set_writable                  (char *name);
-extern void   __gnat_set_executable                (char *name);
+extern void   __gnat_set_executable                (char *name, int);
 extern void   __gnat_set_readable                  (char *name);
 extern void   __gnat_set_non_readable              (char *name);
 extern int    __gnat_is_symbolic_link		   (char *name);
 extern int    __gnat_portable_spawn                (char *[]);
 extern int    __gnat_portable_no_block_spawn       (char *[]);
 extern int    __gnat_portable_wait                 (int *);
+extern int    __gnat_current_process_id            (void);
 extern char  *__gnat_locate_exec                   (char *, char *);
-extern char  *__gnat_locate_exec_on_path	   (char *);
+extern char  *__gnat_locate_exec_on_path           (char *);
 extern char  *__gnat_locate_regular_file           (char *, char *);
 extern void   __gnat_maybe_glob_args               (int *, char ***);
 extern void   __gnat_os_exit			   (int);
@@ -235,11 +286,16 @@ extern int    __gnat_pipe			   (int *);
 extern int    __gnat_expect_poll		   (int *, int, int, int *);
 extern void   __gnat_set_binary_mode		   (int);
 extern void   __gnat_set_text_mode		   (int);
+extern void   __gnat_set_mode			   (int,int);
 extern char  *__gnat_ttyname			   (int);
 extern int    __gnat_lseek			   (int, long, int);
 extern int    __gnat_set_close_on_exec		   (int, int);
 extern int    __gnat_dup			   (int);
 extern int    __gnat_dup2			   (int, int);
+
+/* large file support */
+extern __int64 __gnat_ftell64                      (FILE *);
+extern int     __gnat_fseek64                      (FILE *, __int64, int);
 
 extern int    __gnat_number_of_cpus                (void);
 
@@ -250,7 +306,11 @@ extern char * __gnat_locate_executable_file        (char *, char *);
 extern char * __gnat_locate_file_with_predicate    (char *, char *,
 						    int (*)(char*));
 
-#if defined (linux)
+#if defined (__ANDROID__)
+#undef __linux__
+extern void   *__gnat_lwp_self                     (void);
+
+#elif defined (__linux__)
 extern void   *__gnat_lwp_self			   (void);
 
 /* Routines for interface to required CPU set primitives */
@@ -267,7 +327,7 @@ extern void   __gnat_cpu_set                       (int, size_t, cpu_set_t *);
 #if defined (_WIN32)
 /* Interface to delete a handle from internally maintained list of child
    process handles on Windows */
-extern void
+extern int
 __gnat_win32_remove_handle (HANDLE h, int pid);
 #endif
 
@@ -281,6 +341,8 @@ extern int    get_gcc_version                      (void);
 
 extern int    __gnat_binder_supports_auto_init     (void);
 extern int    __gnat_sals_init_using_constructors  (void);
+
+extern const void * __gnat_get_executable_load_address  (void);
 
 #ifdef __cplusplus
 }

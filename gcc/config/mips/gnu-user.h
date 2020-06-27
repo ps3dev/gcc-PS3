@@ -1,6 +1,5 @@
 /* Definitions for MIPS systems using GNU userspace.
-   Copyright (C) 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006,
-   2007, 2008, 2010, 2011 Free Software Foundation, Inc.
+   Copyright (C) 1998-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -46,24 +45,29 @@ along with GCC; see the file COPYING3.  If not see
    CC1_SPEC itself by config/linux.h, but mips.h overrides CC1_SPEC
    and provides this hook instead.  */
 #undef SUBTARGET_CC1_SPEC
-#define SUBTARGET_CC1_SPEC "%{profile:-p}"
+#define SUBTARGET_CC1_SPEC GNU_USER_TARGET_CC1_SPEC
 
-/* From iris5.h */
 /* -G is incompatible with -KPIC which is the default, so only allow objects
    in the small data section if the user explicitly asks for it.  */
 #undef MIPS_DEFAULT_GVALUE
 #define MIPS_DEFAULT_GVALUE 0
 
-/* Borrowed from sparc/linux.h */
-#undef LINK_SPEC
-#define LINK_SPEC \
- "%(endian_spec) \
-  %{shared:-shared} \
+#undef GNU_USER_TARGET_LINK_SPEC
+#define GNU_USER_TARGET_LINK_SPEC "\
+  %{G*} %{EB} %{EL} %{mips*} %{shared} \
   %{!shared: \
     %{!static: \
       %{rdynamic:-export-dynamic} \
-      -dynamic-linker " GNU_USER_DYNAMIC_LINKER "} \
-      %{static:-static}}"
+      %{mabi=n32: -dynamic-linker " GNU_USER_DYNAMIC_LINKERN32 "} \
+      %{mabi=64: -dynamic-linker " GNU_USER_DYNAMIC_LINKER64 "} \
+      %{mabi=32: -dynamic-linker " GNU_USER_DYNAMIC_LINKER32 "}} \
+    %{static}} \
+  %{mabi=n32:-m" GNU_USER_LINK_EMULATIONN32 "} \
+  %{mabi=64:-m" GNU_USER_LINK_EMULATION64 "} \
+  %{mabi=32:-m" GNU_USER_LINK_EMULATION32 "}"
+
+#undef LINK_SPEC
+#define LINK_SPEC GNU_USER_TARGET_LINK_SPEC
 
 #undef SUBTARGET_ASM_SPEC
 #define SUBTARGET_ASM_SPEC \
@@ -91,16 +95,12 @@ along with GCC; see the file COPYING3.  If not see
 #undef ASM_OUTPUT_REG_POP
 
 #undef LIB_SPEC
-#define LIB_SPEC "\
-%{pthread:-lpthread} \
-%{shared:-lc} \
-%{!shared: \
-  %{profile:-lc_p} %{!profile:-lc}}"
+#define LIB_SPEC GNU_USER_TARGET_LIB_SPEC
 
 #ifdef HAVE_AS_NO_SHARED
 /* Default to -mno-shared for non-PIC.  */
 # define NO_SHARED_SPECS \
-  "%{mshared|mno-shared|fpic|fPIC|fpie|fPIE:;:-mno-shared}"
+  " %{mshared|mno-shared:;:%{" NO_FPIE_AND_FPIC_SPEC ":-mno-shared}}"
 #else
 # define NO_SHARED_SPECS ""
 #endif
@@ -126,15 +126,24 @@ extern const char *host_detect_local_cpu (int argc, const char **argv);
      specs handling by removing a redundant option.  */			\
   "%{!mno-shared:%<mplt}",						\
   /* -mplt likewise has no effect for -mabi=64 without -msym32.  */	\
-  "%{mabi=64:%{!msym32:%<mplt}}"
+  "%{mabi=64:%{!msym32:%<mplt}}",					\
+  "%{!EB:%{!EL:%(endian_spec)}}",					\
+  "%{!mabi=*: -" MULTILIB_ABI_DEFAULT "}"
 
 #undef DRIVER_SELF_SPECS
 #define DRIVER_SELF_SPECS \
+  MIPS_ISA_LEVEL_SPEC,    \
   BASE_DRIVER_SELF_SPECS, \
   LINUX_DRIVER_SELF_SPECS
 
 /* Similar to standard Linux, but adding -ffast-math support.  */
+#undef	GNU_USER_TARGET_MATHFILE_SPEC
+#define GNU_USER_TARGET_MATHFILE_SPEC \
+  "%{Ofast|ffast-math|funsafe-math-optimizations:crtfastmath.o%s}"
 #undef  ENDFILE_SPEC
 #define ENDFILE_SPEC \
-  "%{Ofast|ffast-math|funsafe-math-optimizations:crtfastmath.o%s} \
-   %{shared|pie:crtendS.o%s;:crtend.o%s} crtn.o%s"
+  GNU_USER_TARGET_MATHFILE_SPEC " " \
+  GNU_USER_TARGET_ENDFILE_SPEC
+
+#undef LOCAL_LABEL_PREFIX
+#define LOCAL_LABEL_PREFIX (TARGET_OLDABI ? "$" : ".")

@@ -1,8 +1,6 @@
 // <bitset> -*- C++ -*-
 
-// Copyright (C) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010,
-// 2011
-// Free Software Foundation, Inc.
+// Copyright (C) 2001-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -80,7 +78,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       _GLIBCXX_CONSTEXPR _Base_bitset() _GLIBCXX_NOEXCEPT
       : _M_w() { }
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
       constexpr _Base_bitset(unsigned long long __val) noexcept
       : _M_w{ _WordT(__val)
 #if __SIZEOF_LONG_LONG__ > __SIZEOF_LONG__
@@ -117,7 +115,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       _M_getword(size_t __pos) const _GLIBCXX_NOEXCEPT
       { return _M_w[_S_whichword(__pos)]; }
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
       const _WordT*
       _M_getdata() const noexcept
       { return _M_w; }
@@ -218,7 +216,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       unsigned long
       _M_do_to_ulong() const;
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
       unsigned long long
       _M_do_to_ullong() const;
 #endif
@@ -247,7 +245,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
 	      _M_w[__n] = _M_w[__n - __wshift];
 	  else
 	    {
-	      const size_t __sub_offset = (_GLIBCXX_BITSET_BITS_PER_WORD 
+	      const size_t __sub_offset = (_GLIBCXX_BITSET_BITS_PER_WORD
 					   - __offset);
 	      for (size_t __n = _Nw - 1; __n > __wshift; --__n)
 		_M_w[__n] = ((_M_w[__n - __wshift] << __offset)
@@ -281,7 +279,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
 			     | (_M_w[__n + __wshift + 1] << __sub_offset));
 	      _M_w[__limit] = _M_w[_Nw-1] >> __offset;
 	    }
-	  
+
 	  std::fill(_M_w + __limit + 1, _M_w + _Nw, static_cast<_WordT>(0));
 	}
     }
@@ -296,7 +294,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       return _M_w[0];
     }
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
   template<size_t _Nw>
     unsigned long long
     _Base_bitset<_Nw>::_M_do_to_ullong() const
@@ -380,7 +378,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       : _M_w(0)
       { }
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
       constexpr _Base_bitset(unsigned long long __val) noexcept
 #else
       _Base_bitset(unsigned long __val)
@@ -412,7 +410,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       _M_getword(size_t) const _GLIBCXX_NOEXCEPT
       { return _M_w; }
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
       const _WordT*
       _M_getdata() const noexcept
       { return &_M_w; }
@@ -480,7 +478,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       _M_do_to_ulong() const _GLIBCXX_NOEXCEPT
       { return _M_w; }
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
       unsigned long long
       _M_do_to_ullong() const noexcept
       { return _M_w; }
@@ -525,7 +523,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       _GLIBCXX_CONSTEXPR _Base_bitset() _GLIBCXX_NOEXCEPT
       { }
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
       constexpr _Base_bitset(unsigned long long) noexcept
 #else
       _Base_bitset(unsigned long)
@@ -558,7 +556,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       _WordT&
       _M_getword(size_t) _GLIBCXX_NOEXCEPT
       {
-	__throw_out_of_range(__N("_Base_bitset::_M_getword")); 
+	__throw_out_of_range(__N("_Base_bitset::_M_getword"));
 	return *new _WordT;
       }
 
@@ -626,7 +624,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       _M_do_to_ulong() const _GLIBCXX_NOEXCEPT
       { return 0; }
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
       unsigned long long
       _M_do_to_ullong() const noexcept
       { return 0; }
@@ -661,11 +659,11 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       typedef unsigned long _WordT;
 
       static void
-      _S_do_sanitize(_WordT) _GLIBCXX_NOEXCEPT { } 
+      _S_do_sanitize(_WordT) _GLIBCXX_NOEXCEPT { }
     };
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
-  template<size_t _Nb, bool = _Nb < _GLIBCXX_BITSET_BITS_PER_ULL>
+#if __cplusplus >= 201103L
+  template<size_t _Nb, bool = (_Nb < _GLIBCXX_BITSET_BITS_PER_ULL)>
     struct _Sanitize_val
     {
       static constexpr unsigned long long
@@ -683,9 +681,8 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
 #endif
 
   /**
-   *  The %bitset class represents a @e fixed-size sequence of bits.
-   *
-   *  @ingroup containers
+   *  @brief The %bitset class represents a @e fixed-size sequence of bits.
+   *  @ingroup utilities
    *
    *  (Note that %bitset does @e not meet the formal requirements of a
    *  <a href="tables.html#65">container</a>.  Mainly, it lacks iterators.)
@@ -734,7 +731,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
    *  @endcode
    *
    *  Also see:
-   *  http://gcc.gnu.org/onlinedocs/libstdc++/manual/bk01pt12ch33s02.html
+   *  https://gcc.gnu.org/onlinedocs/libstdc++/manual/ext_containers.html
    *  for a description of extensions.
    *
    *  Most of the actual code isn't contained in %bitset<> itself, but in the
@@ -754,15 +751,35 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       typedef _Base_bitset<_GLIBCXX_BITSET_WORDS(_Nb)> _Base;
       typedef unsigned long _WordT;
 
+      template<class _CharT, class _Traits, class _Alloc>
+      void
+      _M_check_initial_position(const std::basic_string<_CharT, _Traits, _Alloc>& __s,
+				size_t __position) const
+      {
+	if (__position > __s.size())
+	  __throw_out_of_range_fmt(__N("bitset::bitset: __position "
+				       "(which is %zu) > __s.size() "
+				       "(which is %zu)"),
+				   __position, __s.size());
+      }
+
+      void _M_check(size_t __position, const char *__s) const
+      {
+	if (__position >= _Nb)
+	  __throw_out_of_range_fmt(__N("%s: __position (which is %zu) "
+				       ">= _Nb (which is %zu)"),
+				   __s, __position, _Nb);
+      }
+
       void
       _M_do_sanitize() _GLIBCXX_NOEXCEPT
-      { 
+      {
 	typedef _Sanitize<_Nb % _GLIBCXX_BITSET_BITS_PER_WORD> __sanitize_type;
 	__sanitize_type::_S_do_sanitize(this->_M_hiword());
       }
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
-      template<typename> friend class hash;
+#if __cplusplus >= 201103L
+      template<typename> friend struct hash;
 #endif
 
     public:
@@ -784,10 +801,10 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
 
 	_WordT*	_M_wp;
 	size_t 	_M_bpos;
-	
+
 	// left undefined
 	reference();
-	
+
       public:
 	reference(bitset& __b, size_t __pos) _GLIBCXX_NOEXCEPT
 	{
@@ -845,7 +862,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       { }
 
       /// Initial bits bitwise-copied from a single word (others set to zero).
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
       constexpr bitset(unsigned long long __val) noexcept
       : _Base(_Sanitize_val<_Nb>::_S_do_sanitize_val(__val)) { }
 #else
@@ -869,9 +886,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
 	       size_t __position = 0)
 	: _Base()
 	{
-	  if (__position > __s.size())
-	    __throw_out_of_range(__N("bitset::bitset initial position "
-				     "not valid"));
+	  _M_check_initial_position(__s, __position);
 	  _M_copy_from_string(__s, __position,
 			      std::basic_string<_CharT, _Traits, _Alloc>::npos,
 			      _CharT('0'), _CharT('1'));
@@ -892,9 +907,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
 	       size_t __position, size_t __n)
 	: _Base()
 	{
-	  if (__position > __s.size())
-	    __throw_out_of_range(__N("bitset::bitset initial position "
-				     "not valid"));
+	  _M_check_initial_position(__s, __position);
 	  _M_copy_from_string(__s, __position, __n, _CharT('0'), _CharT('1'));
 	}
 
@@ -906,13 +919,11 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
 	       _CharT __zero, _CharT __one = _CharT('1'))
 	: _Base()
 	{
-	  if (__position > __s.size())
-	    __throw_out_of_range(__N("bitset::bitset initial position "
-				     "not valid"));
+	  _M_check_initial_position(__s, __position);
 	  _M_copy_from_string(__s, __position, __n, __zero, __one);
 	}
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
       /**
        *  Construct from a character %array.
        *  @param  __str  An %array of characters @a zero and @a one.
@@ -970,7 +981,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
 	return *this;
       }
       //@}
-      
+
       //@{
       /**
        *  Operations on bitsets.
@@ -1004,7 +1015,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
 	return *this;
       }
       //@}
-      
+
       //@{
       /**
        *  These versions of single-bit set, reset, flip, and test are
@@ -1047,7 +1058,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       { return ((this->_M_getword(__pos) & _Base::_S_maskbit(__pos))
 		!= static_cast<_WordT>(0)); }
       //@}
-      
+
       // Set, reset, and flip.
       /**
        *  @brief Sets every bit to true.
@@ -1069,8 +1080,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       bitset<_Nb>&
       set(size_t __position, bool __val = true)
       {
-	if (__position >= _Nb)
-	  __throw_out_of_range(__N("bitset::set"));
+	this->_M_check(__position, __N("bitset::set"));
 	return _Unchecked_set(__position, __val);
       }
 
@@ -1094,11 +1104,10 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       bitset<_Nb>&
       reset(size_t __position)
       {
-	if (__position >= _Nb)
-	  __throw_out_of_range(__N("bitset::reset"));
+	this->_M_check(__position, __N("bitset::reset"));
 	return _Unchecked_reset(__position);
       }
-      
+
       /**
        *  @brief Toggles every bit to its opposite value.
        */
@@ -1118,11 +1127,10 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       bitset<_Nb>&
       flip(size_t __position)
       {
-	if (__position >= _Nb)
-	  __throw_out_of_range(__N("bitset::flip"));
+	this->_M_check(__position, __N("bitset::flip"));
 	return _Unchecked_flip(__position);
       }
-      
+
       /// See the no-argument flip().
       bitset<_Nb>
       operator~() const _GLIBCXX_NOEXCEPT
@@ -1151,7 +1159,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       operator[](size_t __position) const
       { return _Unchecked_test(__position); }
       //@}
-      
+
       /**
        *  @brief Returns a numerical interpretation of the %bitset.
        *  @return  The integral equivalent of the bits.
@@ -1162,7 +1170,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       to_ulong() const
       { return this->_M_do_to_ulong(); }
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
       unsigned long long
       to_ullong() const
       { return this->_M_do_to_ullong(); }
@@ -1294,7 +1302,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       operator!=(const bitset<_Nb>& __rhs) const _GLIBCXX_NOEXCEPT
       { return !this->_M_is_equal(__rhs); }
       //@}
-      
+
       /**
        *  @brief Tests the value of a bit.
        *  @param  __position  The index of a bit.
@@ -1304,8 +1312,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       bool
       test(size_t __position) const
       {
-	if (__position >= _Nb)
-	  __throw_out_of_range(__N("bitset::test"));
+	this->_M_check(__position, __N("bitset::test"));
 	return _Unchecked_test(__position);
       }
 
@@ -1345,7 +1352,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       operator>>(size_t __position) const _GLIBCXX_NOEXCEPT
       { return bitset<_Nb>(*this) >>= __position; }
       //@}
-      
+
       /**
        *  @brief  Finds the index of the first "on" bit.
        *  @return  The index of the first bit set, or size() if not found.
@@ -1377,7 +1384,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
 		       size_t __pos, size_t __n, _CharT __zero, _CharT __one)
       {
 	reset();
-	const size_t __nbits = std::min(_Nb, std::min(__n, __len - __pos));
+	const size_t __nbits = std::min(_Nb, std::min(__n, size_t(__len - __pos)));
 	for (size_t __i = __nbits; __i > 0; --__i)
 	  {
 	    const _CharT __c = __s[__pos + __nbits - __i];
@@ -1475,7 +1482,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
 	      for (size_t __i = _Nb; __i > 0; --__i)
 		{
 		  static typename _Traits::int_type __eof = _Traits::eof();
-		  
+
 		  typename _Traits::int_type __c1 = __is.rdbuf()->sbumpc();
 		  if (_Traits::eq_int_type(__c1, __eof))
 		    {
@@ -1501,7 +1508,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
 	    }
 	  __catch(__cxxabiv1::__forced_unwind&)
 	    {
-	      __is._M_setstate(__ios_base::badbit);		
+	      __is._M_setstate(__ios_base::badbit);
 	      __throw_exception_again;
 	    }
 	  __catch(...)
@@ -1540,7 +1547,7 @@ _GLIBCXX_END_NAMESPACE_CONTAINER
 #undef _GLIBCXX_BITSET_BITS_PER_WORD
 #undef _GLIBCXX_BITSET_BITS_PER_ULL
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
 
 #include <bits/functional_hash.h>
 
@@ -1574,7 +1581,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace
 
-#endif // __GXX_EXPERIMENTAL_CXX0X__
+#endif // C++11
 
 #ifdef _GLIBCXX_DEBUG
 # include <debug/bitset>

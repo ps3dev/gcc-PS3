@@ -1,7 +1,6 @@
 // Allocators -*- C++ -*-
 
-// Copyright (C) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010,
-// 2011 Free Software Foundation, Inc.
+// Copyright (C) 2001-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -44,24 +43,25 @@
 #ifndef _ALLOCATOR_H
 #define _ALLOCATOR_H 1
 
-// Define the base class to std::allocator.
-#include <bits/c++allocator.h>
+#include <bits/c++allocator.h> // Define the base class to std::allocator.
+#include <bits/memoryfwd.h>
+#if __cplusplus >= 201103L
+#include <type_traits>
+#endif
+
+#define __cpp_lib_incomplete_container_elements 201505
+#if __cplusplus >= 201103L
+# define __cpp_lib_allocator_is_always_equal 201411
+#endif
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
 _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   /**
-   * @defgroup allocators Allocators
-   * @ingroup memory
-   *
-   * Classes encapsulating memory operations.
-   *
-   * @{
+   *  @addtogroup allocators
+   *  @{
    */
-
-  template<typename _Tp>
-    class allocator;
 
   /// allocator<void> specialization.
   template<>
@@ -75,18 +75,37 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       typedef void        value_type;
 
       template<typename _Tp1>
-        struct rebind
-        { typedef allocator<_Tp1> other; };
+	struct rebind
+	{ typedef allocator<_Tp1> other; };
+
+#if __cplusplus >= 201103L
+      // _GLIBCXX_RESOLVE_LIB_DEFECTS
+      // 2103. std::allocator propagate_on_container_move_assignment
+      typedef true_type propagate_on_container_move_assignment;
+
+      typedef true_type is_always_equal;
+
+      template<typename _Up, typename... _Args>
+	void
+	construct(_Up* __p, _Args&&... __args)
+	{ ::new((void *)__p) _Up(std::forward<_Args>(__args)...); }
+
+      template<typename _Up>
+	void
+	destroy(_Up* __p) { __p->~_Up(); }
+#endif
     };
 
   /**
    * @brief  The @a standard allocator, as per [20.4].
    *
-   *  See http://gcc.gnu.org/onlinedocs/libstdc++/manual/bk01pt04ch11.html
+   *  See https://gcc.gnu.org/onlinedocs/libstdc++/manual/memory.html#std.util.memory.allocator
    *  for further details.
+   *
+   *  @tparam  _Tp  Type of allocated object.
    */
   template<typename _Tp>
-    class allocator: public __glibcxx_base_allocator<_Tp>
+    class allocator: public __allocator_base<_Tp>
     {
    public:
       typedef size_t     size_type;
@@ -98,16 +117,24 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       typedef _Tp        value_type;
 
       template<typename _Tp1>
-        struct rebind
-        { typedef allocator<_Tp1> other; };
+	struct rebind
+	{ typedef allocator<_Tp1> other; };
+
+#if __cplusplus >= 201103L
+      // _GLIBCXX_RESOLVE_LIB_DEFECTS
+      // 2103. std::allocator propagate_on_container_move_assignment
+      typedef true_type propagate_on_container_move_assignment;
+
+      typedef true_type is_always_equal;
+#endif
 
       allocator() throw() { }
 
       allocator(const allocator& __a) throw()
-      : __glibcxx_base_allocator<_Tp>(__a) { }
+      : __allocator_base<_Tp>(__a) { }
 
       template<typename _Tp1>
-        allocator(const allocator<_Tp1>&) throw() { }
+	allocator(const allocator<_Tp1>&) throw() { }
 
       ~allocator() throw() { }
 
@@ -117,26 +144,28 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   template<typename _T1, typename _T2>
     inline bool
     operator==(const allocator<_T1>&, const allocator<_T2>&)
+    _GLIBCXX_USE_NOEXCEPT
     { return true; }
 
   template<typename _Tp>
     inline bool
     operator==(const allocator<_Tp>&, const allocator<_Tp>&)
+    _GLIBCXX_USE_NOEXCEPT
     { return true; }
 
   template<typename _T1, typename _T2>
     inline bool
     operator!=(const allocator<_T1>&, const allocator<_T2>&)
+    _GLIBCXX_USE_NOEXCEPT
     { return false; }
 
   template<typename _Tp>
     inline bool
     operator!=(const allocator<_Tp>&, const allocator<_Tp>&)
+    _GLIBCXX_USE_NOEXCEPT
     { return false; }
 
-  /**
-   * @}
-   */
+  /// @} group allocator
 
   // Inhibit implicit instantiations for required instantiations,
   // which are defined via explicit instantiations elsewhere.
@@ -146,18 +175,18 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 #endif
 
   // Undefine.
-#undef __glibcxx_base_allocator
+#undef __allocator_base
 
   // To implement Option 3 of DR 431.
   template<typename _Alloc, bool = __is_empty(_Alloc)>
     struct __alloc_swap
-    { static void _S_do_it(_Alloc&, _Alloc&) { } };
+    { static void _S_do_it(_Alloc&, _Alloc&) _GLIBCXX_NOEXCEPT { } };
 
   template<typename _Alloc>
     struct __alloc_swap<_Alloc, false>
     {
       static void
-      _S_do_it(_Alloc& __one, _Alloc& __two)
+      _S_do_it(_Alloc& __one, _Alloc& __two) _GLIBCXX_NOEXCEPT
       {
 	// Precondition: swappable allocators.
 	if (__one != __two)
@@ -182,34 +211,34 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       { return __one != __two; }
     };
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
   template<typename _Tp, bool
     = __or_<is_copy_constructible<typename _Tp::value_type>,
             is_nothrow_move_constructible<typename _Tp::value_type>>::value>
     struct __shrink_to_fit_aux
-    { static bool _S_do_it(_Tp&) { return false; } };
+    { static bool _S_do_it(_Tp&) noexcept { return false; } };
 
   template<typename _Tp>
     struct __shrink_to_fit_aux<_Tp, true>
     {
       static bool
-      _S_do_it(_Tp& __c)
+      _S_do_it(_Tp& __c) noexcept
       {
-	__try
+#if __cpp_exceptions
+	try
 	  {
 	    _Tp(__make_move_if_noexcept_iterator(__c.begin()),
 		__make_move_if_noexcept_iterator(__c.end()),
 		__c.get_allocator()).swap(__c);
 	    return true;
 	  }
-	__catch(...)
+	catch(...)
 	  { return false; }
+#else
+	return false;
+#endif
       }
     };
-
-  // Declare uses_allocator so it can be specialized in <queue> etc.
-  template<typename, typename>
-    struct uses_allocator;
 #endif
 
 _GLIBCXX_END_NAMESPACE_VERSION

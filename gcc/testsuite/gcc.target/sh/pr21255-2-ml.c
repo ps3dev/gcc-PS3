@@ -1,6 +1,5 @@
-/* { dg-do compile { target "sh*-*-*" } } */
+/* { dg-do compile { target { little_endian } } }  */
 /* { dg-options "-O2 -fomit-frame-pointer" } */
-/* { dg-skip-if "" { "sh*-*-*" } { "-mb" && "-m5*"} { "" } }  */
 /* { dg-final { scan-assembler "mov @\\(4,r.\\),r.; mov @r.,r." } } */
 double d;
 

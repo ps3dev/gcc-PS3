@@ -1,7 +1,8 @@
-!  Copyright (C) 2005, 2007, 2008, 2009, 2011 Free Software Foundation, Inc.
+!  Copyright (C) 2005-2017 Free Software Foundation, Inc.
 !  Contributed by Jakub Jelinek <jakub@redhat.com>.
 
-!  This file is part of the GNU OpenMP Library (libgomp).
+!  This file is part of the GNU Offloading and Multi Processing Library
+!  (libgomp).
 
 !  Libgomp is free software; you can redistribute it and/or modify it
 !  under the terms of the GNU General Public License as published by
@@ -33,9 +34,35 @@
       parameter (omp_sched_dynamic = 2)
       parameter (omp_sched_guided = 3)
       parameter (omp_sched_auto = 4)
-      parameter (openmp_version = 201107)
+      integer omp_proc_bind_kind
+      parameter (omp_proc_bind_kind = 4)
+      integer (omp_proc_bind_kind) omp_proc_bind_false
+      integer (omp_proc_bind_kind) omp_proc_bind_true
+      integer (omp_proc_bind_kind) omp_proc_bind_master
+      integer (omp_proc_bind_kind) omp_proc_bind_close
+      integer (omp_proc_bind_kind) omp_proc_bind_spread
+      parameter (omp_proc_bind_false = 0)
+      parameter (omp_proc_bind_true = 1)
+      parameter (omp_proc_bind_master = 2)
+      parameter (omp_proc_bind_close = 3)
+      parameter (omp_proc_bind_spread = 4)
+      integer omp_lock_hint_kind
+      parameter (omp_lock_hint_kind = 4)
+      integer (omp_lock_hint_kind) omp_lock_hint_none
+      integer (omp_lock_hint_kind) omp_lock_hint_uncontended
+      integer (omp_lock_hint_kind) omp_lock_hint_contended
+      integer (omp_lock_hint_kind) omp_lock_hint_nonspeculative
+      integer (omp_lock_hint_kind) omp_lock_hint_speculative
+      parameter (omp_lock_hint_none = 0)
+      parameter (omp_lock_hint_uncontended = 1)
+      parameter (omp_lock_hint_contended = 2)
+      parameter (omp_lock_hint_nonspeculative = 4)
+      parameter (omp_lock_hint_speculative = 8)
+      parameter (openmp_version = 201511)
 
       external omp_init_lock, omp_init_nest_lock
+      external omp_init_lock_with_hint
+      external omp_init_nest_lock_with_hint
       external omp_destroy_lock, omp_destroy_nest_lock
       external omp_set_lock, omp_set_nest_lock
       external omp_unset_lock, omp_unset_nest_lock
@@ -68,3 +95,34 @@
 
       external omp_in_final
       logical(4) omp_in_final
+
+      external omp_get_cancelllation
+      logical(4) omp_get_cancelllation
+
+      external omp_get_proc_bind
+      integer(omp_proc_bind_kind) omp_get_proc_bind
+
+      integer(4) omp_get_num_places
+      external omp_get_num_places
+      integer(4) omp_get_place_num_procs
+      external omp_get_place_num_procs
+      external omp_get_place_proc_ids
+      integer(4) omp_get_place_num
+      external omp_get_place_num
+      integer(4) omp_get_partition_num_places
+      external omp_get_partition_num_places
+      external omp_get_partition_place_nums
+
+      external omp_set_default_device, omp_get_default_device
+      external omp_get_num_devices, omp_get_num_teams
+      external omp_get_team_num
+      integer(4) omp_get_default_device, omp_get_num_devices
+      integer(4) omp_get_num_teams, omp_get_team_num
+
+      external omp_is_initial_device
+      logical(4) omp_is_initial_device
+      external omp_get_initial_device
+      integer(4) omp_get_initial_device
+
+      external omp_get_max_task_priority
+      integer(4) omp_get_max_task_priority

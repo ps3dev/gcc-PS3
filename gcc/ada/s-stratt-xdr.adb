@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---         Copyright (C) 1996-2010, Free Software Foundation, Inc.          --
+--         Copyright (C) 1996-2016, Free Software Foundation, Inc.          --
 --                                                                          --
 -- GARLIC is free software;  you can redistribute it and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -32,6 +32,11 @@
 --  This file is an alternate version of s-stratt.adb based on the XDR
 --  standard. It is especially useful for exchanging streams between two
 --  different systems with different basic type representations and endianness.
+
+pragma Warnings (Off, "*not allowed in compiler unit");
+--  This body is used only when rebuilding the runtime library, not when
+--  building the compiler, so it's OK to depend on features that would
+--  otherwise break bootstrap (e.g. IF-expressions).
 
 with Ada.IO_Exceptions;
 with Ada.Streams;              use Ada.Streams;
@@ -283,6 +288,10 @@ package body System.Stream_Attributes is
    -- Block_IO_OK --
    -----------------
 
+   --  We must inhibit Block_IO, because in XDR mode, each element is output
+   --  according to XDR requirements, which is not at all the same as writing
+   --  the whole array in one block.
+
    function Block_IO_OK return Boolean is
    begin
       return False;
@@ -374,12 +383,12 @@ package body System.Stream_Attributes is
       F_Bytes : SEO      renames Fields (I).F_Bytes;
       F_Size  : Integer  renames Fields (I).F_Size;
 
-      Positive   : Boolean;
-      Exponent   : Long_Unsigned;
-      Fraction   : Long_Unsigned;
-      Result     : Float;
-      S          : SEA (1 .. F_L);
-      L          : SEO;
+      Is_Positive : Boolean;
+      Exponent    : Long_Unsigned;
+      Fraction    : Long_Unsigned;
+      Result      : Float;
+      S           : SEA (1 .. F_L);
+      L           : SEO;
 
    begin
       Ada.Streams.Read (Stream.all, S, L);
@@ -397,10 +406,10 @@ package body System.Stream_Attributes is
       Result := Float'Scaling (Float (Fraction), -F_Size);
 
       if BS <= S (1) then
-         Positive := False;
+         Is_Positive := False;
          Exponent := Long_Unsigned (S (1) - BS);
       else
-         Positive := True;
+         Is_Positive := True;
          Exponent := Long_Unsigned (S (1));
       end if;
 
@@ -434,7 +443,7 @@ package body System.Stream_Attributes is
            (1.0 + Result, Integer (Exponent) - E_Bias);
       end if;
 
-      if not Positive then
+      if not Is_Positive then
          Result := -Result;
       end if;
 
@@ -489,12 +498,12 @@ package body System.Stream_Attributes is
       F_Bytes : SEO      renames Fields (I).F_Bytes;
       F_Size  : Integer  renames Fields (I).F_Size;
 
-      Positive   : Boolean;
-      Exponent   : Long_Unsigned;
-      Fraction   : Long_Long_Unsigned;
-      Result     : Long_Float;
-      S          : SEA (1 .. LF_L);
-      L          : SEO;
+      Is_Positive : Boolean;
+      Exponent    : Long_Unsigned;
+      Fraction    : Long_Long_Unsigned;
+      Result      : Long_Float;
+      S           : SEA (1 .. LF_L);
+      L           : SEO;
 
    begin
       Ada.Streams.Read (Stream.all, S, L);
@@ -513,10 +522,10 @@ package body System.Stream_Attributes is
       Result := Long_Float'Scaling (Long_Float (Fraction), -F_Size);
 
       if BS <= S (1) then
-         Positive := False;
+         Is_Positive := False;
          Exponent := Long_Unsigned (S (1) - BS);
       else
-         Positive := True;
+         Is_Positive := True;
          Exponent := Long_Unsigned (S (1));
       end if;
 
@@ -551,7 +560,7 @@ package body System.Stream_Attributes is
            (1.0 + Result, Integer (Exponent) - E_Bias);
       end if;
 
-      if not Positive then
+      if not Is_Positive then
          Result := -Result;
       end if;
 
@@ -617,7 +626,7 @@ package body System.Stream_Attributes is
       F_Bytes : SEO      renames Fields (I).F_Bytes;
       F_Size  : Integer  renames Fields (I).F_Size;
 
-      Positive   : Boolean;
+      Is_Positive   : Boolean;
       Exponent   : Long_Unsigned;
       Fraction_1 : Long_Long_Unsigned := 0;
       Fraction_2 : Long_Long_Unsigned := 0;
@@ -648,10 +657,10 @@ package body System.Stream_Attributes is
       Result := Long_Long_Float'Scaling (Result, HF - F_Size);
 
       if BS <= S (1) then
-         Positive := False;
+         Is_Positive := False;
          Exponent := Long_Unsigned (S (1) - BS);
       else
-         Positive := True;
+         Is_Positive := True;
          Exponent := Long_Unsigned (S (1));
       end if;
 
@@ -686,7 +695,7 @@ package body System.Stream_Attributes is
            (1.0 + Result, Integer (Exponent) - E_Bias);
       end if;
 
-      if not Positive then
+      if not Is_Positive then
          Result := -Result;
       end if;
 
@@ -827,12 +836,12 @@ package body System.Stream_Attributes is
       F_Bytes : SEO      renames Fields (I).F_Bytes;
       F_Size  : Integer  renames Fields (I).F_Size;
 
-      Exponent   : Long_Unsigned;
-      Fraction   : Long_Unsigned;
-      Positive   : Boolean;
-      Result     : Short_Float;
-      S          : SEA (1 .. SF_L);
-      L          : SEO;
+      Exponent    : Long_Unsigned;
+      Fraction    : Long_Unsigned;
+      Is_Positive : Boolean;
+      Result      : Short_Float;
+      S           : SEA (1 .. SF_L);
+      L           : SEO;
 
    begin
       Ada.Streams.Read (Stream.all, S, L);
@@ -850,10 +859,10 @@ package body System.Stream_Attributes is
       Result := Short_Float'Scaling (Short_Float (Fraction), -F_Size);
 
       if BS <= S (1) then
-         Positive := False;
+         Is_Positive := False;
          Exponent := Long_Unsigned (S (1) - BS);
       else
-         Positive := True;
+         Is_Positive := True;
          Exponent := Long_Unsigned (S (1));
       end if;
 
@@ -887,7 +896,7 @@ package body System.Stream_Attributes is
            (1.0 + Result, Integer (Exponent) - E_Bias);
       end if;
 
-      if not Positive then
+      if not Is_Positive then
          Result := -Result;
       end if;
 
@@ -1179,12 +1188,12 @@ package body System.Stream_Attributes is
       F_Size  : Integer  renames Fields (I).F_Size;
       F_Mask  : SE       renames Fields (I).F_Mask;
 
-      Exponent : Long_Unsigned;
-      Fraction : Long_Unsigned;
-      Positive : Boolean;
-      E        : Integer;
-      F        : Float;
-      S        : SEA (1 .. F_L) := (others => 0);
+      Exponent    : Long_Unsigned;
+      Fraction    : Long_Unsigned;
+      Is_Positive : Boolean;
+      E           : Integer;
+      F           : Float;
+      S           : SEA (1 .. F_L) := (others => 0);
 
    begin
       if not Item'Valid then
@@ -1193,7 +1202,7 @@ package body System.Stream_Attributes is
 
       --  Compute Sign
 
-      Positive := (0.0 <= Item);
+      Is_Positive := (0.0 <= Item);
       F := abs (Item);
 
       --  Signed zero
@@ -1241,7 +1250,7 @@ package body System.Stream_Attributes is
 
       --  Store Sign
 
-      if not Positive then
+      if not Is_Positive then
          S (1) := S (1) + BS;
       end if;
 
@@ -1293,12 +1302,12 @@ package body System.Stream_Attributes is
       F_Size  : Integer  renames Fields (I).F_Size;
       F_Mask  : SE       renames Fields (I).F_Mask;
 
-      Exponent : Long_Unsigned;
-      Fraction : Long_Long_Unsigned;
-      Positive : Boolean;
-      E        : Integer;
-      F        : Long_Float;
-      S        : SEA (1 .. LF_L) := (others => 0);
+      Exponent    : Long_Unsigned;
+      Fraction    : Long_Long_Unsigned;
+      Is_Positive : Boolean;
+      E           : Integer;
+      F           : Long_Float;
+      S           : SEA (1 .. LF_L) := (others => 0);
 
    begin
       if not Item'Valid then
@@ -1307,7 +1316,7 @@ package body System.Stream_Attributes is
 
       --  Compute Sign
 
-      Positive := (0.0 <= Item);
+      Is_Positive := (0.0 <= Item);
       F := abs (Item);
 
       --  Signed zero
@@ -1355,7 +1364,7 @@ package body System.Stream_Attributes is
 
       --  Store Sign
 
-      if not Positive then
+      if not Is_Positive then
          S (1) := S (1) + BS;
       end if;
 
@@ -1421,13 +1430,13 @@ package body System.Stream_Attributes is
 
       HFS : constant Integer := F_Size / 2;
 
-      Exponent   : Long_Unsigned;
-      Fraction_1 : Long_Long_Unsigned;
-      Fraction_2 : Long_Long_Unsigned;
-      Positive   : Boolean;
-      E          : Integer;
-      F          : Long_Long_Float := Item;
-      S          : SEA (1 .. LLF_L) := (others => 0);
+      Exponent    : Long_Unsigned;
+      Fraction_1  : Long_Long_Unsigned;
+      Fraction_2  : Long_Long_Unsigned;
+      Is_Positive : Boolean;
+      E           : Integer;
+      F           : Long_Long_Float := Item;
+      S           : SEA (1 .. LLF_L) := (others => 0);
 
    begin
       if not Item'Valid then
@@ -1436,7 +1445,8 @@ package body System.Stream_Attributes is
 
       --  Compute Sign
 
-      Positive := (0.0 <= Item);
+      Is_Positive := (0.0 <= Item);
+
       if F < 0.0 then
          F := -Item;
       end if;
@@ -1495,7 +1505,7 @@ package body System.Stream_Attributes is
 
       --  Store Sign
 
-      if not Positive then
+      if not Is_Positive then
          S (1) := S (1) + BS;
       end if;
 
@@ -1639,12 +1649,12 @@ package body System.Stream_Attributes is
       F_Size  : Integer  renames Fields (I).F_Size;
       F_Mask  : SE       renames Fields (I).F_Mask;
 
-      Exponent : Long_Unsigned;
-      Fraction : Long_Unsigned;
-      Positive : Boolean;
-      E        : Integer;
-      F        : Short_Float;
-      S        : SEA (1 .. SF_L) := (others => 0);
+      Exponent    : Long_Unsigned;
+      Fraction    : Long_Unsigned;
+      Is_Positive : Boolean;
+      E           : Integer;
+      F           : Short_Float;
+      S           : SEA (1 .. SF_L) := (others => 0);
 
    begin
       if not Item'Valid then
@@ -1653,7 +1663,7 @@ package body System.Stream_Attributes is
 
       --  Compute Sign
 
-      Positive := (0.0 <= Item);
+      Is_Positive := (0.0 <= Item);
       F := abs (Item);
 
       --  Signed zero
@@ -1701,7 +1711,7 @@ package body System.Stream_Attributes is
 
       --  Store Sign
 
-      if not Positive then
+      if not Is_Positive then
          S (1) := S (1) + BS;
       end if;
 

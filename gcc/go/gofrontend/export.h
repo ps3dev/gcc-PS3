@@ -9,12 +9,13 @@
 
 #include "string-dump.h"
 
-struct sha1_ctx;
+class Go_sha1_helper;
 class Gogo;
 class Import_init;
 class Bindings;
 class Type;
 class Package;
+class Import_init_set;
 
 // Codes used for the builtin types.  These are all negative to make
 // them easily distinct from the codes assigned by Export::write_type.
@@ -45,6 +46,17 @@ enum Builtin_code
   BUILTIN_RUNE = -21,
 
   SMALLEST_BUILTIN_CODE = -21
+};
+
+// Export data version number. New export data is written with the
+// "current" version, but there is support for reading files with
+// older version export data (at least for now).
+
+enum Export_data_version {
+  EXPORT_FORMAT_UNKNOWN = 0,
+  EXPORT_FORMAT_V1 = 1,
+  EXPORT_FORMAT_V2 = 2,
+  EXPORT_FORMAT_CURRENT = EXPORT_FORMAT_V2
 };
 
 // This class manages exporting Go declarations.  It handles the main
@@ -97,18 +109,21 @@ class Export : public String_dump
     void
     write_and_sum_bytes(const char*, size_t);
 
-    // The checksum.
-    sha1_ctx* checksum_;
+    // The checksum helper.
+    Go_sha1_helper* sha1_helper_;
   };
 
   Export(Stream*);
 
-  // The magic code for version 1 export data.
-  static const int v1_magic_len = 4;
-  static const char v1_magic[v1_magic_len];
+  // Size of export data magic string (which includes version number).
+  static const int magic_len = 4;
 
-  // The length of the v1 checksum string.
-  static const int v1_checksum_len = 20;
+  // Magic strings (current version and older v1 version).
+  static const char cur_magic[magic_len];
+  static const char v1_magic[magic_len];
+
+  // The length of the checksum string.
+  static const int checksum_len = 20;
 
   // Register the builtin types.
   void
@@ -117,19 +132,22 @@ class Export : public String_dump
   // Export the identifiers in BINDINGS which are marked for export.
   // The exporting is done via a series of calls to THIS->STREAM_.  If
   // is nothing to export, this->stream_->write will not be called.
-  // UNIQUE_PREFIX is a prefix for all global symbols.
-  // PACKAGE_PRIORITY is the priority to use for this package.
+  // PREFIX is the package prefix.  PKGPATH is the package path.
+  // Only one of PREFIX and PKGPATH will be non-empty.
+  // PACKAGES is all the packages we have seen.
+  // IMPORTS is the explicitly imported packages.
   // IMPORT_INIT_FN is the name of the import initialization function
   // for this package; it will be empty if none is needed.
   // IMPORTED_INIT_FNS is the list of initialization functions for
   // imported packages.
   void
   export_globals(const std::string& package_name,
-		 const std::string& unique_prefix,
-		 int package_priority,
+		 const std::string& prefix,
+		 const std::string& pkgpath,
+		 const std::map<std::string, Package*>& packages,
 		 const std::map<std::string, Package*>& imports,
 		 const std::string& import_init_fn,
-		 const std::set<Import_init>& imported_init_fns,
+		 const Import_init_set& imported_init_fns,
 		 const Bindings* bindings);
 
   // Write a string to the export stream.
@@ -156,18 +174,45 @@ class Export : public String_dump
   void
   write_type(const Type*);
 
+  // Write the escape note to the export stream.  If NOTE is NULL, write
+  // nothing.
+  void
+  write_escape(std::string* note);
+
+  // Write an integer value.
+  void
+  write_int(int);
+
+  // Write an unsigned value.
+  void
+  write_unsigned(unsigned);
+
  private:
   Export(const Export&);
   Export& operator=(const Export&);
+
+  // Write out all known packages.
+  void
+  write_packages(const std::map<std::string, Package*>& packages);
+
+  typedef std::map<unsigned, std::set<unsigned> > Init_graph;
+
+  static void
+  add_init_graph_edge(Init_graph* init_graph, unsigned src, unsigned sink);
+
+  static void
+  populate_init_graph(Init_graph* init_graph,
+                      const Import_init_set& imported_init_fns,
+                      const std::map<std::string, unsigned>& init_idx);
 
   // Write out the imported packages.
   void
   write_imports(const std::map<std::string, Package*>& imports);
 
-  // Write out the imported initialization functions.
+  // Write out the imported initialization functions and init graph.
   void
-  write_imported_init_fns(const std::string& package_name, int priority,
-			  const std::string&, const std::set<Import_init>&);
+  write_imported_init_fns(const std::string& package_name,
+			  const std::string&, const Import_init_set&);
 
   // Register one builtin type.
   void
@@ -182,6 +227,8 @@ class Export : public String_dump
   Type_refs type_refs_;
   // Index number of next type.
   int type_index_;
+  // Packages we have written out.
+  Unordered_set(const Package*) packages_;
 };
 
 // An export streamer which puts the export stream in a named section.

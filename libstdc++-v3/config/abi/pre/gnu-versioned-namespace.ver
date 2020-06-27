@@ -1,7 +1,6 @@
 ## Linker script for GNU namespace versioning.
 ##
-## Copyright (C) 2002, 2003, 2004, 2005, 2007, 2009, 2011, 2012
-## Free Software Foundation, Inc.
+## Copyright (C) 2002-2017 Free Software Foundation, Inc.
 ##
 ## This file is part of the libstdc++ version 3 distribution.
 ##
@@ -27,19 +26,10 @@ GLIBCXX_7.0 {
     # Names inside the 'extern' block are demangled names.
     extern "C++"
     {
+      std::*;
       std::__7::*;
-      std::*
+      std::random_device::*
     };
-
-    # locale
-    _ZNSt3__79has_facetINS_*;
-
-    # hash 
-    _ZNSt8__detail3__712__prime_listE;
-    _ZNSt3tr18__detail3__712__prime_listE;
-
-    # thread/mutex/condition_variable/future
-    __once_proxy;
 
     # operator new(size_t)
     _Znw[jmy];
@@ -64,13 +54,35 @@ GLIBCXX_7.0 {
     # function-scope static objects requires a guard variable.
     _ZGVNSt*;
 
-    _ZTT*;
-    _ZTV*;
+    # VTT structure
+    _ZTTNSt*;
 
-    _ZTI*;
-    _ZTS*;
+    # vtable
+    _ZTVSt*;
+    _ZTVNSt*;
+    _ZTVN9__gnu_cxx3__718stdio_sync_filebufI[cw]NSt3__711char_traitsI[cw]EEEE;
 
-    _ZTv0_n*;
+    # thunk
+    _ZTv0_n12_NS*;
+    _ZTv0_n24_NS*;
+
+    # typeinfo structure
+    _ZTISt*;
+    _ZTINSt*;
+
+    # typeinfo name
+    _ZTSSt*;
+    _ZTSNSt*;
+
+    # locale
+    _ZNSt3__79has_facetINS_*;
+
+    # hash
+    _ZNSt8__detail3__712__prime_listE;
+    _ZNSt3tr18__detail3__712__prime_listE;
+
+    # thread/mutex/condition_variable/future
+    __once_proxy;
 
     # std::__detail::_List_node_base
     _ZNSt8__detail3__715_List_node_base7_M_hook*;
@@ -98,7 +110,7 @@ GLIBCXX_7.0 {
     _ZN9__gnu_cxx3__76__poolILb[01]EE10_M_destroyEv;
     _ZN9__gnu_cxx3__76__poolILb1EE16_M_get_thread_idEv;
 
-    _ZN9__gnu_cxx3__717__pool_alloc_base9_M_refillE[jmy];    
+    _ZN9__gnu_cxx3__717__pool_alloc_base9_M_refillE[jmy];
     _ZN9__gnu_cxx3__717__pool_alloc_base16_M_get_free_listE[jmy];
     _ZN9__gnu_cxx3__717__pool_alloc_base12_M_get_mutexEv;
 
@@ -131,6 +143,14 @@ GLIBCXX_7.0 {
     _ZNK11__gnu_debug16_Error_formatter8_M_error*;
     _ZNK11__gnu_debug16_Error_formatter17_M_get_max_lengthEv;
 
+    # __gnu_debug::_Safe_unordered_container_base
+    # __gnu_debug::_Safe_local_iterator_base
+    _ZN11__gnu_debug30_Safe_unordered_container_base7_M_swapERS0_;
+    _ZN11__gnu_debug30_Safe_unordered_container_base13_M_detach_allEv;
+    _ZN11__gnu_debug25_Safe_local_iterator_base9_M_attachEPNS_19_Safe_sequence_baseEb;
+    _ZN11__gnu_debug25_Safe_local_iterator_base9_M_detachEv;
+
+
     # parallel mode
     _ZN14__gnu_parallel9_Settings3getEv;
     _ZN14__gnu_parallel9_Settings3setERS0_;
@@ -159,6 +179,7 @@ CXXABI_2.0 {
     __cxa_free_exception;
     __cxa_free_dependent_exception;
     __cxa_get_exception_ptr;
+    __cxa_init_primary_exception;
     __cxa_get_globals;
     __cxa_get_globals_fast;
     __cxa_guard_abort;
@@ -166,6 +187,7 @@ CXXABI_2.0 {
     __cxa_guard_release;
     __cxa_pure_virtual;
     __cxa_rethrow;
+    __cxa_thread_atexit;
     __cxa_throw;
     __cxa_type_match;
     __cxa_vec_cctor;
@@ -185,6 +207,7 @@ CXXABI_2.0 {
     # std::exception_ptr
     _ZNSt15__exception_ptr13exception_ptrC1Ev;
     _ZNSt15__exception_ptr13exception_ptrC2Ev;
+    _ZNSt15__exception_ptr13exception_ptrC1EPv;
     _ZNSt15__exception_ptr13exception_ptrC1ERKS0_;
     _ZNSt15__exception_ptr13exception_ptrC2ERKS0_;
     _ZNSt15__exception_ptr13exception_ptrC1EMS0_FvvE;
@@ -212,6 +235,12 @@ CXXABI_2.0 {
     _ZTISt17bad_function_call;
     _ZTSSt17bad_function_call;
     _ZTVSt17bad_function_call;
+
+    __cxa_throw_bad_array_new_length;
+    _Z*St20bad_array_new_length*;
+
+    __cxa_throw_bad_array_length;
+    _Z*St16bad_array_length*;
 
     # Default function.
     _ZSt11_Hash_bytesPKv*;
@@ -312,6 +341,25 @@ CXXABI_2.0 {
     _ZTVN10__cxxabiv120__si_class_type_infoE;
     _ZTVN10__cxxabiv121__vmi_class_type_infoE;
 
+    # operator delete(void*, std::size_t)
+    _ZdlPv[jmy];
+    # operator delete[](void*, std::size_t)
+    _ZdaPv[jmy];
+
+    # __gnu_cxx::__freeres()
+    _ZN9__gnu_cxx9__freeresEv;
+
+    # C++17 aligned new/delete
+    _Znw[jmy]St11align_val_t;
+    _Znw[jmy]St11align_val_tRKSt9nothrow_t;
+    _Zna[jmy]St11align_val_t;
+    _Zna[jmy]St11align_val_tRKSt9nothrow_t;
+    _ZdlPvSt11align_val_t;
+    _ZdlPvSt11align_val_tRKSt9nothrow_t;
+    _ZdlPv[jmy]St11align_val_t;
+    _ZdaPvSt11align_val_t;
+    _ZdaPvSt11align_val_tRKSt9nothrow_t;
+    _ZdaPv[jmy]St11align_val_t;
 };
 
 # Symbols in the support library (libsupc++) supporting trans-mem.

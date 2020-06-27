@@ -1,6 +1,5 @@
 /* Header file for fp-bit.c.  */
-/* Copyright (C) 2000, 2002, 2003, 2006, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+/* Copyright (C) 2000-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -118,11 +117,11 @@ typedef unsigned int UTItype __attribute__ ((mode (TI)));
 
 #define MAX_USI_INT  (~(USItype)0)
 #define MAX_SI_INT   ((SItype) (MAX_USI_INT >> 1))
-#define BITS_PER_SI  (4 * BITS_PER_UNIT)
+#define BITS_PER_SI  (4 * __CHAR_BIT__)
 #ifdef TMODES
 #define MAX_UDI_INT  (~(UDItype)0)
 #define MAX_DI_INT   ((DItype) (MAX_UDI_INT >> 1))
-#define BITS_PER_DI  (8 * BITS_PER_UNIT)
+#define BITS_PER_DI  (8 * __CHAR_BIT__)
 #endif
 
 #ifdef FLOAT_ONLY
@@ -190,7 +189,7 @@ typedef unsigned int UTItype __attribute__ ((mode (TI)));
 #	define EXPBIAS 127
 #	define FRACBITS 23
 #	define EXPMAX (0xff)
-#	define QUIET_NAN 0x100000L
+#	define QUIET_NAN 0x400000L
 #	define FRAC_NBITS 32
 #	define FRACHIGH  0x80000000L
 #	define FRACHIGH2 0xc0000000L
@@ -298,7 +297,7 @@ typedef unsigned int UTItype __attribute__ ((mode (TI)));
 /* numeric parameters */
 /* F_D_BITOFF is the number of bits offset between the MSB of the mantissa
    of a float and of a double. Assumes there are only two float types.
-   (double::FRAC_BITS+double::NGARDS-(float::FRAC_BITS-float::NGARDS))
+   (double::FRAC_BITS+double::NGARDS-(float::FRAC_BITS+float::NGARDS))
  */
 #define F_D_BITOFF (52+8-(23+7))
 

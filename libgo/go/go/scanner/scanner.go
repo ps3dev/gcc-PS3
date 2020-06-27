@@ -26,7 +26,7 @@ import (
 type ErrorHandler func(pos token.Position, msg string)
 
 // A Scanner holds the scanner's internal state while processing
-// a given text.  It can be allocated as part of another data
+// a given text. It can be allocated as part of another data
 // structure but must be initialized via Init before use.
 //
 type Scanner struct {
@@ -48,6 +48,8 @@ type Scanner struct {
 	ErrorCount int // number of errors encountered
 }
 
+const bom = 0xFEFF // byte order mark, only permitted as very first character
+
 // Read the next Unicode char into s.ch.
 // s.ch < 0 means end-of-file.
 //
@@ -62,11 +64,13 @@ func (s *Scanner) next() {
 		switch {
 		case r == 0:
 			s.error(s.offset, "illegal character NUL")
-		case r >= 0x80:
+		case r >= utf8.RuneSelf:
 			// not ASCII
 			r, w = utf8.DecodeRune(s.src[s.rdOffset:])
 			if r == utf8.RuneError && w == 1 {
 				s.error(s.offset, "illegal UTF-8 encoding")
+			} else if r == bom && s.offset > 0 {
+				s.error(s.offset, "illegal byte order mark")
 			}
 		}
 		s.rdOffset += w
@@ -81,7 +85,7 @@ func (s *Scanner) next() {
 	}
 }
 
-// A mode value is set of flags (or 0).
+// A mode value is a set of flags (or 0).
 // They control scanner behavior.
 //
 type Mode uint
@@ -109,7 +113,7 @@ const (
 func (s *Scanner) Init(file *token.File, src []byte, err ErrorHandler, mode Mode) {
 	// Explicitly initialize all fields since a scanner may be reused.
 	if file.Size() != len(src) {
-		panic("file size does not match src len")
+		panic(fmt.Sprintf("file size (%d) does not match src len (%d)", file.Size(), len(src)))
 	}
 	s.file = file
 	s.dir, _ = filepath.Split(file.Name())
@@ -125,6 +129,9 @@ func (s *Scanner) Init(file *token.File, src []byte, err ErrorHandler, mode Mode
 	s.ErrorCount = 0
 
 	s.next()
+	if s.ch == bom {
+		s.next() // ignore BOM at file beginning
+	}
 }
 
 func (s *Scanner) error(offs int, msg string) {
@@ -141,11 +148,14 @@ func (s *Scanner) interpretLineComment(text []byte) {
 		// get filename and line number, if any
 		if i := bytes.LastIndex(text, []byte{':'}); i > 0 {
 			if line, err := strconv.Atoi(string(text[i+1:])); err == nil && line > 0 {
-				// valid //line filename:line comment;
-				filename := filepath.Clean(string(text[len(prefix):i]))
-				if !filepath.IsAbs(filename) {
-					// make filename relative to current directory
-					filename = filepath.Join(s.dir, filename)
+				// valid //line filename:line comment
+				filename := string(bytes.TrimSpace(text[len(prefix):i]))
+				if filename != "" {
+					filename = filepath.Clean(filename)
+					if !filepath.IsAbs(filename) {
+						// make filename relative to current directory
+						filename = filepath.Join(s.dir, filename)
+					}
 				}
 				// update scanner position
 				s.file.AddLineInfo(s.lineOffset+len(text)+1, filename, line) // +len(text)+1 since comment applies to next line
@@ -157,11 +167,15 @@ func (s *Scanner) interpretLineComment(text []byte) {
 func (s *Scanner) scanComment() string {
 	// initial '/' already consumed; s.ch == '/' || s.ch == '*'
 	offs := s.offset - 1 // position of initial '/'
+	hasCR := false
 
 	if s.ch == '/' {
 		//-style comment
 		s.next()
 		for s.ch != '\n' && s.ch >= 0 {
+			if s.ch == '\r' {
+				hasCR = true
+			}
 			s.next()
 		}
 		if offs == s.lineOffset {
@@ -175,6 +189,9 @@ func (s *Scanner) scanComment() string {
 	s.next()
 	for s.ch >= 0 {
 		ch := s.ch
+		if ch == '\r' {
+			hasCR = true
+		}
 		s.next()
 		if ch == '*' && s.ch == '/' {
 			s.next()
@@ -185,7 +202,12 @@ func (s *Scanner) scanComment() string {
 	s.error(offs, "comment not terminated")
 
 exit:
-	return string(s.src[offs:s.offset])
+	lit := s.src[offs:s.offset]
+	if hasCR {
+		lit = stripCR(lit)
+	}
+
+	return string(lit)
 }
 
 func (s *Scanner) findLineEnd() bool {
@@ -233,11 +255,11 @@ func (s *Scanner) findLineEnd() bool {
 }
 
 func isLetter(ch rune) bool {
-	return 'a' <= ch && ch <= 'z' || 'A' <= ch && ch <= 'Z' || ch == '_' || ch >= 0x80 && unicode.IsLetter(ch)
+	return 'a' <= ch && ch <= 'z' || 'A' <= ch && ch <= 'Z' || ch == '_' || ch >= utf8.RuneSelf && unicode.IsLetter(ch)
 }
 
 func isDigit(ch rune) bool {
-	return '0' <= ch && ch <= '9' || ch >= 0x80 && unicode.IsDigit(ch)
+	return '0' <= ch && ch <= '9' || ch >= utf8.RuneSelf && unicode.IsDigit(ch)
 }
 
 func (s *Scanner) scanIdentifier() string {
@@ -327,7 +349,11 @@ exponent:
 		if s.ch == '-' || s.ch == '+' {
 			s.next()
 		}
-		s.scanMantissa(10)
+		if digitVal(s.ch) < 10 {
+			s.scanMantissa(10)
+		} else {
+			s.error(offs, "illegal floating-point exponent")
+		}
 	}
 
 	if s.ch == 'i' {
@@ -339,73 +365,94 @@ exit:
 	return tok, string(s.src[offs:s.offset])
 }
 
-func (s *Scanner) scanEscape(quote rune) {
+// scanEscape parses an escape sequence where rune is the accepted
+// escaped quote. In case of a syntax error, it stops at the offending
+// character (without consuming it) and returns false. Otherwise
+// it returns true.
+func (s *Scanner) scanEscape(quote rune) bool {
 	offs := s.offset
 
-	var i, base, max uint32
+	var n int
+	var base, max uint32
 	switch s.ch {
 	case 'a', 'b', 'f', 'n', 'r', 't', 'v', '\\', quote:
 		s.next()
-		return
+		return true
 	case '0', '1', '2', '3', '4', '5', '6', '7':
-		i, base, max = 3, 8, 255
+		n, base, max = 3, 8, 255
 	case 'x':
 		s.next()
-		i, base, max = 2, 16, 255
+		n, base, max = 2, 16, 255
 	case 'u':
 		s.next()
-		i, base, max = 4, 16, unicode.MaxRune
+		n, base, max = 4, 16, unicode.MaxRune
 	case 'U':
 		s.next()
-		i, base, max = 8, 16, unicode.MaxRune
+		n, base, max = 8, 16, unicode.MaxRune
 	default:
-		s.next() // always make progress
-		s.error(offs, "unknown escape sequence")
-		return
+		msg := "unknown escape sequence"
+		if s.ch < 0 {
+			msg = "escape sequence not terminated"
+		}
+		s.error(offs, msg)
+		return false
 	}
 
 	var x uint32
-	for ; i > 0 && s.ch != quote && s.ch >= 0; i-- {
+	for n > 0 {
 		d := uint32(digitVal(s.ch))
 		if d >= base {
-			s.error(s.offset, "illegal character in escape sequence")
-			break
+			msg := fmt.Sprintf("illegal character %#U in escape sequence", s.ch)
+			if s.ch < 0 {
+				msg = "escape sequence not terminated"
+			}
+			s.error(s.offset, msg)
+			return false
 		}
 		x = x*base + d
 		s.next()
+		n--
 	}
-	// in case of an error, consume remaining chars
-	for ; i > 0 && s.ch != quote && s.ch >= 0; i-- {
-		s.next()
-	}
-	if x > max || 0xd800 <= x && x < 0xe000 {
+
+	if x > max || 0xD800 <= x && x < 0xE000 {
 		s.error(offs, "escape sequence is invalid Unicode code point")
+		return false
 	}
+
+	return true
 }
 
-func (s *Scanner) scanChar() string {
+func (s *Scanner) scanRune() string {
 	// '\'' opening already consumed
 	offs := s.offset - 1
 
+	valid := true
 	n := 0
-	for s.ch != '\'' {
+	for {
 		ch := s.ch
-		n++
-		s.next()
 		if ch == '\n' || ch < 0 {
-			s.error(offs, "character literal not terminated")
-			n = 1
+			// only report error if we don't have one already
+			if valid {
+				s.error(offs, "rune literal not terminated")
+				valid = false
+			}
 			break
 		}
+		s.next()
+		if ch == '\'' {
+			break
+		}
+		n++
 		if ch == '\\' {
-			s.scanEscape('\'')
+			if !s.scanEscape('\'') {
+				valid = false
+			}
+			// continue to read to closing quote
 		}
 	}
 
-	s.next()
-
-	if n != 1 {
-		s.error(offs, "illegal character literal")
+	if valid && n != 1 {
+		s.error(offs, "illegal rune literal")
 	}
 
 	return string(s.src[offs:s.offset])
@@ -415,19 +462,20 @@ func (s *Scanner) scanString() string {
 	// '"' opening already consumed
 	offs := s.offset - 1
 
-	for s.ch != '"' {
+	for {
 		ch := s.ch
-		s.next()
 		if ch == '\n' || ch < 0 {
-			s.error(offs, "string not terminated")
+			s.error(offs, "string literal not terminated")
+			break
+		}
+		s.next()
+		if ch == '"' {
 			break
 		}
 		if ch == '\\' {
 			s.scanEscape('"')
 		}
 	}
-
-	s.next()
 
 	return string(s.src[offs:s.offset])
 }
@@ -449,19 +497,20 @@ func (s *Scanner) scanRawString() string {
 	offs := s.offset - 1
 
 	hasCR := false
-	for s.ch != '`' {
+	for {
 		ch := s.ch
+		if ch < 0 {
+			s.error(offs, "raw string literal not terminated")
+			break
+		}
 		s.next()
+		if ch == '`' {
+			break
+		}
 		if ch == '\r' {
 			hasCR = true
 		}
-		if ch < 0 {
-			s.error(offs, "string not terminated")
-			break
-		}
 	}
-
-	s.next()
 
 	lit := s.src[offs:s.offset]
 	if hasCR {
@@ -527,6 +576,8 @@ func (s *Scanner) switch4(tok0, tok1 token.Token, ch2 rune, tok2, tok3 token.Tok
 // token.IMAG, token.CHAR, token.STRING) or token.COMMENT, the literal string
 // has the corresponding value.
 //
+// If the returned token is a keyword, the literal string is the keyword.
+//
 // If the returned token is token.SEMICOLON, the corresponding
 // literal string is ";" if the semicolon was present in the source,
 // and "\n" if the semicolon was inserted because of a newline or
@@ -560,12 +611,18 @@ scanAgain:
 	switch ch := s.ch; {
 	case isLetter(ch):
 		lit = s.scanIdentifier()
-		tok = token.Lookup(lit)
-		switch tok {
-		case token.IDENT, token.BREAK, token.CONTINUE, token.FALLTHROUGH, token.RETURN:
+		if len(lit) > 1 {
+			// keywords are longer than one letter - avoid lookup otherwise
+			tok = token.Lookup(lit)
+			switch tok {
+			case token.IDENT, token.BREAK, token.CONTINUE, token.FALLTHROUGH, token.RETURN:
+				insertSemi = true
+			}
+		} else {
 			insertSemi = true
+			tok = token.IDENT
 		}
-	case digitVal(ch) < 10:
+	case '0' <= ch && ch <= '9':
 		insertSemi = true
 		tok, lit = s.scanNumber(false)
 	default:
@@ -590,7 +647,7 @@ scanAgain:
 		case '\'':
 			insertSemi = true
 			tok = token.CHAR
-			lit = s.scanChar()
+			lit = s.scanRune()
 		case '`':
 			insertSemi = true
 			tok = token.STRING
@@ -598,7 +655,7 @@ scanAgain:
 		case ':':
 			tok = s.switch2(token.COLON, token.DEFINE)
 		case '.':
-			if digitVal(s.ch) < 10 {
+			if '0' <= s.ch && s.ch <= '9' {
 				insertSemi = true
 				tok, lit = s.scanNumber(true)
 			} else if s.ch == '.' {
@@ -653,13 +710,14 @@ scanAgain:
 					s.insertSemi = false // newline consumed
 					return pos, token.SEMICOLON, "\n"
 				}
-				lit = s.scanComment()
+				comment := s.scanComment()
 				if s.mode&ScanComments == 0 {
 					// skip comment
 					s.insertSemi = false // newline consumed
 					goto scanAgain
 				}
 				tok = token.COMMENT
+				lit = comment
 			} else {
 				tok = s.switch2(token.QUO, token.QUO_ASSIGN)
 			}
@@ -690,7 +748,10 @@ scanAgain:
 		case '|':
 			tok = s.switch3(token.OR, token.OR_ASSIGN, '|', token.LOR)
 		default:
-			s.error(s.file.Offset(pos), fmt.Sprintf("illegal character %#U", ch))
+			// next reports unexpected BOMs - don't repeat
+			if ch != bom {
+				s.error(s.file.Offset(pos), fmt.Sprintf("illegal character %#U", ch))
+			}
 			insertSemi = s.insertSemi // preserve insertSemi info
 			tok = token.ILLEGAL
 			lit = string(ch)

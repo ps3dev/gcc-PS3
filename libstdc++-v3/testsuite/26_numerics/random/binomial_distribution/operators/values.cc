@@ -1,8 +1,8 @@
-// { dg-options "-std=gnu++0x" }
+// { dg-do run { target c++11 } }
 // { dg-require-cstdint "" }
 // { dg-require-cmath "" }
 //
-// Copyright (C) 2011 Free Software Foundation, Inc.
+// Copyright (C) 2011-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -35,14 +35,8 @@ void test01()
   auto bbd1 = std::bind(bd1, eng);
   testDiscreteDist(bbd1, [](int n) { return binomial_pdf(n, 5, 0.3); } );
 
-  std::binomial_distribution<> bd2(55, 0.3);
-  auto bbd2 = std::bind(bd2, eng);
-  testDiscreteDist(bbd2, [](int n) { return binomial_pdf(n, 55, 0.3); } );
-
-  // libstdc++/48114
-  std::binomial_distribution<> bd3(10, 0.75);
-  auto bbd3 = std::bind(bd3, eng);
-  testDiscreteDist(bbd3, [](int n) { return binomial_pdf(n, 10, 0.75); } );
+  // These tests take a relatively long time on soft-float simulated
+  // targets, so please don't add new tests here, instead add a new file.
 }
 
 int main()

@@ -6,10 +6,23 @@
 
 package os
 
-import "syscall"
+import (
+	"runtime"
+	"syscall"
+)
 
 // Args hold the command-line arguments, starting with the program name.
 var Args []string
+
+func init() {
+	if runtime.GOOS == "windows" {
+		// Initialized in exec_windows.go.
+		return
+	}
+	Args = runtime_args()
+}
+
+func runtime_args() []string // in package runtime
 
 // Getuid returns the numeric user id of the caller.
 func Getuid() int { return syscall.Getuid() }
@@ -31,4 +44,14 @@ func Getgroups() ([]int, error) {
 
 // Exit causes the current program to exit with the given status code.
 // Conventionally, code zero indicates success, non-zero an error.
-func Exit(code int) { syscall.Exit(code) }
+// The program terminates immediately; deferred functions are not run.
+func Exit(code int) {
+	if code == 0 {
+		// Give race detector a chance to fail the program.
+		// Racy programs do not have the right to finish successfully.
+		runtime_beforeExit()
+	}
+	syscall.Exit(code)
+}
+
+func runtime_beforeExit() // implemented in runtime

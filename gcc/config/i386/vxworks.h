@@ -1,6 +1,5 @@
 /* IA32 VxWorks target definitions for GNU compiler.
-   Copyright (C) 2003, 2004, 2005, 2007, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 2003-2017 Free Software Foundation, Inc.
    Updated by CodeSourcery, LLC.
 
 This file is part of GCC.
@@ -21,6 +20,21 @@ along with GCC; see the file COPYING3.  If not see
 
 #undef  ASM_SPEC
 #define ASM_SPEC ""
+
+#define ASM_OUTPUT_ALIGNED_BSS(FILE, DECL, NAME, SIZE, ALIGN) \
+  asm_output_aligned_bss (FILE, DECL, NAME, SIZE, ALIGN)
+
+/* VxWorks uses the same ABI as Solaris 2, so use i386/sol2.h version.  */
+
+#undef TARGET_SUBTARGET_DEFAULT
+#define TARGET_SUBTARGET_DEFAULT \
+	(MASK_80387 | MASK_IEEE_FP | MASK_FLOAT_RETURNS | MASK_VECT8_RETURNS)
+
+/* Provide our target specific DBX_REGISTER_NUMBER.  VxWorks relies on
+   the SVR4 numbering.  */
+
+#undef DBX_REGISTER_NUMBER
+#define DBX_REGISTER_NUMBER(n)  svr4_dbx_register_map[n]
 
 #define TARGET_OS_CPP_BUILTINS()			\
   do							\
@@ -72,3 +86,10 @@ along with GCC; see the file COPYING3.  If not see
 /* We cannot use PC-relative accesses for VxWorks PIC because there is no
    fixed gap between segments.  */
 #undef ASM_PREFERRED_EH_DATA_FORMAT
+
+/* Define this to be nonzero if static stack checking is supported.  */
+#define STACK_CHECK_STATIC_BUILTIN 1
+
+/* This platform supports the probing method of stack checking (RTP mode).
+   8K is reserved in the stack to propagate exceptions in case of overflow.  */
+#define STACK_CHECK_PROTECT 8192

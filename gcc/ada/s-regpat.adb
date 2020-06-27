@@ -7,7 +7,7 @@
 --                                 B o d y                                  --
 --                                                                          --
 --               Copyright (C) 1986 by University of Toronto.               --
---                      Copyright (C) 1999-2011, AdaCore                    --
+--                      Copyright (C) 1999-2016, AdaCore                    --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -410,16 +410,19 @@ package body System.Regpat is
 
       procedure Parse
         (Parenthesized : Boolean;
+         Capturing     : Boolean;
          Flags         : out Expression_Flags;
          IP            : out Pointer);
-      --  Parse regular expression, i.e. main body or parenthesized thing
-      --  Caller must absorb opening parenthesis.
+      --  Parse regular expression, i.e. main body or parenthesized thing.
+      --  Caller must absorb opening parenthesis. Capturing should be set to
+      --  True when we have an open parenthesis from which we want the user
+      --  to extra text.
 
       procedure Parse_Branch
         (Flags         : out Expression_Flags;
          First         : Boolean;
          IP            : out Pointer);
-      --  Implements the concatenation operator and handles '|'
+      --  Implements the concatenation operator and handles '|'.
       --  First should be true if this is the first item of the alternative.
 
       procedure Parse_Piece
@@ -831,9 +834,10 @@ package body System.Regpat is
       --  the branches to what follows makes it hard to avoid.
 
       procedure Parse
-         (Parenthesized  : Boolean;
-          Flags          : out Expression_Flags;
-          IP             : out Pointer)
+         (Parenthesized : Boolean;
+          Capturing     : Boolean;
+          Flags         : out Expression_Flags;
+          IP            : out Pointer)
       is
          E           : String renames Expression;
          Br, Br2     : Pointer;
@@ -847,7 +851,7 @@ package body System.Regpat is
 
          --  Make an OPEN node, if parenthesized
 
-         if Parenthesized then
+         if Parenthesized and then Capturing then
             if Matcher.Paren_Count > Max_Paren_Count then
                Fail ("too many ()");
             end if;
@@ -856,7 +860,6 @@ package body System.Regpat is
             Matcher.Paren_Count := Matcher.Paren_Count + 1;
             IP := Emit_Node (OPEN);
             Emit (Character'Val (Par_No));
-
          else
             IP := 0;
             Par_No := 0;
@@ -913,15 +916,22 @@ package body System.Regpat is
          --  Make a closing node, and hook it on the end
 
          if Parenthesized then
-            Ender := Emit_Node (CLOSE);
-            Emit (Character'Val (Par_No));
+            if Capturing then
+               Ender := Emit_Node (CLOSE);
+               Emit (Character'Val (Par_No));
+               Link_Tail (IP, Ender);
+
+            else
+               --  Need to keep looking after the closing parenthesis
+               Ender := Emit_Ptr;
+            end if;
+
          else
             Ender := Emit_Node (EOP);
+            Link_Tail (IP, Ender);
          end if;
 
-         Link_Tail (IP, Ender);
-
-         if Have_Branch and then Emit_Ptr <= PM.Size then
+         if Have_Branch and then Emit_Ptr <= PM.Size + 1 then
 
             --  Hook the tails of the branches to the closing node
 
@@ -945,7 +955,7 @@ package body System.Regpat is
 
          elsif Parse_Pos <= Parse_End then
             if E (Parse_Pos) = ')'  then
-               Fail ("unmatched ()");
+               Fail ("unmatched ')'");
             else
                Fail ("junk on end");         -- "Can't happen"
             end if;
@@ -1003,16 +1013,28 @@ package body System.Regpat is
                   New_Flags : Expression_Flags;
 
                begin
-                  Parse (True, New_Flags, IP);
+                  if Parse_Pos <= Parse_End - 1
+                    and then Expression (Parse_Pos) = '?'
+                    and then Expression (Parse_Pos + 1) = ':'
+                  then
+                     Parse_Pos := Parse_Pos + 2;
 
-                  if IP = 0 then
-                     return;
+                     --  Non-capturing parenthesis
+
+                     Parse (True, False, New_Flags, IP);
+
+                  else
+                     --  Capturing parenthesis
+
+                     Parse (True, True, New_Flags, IP);
+                     Expr_Flags.Has_Width :=
+                       Expr_Flags.Has_Width or else New_Flags.Has_Width;
+                     Expr_Flags.SP_Start :=
+                       Expr_Flags.SP_Start or else New_Flags.SP_Start;
+                     if IP = 0 then
+                        return;
+                     end if;
                   end if;
-
-                  Expr_Flags.Has_Width :=
-                    Expr_Flags.Has_Width or else New_Flags.Has_Width;
-                  Expr_Flags.SP_Start :=
-                    Expr_Flags.SP_Start or else New_Flags.SP_Start;
                end;
 
             when '|' | ASCII.LF | ')' =>
@@ -1971,7 +1993,7 @@ package body System.Regpat is
    --  Start of processing for Compile
 
    begin
-      Parse (False, Expr_Flags, Result);
+      Parse (False, False, Expr_Flags, Result);
 
       if Result = 0 then
          Fail ("Couldn't compile expression");
@@ -2556,7 +2578,7 @@ package body System.Regpat is
             case Op is
                when EOP =>
                   Dump_Indent := Dump_Indent - 1;
-                  return True;  --  Success !
+                  return True;  --  Success
 
                when BRANCH =>
                   if Program (Next) /= BRANCH then
@@ -2592,15 +2614,34 @@ package body System.Regpat is
                   exit State_Machine when Input_Pos /= BOL_Pos;
 
                when EOL =>
-                  exit State_Machine when Input_Pos <= Data'Last
-                    and then ((Self.Flags and Multiple_Lines) = 0
-                               or else Data (Input_Pos) /= ASCII.LF);
+
+                  --  A combination of MEOL and SEOL
+
+                  if (Self.Flags and Multiple_Lines) = 0 then
+
+                     --  Single line mode
+
+                     exit State_Machine when Input_Pos <= Data'Last;
+
+                  elsif Input_Pos <= Last_In_Data then
+                     exit State_Machine when Data (Input_Pos) /= ASCII.LF;
+                  else
+                     exit State_Machine when Last_In_Data /= Data'Last;
+                  end if;
 
                when MEOL =>
-                  exit State_Machine when Input_Pos <= Data'Last
-                    and then Data (Input_Pos) /= ASCII.LF;
+                  if Input_Pos <= Last_In_Data then
+                     exit State_Machine when Data (Input_Pos) /= ASCII.LF;
+                  else
+                     exit State_Machine when Last_In_Data /= Data'Last;
+                  end if;
 
                when SEOL =>
+
+                  --  If there is a character before Data'Last (even if
+                  --  Last_In_Data stops before then), we can't have the
+                  --  end of the line.
+
                   exit State_Machine when Input_Pos <= Data'Last;
 
                when BOUND | NBOUND =>

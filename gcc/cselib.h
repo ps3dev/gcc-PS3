@@ -1,7 +1,5 @@
 /* Common subexpression elimination for GNU compiler.
-   Copyright (C) 1987, 1988, 1989, 1992, 1993, 1994, 1995, 1996, 1997,
-   1998, 1999, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012
-   Free Software Foundation, Inc.
+   Copyright (C) 1987-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -19,8 +17,12 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
+#ifndef GCC_CSELIB_H
+#define GCC_CSELIB_H
+
 /* Describe a value.  */
-typedef struct cselib_val_struct {
+struct cselib_val
+{
   /* The hash value.  */
   unsigned int hash;
 
@@ -38,8 +40,8 @@ typedef struct cselib_val_struct {
      use it as an address in a MEM.  */
   struct elt_list *addr_list;
 
-  struct cselib_val_struct *next_containing_mem;
-} cselib_val;
+  struct cselib_val *next_containing_mem;
+};
 
 /* A list of rtl expressions that hold the same value.  */
 struct elt_loc_list {
@@ -48,7 +50,7 @@ struct elt_loc_list {
   /* An rtl expression that holds the value.  */
   rtx loc;
   /* The insn that made the equivalence.  */
-  rtx setting_insn;
+  rtx_insn *setting_insn;
 };
 
 /* Describe a single set that is part of an insn.  */
@@ -67,19 +69,20 @@ enum cselib_record_what
 };
 
 extern void (*cselib_discard_hook) (cselib_val *);
-extern void (*cselib_record_sets_hook) (rtx insn, struct cselib_set *sets,
+extern void (*cselib_record_sets_hook) (rtx_insn *insn, struct cselib_set *sets,
 					int n_sets);
 
-extern cselib_val *cselib_lookup (rtx, enum machine_mode,
-				  int, enum machine_mode);
-extern cselib_val *cselib_lookup_from_insn (rtx, enum machine_mode,
-					    int, enum machine_mode, rtx);
+extern cselib_val *cselib_lookup (rtx, machine_mode,
+				  int, machine_mode);
+extern cselib_val *cselib_lookup_from_insn (rtx, machine_mode,
+					    int, machine_mode, rtx_insn *);
 extern void cselib_init (int);
 extern void cselib_clear_table (void);
 extern void cselib_finish (void);
-extern void cselib_process_insn (rtx);
-extern enum machine_mode cselib_reg_set_mode (const_rtx);
-extern int rtx_equal_for_cselib_p (rtx, rtx);
+extern void cselib_process_insn (rtx_insn *);
+extern bool fp_setter_insn (rtx_insn *);
+extern machine_mode cselib_reg_set_mode (const_rtx);
+extern int rtx_equal_for_cselib_1 (rtx, rtx, machine_mode, int);
 extern int references_value_p (const_rtx, int);
 extern rtx cselib_expand_value_rtx (rtx, bitmap, int);
 typedef rtx (*cselib_expand_callback)(rtx, bitmap, int, void *);
@@ -87,8 +90,8 @@ extern rtx cselib_expand_value_rtx_cb (rtx, bitmap, int,
 				       cselib_expand_callback, void *);
 extern bool cselib_dummy_expand_value_rtx_cb (rtx, bitmap, int,
 					      cselib_expand_callback, void *);
-extern rtx cselib_subst_to_values (rtx, enum machine_mode);
-extern rtx cselib_subst_to_values_from_insn (rtx, enum machine_mode, rtx);
+extern rtx cselib_subst_to_values (rtx, machine_mode);
+extern rtx cselib_subst_to_values_from_insn (rtx, machine_mode, rtx_insn *);
 extern void cselib_invalidate_rtx (rtx);
 
 extern void cselib_reset_table (unsigned int);
@@ -97,8 +100,10 @@ extern void cselib_preserve_value (cselib_val *);
 extern bool cselib_preserved_value_p (cselib_val *);
 extern void cselib_preserve_only_values (void);
 extern void cselib_preserve_cfa_base_value (cselib_val *, unsigned int);
-extern void cselib_add_permanent_equiv (cselib_val *, rtx, rtx);
+extern void cselib_add_permanent_equiv (cselib_val *, rtx, rtx_insn *);
 extern bool cselib_have_permanent_equivalences (void);
+extern void cselib_set_value_sp_based (cselib_val *);
+extern bool cselib_sp_based_value_p (cselib_val *);
 
 extern void dump_cselib_table (FILE *);
 
@@ -119,3 +124,17 @@ canonical_cselib_val (cselib_val *val)
   gcc_checking_assert (canonical_cselib_val (canon) == canon);
   return canon;
 }
+
+/* Return nonzero if we can prove that X and Y contain the same value, taking
+   our gathered information into account.  */
+
+static inline int
+rtx_equal_for_cselib_p (rtx x, rtx y)
+{
+  if (x == y)
+    return 1;
+
+  return rtx_equal_for_cselib_1 (x, y, VOIDmode, 0);
+}
+
+#endif /* GCC_CSELIB_H */

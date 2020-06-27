@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 2001-2009, Free Software Foundation, Inc.         --
+--          Copyright (C) 2001-2013, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -40,7 +40,7 @@
 --  This unit may be used directly from an application program by providing
 --  an appropriate WITH, and the interface can be expected to remain stable.
 
-pragma Compiler_Unit;
+pragma Compiler_Unit_Warning;
 
 package System.Memory is
    pragma Elaborate_Body;
@@ -56,10 +56,10 @@ package System.Memory is
    --  memory. The implementation of this routine is guaranteed to be
    --  task safe, and also aborts are deferred if necessary.
    --
-   --  If size_t is set to size_t'Last on entry, then a Storage_Error
+   --  If Size is set to size_t'Last on entry, then a Storage_Error
    --  exception is raised with a message "object too large".
    --
-   --  If size_t is set to zero on entry, then a minimal (but non-zero)
+   --  If Size is set to zero on entry, then a minimal (but non-zero)
    --  size block is allocated.
    --
    --  Note: this is roughly equivalent to the standard C malloc call
@@ -87,10 +87,10 @@ package System.Memory is
    --  routine is guaranteed to be task safe, and also aborts are
    --  deferred as necessary.
    --
-   --  If size_t is set to size_t'Last on entry, then a Storage_Error
+   --  If Size is set to size_t'Last on entry, then a Storage_Error
    --  exception is raised with a message "object too large".
    --
-   --  If size_t is set to zero on entry, then a minimal (but non-zero)
+   --  If Size is set to zero on entry, then a minimal (but non-zero)
    --  size block is allocated.
    --
    --  Note: this is roughly equivalent to the standard C realloc call

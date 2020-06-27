@@ -1,7 +1,5 @@
 /* Definitions for ARM running Linux-based GNU systems using ELF
-   Copyright (C) 1993, 1994, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004,
-   2005, 2006, 2007, 2008, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 1993-2017 Free Software Foundation, Inc.
    Contributed by Philip Blundell <philb@gnu.org>
 
    This file is part of GCC.
@@ -16,8 +14,13 @@
    or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
    License for more details.
 
-   You should have received a copy of the GNU General Public License
-   along with GCC; see the file COPYING3.  If not see
+   Under Section 7 of GPL version 3, you are granted additional
+   permissions described in the GCC Runtime Library Exception, version
+   3.1, as published by the Free Software Foundation.
+
+   You should have received a copy of the GNU General Public License and
+   a copy of the GCC Runtime Library Exception along with this program;
+   see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
    <http://www.gnu.org/licenses/>.  */
 
 /* elfos.h should have already been included.  Now just override
@@ -42,13 +45,11 @@
 #undef  TARGET_DEFAULT
 #define TARGET_DEFAULT (TARGET_ENDIAN_DEFAULT)
 
-#define SUBTARGET_CPU_DEFAULT TARGET_CPU_arm6
-
 #define SUBTARGET_EXTRA_LINK_SPEC " -m " TARGET_LINKER_EMULATION " -p"
 
+/* We do not have any MULTILIB_OPTIONS specified, so there are no
+   MULTILIB_DEFAULTS.  */
 #undef  MULTILIB_DEFAULTS
-#define MULTILIB_DEFAULTS \
-	{ "marm", "mlittle-endian", "mfloat-abi=hard", "mno-thumb-interwork" }
 
 /* Now we define the strings used to build the spec file.  */
 #undef  LIB_SPEC
@@ -65,8 +66,9 @@
    %{static:-Bstatic} \
    %{shared:-shared} \
    %{symbolic:-Bsymbolic} \
-   %{rdynamic:-export-dynamic} \
-   -dynamic-linker " GNU_USER_DYNAMIC_LINKER " \
+   %{!static: \
+     %{rdynamic:-export-dynamic} \
+     %{!shared:-dynamic-linker " GNU_USER_DYNAMIC_LINKER "}} \
    -X \
    %{mbig-endian:-EB} %{mlittle-endian:-EL}" \
    SUBTARGET_EXTRA_LINK_SPEC
@@ -81,20 +83,8 @@
     }						\
   while (0)
 
-/* This is how we tell the assembler that two symbols have the same value.  */
-#define ASM_OUTPUT_DEF(FILE, NAME1, NAME2) \
-  do					   \
-    {					   \
-      assemble_name (FILE, NAME1); 	   \
-      fputs (" = ", FILE);		   \
-      assemble_name (FILE, NAME2);	   \
-      fputc ('\n', FILE);		   \
-    }					   \
-  while (0)
-
-/* NWFPE always understands FPA instructions.  */
 #undef  FPUTYPE_DEFAULT
-#define FPUTYPE_DEFAULT "fpe3"
+#define FPUTYPE_DEFAULT "vfp"
 
 /* Call the function profiler with a given profile label.  */
 #undef  ARM_FUNCTION_PROFILER
@@ -115,3 +105,12 @@
 /* Add .note.GNU-stack.  */
 #undef NEED_INDICATE_EXEC_STACK
 #define NEED_INDICATE_EXEC_STACK	1
+
+/* Uninitialized common symbols in non-PIE executables, even with
+   strong definitions in dependent shared libraries, will resolve
+   to COPY relocated symbol in the executable.  See PR65780.  */
+#undef TARGET_BINDS_LOCAL_P
+#define TARGET_BINDS_LOCAL_P default_binds_local_p_2
+
+/* Define this to be nonzero if static stack checking is supported.  */
+#define STACK_CHECK_STATIC_BUILTIN 1

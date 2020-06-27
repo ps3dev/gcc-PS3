@@ -7,7 +7,7 @@
 --                                  S p e c                                 --
 --                                                                          --
 --             Copyright (C) 1991-1994, Florida State University            --
---          Copyright (C) 1995-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1995-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -47,6 +47,8 @@ package System.OS_Interface is
    pragma Preelaborate;
 
    pragma Linker_Options ("-lpthread");
+   pragma Linker_Options ("-lrt");
+   --  Needed for clock_getres with glibc versions prior to 2.17
 
    subtype int            is Interfaces.C.int;
    subtype char           is Interfaces.C.char;
@@ -180,7 +182,7 @@ package System.OS_Interface is
    type struct_sigaction is record
       sa_handler  : System.Address;
       sa_mask     : sigset_t;
-      sa_flags    : Interfaces.C.unsigned_long;
+      sa_flags    : int;
       sa_restorer : System.Address;
    end record;
    pragma Convention (C, struct_sigaction);
@@ -217,7 +219,19 @@ package System.OS_Interface is
    -- Time --
    ----------
 
-   type timespec is private;
+   subtype time_t    is System.Linux.time_t;
+   subtype timespec  is System.Linux.timespec;
+   subtype timeval   is System.Linux.timeval;
+   subtype clockid_t is System.Linux.clockid_t;
+
+   function clock_gettime
+     (clock_id : clockid_t; tp : access timespec) return int;
+   pragma Import (C, clock_gettime, "clock_gettime");
+
+   function clock_getres
+     (clock_id : clockid_t;
+      res      : access timespec) return int;
+   pragma Import (C, clock_getres, "clock_getres");
 
    function To_Duration (TS : timespec) return Duration;
    pragma Inline (To_Duration);
@@ -254,6 +268,14 @@ package System.OS_Interface is
 
    function getpid return pid_t;
    pragma Import (C, getpid, "getpid");
+
+   PR_SET_NAME : constant := 15;
+   PR_GET_NAME : constant := 16;
+
+   function prctl
+     (option                 : int;
+      arg2, arg3, arg4, arg5 : unsigned_long := 0) return int;
+   pragma Import (C, prctl);
 
    -------------
    -- Threads --
@@ -509,6 +531,10 @@ package System.OS_Interface is
       destructor : destructor_pointer) return int;
    pragma Import (C, pthread_key_create, "pthread_key_create");
 
+   ----------------
+   -- Extensions --
+   ----------------
+
    CPU_SETSIZE : constant := 1_024;
    --  Size of the cpu_set_t mask on most linux systems (SUSE 11 uses 4_096).
    --  This is kept for backward compatibility (System.Task_Info uses it), but
@@ -581,24 +607,13 @@ private
    for struct_sigaction use record
       sa_handler at Linux.sa_handler_pos range 0 .. Standard'Address_Size - 1;
       sa_mask    at Linux.sa_mask_pos    range 0 .. 1023;
-      sa_flags   at Linux.sa_flags_pos   range 0 .. Standard'Address_Size - 1;
+      sa_flags   at Linux.sa_flags_pos   range 0 .. int'Size - 1;
    end record;
    --  We intentionally leave sa_restorer unspecified and let the compiler
    --  append it after the last field, so disable corresponding warning.
    pragma Warnings (On);
 
    type pid_t is new int;
-
-   type time_t is new long;
-
-   type timespec is record
-      tv_sec  : time_t;
-      tv_nsec : long;
-   end record;
-   pragma Convention (C, timespec);
-
-   type unsigned_long_long_t is mod 2 ** 64;
-   --  Local type only used to get the alignment of this type below
 
    subtype char_array is Interfaces.C.char_array;
 
@@ -642,7 +657,7 @@ private
       Data : char_array (1 .. OS_Constants.PTHREAD_COND_SIZE);
    end record;
    pragma Convention (C, pthread_cond_t);
-   for pthread_cond_t'Alignment use unsigned_long_long_t'Alignment;
+   for pthread_cond_t'Alignment use Interfaces.Unsigned_64'Alignment;
 
    type pthread_key_t is new unsigned;
 

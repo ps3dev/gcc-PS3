@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 2004-2010, Free Software Foundation, Inc.         --
+--          Copyright (C) 2004-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -34,7 +34,7 @@ generic
    with package HT_Types is
      new Generic_Bounded_Hash_Table_Types (<>);
 
-   use HT_Types;
+   use HT_Types, HT_Types.Implementation;
 
    with function Next (Node : Node_Type) return Count_Type;
 
@@ -58,6 +58,20 @@ package Ada.Containers.Hash_Tables.Generic_Bounded_Keys is
       Key : Key_Type) return Hash_Type;
    pragma Inline (Index);
    --  Returns the bucket number (array index value) for the given key
+
+   function Checked_Index
+     (HT  : aliased in out Hash_Table_Type'Class;
+      Key : Key_Type) return Hash_Type;
+   pragma Inline (Checked_Index);
+   --  Calls Index, but also locks and unlocks the container, per AI05-0022, in
+   --  order to detect element tampering by the generic actual Hash function.
+
+   function Checked_Equivalent_Keys
+     (HT   : aliased in out Hash_Table_Type'Class;
+      Key  : Key_Type;
+      Node : Count_Type) return Boolean;
+   --  Calls Equivalent_Keys, but locks and unlocks the container, per
+   --  AI05-0022, in order to detect element tampering by that generic actual.
 
    procedure Delete_Key_Sans_Free
      (HT  : in out Hash_Table_Type'Class;

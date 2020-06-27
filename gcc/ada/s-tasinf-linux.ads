@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---            Copyright (C) 2007-2009, Free Software Foundation, Inc.       --
+--            Copyright (C) 2007-2014, Free Software Foundation, Inc.       --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -36,22 +36,23 @@
 --  Note: the compiler generates direct calls to this interface, via Rtsfind.
 --  Any changes to this interface may require corresponding compiler changes.
 
---  This unit may be used directly from an application program by providing
---  an appropriate WITH, and the interface can be expected to remain stable.
+--  The functionality in this unit is now provided by the predefined package
+--  System.Multiprocessors and the CPU aspect. This package is obsolescent.
 
 --  This is the GNU/Linux version of this module
 
 with System.OS_Interface;
 
 package System.Task_Info is
+   pragma Obsolescent (Task_Info, "use System.Multiprocessors and CPU aspect");
    pragma Preelaborate;
    pragma Elaborate_Body;
    --  To ensure that a body is allowed
 
-   --  Windows provides a way to define the ideal processor to use for a given
-   --  thread. The ideal processor is not necessarily the one that will be used
-   --  by the OS but the OS will always try to schedule this thread to the
-   --  specified processor if it is available.
+   --  The Linux kernel provides a way to define the ideal processor to use for
+   --  a given thread. The ideal processor is not necessarily the one that will
+   --  be used by the OS but the OS will always try to schedule this thread to
+   --  the specified processor if it is available.
 
    --  The Task_Info pragma:
 

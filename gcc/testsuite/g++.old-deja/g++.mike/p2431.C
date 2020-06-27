@@ -3,7 +3,7 @@
 class A
 {
 	public:
-      A(A &); // { dg-message "note" }
+      A(A &); // { dg-message "note" "" { target c++14_down } }
 };
 
 class B
@@ -18,7 +18,6 @@ class C
 	C()
 	{
 		B	b;
-		A a = b;// { dg-error "match" } 
-		// { dg-message "candidate" "candidate note" { target *-*-* } 21 }
+		A a = b;// { dg-error "rvalue" "" { target c++14_down } }
 	}
 };

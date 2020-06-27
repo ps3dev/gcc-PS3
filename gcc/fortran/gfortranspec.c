@@ -1,7 +1,5 @@
 /* Specific flags and argument handling of the Fortran front-end.
-   Copyright (C) 1997, 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006,
-   2007, 2008, 2009, 2010, 2011, 2012
-   Free Software Foundation, Inc.
+   Copyright (C) 1997-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -75,32 +73,9 @@ static void append_arg (const struct cl_decoded_option *);
 static unsigned int g77_newargc;
 static struct cl_decoded_option *g77_new_decoded_options;
 
-/* The path to the spec file.  */
-static char *spec_file = NULL;
-
 /* This will be NULL if we encounter a situation where we should not
    link in the fortran libraries.  */
 static const char *library = NULL;
-
-
-/* Return full path name of spec file if it is in DIR, or NULL if
-   not.  */
-static char *
-find_spec_file (const char *dir)
-{
-  const char dirsep_string[] = { DIR_SEPARATOR, '\0' };
-  char *spec;
-  struct stat sb;
-
-  spec = XNEWVEC (char, strlen (dir) + sizeof (SPEC_FILE) + 4);
-  strcpy (spec, dir);
-  strcat (spec, dirsep_string);
-  strcat (spec, SPEC_FILE);
-  if (!stat (spec, &sb))
-    return spec;
-  free (spec);
-  return NULL;
-}
 
 
 /* Return whether strings S1 and S2 are both NULL or both the same
@@ -167,7 +142,7 @@ append_arg (const struct cl_decoded_option *arg)
     }
 
   if (g77_newargc == newargsize)
-    fatal_error ("overflowed output arg list for %qs",
+    fatal_error (input_location, "overflowed output arg list for %qs",
 		 arg->orig_option_with_args_text);
 
   g77_new_decoded_options[g77_newargc++] = *arg;
@@ -223,7 +198,7 @@ lang_specific_driver (struct cl_decoded_option **in_decoded_options,
   /* By default, we throw on the math library if we have one.  */
   int need_math = (MATH_LIBRARY[0] != '\0');
 
-  /* Whether we should link a static libgfortran. */
+  /* Whether we should link a static libgfortran.  */
   int static_lib = 0; 
 
   /* Whether we need to link statically.  */
@@ -301,12 +276,11 @@ lang_specific_driver (struct cl_decoded_option **in_decoded_options,
 
 	case OPT__version:
 	  printf ("GNU Fortran %s%s\n", pkgversion_string, version_string);
-	  printf ("Copyright %s 2012 Free Software Foundation, Inc.\n\n",
+	  printf ("Copyright %s 2017 Free Software Foundation, Inc.\n",
 		  _("(C)"));
-	  printf (_("GNU Fortran comes with NO WARRANTY, to the extent permitted by law.\n\
-You may redistribute copies of GNU Fortran\n\
-under the terms of the GNU General Public License.\n\
-For more information about these matters, see the file named COPYING\n\n"));
+	  fputs (_("This is free software; see the source for copying conditions.  There is NO\n\
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n"),
+		stdout);
 	  exit (0);
 	  break;
 
@@ -315,19 +289,14 @@ For more information about these matters, see the file named COPYING\n\n"));
 	     cool facility for handling --help and --verbose --help.  */
 	  return;
 
-	case OPT_L:
-	  if (!spec_file)
-	    spec_file = find_spec_file (decoded_options[i].arg);
-	  break;
-
-
 	default:
 	  break;
 	}
     }
 
   if ((n_outfiles != 0) && (n_infiles == 0))
-    fatal_error ("no input files; unwilling to write output files");
+    fatal_error (input_location,
+		 "no input files; unwilling to write output files");
 
   /* If there are no input files, no need for the library.  */
   if (n_infiles == 0)
@@ -451,12 +420,6 @@ For more information about these matters, see the file named COPYING\n\n"));
 
 #endif
 
-  /* Read the specs file corresponding to libgfortran.
-     If we didn't find the spec file on the -L path, we load it
-     via lang_specific_pre_link.  */
-  if (spec_file)
-    append_option (OPT_specs_, spec_file, 1);
-
   if (verbose && g77_new_decoded_options != g77_x_decoded_options)
     {
       fprintf (stderr, _("Driving:"));
@@ -475,8 +438,7 @@ For more information about these matters, see the file named COPYING\n\n"));
 int
 lang_specific_pre_link (void)
 {
-  free (spec_file);
-  if (spec_file == NULL && library)
+  if (library)
     do_spec ("%:include(libgfortran.spec)");
 
   return 0;

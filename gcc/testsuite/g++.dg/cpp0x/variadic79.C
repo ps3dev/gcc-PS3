@@ -1,6 +1,6 @@
 // PR c++/33213
-// { dg-do compile }
-// { dg-options "-std=gnu++0x" }
+// { dg-do compile { target c++11 } }
+// { dg-options -fno-new-ttp-matching }
 
 template<template<typename> class...> struct A;
 

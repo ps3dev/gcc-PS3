@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---            Copyright (C) 2011, Free Software Foundation, Inc.            --
+--          Copyright (C) 2011-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- This specification is derived from the Ada Reference Manual for use with --
 -- GNAT. The copyright notice above, and the license provisions that follow --
@@ -95,18 +95,18 @@ package System.Storage_Pools.Subpools is
      (Pool    : in out Root_Storage_Pool_With_Subpools;
       Subpool : in out Subpool_Handle)
    is abstract;
+   --  This precondition causes errors in simple tests, disabled for now???
+   --  with Pre'Class => Pool_Of_Subpool (Subpool) = Pool'Access;
 
-   --  ??? This precondition causes errors in simple tests, disabled for now
-
-   --      with Pre'Class => Pool_Of_Subpool (Subpool) = Pool'Access;
    --  This routine requires implementation. Reclaim the storage a particular
    --  subpool occupies in a pool_with_subpools. This routine is called by
    --  Ada.Unchecked_Deallocate_Subpool.
 
    function Default_Subpool_For_Pool
-     (Pool : Root_Storage_Pool_With_Subpools) return not null Subpool_Handle;
+     (Pool : in out Root_Storage_Pool_With_Subpools)
+      return not null Subpool_Handle;
    --  Return a common subpool which is used for object allocations without a
-   --  Subpool_Handle_name in the allocator. The default implementation of this
+   --  Subpool_Handle_Name in the allocator. The default implementation of this
    --  routine raises Program_Error.
 
    function Pool_Of_Subpool
@@ -249,6 +249,14 @@ private
       --  This back pointer is used in subpool deallocation.
    end record;
 
+   procedure Adjust_Controlled_Dereference
+     (Addr         : in out System.Address;
+      Storage_Size : in out System.Storage_Elements.Storage_Count;
+      Alignment    : System.Storage_Elements.Storage_Count);
+   --  Given the memory attributes of a heap-allocated object that is known to
+   --  be controlled, adjust the address and size of the object to include the
+   --  two hidden pointers inserted by the finalization machinery.
+
    --  ??? Once Storage_Pools.Allocate_Any is removed, this should be renamed
    --  to Allocate_Any.
 
@@ -317,6 +325,9 @@ private
    --    is controlled. When set to True, the machinery generates additional
    --    data.
 
+   procedure Detach (N : not null SP_Node_Ptr);
+   --  Unhook a subpool node from an arbitrary subpool list
+
    overriding procedure Finalize (Controller : in out Pool_Controller);
    --  Buffer routine, calls Finalize_Pool
 
@@ -324,11 +335,6 @@ private
    --  Iterate over all subpools of Pool, detach them one by one and finalize
    --  their masters. This action first detaches a controlled object from a
    --  particular master, then invokes its Finalize_Address primitive.
-
-   procedure Finalize_Subpool (Subpool : not null Subpool_Handle);
-   --  Finalize all controlled objects chained on Subpool's master. Remove the
-   --  subpool from its owner's list. Deallocate the associated doubly linked
-   --  list node.
 
    function Header_Size_With_Padding
      (Alignment : System.Storage_Elements.Storage_Count)

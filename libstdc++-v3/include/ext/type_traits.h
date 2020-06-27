@@ -1,6 +1,6 @@
 // -*- C++ -*-
 
-// Copyright (C) 2005, 2006, 2007, 2009 Free Software Foundation, Inc.
+// Copyright (C) 2005-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the terms
@@ -33,6 +33,8 @@
 
 #include <bits/c++config.h>
 #include <bits/cpp_type_traits.h>
+
+extern "C++" {
 
 namespace __gnu_cxx _GLIBCXX_VISIBILITY(default)
 {
@@ -155,6 +157,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     __is_null_pointer(_Type)
     { return false; }
 
+#if __cplusplus >= 201103L
+  inline bool
+  __is_null_pointer(std::nullptr_t)
+  { return true; }
+#endif
 
   // For complex and cmath
   template<typename _Tp, bool = std::__is_integer<_Tp>::__value>
@@ -209,5 +216,6 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace
+} // extern "C++"
 
 #endif 

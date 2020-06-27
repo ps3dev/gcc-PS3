@@ -35,9 +35,9 @@ int main (void)
     abort ();
 
   MyRootClass.int;        /* { dg-error "expected identifier" } */
-                          /* { dg-error "expected" "" { target *-*-* } 37 } */
+
   if (MyRootClass.int)    /* { dg-error "expected identifier" } */
-                          /* { dg-error "expected" "" { target *-*-* } 39 } */
+                          /* { dg-error "expected" "" { target *-*-* } .-1 } */
     abort ();
 
   return 0;

@@ -58,9 +58,9 @@ func (sa *SockaddrNetlink) sockaddr() (*RawSockaddrAny, Socklen_t, error) {
 
 type RawSockaddrInet4 struct {
 	Family uint16
-	Port uint16
-	Addr [4]byte /* in_addr */
-	Zero [8]uint8
+	Port   uint16
+	Addr   [4]byte /* in_addr */
+	Zero   [8]uint8
 }
 
 func (sa *RawSockaddrInet4) setLen() Socklen_t {
@@ -68,10 +68,10 @@ func (sa *RawSockaddrInet4) setLen() Socklen_t {
 }
 
 type RawSockaddrInet6 struct {
-	Family uint16
-	Port uint16
+	Family   uint16
+	Port     uint16
 	Flowinfo uint32
-	Addr [16]byte /* in6_addr */
+	Addr     [16]byte /* in6_addr */
 	Scope_id uint32
 }
 
@@ -81,7 +81,7 @@ func (sa *RawSockaddrInet6) setLen() Socklen_t {
 
 type RawSockaddrUnix struct {
 	Family uint16
-	Path [108]int8
+	Path   [108]int8
 }
 
 func (sa *RawSockaddrUnix) setLen(int) {
@@ -103,11 +103,20 @@ func (sa *RawSockaddrUnix) getLen() (int, error) {
 	// to be uninterpreted fixed-size binary blobs--but
 	// everyone uses this convention.
 	n := 0
-	for n < len(sa.Path) - 3 && sa.Path[n] != 0 {
+	for n < len(sa.Path) && sa.Path[n] != 0 {
 		n++
 	}
 
 	return n, nil
+}
+
+func (sa *RawSockaddrUnix) adjustAbstract(sl Socklen_t) Socklen_t {
+	if sa.Path[0] == '@' {
+		sa.Path[0] = 0
+		// Don't count trailing NUL for abstract address.
+		sl--
+	}
+	return sl
 }
 
 type RawSockaddrLinklayer struct {
@@ -125,11 +134,6 @@ type RawSockaddrNetlink struct {
 	Pad    uint16
 	Pid    uint32
 	Groups uint32
-}
-
-type RawSockaddr struct {
-	Family uint16
-	Data [14]int8
 }
 
 // BindToDevice binds the socket associated with fd to device.
@@ -164,14 +168,28 @@ func anyToSockaddrOS(rsa *RawSockaddrAny) (Sockaddr, error) {
 	return nil, EAFNOSUPPORT
 }
 
+func GetsockoptIPv6MTUInfo(fd, level, opt int) (*IPv6MTUInfo, error) {
+	var value IPv6MTUInfo
+	vallen := Socklen_t(SizeofIPv6MTUInfo)
+	err := getsockopt(fd, level, opt, unsafe.Pointer(&value), &vallen)
+	return &value, err
+}
+
+func GetsockoptUcred(fd, level, opt int) (*Ucred, error) {
+	var value Ucred
+	vallen := Socklen_t(SizeofUcred)
+	err := getsockopt(fd, level, opt, unsafe.Pointer(&value), &vallen)
+	return &value, err
+}
+
 //sysnb	EpollCreate(size int) (fd int, err error)
-//epoll_create(size int) int
+//epoll_create(size _C_int) _C_int
 
 //sysnb EpollCreate1(flags int) (fd int, err error)
-//epoll_create1(flags int) int
+//epoll_create1(flags _C_int) _C_int
 
 //sysnb	EpollCtl(epfd int, op int, fd int, event *EpollEvent) (err error)
-//epoll_ctl(epfd int, op int, fd int, event *EpollEvent) int
+//epoll_ctl(epfd _C_int, op _C_int, fd _C_int, event *EpollEvent) _C_int
 
 //sys	EpollWait(epfd int, events []EpollEvent, msec int) (n int, err error)
-//epoll_wait(epfd int, events *EpollEvent, maxevents int, timeout int) int
+//epoll_wait(epfd _C_int, events *EpollEvent, maxevents _C_int, timeout _C_int) _C_int

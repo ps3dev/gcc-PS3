@@ -1,6 +1,5 @@
 ;; Predicate definitions for Tilera TILE-Gx.
-;; Copyright (C) 2011, 2012
-;; Free Software Foundation, Inc.
+;; Copyright (C) 2011-2017 Free Software Foundation, Inc.
 ;; Contributed by Walter Lee (walt@tilera.com)
 ;;
 ;; This file is part of GCC.
@@ -80,11 +79,14 @@
 	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW1_LAST")
 	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW2_LAST")
 	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW1_LAST_PCREL")
+	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW2_LAST_PCREL")
 	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW0_LAST_GOT")
 	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW1_LAST_GOT")
 	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW1_LAST_TLS_GD")
 	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW1_LAST_TLS_IE")
-	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW1_LAST_TLS_LE"))))
+	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW1_LAST_TLS_LE")
+	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW1_LAST_PLT_PCREL")
+	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW2_LAST_PLT_PCREL"))))
 
 ;; Returns 1 if OP is an unspec wrapper for a symbol, got, or tls
 ;; reference.
@@ -96,10 +98,13 @@
 	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW2")
 	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW3")
 	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW0_PCREL")
+	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW1_PCREL")
 	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW0_GOT")
 	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW0_TLS_GD")
 	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW0_TLS_IE")
-	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW0_TLS_LE"))))
+	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW0_TLS_LE")
+	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW0_PLT_PCREL")
+	    (match_test "XINT (XEXP (op,0), 1) == UNSPEC_HW1_PLT_PCREL"))))
 
 ;; Return 1 if OP is a 8-element vector constant with identical signed
 ;; 8-bit elements or any register.
@@ -107,14 +112,8 @@
   (ior (match_operand 0 "register_operand")
        (and (match_code "const_vector")
 	    (match_test "CONST_VECTOR_NUNITS (op) == 8
-                         && satisfies_constraint_I (CONST_VECTOR_ELT (op, 0))
-                         && CONST_VECTOR_ELT (op, 0) == CONST_VECTOR_ELT (op, 1)
-                         && CONST_VECTOR_ELT (op, 0) == CONST_VECTOR_ELT (op, 2)
-                         && CONST_VECTOR_ELT (op, 0) == CONST_VECTOR_ELT (op, 3)
-                         && CONST_VECTOR_ELT (op, 0) == CONST_VECTOR_ELT (op, 4)
-                         && CONST_VECTOR_ELT (op, 0) == CONST_VECTOR_ELT (op, 5)
-                         && CONST_VECTOR_ELT (op, 0) == CONST_VECTOR_ELT (op, 6)
-                         && CONST_VECTOR_ELT (op, 0) == CONST_VECTOR_ELT (op, 7)"))))
+                         && (satisfies_constraint_I
+			     (unwrap_const_vec_duplicate (op)))"))))
 
 ;; Return 1 if OP is a 4-element vector constant with identical signed
 ;; 8-bit elements or any register.
@@ -122,10 +121,8 @@
   (ior (match_operand 0 "register_operand")
        (and (match_code "const_vector")
 	    (match_test "CONST_VECTOR_NUNITS (op) == 4
-                         && satisfies_constraint_I (CONST_VECTOR_ELT (op, 0))
-                         && CONST_VECTOR_ELT (op, 0) == CONST_VECTOR_ELT (op, 1)
-                         && CONST_VECTOR_ELT (op, 0) == CONST_VECTOR_ELT (op, 2)
-                         && CONST_VECTOR_ELT (op, 0) == CONST_VECTOR_ELT (op, 3)"))))
+                         && (satisfies_constraint_I
+			     (unwrap_const_vec_duplicate (op)))"))))
 
 ;; Return 1 if the operand is a valid second operand to an add insn.
 (define_predicate "add_operand"

@@ -1,4 +1,4 @@
-/* Copyright (C) 2008, 2009 Free Software Foundation, Inc.
+/* Copyright (C) 2008-2017 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -28,13 +28,26 @@
 # error "Never use <avxintrin.h> directly; include <immintrin.h> instead."
 #endif
 
+#ifndef _AVXINTRIN_H_INCLUDED
+#define _AVXINTRIN_H_INCLUDED
+
+#ifndef __AVX__
+#pragma GCC push_options
+#pragma GCC target("avx")
+#define __DISABLE_AVX__
+#endif /* __AVX__ */
+
 /* Internal data types for implementing the intrinsics.  */
 typedef double __v4df __attribute__ ((__vector_size__ (32)));
 typedef float __v8sf __attribute__ ((__vector_size__ (32)));
 typedef long long __v4di __attribute__ ((__vector_size__ (32)));
+typedef unsigned long long __v4du __attribute__ ((__vector_size__ (32)));
 typedef int __v8si __attribute__ ((__vector_size__ (32)));
+typedef unsigned int __v8su __attribute__ ((__vector_size__ (32)));
 typedef short __v16hi __attribute__ ((__vector_size__ (32)));
+typedef unsigned short __v16hu __attribute__ ((__vector_size__ (32)));
 typedef char __v32qi __attribute__ ((__vector_size__ (32)));
+typedef unsigned char __v32qu __attribute__ ((__vector_size__ (32)));
 
 /* The Intel API is flexible enough that we must allow aliasing with other
    vector types, and their scalar components.  */
@@ -44,6 +57,17 @@ typedef long long __m256i __attribute__ ((__vector_size__ (32),
 					  __may_alias__));
 typedef double __m256d __attribute__ ((__vector_size__ (32),
 				       __may_alias__));
+
+/* Unaligned version of the same types.  */
+typedef float __m256_u __attribute__ ((__vector_size__ (32),
+				       __may_alias__,
+				       __aligned__ (1)));
+typedef long long __m256i_u __attribute__ ((__vector_size__ (32),
+					    __may_alias__,
+					    __aligned__ (1)));
+typedef double __m256d_u __attribute__ ((__vector_size__ (32),
+					 __may_alias__,
+					 __aligned__ (1)));
 
 /* Compare predicates for scalar and packed compare intrinsics.  */
 
@@ -115,13 +139,13 @@ typedef double __m256d __attribute__ ((__vector_size__ (32),
 extern __inline __m256d __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_add_pd (__m256d __A, __m256d __B)
 {
-  return (__m256d) __builtin_ia32_addpd256 ((__v4df)__A, (__v4df)__B);
+  return (__m256d) ((__v4df)__A + (__v4df)__B);
 }
 
 extern __inline __m256 __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_add_ps (__m256 __A, __m256 __B)
 {
-  return (__m256) __builtin_ia32_addps256 ((__v8sf)__A, (__v8sf)__B);
+  return (__m256) ((__v8sf)__A + (__v8sf)__B);
 }
 
 extern __inline __m256d __attribute__((__gnu_inline__, __always_inline__, __artificial__))
@@ -209,13 +233,13 @@ _mm256_blendv_ps (__m256 __X, __m256 __Y, __m256 __M)
 extern __inline __m256d __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_div_pd (__m256d __A, __m256d __B)
 {
-  return (__m256d) __builtin_ia32_divpd256 ((__v4df)__A, (__v4df)__B);
+  return (__m256d) ((__v4df)__A / (__v4df)__B);
 }
 
 extern __inline __m256 __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_div_ps (__m256 __A, __m256 __B)
 {
-  return (__m256) __builtin_ia32_divps256 ((__v8sf)__A, (__v8sf)__B);
+  return (__m256) ((__v8sf)__A / (__v8sf)__B);
 }
 
 /* Dot product instructions with mask-defined summing and zeroing parts
@@ -286,13 +310,13 @@ _mm256_min_ps (__m256 __A, __m256 __B)
 extern __inline __m256d __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_mul_pd (__m256d __A, __m256d __B)
 {
-  return (__m256d) __builtin_ia32_mulpd256 ((__v4df)__A, (__v4df)__B);
+  return (__m256d) ((__v4df)__A * (__v4df)__B);
 }
 
 extern __inline __m256 __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_mul_ps (__m256 __A, __m256 __B)
 {
-  return (__m256) __builtin_ia32_mulps256 ((__v8sf)__A, (__v8sf)__B);
+  return (__m256) ((__v8sf)__A * (__v8sf)__B);
 }
 
 extern __inline __m256d __attribute__((__gnu_inline__, __always_inline__, __artificial__))
@@ -334,13 +358,13 @@ _mm256_shuffle_ps (__m256 __A, __m256 __B, const int __mask)
 extern __inline __m256d __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_sub_pd (__m256d __A, __m256d __B)
 {
-  return (__m256d) __builtin_ia32_subpd256 ((__v4df)__A, (__v4df)__B);
+  return (__m256d) ((__v4df)__A - (__v4df)__B);
 }
 
 extern __inline __m256 __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_sub_ps (__m256 __A, __m256 __B)
 {
-  return (__m256) __builtin_ia32_subps256 ((__v8sf)__A, (__v8sf)__B);
+  return (__m256) ((__v8sf)__A - (__v8sf)__B);
 }
 
 extern __inline __m256d __attribute__((__gnu_inline__, __always_inline__, __artificial__))
@@ -465,6 +489,20 @@ extern __inline __m256i __attribute__((__gnu_inline__, __always_inline__, __arti
 _mm256_cvttps_epi32 (__m256 __A)
 {
   return (__m256i)__builtin_ia32_cvttps2dq256 ((__v8sf) __A);
+}
+
+extern __inline double
+__attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
+_mm256_cvtsd_f64 (__m256d __A)
+{
+  return __A[0];
+}
+
+extern __inline float
+__attribute__ ((__gnu_inline__, __always_inline__, __artificial__))
+_mm256_cvtss_f32 (__m256 __A)
+{
+  return __A[0];
 }
 
 #ifdef __OPTIMIZE__
@@ -844,25 +882,25 @@ _mm256_store_ps (float *__P, __m256 __A)
 extern __inline __m256d __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_loadu_pd (double const *__P)
 {
-  return (__m256d) __builtin_ia32_loadupd256 (__P);
+  return *(__m256d_u *)__P;
 }
 
 extern __inline void __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_storeu_pd (double *__P, __m256d __A)
 {
-  __builtin_ia32_storeupd256 (__P, (__v4df)__A);
+  *(__m256d_u *)__P = __A;
 }
 
 extern __inline __m256 __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_loadu_ps (float const *__P)
 {
-  return (__m256) __builtin_ia32_loadups256 (__P);
+  return *(__m256_u *)__P;
 }
 
 extern __inline void __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_storeu_ps (float *__P, __m256 __A)
 {
-  __builtin_ia32_storeups256 (__P, (__v8sf)__A);
+  *(__m256_u *)__P = __A;
 }
 
 extern __inline __m256i __attribute__((__gnu_inline__, __always_inline__, __artificial__))
@@ -878,15 +916,15 @@ _mm256_store_si256 (__m256i *__P, __m256i __A)
 }
 
 extern __inline __m256i __attribute__((__gnu_inline__, __always_inline__, __artificial__))
-_mm256_loadu_si256 (__m256i const *__P)
+_mm256_loadu_si256 (__m256i_u const *__P)
 {
-  return (__m256i) __builtin_ia32_loaddqu256 ((char const *)__P);
+  return *__P;
 }
 
 extern __inline void __attribute__((__gnu_inline__, __always_inline__, __artificial__))
-_mm256_storeu_si256 (__m256i *__P, __m256i __A)
+_mm256_storeu_si256 (__m256i_u *__P, __m256i __A)
 {
-  __builtin_ia32_storedqu256 ((char *)__P, (__v32qi)__A);
+  *__P = __A;
 }
 
 extern __inline __m128d __attribute__((__gnu_inline__, __always_inline__, __artificial__))
@@ -1159,6 +1197,27 @@ _mm256_movemask_ps (__m256 __A)
 }
 
 extern __inline __m256d __attribute__((__gnu_inline__, __always_inline__, __artificial__))
+_mm256_undefined_pd (void)
+{
+  __m256d __Y = __Y;
+  return __Y;
+}
+
+extern __inline __m256 __attribute__((__gnu_inline__, __always_inline__, __artificial__))
+_mm256_undefined_ps (void)
+{
+  __m256 __Y = __Y;
+  return __Y;
+}
+
+extern __inline __m256i __attribute__((__gnu_inline__, __always_inline__, __artificial__))
+_mm256_undefined_si256 (void)
+{
+  __m256i __Y = __Y;
+  return __Y;
+}
+
+extern __inline __m256d __attribute__((__gnu_inline__, __always_inline__, __artificial__))
 _mm256_setzero_pd (void)
 {
   return __extension__ (__m256d){ 0.0, 0.0, 0.0, 0.0 };
@@ -1424,3 +1483,10 @@ _mm256_castsi128_si256 (__m128i __A)
 {
   return (__m256i) __builtin_ia32_si256_si ((__v4si)__A);
 }
+
+#ifdef __DISABLE_AVX__
+#undef __DISABLE_AVX__
+#pragma GCC pop_options
+#endif /* __DISABLE_AVX__ */
+
+#endif /* _AVXINTRIN_H_INCLUDED */

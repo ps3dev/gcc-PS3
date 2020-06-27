@@ -1,4 +1,4 @@
-/* Copyright (C) 1992, 1996, 1997, 1998 Free Software Foundation, Inc.
+/* Copyright (C) 1992-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -18,6 +18,8 @@ along with GCC; see the file COPYING3.  If not see
 
 /* For cross compilation, use the portable definitions from the COFF
    documentation.  */
+#ifndef GCC_GSYMS_H
+#define GCC_GSYMS_H
 
 #define __GNU_SYMS__
 
@@ -72,9 +74,6 @@ enum sdb_type
   T_USHORT = 13,
   T_UINT = 14,
   T_ULONG = 15
-#ifdef EXTENDED_SDB_BASIC_TYPES
-  , T_LNGDBL = 16
-#endif
 };
 
 enum sdb_type_class
@@ -87,18 +86,12 @@ enum sdb_type_class
 
 enum sdb_masks
 {
-#ifdef EXTENDED_SDB_BASIC_TYPES
-  N_BTMASK = 0x1f,
-  N_TMASK = 0x60,
-  N_TMASK1 = 0x300,
-  N_TMASK2 = 0x360,
-  N_BTSHFT = 5,
-#else
   N_BTMASK = 017,
   N_TMASK = 060,
   N_TMASK1 = 0300,
   N_TMASK2 = 0360,
   N_BTSHFT = 4,
-#endif
   N_TSHIFT = 2
 };
+
+#endif /* GCC_GSYMS_H */

@@ -976,7 +976,7 @@ func_enable_tag ()
 
 
   case $host in
-    *cygwin* | *mingw* | *pw32* | *cegcc*)
+    *cygwin* | *mingw* | *pw32* | *cegcc* | *solaris2* )
       # don't eliminate duplications in $postdeps and $predeps
       opt_duplicate_compiler_generated_deps=:
       ;;
@@ -5928,7 +5928,7 @@ func_mode_link ()
 	         test "$hardcode_direct_absolute" = no; then
 		add="$dir/$linklib"
 	      elif test "$hardcode_minus_L" = yes; then
-		add_dir="-L$dir"
+		add_dir="-L$absdir"
 		# Try looking first in the location we're being installed to.
 		if test -n "$inst_prefix_dir"; then
 		  case $libdir in

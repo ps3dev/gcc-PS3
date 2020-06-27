@@ -1,8 +1,7 @@
 /* Generate from machine description:
    - some macros CODE_FOR_... giving the insn_code_number value
    for each of the defined standard insn names.
-   Copyright (C) 1987, 1991, 1995, 1998, 1999, 2000, 2001, 2003,
-   2004, 2007, 2010  Free Software Foundation, Inc.
+   Copyright (C) 1987-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -30,10 +29,10 @@ along with GCC; see the file COPYING3.  If not see
 #include "gensupport.h"
 
 static void
-gen_insn (rtx insn, int code)
+gen_insn (md_rtx_info *info)
 {
-  const char *name = XSTR (insn, 0);
-  int truth = maybe_eval_c_test (XSTR (insn, 2));
+  const char *name = XSTR (info->def, 0);
+  int truth = maybe_eval_c_test (XSTR (info->def, 2));
 
   /* Don't mention instructions whose names are the null string
      or begin with '*'.  They are in the machine description just
@@ -41,17 +40,15 @@ gen_insn (rtx insn, int code)
   if (name[0] != 0 && name[0] != '*')
     {
       if (truth == 0)
-	printf ("#define CODE_FOR_%s CODE_FOR_nothing\n", name);
+	printf (",\n   CODE_FOR_%s = CODE_FOR_nothing", name);
       else
-	printf ("  CODE_FOR_%s = %d,\n", name, code);
+	printf (",\n  CODE_FOR_%s = %d", name, info->index);
     }
 }
 
 int
-main (int argc, char **argv)
+main (int argc, const char **argv)
 {
-  rtx desc;
-
   progname = "gencodes";
 
   /* We need to see all the possibilities.  Elided insns may have
@@ -61,34 +58,35 @@ main (int argc, char **argv)
   if (!init_rtx_reader_args (argc, argv))
     return (FATAL_EXIT_CODE);
 
-  puts ("\
+  printf ("\
 /* Generated automatically by the program `gencodes'\n\
    from the machine description file `md'.  */\n\
 \n\
 #ifndef GCC_INSN_CODES_H\n\
 #define GCC_INSN_CODES_H\n\
 \n\
-enum insn_code {");
+enum insn_code {\n\
+  CODE_FOR_nothing = 0");
 
   /* Read the machine description.  */
 
-  while (1)
-    {
-      int line_no;
-      int insn_code_number;
-
-      desc = read_md_rtx (&line_no, &insn_code_number);
-      if (desc == NULL)
+  md_rtx_info info;
+  while (read_md_rtx (&info))
+    switch (GET_CODE (info.def))
+      {
+      case DEFINE_INSN:
+      case DEFINE_EXPAND:
+	gen_insn (&info);
 	break;
 
-      if (GET_CODE (desc) == DEFINE_INSN || GET_CODE (desc) == DEFINE_EXPAND)
-	gen_insn (desc, insn_code_number);
+      default:
+	break;
     }
 
-  puts ("  CODE_FOR_nothing\n\
-};\n\
+  printf ("\n};\n\
 \n\
-#endif /* GCC_INSN_CODES_H */");
+const unsigned int NUM_INSN_CODES = %d;\n\
+#endif /* GCC_INSN_CODES_H */\n", get_num_insn_codes ());
 
   if (ferror (stdout) || fflush (stdout) || fclose (stdout))
     return FATAL_EXIT_CODE;

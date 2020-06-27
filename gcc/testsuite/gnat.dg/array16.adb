@@ -1,3 +1,6 @@
+-- { dg-do compile }
+-- { dg-options "-O -gnatn -fdump-tree-optimized" }
+
 package body Array16 is
 
   function F1 (A : access My_T1) return My_T1 is
@@ -20,3 +23,5 @@ package body Array16 is
   end;
 
 end Array16;
+
+-- { dg-final { scan-tree-dump-not "secondary_stack" "optimized" } }

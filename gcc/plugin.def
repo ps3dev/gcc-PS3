@@ -1,5 +1,5 @@
 /* This file contains the definitions for plugin events in GCC.
-   Copyright (C) 2009 Free Software Foundation, Inc.
+   Copyright (C) 2009-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -17,6 +17,11 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
+/* Called before parsing the body of a function.  */
+DEFEVENT (PLUGIN_START_PARSE_FUNCTION)
+
+/* After finishing parsing a function. */
+DEFEVENT (PLUGIN_FINISH_PARSE_FUNCTION)
 
 /* To hook into pass manager.  */
 DEFEVENT (PLUGIN_PASS_MANAGER_SETUP)
@@ -50,9 +55,6 @@ DEFEVENT (PLUGIN_GGC_END)
 
 /* Register an extra GGC root table. */
 DEFEVENT (PLUGIN_REGISTER_GGC_ROOTS)
-
-/* Register an extra GGC cache table. */
-DEFEVENT (PLUGIN_REGISTER_GGC_CACHES)
 
 /* Called during attribute registration.  */
 DEFEVENT (PLUGIN_ATTRIBUTES)
@@ -91,6 +93,15 @@ DEFEVENT (PLUGIN_EARLY_GIMPLE_PASSES_END)
 
 /* Called when a pass is first instantiated.  */
 DEFEVENT (PLUGIN_NEW_PASS)
+
+/* Called when a file is #include-d or given via the #line directive.
+   this could happen many times.  The event data is the included file path,
+   as a const char* pointer.  */
+DEFEVENT (PLUGIN_INCLUDE_FILE)
+
+/* When adding a new hard-coded plugin event, don't forget to edit in
+   file plugin.c the functions register_callback and
+   invoke_plugin_callbacks_full accordingly!  */
 
 /* After the hard-coded events above, plugins can dynamically allocate events
    at run time.

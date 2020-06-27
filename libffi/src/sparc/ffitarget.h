@@ -1,5 +1,6 @@
 /* -----------------------------------------------------------------*-C-*-
-   ffitarget.h - Copyright (c) 1996-2003  Red Hat, Inc.
+   ffitarget.h - Copyright (c) 2012  Anthony Green
+                 Copyright (c) 1996-2003  Red Hat, Inc.
    Target configuration macros for SPARC.
 
    Permission is hereby granted, free of charge, to any person obtaining
@@ -27,6 +28,10 @@
 #ifndef LIBFFI_TARGET_H
 #define LIBFFI_TARGET_H
 
+#ifndef LIBFFI_H
+#error "Please do not include ffitarget.h directly into your source.  Use ffi.h instead."
+#endif
+
 /* ---- System specific configurations ----------------------------------- */
 
 #if defined(__arch64__) || defined(__sparcv9)
@@ -41,21 +46,29 @@ typedef signed long            ffi_sarg;
 
 typedef enum ffi_abi {
   FFI_FIRST_ABI = 0,
-  FFI_V8,
-  FFI_V8PLUS,
-  FFI_V9,
 #ifdef SPARC64
+  FFI_V9,
   FFI_DEFAULT_ABI = FFI_V9,
 #else
+  FFI_V8,
   FFI_DEFAULT_ABI = FFI_V8,
 #endif
-  FFI_LAST_ABI = FFI_DEFAULT_ABI + 1
+  FFI_LAST_ABI
 } ffi_abi;
+#endif
+
+#define FFI_TARGET_SPECIFIC_STACK_SPACE_ALLOCATION 1
+#define FFI_TARGET_HAS_COMPLEX_TYPE 1
+
+#ifdef SPARC64
+# define FFI_TARGET_SPECIFIC_VARIADIC 1
+# define FFI_EXTRA_CIF_FIELDS  unsigned int nfixedargs
 #endif
 
 /* ---- Definitions for closures ----------------------------------------- */
 
 #define FFI_CLOSURES 1
+#define FFI_GO_CLOSURES 1
 #define FFI_NATIVE_RAW_API 0
 
 #ifdef SPARC64

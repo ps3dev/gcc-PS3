@@ -1,6 +1,4 @@
-// Copyright (C) 1994, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2007,
-// 2009, 2010
-// Free Software Foundation
+// Copyright (C) 1994-2017 Free Software Foundation, Inc.
 //
 // This file is part of GCC.
 //
@@ -42,7 +40,7 @@ __pointer_catch (const __pbase_type_info *thrown_type,
                  void **thr_obj,
                  unsigned outer) const
 {
-#ifdef __GXX_RTTI
+#if __cpp_rtti
   if (outer < 2 && *__pointee == typeid (void))
     {
       // conversion to void

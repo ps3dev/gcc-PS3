@@ -1,5 +1,5 @@
 // PR c++/47795
-// { dg-options "-std=c++0x" }
+// { dg-do compile { target c++11 } }
 
 class Klass
 {
@@ -11,7 +11,7 @@ public:
 bool Klass::dostuff()
 {
   auto f = []() -> bool {
-    if (local & 1) { return true; } // { dg-error "not captured" }
+    if (local & 1) { return true; } // { dg-error "not captured|non-static" }
     return false;
   };
 }

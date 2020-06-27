@@ -1,6 +1,5 @@
 /* Definitions for the Blackfin port.
-   Copyright (C) 2005, 2007, 2008, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 2005-2017 Free Software Foundation, Inc.
    Contributed by Analog Devices.
 
    This file is part of GCC.
@@ -43,6 +42,8 @@
 						\
       switch (bfin_cpu_type)			\
 	{					\
+	case BFIN_CPU_UNKNOWN:			\
+	  break;				\
 	case BFIN_CPU_BF512:			\
 	  builtin_define ("__ADSPBF512__");	\
 	  builtin_define ("__ADSPBF51x__");	\
@@ -109,30 +110,35 @@
 	  break;				\
 	case BFIN_CPU_BF542M:			\
 	  builtin_define ("__ADSPBF542M__");	\
+	  /* FALLTHRU */			\
 	case BFIN_CPU_BF542:			\
 	  builtin_define ("__ADSPBF542__");	\
 	  builtin_define ("__ADSPBF54x__");	\
 	  break;				\
 	case BFIN_CPU_BF544M:			\
 	  builtin_define ("__ADSPBF544M__");	\
+	  /* FALLTHRU */			\
 	case BFIN_CPU_BF544:			\
 	  builtin_define ("__ADSPBF544__");	\
 	  builtin_define ("__ADSPBF54x__");	\
 	  break;				\
 	case BFIN_CPU_BF547M:			\
 	  builtin_define ("__ADSPBF547M__");	\
+	  /* FALLTHRU */			\
 	case BFIN_CPU_BF547:			\
 	  builtin_define ("__ADSPBF547__");	\
 	  builtin_define ("__ADSPBF54x__");	\
 	  break;				\
 	case BFIN_CPU_BF548M:			\
 	  builtin_define ("__ADSPBF548M__");	\
+	  /* FALLTHRU */			\
 	case BFIN_CPU_BF548:			\
 	  builtin_define ("__ADSPBF548__");	\
 	  builtin_define ("__ADSPBF54x__");	\
 	  break;				\
 	case BFIN_CPU_BF549M:			\
 	  builtin_define ("__ADSPBF549M__");	\
+	  /* FALLTHRU */			\
 	case BFIN_CPU_BF549:			\
 	  builtin_define ("__ADSPBF549__");	\
 	  builtin_define ("__ADSPBF54x__");	\
@@ -232,7 +238,7 @@ extern const char *bfin_library_id_string;
 
 /* Define this if pushing a word on the stack
    makes the stack pointer a smaller address.  */
-#define STACK_GROWS_DOWNWARD
+#define STACK_GROWS_DOWNWARD 1
 
 #define STACK_PUSH_CODE PRE_DEC
 
@@ -784,7 +790,8 @@ typedef struct {
 #define EH_RETURN_DATA_REGNO(N)	((N) < 2 ? (N) : INVALID_REGNUM)
 #define EH_RETURN_STACKADJ_RTX	gen_rtx_REG (Pmode, REG_P2)
 #define EH_RETURN_HANDLER_RTX \
-    gen_frame_mem (Pmode, plus_constant (frame_pointer_rtx, UNITS_PER_WORD))
+  gen_frame_mem (Pmode, plus_constant (Pmode, frame_pointer_rtx, \
+				       UNITS_PER_WORD))
 
 /* Addressing Modes */
 
@@ -858,9 +865,6 @@ typedef struct {
 
 /* Define this if most significant word of a multiword number is numbered. */
 #define WORDS_BIG_ENDIAN 0
-
-/* number of bits in an addressable storage unit */
-#define BITS_PER_UNIT 8
 
 /* Width in bits of a "word", which is the contents of a machine register.
    Note that this is not necessarily the width of data type `int';
@@ -983,7 +987,7 @@ typedef struct {
 
 /* Define if operations between registers always perform the operation
    on the full register even if a narrower mode is specified. 
-#define WORD_REGISTER_OPERATIONS
+#define WORD_REGISTER_OPERATIONS 1
 */
 
 /* Evaluates to true if A and B are mac flags that can be used

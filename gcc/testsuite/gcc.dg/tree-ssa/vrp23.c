@@ -1,6 +1,11 @@
 /* { dg-do compile } */
-/* { dg-options "-O2 -fdump-tree-vrp1-details" } */
+/* { dg-options "-O2 -fno-tree-forwprop -fdump-tree-vrp1-details" } */
 
+void aa (void);
+void aos (void);
+void aob (void);
+
+void
 blah (int code1, int code2)
 {
   int i;
@@ -41,5 +46,4 @@ L8:
    only way to reach the test is when n_sets <= 1, and the only value
    which satisfies both conditions is n_sets == 1.  */
 /* { dg-final { scan-tree-dump-times "Simplified relational" 1 "vrp1" } } */
-/* { dg-final { cleanup-tree-dump "vrp1" } } */
 

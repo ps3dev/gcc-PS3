@@ -1,4 +1,4 @@
-// errchk $G $D/$F.go
+// errorcheck
 
 // Copyright 2010 The Go Authors.  All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -21,7 +21,9 @@ type T struct {
 // legal according to spec
 func (p T) m() {}
 
-// not legal according to spec
-func (p (T)) f() {}   // ERROR "parenthesize|expected"
-func (p *(T)) g() {}  // ERROR "parenthesize|expected"
-func (p (*T)) h() {}  // ERROR "parenthesize|expected"
+// now legal according to spec
+func (p (T)) f() {}
+func (p *(T)) g() {}
+func (p (*T)) h() {}
+func (p (*(T))) i() {}
+func ((T),) j() {}

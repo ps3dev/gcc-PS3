@@ -6,7 +6,7 @@ package math
 
 // The original C code, the long comment, and the constants
 // below are from FreeBSD's /usr/src/lib/msun/src/e_atanh.c
-// and came with this notice.  The go code is a simplified
+// and came with this notice. The go code is a simplified
 // version of the original C.
 //
 // ====================================================
@@ -36,7 +36,7 @@ package math
 //	atanh(+-1) is +-INF with signal.
 //
 
-// Atanh(x) calculates the inverse hyperbolic tangent of x.
+// Atanh returns the inverse hyperbolic tangent of x.
 //
 // Special cases are:
 //	Atanh(1) = +Inf

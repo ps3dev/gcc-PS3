@@ -1,6 +1,7 @@
 /* { dg-do compile } */
-/* { dg-options "-O2 -fdump-tree-vrp1" } */
+/* { dg-options "-O2 -fdump-tree-vrp1 -fdisable-tree-ethread" } */
 
+int
 foo (int *p, int i)
 {
   int x;
@@ -24,5 +25,4 @@ foo (int *p, int i)
   return i;
 }
 
-/* { dg-final { scan-tree-dump-times "Folding predicate p_.*to 1" 1 "vrp1" } } */
-/* { dg-final { cleanup-tree-dump "vrp1" } } */
+/* { dg-final { scan-tree-dump-times "if \\\(" 2 "vrp1" } } */

@@ -29,9 +29,8 @@
 #include "arch.h"
 #include "malloc.h"
 
-int32 runtime_class_to_size[NumSizeClasses];
-int32 runtime_class_to_allocnpages[NumSizeClasses];
-int32 runtime_class_to_transfercount[NumSizeClasses];
+int32 runtime_class_to_size[_NumSizeClasses];
+int32 runtime_class_to_allocnpages[_NumSizeClasses];
 
 // The SizeToClass lookup is implemented using two arrays,
 // one mapping sizes <= 1024 to their class and one mapping
@@ -42,8 +41,8 @@ int32 runtime_class_to_transfercount[NumSizeClasses];
 // size divided by 128 (rounded up).  The arrays are filled in
 // by InitSizes.
 
-static int32 size_to_class8[1024/8 + 1];
-static int32 size_to_class128[(MaxSmallSize-1024)/128 + 1];
+int8 runtime_size_to_class8[1024/8 + 1];
+int8 runtime_size_to_class128[(MaxSmallSize-1024)/128 + 1];
 
 int32
 runtime_SizeToClass(int32 size)
@@ -51,8 +50,8 @@ runtime_SizeToClass(int32 size)
 	if(size > MaxSmallSize)
 		runtime_throw("SizeToClass - invalid size");
 	if(size > 1024-8)
-		return size_to_class128[(size-1024+127) >> 7];
-	return size_to_class8[(size+7)>>3];
+		return runtime_size_to_class128[(size-1024+127) >> 7];
+	return runtime_size_to_class8[(size+7)>>3];
 }
 
 void
@@ -61,6 +60,7 @@ runtime_InitSizes(void)
 	int32 align, sizeclass, size, nextsize, n;
 	uint32 i;
 	uintptr allocsize, npages;
+	MStats *pmstats;
 
 	// Initialize the runtime_class_to_size table (and choose class sizes in the process).
 	runtime_class_to_size[0] = 0;
@@ -91,9 +91,9 @@ runtime_InitSizes(void)
 		// objects into the page, we might as well
 		// use just this size instead of having two
 		// different sizes.
-		if(sizeclass > 1
-		&& (int32)npages == runtime_class_to_allocnpages[sizeclass-1]
-		&& allocsize/size == allocsize/runtime_class_to_size[sizeclass-1]) {
+		if(sizeclass > 1 &&
+			(int32)npages == runtime_class_to_allocnpages[sizeclass-1] &&
+			allocsize/size == allocsize/runtime_class_to_size[sizeclass-1]) {
 			runtime_class_to_size[sizeclass-1] = size;
 			continue;
 		}
@@ -102,68 +102,76 @@ runtime_InitSizes(void)
 		runtime_class_to_size[sizeclass] = size;
 		sizeclass++;
 	}
-	if(sizeclass != NumSizeClasses) {
-		// runtime_printf("sizeclass=%d NumSizeClasses=%d\n", sizeclass, NumSizeClasses);
-		runtime_throw("InitSizes - bad NumSizeClasses");
+	if(sizeclass != _NumSizeClasses) {
+		runtime_printf("sizeclass=%d _NumSizeClasses=%d\n", sizeclass, _NumSizeClasses);
+		runtime_throw("InitSizes - bad _NumSizeClasses");
 	}
 
 	// Initialize the size_to_class tables.
 	nextsize = 0;
-	for (sizeclass = 1; sizeclass < NumSizeClasses; sizeclass++) {
+	for (sizeclass = 1; sizeclass < _NumSizeClasses; sizeclass++) {
 		for(; nextsize < 1024 && nextsize <= runtime_class_to_size[sizeclass]; nextsize+=8)
-			size_to_class8[nextsize/8] = sizeclass;
+			runtime_size_to_class8[nextsize/8] = sizeclass;
 		if(nextsize >= 1024)
 			for(; nextsize <= runtime_class_to_size[sizeclass]; nextsize += 128)
-				size_to_class128[(nextsize-1024)/128] = sizeclass;
+				runtime_size_to_class128[(nextsize-1024)/128] = sizeclass;
 	}
 
 	// Double-check SizeToClass.
 	if(0) {
 		for(n=0; n < MaxSmallSize; n++) {
 			sizeclass = runtime_SizeToClass(n);
-			if(sizeclass < 1 || sizeclass >= NumSizeClasses || runtime_class_to_size[sizeclass] < n) {
-				// runtime_printf("size=%d sizeclass=%d runtime_class_to_size=%d\n", n, sizeclass, runtime_class_to_size[sizeclass]);
-				// runtime_printf("incorrect SizeToClass");
+			if(sizeclass < 1 || sizeclass >= _NumSizeClasses || runtime_class_to_size[sizeclass] < n) {
+				runtime_printf("size=%d sizeclass=%d runtime_class_to_size=%d\n", n, sizeclass, runtime_class_to_size[sizeclass]);
+				runtime_printf("incorrect SizeToClass");
 				goto dump;
 			}
 			if(sizeclass > 1 && runtime_class_to_size[sizeclass-1] >= n) {
-				// runtime_printf("size=%d sizeclass=%d runtime_class_to_size=%d\n", n, sizeclass, runtime_class_to_size[sizeclass]);
-				// runtime_printf("SizeToClass too big");
+				runtime_printf("size=%d sizeclass=%d runtime_class_to_size=%d\n", n, sizeclass, runtime_class_to_size[sizeclass]);
+				runtime_printf("SizeToClass too big");
 				goto dump;
 			}
 		}
 	}
 
 	// Copy out for statistics table.
+	pmstats = mstats();
 	for(i=0; i<nelem(runtime_class_to_size); i++)
-		mstats.by_size[i].size = runtime_class_to_size[i];
-
-	// Initialize the runtime_class_to_transfercount table.
-	for(sizeclass = 1; sizeclass < NumSizeClasses; sizeclass++) {
-		n = 64*1024 / runtime_class_to_size[sizeclass];
-		if(n < 2)
-			n = 2;
-		if(n > 32)
-			n = 32;
-		runtime_class_to_transfercount[sizeclass] = n;
-	}
+		pmstats->by_size[i].size = runtime_class_to_size[i];
 	return;
 
 dump:
 	if(1){
-		runtime_printf("NumSizeClasses=%d\n", NumSizeClasses);
+		runtime_printf("NumSizeClasses=%d\n", _NumSizeClasses);
 		runtime_printf("runtime_class_to_size:");
-		for(sizeclass=0; sizeclass<NumSizeClasses; sizeclass++)
+		for(sizeclass=0; sizeclass<_NumSizeClasses; sizeclass++)
 			runtime_printf(" %d", runtime_class_to_size[sizeclass]);
 		runtime_printf("\n\n");
 		runtime_printf("size_to_class8:");
-		for(i=0; i<nelem(size_to_class8); i++)
-			runtime_printf(" %d=>%d(%d)\n", i*8, size_to_class8[i], runtime_class_to_size[size_to_class8[i]]);
+		for(i=0; i<nelem(runtime_size_to_class8); i++)
+			runtime_printf(" %d=>%d(%d)\n", i*8, runtime_size_to_class8[i],
+				runtime_class_to_size[runtime_size_to_class8[i]]);
 		runtime_printf("\n");
 		runtime_printf("size_to_class128:");
-		for(i=0; i<nelem(size_to_class128); i++)
-			runtime_printf(" %d=>%d(%d)\n", i*128, size_to_class128[i], runtime_class_to_size[size_to_class128[i]]);
+		for(i=0; i<nelem(runtime_size_to_class128); i++)
+			runtime_printf(" %d=>%d(%d)\n", i*128, runtime_size_to_class128[i],
+				runtime_class_to_size[runtime_size_to_class128[i]]);
 		runtime_printf("\n");
 	}
 	runtime_throw("InitSizes failed");
+}
+
+// Returns size of the memory block that mallocgc will allocate if you ask for the size.
+uintptr
+runtime_roundupsize(uintptr size)
+{
+	if(size < MaxSmallSize) {
+		if(size <= 1024-8)
+			return runtime_class_to_size[runtime_size_to_class8[(size+7)>>3]];
+		else
+			return runtime_class_to_size[runtime_size_to_class128[(size-1024+127) >> 7]];
+	}
+	if(size + PageSize < size)
+		return size;
+	return ROUND(size, PageSize);
 }

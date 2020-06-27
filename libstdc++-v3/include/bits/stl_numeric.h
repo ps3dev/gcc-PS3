@@ -1,7 +1,6 @@
 // Numeric functions implementation -*- C++ -*-
 
-// Copyright (C) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010,
-// 2011 Free Software Foundation, Inc.
+// Copyright (C) 2001-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -61,7 +60,7 @@
 #include <debug/debug.h>
 #include <bits/move.h> // For _GLIBCXX_MOVE
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
@@ -180,7 +179,7 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
       __glibcxx_function_requires(_InputIteratorConcept<_InputIterator2>)
       __glibcxx_requires_valid_range(__first1, __last1);
 
-      for (; __first1 != __last1; ++__first1, ++__first2)
+      for (; __first1 != __last1; ++__first1, (void)++__first2)
 	__init = __init + (*__first1 * *__first2);
       return __init;
     }
@@ -214,7 +213,7 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
       __glibcxx_function_requires(_InputIteratorConcept<_InputIterator2>)
       __glibcxx_requires_valid_range(__first1, __last1);
 
-      for (; __first1 != __last1; ++__first1, ++__first2)
+      for (; __first1 != __last1; ++__first1, (void)++__first2)
 	__init = __binary_op1(__init, __binary_op2(*__first1, *__first2));
       return __init;
     }

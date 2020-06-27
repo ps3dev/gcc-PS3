@@ -11,95 +11,43 @@ package bzip2
 // index into that list. When a symbol is referenced, it's moved to the front
 // of the list. Thus, a repeated symbol ends up being encoded with many zeros,
 // as the symbol will be at the front of the list after the first access.
-type moveToFrontDecoder struct {
-	// Rather than actually keep the list in memory, the symbols are stored
-	// as a circular, double linked list with the symbol indexed by head
-	// at the front of the list.
-	symbols []byte
-	next    []uint8
-	prev    []uint8
-	head    uint8
-}
+type moveToFrontDecoder []byte
 
 // newMTFDecoder creates a move-to-front decoder with an explicit initial list
 // of symbols.
-func newMTFDecoder(symbols []byte) *moveToFrontDecoder {
+func newMTFDecoder(symbols []byte) moveToFrontDecoder {
 	if len(symbols) > 256 {
 		panic("too many symbols")
 	}
-
-	m := &moveToFrontDecoder{
-		symbols: symbols,
-		next:    make([]uint8, len(symbols)),
-		prev:    make([]uint8, len(symbols)),
-	}
-
-	m.threadLinkedList()
-	return m
+	return moveToFrontDecoder(symbols)
 }
 
 // newMTFDecoderWithRange creates a move-to-front decoder with an initial
 // symbol list of 0...n-1.
-func newMTFDecoderWithRange(n int) *moveToFrontDecoder {
+func newMTFDecoderWithRange(n int) moveToFrontDecoder {
 	if n > 256 {
 		panic("newMTFDecoderWithRange: cannot have > 256 symbols")
 	}
 
-	m := &moveToFrontDecoder{
-		symbols: make([]uint8, n),
-		next:    make([]uint8, n),
-		prev:    make([]uint8, n),
-	}
-
+	m := make([]byte, n)
 	for i := 0; i < n; i++ {
-		m.symbols[i] = byte(i)
+		m[i] = byte(i)
 	}
-
-	m.threadLinkedList()
-	return m
+	return moveToFrontDecoder(m)
 }
 
-// threadLinkedList creates the initial linked-list pointers.
-func (m *moveToFrontDecoder) threadLinkedList() {
-	if len(m.symbols) == 0 {
-		return
-	}
-
-	m.prev[0] = uint8(len(m.symbols) - 1)
-
-	for i := 0; i < len(m.symbols)-1; i++ {
-		m.next[i] = uint8(i + 1)
-		m.prev[i+1] = uint8(i)
-	}
-
-	m.next[len(m.symbols)-1] = 0
-}
-
-func (m *moveToFrontDecoder) Decode(n int) (b byte) {
-	// Most of the time, n will be zero so it's worth dealing with this
-	// simple case.
-	if n == 0 {
-		return m.symbols[m.head]
-	}
-
-	i := m.head
-	for j := 0; j < n; j++ {
-		i = m.next[i]
-	}
-	b = m.symbols[i]
-
-	m.next[m.prev[i]] = m.next[i]
-	m.prev[m.next[i]] = m.prev[i]
-	m.next[i] = m.head
-	m.prev[i] = m.prev[m.head]
-	m.next[m.prev[m.head]] = i
-	m.prev[m.head] = i
-	m.head = i
-
+func (m moveToFrontDecoder) Decode(n int) (b byte) {
+	// Implement move-to-front with a simple copy. This approach
+	// beats more sophisticated approaches in benchmarking, probably
+	// because it has high locality of reference inside of a
+	// single cache line (most move-to-front operations have n < 64).
+	b = m[n]
+	copy(m[1:], m[:n])
+	m[0] = b
 	return
 }
 
 // First returns the symbol at the front of the list.
-func (m *moveToFrontDecoder) First() byte {
-	return m.symbols[m.head]
+func (m moveToFrontDecoder) First() byte {
+	return m[0]
 }

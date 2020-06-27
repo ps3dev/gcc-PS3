@@ -1,6 +1,5 @@
 /* Subroutines used for macro/preprocessor support on the ia-32.
-   Copyright (C) 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2008-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -21,34 +20,29 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
-#include "tree.h"
-#include "tm_p.h"
-#include "flags.h"
-#include "c-family/c-common.h"
-#include "ggc.h"
 #include "target.h"
-#include "target-def.h"
-#include "cpplib.h"
+#include "c-family/c-common.h"
+#include "memmodel.h"
+#include "tm_p.h"
 #include "c-family/c-pragma.h"
 
 static bool ix86_pragma_target_parse (tree, tree);
 static void ix86_target_macros_internal
-  (HOST_WIDE_INT, enum processor_type, enum processor_type, enum fpmath_unit,
+  (HOST_WIDE_INT, HOST_WIDE_INT, enum processor_type, enum processor_type, enum fpmath_unit,
    void (*def_or_undef) (cpp_reader *, const char *));
 
-
 /* Internal function to either define or undef the appropriate system
    macros.  */
 static void
 ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
+			     HOST_WIDE_INT isa_flag2,
 			     enum processor_type arch,
 			     enum processor_type tune,
 			     enum fpmath_unit fpmath,
 			     void (*def_or_undef) (cpp_reader *,
 						   const char *))
 {
-  /* For some of the k6/pentium varients there weren't seperate ISA bits to
+  /* For some of the k6/pentium varients there weren't separate ISA bits to
      identify which tune/arch flag was passed, so figure it out here.  */
   size_t arch_len = strlen (ix86_arch_string);
   size_t tune_len = strlen (ix86_tune_string);
@@ -64,6 +58,8 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
       def_or_undef (parse_in, "__i486");
       def_or_undef (parse_in, "__i486__");
       break;
+    case PROCESSOR_LAKEMONT:
+      /* Intel MCU is based on Intel Pentium CPU.  */
     case PROCESSOR_PENTIUM:
       def_or_undef (parse_in, "__i586");
       def_or_undef (parse_in, "__i586__");
@@ -114,9 +110,25 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
       def_or_undef (parse_in, "__bdver2");
       def_or_undef (parse_in, "__bdver2__");
       break;
+    case PROCESSOR_BDVER3:
+      def_or_undef (parse_in, "__bdver3");
+      def_or_undef (parse_in, "__bdver3__");
+      break;
+    case PROCESSOR_BDVER4:
+      def_or_undef (parse_in, "__bdver4");
+      def_or_undef (parse_in, "__bdver4__");
+      break;
+    case PROCESSOR_ZNVER1:
+      def_or_undef (parse_in, "__znver1");
+      def_or_undef (parse_in, "__znver1__");
+      break;
     case PROCESSOR_BTVER1:
       def_or_undef (parse_in, "__btver1");
       def_or_undef (parse_in, "__btver1__");
+      break;
+    case PROCESSOR_BTVER2:
+      def_or_undef (parse_in, "__btver2");
+      def_or_undef (parse_in, "__btver2__");
       break;
     case PROCESSOR_PENTIUM4:
       def_or_undef (parse_in, "__pentium4");
@@ -126,25 +138,53 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
       def_or_undef (parse_in, "__nocona");
       def_or_undef (parse_in, "__nocona__");
       break;
-    case PROCESSOR_CORE2_32:
-    case PROCESSOR_CORE2_64:
+    case PROCESSOR_CORE2:
       def_or_undef (parse_in, "__core2");
       def_or_undef (parse_in, "__core2__");
       break;
-    case PROCESSOR_COREI7_32:
-    case PROCESSOR_COREI7_64:
+    case PROCESSOR_NEHALEM:
       def_or_undef (parse_in, "__corei7");
       def_or_undef (parse_in, "__corei7__");
+      def_or_undef (parse_in, "__nehalem");
+      def_or_undef (parse_in, "__nehalem__");
       break;
-    case PROCESSOR_ATOM:
+    case PROCESSOR_SANDYBRIDGE:
+      def_or_undef (parse_in, "__corei7_avx");
+      def_or_undef (parse_in, "__corei7_avx__");
+      def_or_undef (parse_in, "__sandybridge");
+      def_or_undef (parse_in, "__sandybridge__");
+      break;
+    case PROCESSOR_HASWELL:
+      def_or_undef (parse_in, "__core_avx2");
+      def_or_undef (parse_in, "__core_avx2__");
+      def_or_undef (parse_in, "__haswell");
+      def_or_undef (parse_in, "__haswell__");
+      break;
+    case PROCESSOR_BONNELL:
       def_or_undef (parse_in, "__atom");
       def_or_undef (parse_in, "__atom__");
+      def_or_undef (parse_in, "__bonnell");
+      def_or_undef (parse_in, "__bonnell__");
+      break;
+    case PROCESSOR_SILVERMONT:
+      def_or_undef (parse_in, "__slm");
+      def_or_undef (parse_in, "__slm__");
+      def_or_undef (parse_in, "__silvermont");
+      def_or_undef (parse_in, "__silvermont__");
+      break;
+    case PROCESSOR_KNL:
+      def_or_undef (parse_in, "__knl");
+      def_or_undef (parse_in, "__knl__");
+      break;
+    case PROCESSOR_SKYLAKE_AVX512:
+      def_or_undef (parse_in, "__skylake_avx512");
+      def_or_undef (parse_in, "__skylake_avx512__");
       break;
     /* use PROCESSOR_max to not set/unset the arch macro.  */
     case PROCESSOR_max:
       break;
-    case PROCESSOR_GENERIC32:
-    case PROCESSOR_GENERIC64:
+    case PROCESSOR_INTEL:
+    case PROCESSOR_GENERIC:
       gcc_unreachable ();
     }
 
@@ -205,32 +245,89 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
     case PROCESSOR_BDVER2:
       def_or_undef (parse_in, "__tune_bdver2__");
       break;
-   case PROCESSOR_BTVER1:
+    case PROCESSOR_BDVER3:
+      def_or_undef (parse_in, "__tune_bdver3__");
+      break;
+    case PROCESSOR_BDVER4:
+      def_or_undef (parse_in, "__tune_bdver4__");
+      break;
+    case PROCESSOR_ZNVER1:
+      def_or_undef (parse_in, "__tune_znver1__");
+      break;
+    case PROCESSOR_BTVER1:
       def_or_undef (parse_in, "__tune_btver1__");
       break;
+    case PROCESSOR_BTVER2:
+      def_or_undef (parse_in, "__tune_btver2__");
+       break;
     case PROCESSOR_PENTIUM4:
       def_or_undef (parse_in, "__tune_pentium4__");
       break;
     case PROCESSOR_NOCONA:
       def_or_undef (parse_in, "__tune_nocona__");
       break;
-    case PROCESSOR_CORE2_32:
-    case PROCESSOR_CORE2_64:
+    case PROCESSOR_CORE2:
       def_or_undef (parse_in, "__tune_core2__");
       break;
-    case PROCESSOR_COREI7_32:
-    case PROCESSOR_COREI7_64:
+    case PROCESSOR_NEHALEM:
       def_or_undef (parse_in, "__tune_corei7__");
+      def_or_undef (parse_in, "__tune_nehalem__");
       break;
-    case PROCESSOR_ATOM:
+    case PROCESSOR_SANDYBRIDGE:
+      def_or_undef (parse_in, "__tune_corei7_avx__");
+      def_or_undef (parse_in, "__tune_sandybridge__");
+      break;
+    case PROCESSOR_HASWELL:
+      def_or_undef (parse_in, "__tune_core_avx2__");
+      def_or_undef (parse_in, "__tune_haswell__");
+      break;
+    case PROCESSOR_BONNELL:
       def_or_undef (parse_in, "__tune_atom__");
+      def_or_undef (parse_in, "__tune_bonnell__");
       break;
-    case PROCESSOR_GENERIC32:
-    case PROCESSOR_GENERIC64:
+    case PROCESSOR_SILVERMONT:
+      def_or_undef (parse_in, "__tune_slm__");
+      def_or_undef (parse_in, "__tune_silvermont__");
+      break;
+    case PROCESSOR_KNL:
+      def_or_undef (parse_in, "__tune_knl__");
+      break;
+    case PROCESSOR_SKYLAKE_AVX512:
+      def_or_undef (parse_in, "__tune_skylake_avx512__");
+      break;
+    case PROCESSOR_LAKEMONT:
+      def_or_undef (parse_in, "__tune_lakemont__");
+      break;
+    case PROCESSOR_INTEL:
+    case PROCESSOR_GENERIC:
       break;
     /* use PROCESSOR_max to not set/unset the tune macro.  */
     case PROCESSOR_max:
       break;
+    }
+
+  switch (ix86_cmodel)
+    {
+    case CM_SMALL:
+    case CM_SMALL_PIC:
+      def_or_undef (parse_in, "__code_model_small__");
+      break;
+    case CM_MEDIUM:
+    case CM_MEDIUM_PIC:
+      def_or_undef (parse_in, "__code_model_medium__");
+      break;
+    case CM_LARGE:
+    case CM_LARGE_PIC:
+      def_or_undef (parse_in, "__code_model_large__");
+      break;
+    case CM_32:
+      def_or_undef (parse_in, "__code_model_32__");
+      break;
+    case CM_KERNEL:
+      def_or_undef (parse_in, "__code_model_kernel__");
+      break;
+    default:
+      ;
     }
 
   if (isa_flag & OPTION_MASK_ISA_MMX)
@@ -253,14 +350,44 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
     def_or_undef (parse_in, "__SSE4_2__");
   if (isa_flag & OPTION_MASK_ISA_AES)
     def_or_undef (parse_in, "__AES__");
+  if (isa_flag & OPTION_MASK_ISA_SHA)
+    def_or_undef (parse_in, "__SHA__");
   if (isa_flag & OPTION_MASK_ISA_PCLMUL)
     def_or_undef (parse_in, "__PCLMUL__");
   if (isa_flag & OPTION_MASK_ISA_AVX)
     def_or_undef (parse_in, "__AVX__");
   if (isa_flag & OPTION_MASK_ISA_AVX2)
     def_or_undef (parse_in, "__AVX2__");
+  if (isa_flag & OPTION_MASK_ISA_AVX512F)
+    def_or_undef (parse_in, "__AVX512F__");
+  if (isa_flag & OPTION_MASK_ISA_AVX512ER)
+    def_or_undef (parse_in, "__AVX512ER__");
+  if (isa_flag & OPTION_MASK_ISA_AVX512CD)
+    def_or_undef (parse_in, "__AVX512CD__");
+  if (isa_flag & OPTION_MASK_ISA_AVX512PF)
+    def_or_undef (parse_in, "__AVX512PF__");
+  if (isa_flag & OPTION_MASK_ISA_AVX512DQ)
+    def_or_undef (parse_in, "__AVX512DQ__");
+  if (isa_flag & OPTION_MASK_ISA_AVX512BW)
+    def_or_undef (parse_in, "__AVX512BW__");
+  if (isa_flag & OPTION_MASK_ISA_AVX512VL)
+    def_or_undef (parse_in, "__AVX512VL__");
+  if (isa_flag & OPTION_MASK_ISA_AVX512VBMI)
+    def_or_undef (parse_in, "__AVX512VBMI__");
+  if (isa_flag & OPTION_MASK_ISA_AVX512IFMA)
+    def_or_undef (parse_in, "__AVX512IFMA__");
+  if (isa_flag2 & OPTION_MASK_ISA_AVX5124VNNIW)
+    def_or_undef (parse_in, "__AVX5124VNNIW__");
+  if (isa_flag2 & OPTION_MASK_ISA_SGX)
+    def_or_undef (parse_in, "__SGX__");
+  if (isa_flag2 & OPTION_MASK_ISA_AVX5124FMAPS)
+    def_or_undef (parse_in, "__AVX5124FMAPS__");
+  if (isa_flag2 & OPTION_MASK_ISA_AVX512VPOPCNTDQ)
+    def_or_undef (parse_in, "__AVX512VPOPCNTDQ__");
   if (isa_flag & OPTION_MASK_ISA_FMA)
     def_or_undef (parse_in, "__FMA__");
+  if (isa_flag & OPTION_MASK_ISA_RTM)
+    def_or_undef (parse_in, "__RTM__");
   if (isa_flag & OPTION_MASK_ISA_SSE4A)
     def_or_undef (parse_in, "__SSE4A__");
   if (isa_flag & OPTION_MASK_ISA_FMA4)
@@ -287,10 +414,47 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
     def_or_undef (parse_in, "__RDRND__");
   if (isa_flag & OPTION_MASK_ISA_F16C)
     def_or_undef (parse_in, "__F16C__");
+  if (isa_flag & OPTION_MASK_ISA_RDSEED)
+    def_or_undef (parse_in, "__RDSEED__");
+  if (isa_flag & OPTION_MASK_ISA_PRFCHW)
+    def_or_undef (parse_in, "__PRFCHW__");
+  if (isa_flag & OPTION_MASK_ISA_ADX)
+    def_or_undef (parse_in, "__ADX__");
+  if (isa_flag & OPTION_MASK_ISA_FXSR)
+    def_or_undef (parse_in, "__FXSR__");
+  if (isa_flag & OPTION_MASK_ISA_XSAVE)
+    def_or_undef (parse_in, "__XSAVE__");
+  if (isa_flag & OPTION_MASK_ISA_XSAVEOPT)
+    def_or_undef (parse_in, "__XSAVEOPT__");
+  if (isa_flag & OPTION_MASK_ISA_PREFETCHWT1)
+    def_or_undef (parse_in, "__PREFETCHWT1__");
   if ((fpmath & FPMATH_SSE) && (isa_flag & OPTION_MASK_ISA_SSE))
     def_or_undef (parse_in, "__SSE_MATH__");
   if ((fpmath & FPMATH_SSE) && (isa_flag & OPTION_MASK_ISA_SSE2))
     def_or_undef (parse_in, "__SSE2_MATH__");
+  if (isa_flag & OPTION_MASK_ISA_CLFLUSHOPT)
+    def_or_undef (parse_in, "__CLFLUSHOPT__");
+  if (isa_flag & OPTION_MASK_ISA_CLZERO)
+    def_or_undef (parse_in, "__CLZERO__");
+  if (isa_flag & OPTION_MASK_ISA_XSAVEC)
+    def_or_undef (parse_in, "__XSAVEC__");
+  if (isa_flag & OPTION_MASK_ISA_XSAVES)
+    def_or_undef (parse_in, "__XSAVES__");
+  if (isa_flag & OPTION_MASK_ISA_MPX)
+    def_or_undef (parse_in, "__MPX__");
+  if (isa_flag & OPTION_MASK_ISA_CLWB)
+    def_or_undef (parse_in, "__CLWB__");
+  if (isa_flag & OPTION_MASK_ISA_MWAITX)
+    def_or_undef (parse_in, "__MWAITX__");
+  if (isa_flag & OPTION_MASK_ISA_PKU)
+    def_or_undef (parse_in, "__PKU__");
+  if (isa_flag2 & OPTION_MASK_ISA_RDPID)
+    def_or_undef (parse_in, "__RDPID__");
+  if (TARGET_IAMCU)
+    {
+      def_or_undef (parse_in, "__iamcu");
+      def_or_undef (parse_in, "__iamcu__");
+    }
 }
 
 
@@ -301,13 +465,16 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
 static bool
 ix86_pragma_target_parse (tree args, tree pop_target)
 {
-  tree prev_tree = build_target_option_node ();
+  tree prev_tree = build_target_option_node (&global_options);
   tree cur_tree;
   struct cl_target_option *prev_opt;
   struct cl_target_option *cur_opt;
   HOST_WIDE_INT prev_isa;
   HOST_WIDE_INT cur_isa;
   HOST_WIDE_INT diff_isa;
+  HOST_WIDE_INT prev_isa2;
+  HOST_WIDE_INT cur_isa2;
+  HOST_WIDE_INT diff_isa2;
   enum processor_type prev_arch;
   enum processor_type prev_tune;
   enum processor_type cur_arch;
@@ -315,20 +482,24 @@ ix86_pragma_target_parse (tree args, tree pop_target)
 
   if (! args)
     {
-      cur_tree = ((pop_target)
-		  ? pop_target
-		  : target_option_default_node);
+      cur_tree = (pop_target ? pop_target : target_option_default_node);
       cl_target_option_restore (&global_options,
 				TREE_TARGET_OPTION (cur_tree));
     }
   else
     {
-      cur_tree = ix86_valid_target_attribute_tree (args);
-      if (!cur_tree)
-	return false;
+      cur_tree = ix86_valid_target_attribute_tree (args, &global_options,
+						   &global_options_set);
+      if (!cur_tree || cur_tree == error_mark_node)
+       {
+         cl_target_option_restore (&global_options,
+                                   TREE_TARGET_OPTION (prev_tree));
+         return false;
+       }
     }
 
   target_option_current_node = cur_tree;
+  ix86_reset_previous_fndecl ();
 
   /* Figure out the previous/current isa, arch, tune and the differences.  */
   prev_opt  = TREE_TARGET_OPTION (prev_tree);
@@ -336,6 +507,9 @@ ix86_pragma_target_parse (tree args, tree pop_target)
   prev_isa  = prev_opt->x_ix86_isa_flags;
   cur_isa   = cur_opt->x_ix86_isa_flags;
   diff_isa  = (prev_isa ^ cur_isa);
+  prev_isa2  = prev_opt->x_ix86_isa_flags2;
+  cur_isa2   = cur_opt->x_ix86_isa_flags2;
+  diff_isa2  = (prev_isa2 ^ cur_isa2);
   prev_arch = (enum processor_type) prev_opt->arch;
   prev_tune = (enum processor_type) prev_opt->tune;
   cur_arch  = (enum processor_type) cur_opt->arch;
@@ -351,17 +525,28 @@ ix86_pragma_target_parse (tree args, tree pop_target)
 
   /* Undef all of the macros for that are no longer current.  */
   ix86_target_macros_internal (prev_isa & diff_isa,
+			       prev_isa2 & diff_isa2,
 			       prev_arch,
 			       prev_tune,
 			       (enum fpmath_unit) prev_opt->x_ix86_fpmath,
 			       cpp_undef);
 
+  /* For the definitions, ensure all newly defined macros are considered
+     as used for -Wunused-macros.  There is no point warning about the
+     compiler predefined macros.  */
+  cpp_options *cpp_opts = cpp_get_options (parse_in);
+  unsigned char saved_warn_unused_macros = cpp_opts->warn_unused_macros;
+  cpp_opts->warn_unused_macros = 0;
+
   /* Define all of the macros for new options that were just turned on.  */
   ix86_target_macros_internal (cur_isa & diff_isa,
+			       cur_isa2 & diff_isa2,
 			       cur_arch,
 			       cur_tune,
 			       (enum fpmath_unit) cur_opt->x_ix86_fpmath,
 			       cpp_define);
+
+  cpp_opts->warn_unused_macros = saved_warn_unused_macros;
 
   return true;
 }
@@ -381,6 +566,11 @@ ix86_target_macros (void)
       cpp_define (parse_in, "__amd64__");
       cpp_define (parse_in, "__x86_64");
       cpp_define (parse_in, "__x86_64__");
+      if (TARGET_X32)
+	{
+	  cpp_define (parse_in, "_ILP32");
+	  cpp_define (parse_in, "__ILP32__");
+	}
     }
   else
     {
@@ -389,11 +579,36 @@ ix86_target_macros (void)
       builtin_define_std ("i386");
     }
 
+  if (!TARGET_80387)
+    cpp_define (parse_in, "_SOFT_FLOAT");
+
+  if (TARGET_LONG_DOUBLE_64)
+    cpp_define (parse_in, "__LONG_DOUBLE_64__");
+
+  if (TARGET_LONG_DOUBLE_128)
+    cpp_define (parse_in, "__LONG_DOUBLE_128__");
+
+  if (TARGET_128BIT_LONG_DOUBLE)
+    cpp_define (parse_in, "__SIZEOF_FLOAT80__=16");
+  else
+    cpp_define (parse_in, "__SIZEOF_FLOAT80__=12");
+
+  cpp_define (parse_in, "__SIZEOF_FLOAT128__=16");
+
+  cpp_define_formatted (parse_in, "__ATOMIC_HLE_ACQUIRE=%d", IX86_HLE_ACQUIRE);
+  cpp_define_formatted (parse_in, "__ATOMIC_HLE_RELEASE=%d", IX86_HLE_RELEASE);
+
+  cpp_define (parse_in, "__GCC_ASM_FLAG_OUTPUTS__");
+
   ix86_target_macros_internal (ix86_isa_flags,
+			       ix86_isa_flags2,
 			       ix86_arch,
 			       ix86_tune,
 			       ix86_fpmath,
 			       cpp_define);
+
+  cpp_define (parse_in, "__SEG_FS");
+  cpp_define (parse_in, "__SEG_GS");
 }
 
 
@@ -407,6 +622,9 @@ ix86_register_pragmas (void)
 {
   /* Update pragma hook to allow parsing #pragma GCC target.  */
   targetm.target_option.pragma_parse = ix86_pragma_target_parse;
+
+  c_register_addr_space ("__seg_fs", ADDR_SPACE_SEG_FS);
+  c_register_addr_space ("__seg_gs", ADDR_SPACE_SEG_GS);
 
 #ifdef REGISTER_SUBTARGET_PRAGMAS
   REGISTER_SUBTARGET_PRAGMAS ();

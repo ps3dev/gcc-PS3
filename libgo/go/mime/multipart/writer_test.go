@@ -7,6 +7,8 @@ package multipart
 import (
 	"bytes"
 	"io/ioutil"
+	"net/textproto"
+	"strings"
 	"testing"
 )
 
@@ -74,5 +76,83 @@ func TestWriter(t *testing.T) {
 	part, err = r.NextPart()
 	if part != nil || err == nil {
 		t.Fatalf("expected end of parts; got %v, %v", part, err)
+	}
+}
+
+func TestWriterSetBoundary(t *testing.T) {
+	var b bytes.Buffer
+	w := NewWriter(&b)
+	tests := []struct {
+		b  string
+		ok bool
+	}{
+		{"abc", true},
+		{"", false},
+		{"ungültig", false},
+		{"!", false},
+		{strings.Repeat("x", 69), true},
+		{strings.Repeat("x", 70), false},
+		{"bad!ascii!", false},
+		{"my-separator", true},
+	}
+	for i, tt := range tests {
+		err := w.SetBoundary(tt.b)
+		got := err == nil
+		if got != tt.ok {
+			t.Errorf("%d. boundary %q = %v (%v); want %v", i, tt.b, got, err, tt.ok)
+		} else if tt.ok {
+			got := w.Boundary()
+			if got != tt.b {
+				t.Errorf("boundary = %q; want %q", got, tt.b)
+			}
+		}
+	}
+	w.Close()
+	if got := b.String(); !strings.Contains(got, "\r\n--my-separator--\r\n") {
+		t.Errorf("expected my-separator in output. got: %q", got)
+	}
+}
+
+func TestWriterBoundaryGoroutines(t *testing.T) {
+	// Verify there's no data race accessing any lazy boundary if it's used by
+	// different goroutines. This was previously broken by
+	// https://codereview.appspot.com/95760043/ and reverted in
+	// https://codereview.appspot.com/117600043/
+	w := NewWriter(ioutil.Discard)
+	done := make(chan int)
+	go func() {
+		w.CreateFormField("foo")
+		done <- 1
+	}()
+	w.Boundary()
+	<-done
+}
+
+func TestSortedHeader(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	if err := w.SetBoundary("MIMEBOUNDARY"); err != nil {
+		t.Fatalf("Error setting mime boundary: %v", err)
+	}
+
+	header := textproto.MIMEHeader{
+		"A": {"2"},
+		"B": {"5", "7", "6"},
+		"C": {"4"},
+		"M": {"3"},
+		"Z": {"1"},
+	}
+
+	part, err := w.CreatePart(header)
+	if err != nil {
+		t.Fatalf("Unable to create part: %v", err)
+	}
+	part.Write([]byte("foo"))
+
+	w.Close()
+
+	want := "--MIMEBOUNDARY\r\nA: 2\r\nB: 5\r\nB: 7\r\nB: 6\r\nC: 4\r\nM: 3\r\nZ: 1\r\n\r\nfoo\r\n--MIMEBOUNDARY--\r\n"
+	if want != buf.String() {
+		t.Fatalf("\n got: %q\nwant: %q\n", buf.String(), want)
 	}
 }

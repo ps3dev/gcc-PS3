@@ -1,7 +1,6 @@
 // 1999-07-01 bkoz
 
-// Copyright (C) 1999, 2000, 2001, 2002, 2003, 2009
-// Free Software Foundation, Inc.
+// Copyright (C) 1999-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -32,7 +31,6 @@
 // libstdc++/2830
 void test09()
 {
-  bool test __attribute__((unused)) = true;
   std::wstring blanks(3, L'\0');
   std::wstring foo = L"peace";
   foo += blanks;

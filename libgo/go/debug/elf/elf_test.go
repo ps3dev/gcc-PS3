@@ -1,11 +1,10 @@
-// Copyright 2009 The Go Authors.  All rights reserved.
+// Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package elf_test
+package elf
 
 import (
-	. "debug/elf"
 	"fmt"
 	"testing"
 )
@@ -44,7 +43,7 @@ func TestNames(t *testing.T) {
 	for i, tt := range nameTests {
 		s := fmt.Sprint(tt.val)
 		if s != tt.str {
-			t.Errorf("#%d: want %q have %q", i, s, tt.str)
+			t.Errorf("#%d: Sprint(%d) = %q, want %q", i, tt.val, s, tt.str)
 		}
 	}
 }

@@ -1,6 +1,5 @@
 /* Part of CPP library.  (Precompiled header reading/writing.)
-   Copyright (C) 2000, 2001, 2002, 2003, 2004, 2005, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2000-2017 Free Software Foundation, Inc.
 
 This program is free software; you can redistribute it and/or modify it
 under the terms of the GNU General Public License as published by the
@@ -56,6 +55,8 @@ write_macdef (cpp_reader *pfile, cpp_hashnode *hn, void *file_p)
     case NT_VOID:
       if (! (hn->flags & NODE_POISONED))
 	return 1;
+      /* XXX Really fallthru?  */
+      /* FALLTHRU */
 
     case NT_MACRO:
       if ((hn->flags & NODE_BUILTIN)
@@ -188,6 +189,16 @@ cpp_string_eq (const void *a_p, const void *b_p)
 	  && memcmp (a->text, b->text, a->len) == 0);
 }
 
+/* Free memory associated with cpp_string.  */
+
+static void
+cpp_string_free (void *a_p)
+{
+  struct cpp_string *a = (struct cpp_string *) a_p;
+  free ((void *) a->text);
+  free (a);
+}
+
 /* Save the current definitions of the cpp_reader for dependency
    checking purposes.  When writing a precompiled header, this should
    be called at the same point in the compilation as cpp_valid_state
@@ -199,7 +210,7 @@ cpp_save_state (cpp_reader *r, FILE *f)
   /* Save the list of non-void identifiers for the dependency checking.  */
   r->savedstate = XNEW (struct cpp_savedstate);
   r->savedstate->definedhash = htab_create (100, cpp_string_hash,
-					    cpp_string_eq, NULL);
+					    cpp_string_eq, cpp_string_free);
   cpp_forall_identifiers (r, save_idents, r->savedstate);
 
   /* Write out the list of defined identifiers.  */
@@ -221,7 +232,7 @@ count_defs (cpp_reader *pfile ATTRIBUTE_UNUSED, cpp_hashnode *hn, void *ss_p)
       if (hn->flags & NODE_BUILTIN)
 	return 1;
 
-      /* else fall through.  */
+      /* fall through.  */
 
     case NT_VOID:
       {
@@ -260,7 +271,7 @@ write_defs (cpp_reader *pfile ATTRIBUTE_UNUSED, cpp_hashnode *hn, void *ss_p)
       if (hn->flags & NODE_BUILTIN)
 	return 1;
 
-      /* else fall through.  */
+      /* fall through.  */
 
     case NT_VOID:
       {
@@ -337,6 +348,8 @@ cpp_write_pch_deps (cpp_reader *r, FILE *f)
       return -1;
     }
   free (ss->definedstrs);
+  free (ss->defs);
+  htab_delete (ss->definedhash);
 
   /* Free the saved state.  */
   free (ss);
@@ -617,7 +630,7 @@ cpp_valid_state (cpp_reader *r, const char *name, int fd)
 	     attempting to use it without -g.  Restoring the PCH file
 	     is supposed to bring in this definition *and* enable the
 	     generation of call frame information, so that precompiled
-	     definitions that take this macro into accout, to decide
+	     definitions that take this macro into account, to decide
 	     what asm to emit, won't issue .cfi directives when the
 	     compiler doesn't.  */
 	  if (!(h->flags & NODE_USED)
@@ -702,7 +715,7 @@ cpp_valid_state (cpp_reader *r, const char *name, int fd)
 	cpp_warning_syshdr (r, CPP_W_INVALID_PCH,
 		            "%s: not used because `__COUNTER__' is invalid",
 		            name);
-	goto fail;
+      goto fail;
     }
 
   /* We win!  */
@@ -710,7 +723,6 @@ cpp_valid_state (cpp_reader *r, const char *name, int fd)
 
  error:
   cpp_errno (r, CPP_DL_ERROR, "while reading precompiled header");
-  return -1;
 
  fail:
   free (namebuf);
@@ -823,6 +835,8 @@ cpp_read_state (cpp_reader *r, const char *name, FILE *f,
     s->n_true		= cpp_lookup (r, DSC("true"));
     s->n_false		= cpp_lookup (r, DSC("false"));
     s->n__VA_ARGS__     = cpp_lookup (r, DSC("__VA_ARGS__"));
+    s->n__has_include__ = cpp_lookup (r, DSC("__has_include__"));
+    s->n__has_include_next__ = cpp_lookup (r, DSC("__has_include_next__"));
   }
 
   old_state = r->state;

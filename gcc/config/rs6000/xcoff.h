@@ -1,7 +1,6 @@
 /* Definitions of target machine for GNU compiler,
    for some generic XCOFF file format
-   Copyright (C) 2001, 2002, 2003, 2004, 2007, 2008
-   Free Software Foundation, Inc.
+   Copyright (C) 2001-2017 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -87,7 +86,10 @@
 	       || (SCALAR_FLOAT_MODE_P (GET_MODE (X))			\
 		   && ! TARGET_NO_FP_IN_TOC)))))
 
+#undef TARGET_DEBUG_UNWIND_INFO
+#define TARGET_DEBUG_UNWIND_INFO  rs6000_xcoff_debug_unwind_info
 #define TARGET_ASM_OUTPUT_ANCHOR  rs6000_xcoff_asm_output_anchor
+#define TARGET_ASM_GLOBALIZE_DECL_NAME  rs6000_xcoff_asm_globalize_decl_name
 #define TARGET_ASM_GLOBALIZE_LABEL  rs6000_xcoff_asm_globalize_label
 #define TARGET_ASM_INIT_SECTIONS  rs6000_xcoff_asm_init_sections
 #define TARGET_ASM_RELOC_RW_MASK  rs6000_xcoff_reloc_rw_mask
@@ -98,6 +100,10 @@
 #define TARGET_ASM_FUNCTION_RODATA_SECTION default_no_function_rodata_section
 #define TARGET_STRIP_NAME_ENCODING  rs6000_xcoff_strip_name_encoding
 #define TARGET_SECTION_TYPE_FLAGS  rs6000_xcoff_section_type_flags
+#ifdef HAVE_AS_TLS
+#define TARGET_ENCODE_SECTION_INFO rs6000_xcoff_encode_section_info
+#endif
+#define ASM_OUTPUT_ALIGNED_DECL_COMMON  rs6000_xcoff_asm_output_aligned_decl_common
 
 /* FP save and restore routines.  */
 #define	SAVE_FP_PREFIX "._savef"
@@ -132,67 +138,14 @@
 #undef TARGET_ASM_FILE_START_FILE_DIRECTIVE
 #define TARGET_ASM_FILE_START_FILE_DIRECTIVE false
 
-/* This macro produces the initial definition of a function name.
-   On the RS/6000, we need to place an extra '.' in the function name and
-   output the function descriptor.
-   Dollar signs are converted to underscores.
+/* This macro produces the initial definition of a function name.  */
 
-   The csect for the function will have already been created when
-   text_section was selected.  We do have to go back to that csect, however.
-
-   The third and fourth parameters to the .function pseudo-op (16 and 044)
-   are placeholders which no longer have any use.  */
-
-#define ASM_DECLARE_FUNCTION_NAME(FILE,NAME,DECL)		\
-{ char *buffer = (char *) alloca (strlen (NAME) + 1);		\
-  char *p;							\
-  int dollar_inside = 0;					\
-  strcpy (buffer, NAME);					\
-  p = strchr (buffer, '$');					\
-  while (p) {							\
-    *p = '_';							\
-    dollar_inside++;						\
-    p = strchr (p + 1, '$');					\
-  }								\
-  if (TREE_PUBLIC (DECL))					\
-    {								\
-      if (!RS6000_WEAK || !DECL_WEAK (decl))			\
-	{							\
-          if (dollar_inside) {					\
-              fprintf(FILE, "\t.rename .%s,\".%s\"\n", buffer, NAME);	\
-              fprintf(FILE, "\t.rename %s,\"%s\"\n", buffer, NAME);	\
-	    }							\
-	  fputs ("\t.globl .", FILE);				\
-	  RS6000_OUTPUT_BASENAME (FILE, buffer);		\
-	  putc ('\n', FILE);					\
-	}							\
-    }								\
-  else								\
-    {								\
-      if (dollar_inside) {					\
-          fprintf(FILE, "\t.rename .%s,\".%s\"\n", buffer, NAME);	\
-          fprintf(FILE, "\t.rename %s,\"%s\"\n", buffer, NAME);	\
-	}							\
-      fputs ("\t.lglobl .", FILE);				\
-      RS6000_OUTPUT_BASENAME (FILE, buffer);			\
-      putc ('\n', FILE);					\
-    }								\
-  fputs ("\t.csect ", FILE);					\
-  RS6000_OUTPUT_BASENAME (FILE, buffer);			\
-  fputs (TARGET_32BIT ? "[DS]\n" : "[DS],3\n", FILE);		\
-  RS6000_OUTPUT_BASENAME (FILE, buffer);			\
-  fputs (":\n", FILE);						\
-  fputs (TARGET_32BIT ? "\t.long ." : "\t.llong .", FILE);	\
-  RS6000_OUTPUT_BASENAME (FILE, buffer);			\
-  fputs (", TOC[tc0], 0\n", FILE);				\
-  in_section = NULL;						\
-  switch_to_section (function_section (DECL));			\
-  putc ('.', FILE);						\
-  RS6000_OUTPUT_BASENAME (FILE, buffer);			\
-  fputs (":\n", FILE);						\
-  if (write_symbols != NO_DEBUG && !DECL_IGNORED_P (DECL))	\
-    xcoffout_declare_function (FILE, DECL, buffer);		\
-}
+#undef ASM_DECLARE_FUNCTION_NAME
+#define ASM_DECLARE_FUNCTION_NAME(FILE, NAME, DECL)			\
+  rs6000_xcoff_declare_function_name ((FILE), (NAME), (DECL))
+#undef ASM_DECLARE_OBJECT_NAME
+#define ASM_DECLARE_OBJECT_NAME(FILE, NAME, DECL)			\
+  rs6000_xcoff_declare_object_name ((FILE), (NAME), (DECL))
 
 /* Output a reference to SYM on FILE.  */
 
@@ -206,7 +159,6 @@
 #define ASM_OUTPUT_EXTERNAL(FILE, DECL, NAME)				\
 { char *buffer = (char *) alloca (strlen (NAME) + 1);			\
   char *p;								\
-  rtx _symref = XEXP (DECL_RTL (DECL), 0);				\
   int dollar_inside = 0;						\
   strcpy (buffer, NAME);						\
   p = strchr (buffer, '$');						\
@@ -219,16 +171,7 @@
       fputs ("\t.extern .", FILE);					\
       RS6000_OUTPUT_BASENAME (FILE, buffer);				\
       putc ('\n', FILE);						\
-      fprintf(FILE, "\t.rename .%s,\".%s\"\n", buffer, NAME);		\
-    }									\
-  if ((TREE_CODE (DECL) == VAR_DECL					\
-       || TREE_CODE (DECL) == FUNCTION_DECL)				\
-      && (NAME)[strlen (NAME) - 1] != ']')				\
-    {									\
-      XSTR (_symref, 0) = concat (XSTR (_symref, 0),			\
-				  (TREE_CODE (DECL) == FUNCTION_DECL	\
-				   ? "[DS]" : "[RW]"),			\
-				  NULL);				\
+      fprintf (FILE, "\t.rename .%s,\".%s\"\n", buffer, NAME);		\
     }									\
 }
 
@@ -269,52 +212,70 @@
 #define SKIP_ASM_OP "\t.space "
 
 #define ASM_OUTPUT_SKIP(FILE,SIZE)  \
-  fprintf (FILE, "%s"HOST_WIDE_INT_PRINT_UNSIGNED"\n", SKIP_ASM_OP, (SIZE))
+  fprintf (FILE, "%s" HOST_WIDE_INT_PRINT_UNSIGNED"\n", SKIP_ASM_OP, (SIZE))
 
 /* This says how to output an assembler line
    to define a global common symbol.  */
 
 #define COMMON_ASM_OP "\t.comm "
 
-#define ASM_OUTPUT_ALIGNED_COMMON(FILE, NAME, SIZE, ALIGN)	\
-  do { fputs (COMMON_ASM_OP, (FILE));			\
-       RS6000_OUTPUT_BASENAME ((FILE), (NAME));		\
-       if ((ALIGN) > 32)				\
-	 fprintf ((FILE), ","HOST_WIDE_INT_PRINT_UNSIGNED",%u\n", (SIZE), \
-		  exact_log2 ((ALIGN) / BITS_PER_UNIT)); \
-       else if ((SIZE) > 4)				\
-         fprintf ((FILE), ","HOST_WIDE_INT_PRINT_UNSIGNED",3\n", (SIZE)); \
-       else						\
-	 fprintf ((FILE), ","HOST_WIDE_INT_PRINT_UNSIGNED"\n", (SIZE)); \
-  } while (0)
-
 /* This says how to output an assembler line
    to define a local common symbol.
-   Alignment cannot be specified, but we can try to maintain
+   The assembler in AIX 6.1 and later supports an alignment argument.
+   For earlier releases of AIX, we try to maintain
    alignment after preceding TOC section if it was aligned
    for 64-bit mode.  */
 
 #define LOCAL_COMMON_ASM_OP "\t.lcomm "
 
+#if TARGET_AIX_VERSION >= 61
+#define ASM_OUTPUT_ALIGNED_LOCAL(FILE, NAME, SIZE, ALIGN)	\
+  do { fputs (LOCAL_COMMON_ASM_OP, (FILE));			\
+       RS6000_OUTPUT_BASENAME ((FILE), (NAME));			\
+       if ((ALIGN) > 32)					\
+	 fprintf ((FILE), "," HOST_WIDE_INT_PRINT_UNSIGNED",%s%u_,%u\n",	\
+		  (SIZE), xcoff_bss_section_name,			\
+		  floor_log2 ((ALIGN) / BITS_PER_UNIT),			\
+		  floor_log2 ((ALIGN) / BITS_PER_UNIT));		\
+       else if ((SIZE) > 4)					\
+	 fprintf ((FILE), "," HOST_WIDE_INT_PRINT_UNSIGNED",%s3_,3\n",	\
+		  (SIZE), xcoff_bss_section_name);		\
+       else							\
+	 fprintf ((FILE), "," HOST_WIDE_INT_PRINT_UNSIGNED",%s,2\n",	\
+		  (SIZE), xcoff_bss_section_name);		\
+     } while (0)
+#endif
+
 #define ASM_OUTPUT_LOCAL(FILE, NAME, SIZE, ROUNDED)	\
   do { fputs (LOCAL_COMMON_ASM_OP, (FILE));		\
        RS6000_OUTPUT_BASENAME ((FILE), (NAME));		\
-       fprintf ((FILE), ","HOST_WIDE_INT_PRINT_UNSIGNED",%s\n", \
+       fprintf ((FILE), "," HOST_WIDE_INT_PRINT_UNSIGNED",%s\n", \
 		(TARGET_32BIT ? (SIZE) : (ROUNDED)),	\
 		xcoff_bss_section_name);		\
      } while (0)
 
+#ifdef HAVE_AS_TLS
+#define ASM_OUTPUT_TLS_COMMON(FILE, DECL, NAME, SIZE)	\
+  do { fputs (COMMON_ASM_OP, (FILE));			\
+       RS6000_OUTPUT_BASENAME ((FILE), (NAME));		\
+       fprintf ((FILE), "[UL]," HOST_WIDE_INT_PRINT_UNSIGNED"\n", \
+       (SIZE));						\
+  } while (0)
+#endif
+
 /* This is how we tell the assembler that two symbols have the same value.  */
 #define SET_ASM_OP "\t.set "
 
-/* This is how we tell the assembler to equate two values.  */
-#define ASM_OUTPUT_DEF(FILE,LABEL1,LABEL2)				\
- do {	fprintf ((FILE), "%s", SET_ASM_OP);				\
-	RS6000_OUTPUT_BASENAME (FILE, LABEL1);				\
-	fprintf (FILE, ",");						\
-	RS6000_OUTPUT_BASENAME (FILE, LABEL2);				\
-	fprintf (FILE, "\n");						\
-  } while (0)
+/* This is how we tell the assembler to equate two values. 
+   The semantic of AIX assembler's .set do not correspond to middle-end expectations.
+   We output aliases as alternative symbols in the front of the definition
+   via DECLARE_FUNCTION_NAME and DECLARE_OBJECT_NAME.
+   We still need to define this macro to let middle-end know that aliases are
+   supported.
+ */
+#define ASM_OUTPUT_DEF(FILE,LABEL1,LABEL2) do { } while (0)
+
+/* Used by rs6000_assemble_integer, among others.  */
 
 /* Used by rs6000_assemble_integer, among others.  */
 #define DOUBLE_INT_ASM_OP "\t.llong\t"
@@ -327,7 +288,29 @@
   "\t.csect .data[RW]," XCOFF_CSECT_DEFAULT_ALIGNMENT_STR
 
 
-/* Define to prevent DWARF2 unwind info in the data section rather
-   than in the .eh_frame section.  We do this because the AIX linker
-   would otherwise garbage collect these sections.  */
-#define EH_FRAME_IN_DATA_SECTION 1
+/* The eh_frames are put in the read-only text segment.
+   Local code labels/function will also be in the local text segment so use
+   PC relative addressing.
+   Global symbols must be in the data segment to allow loader relocations.
+   So use DW_EH_PE_indirect to allocate a slot in the local data segment.
+   There is no constant offset to this data segment from the text segment,
+   so use addressing relative to the data segment.
+ */
+#define ASM_PREFERRED_EH_DATA_FORMAT(CODE,GLOBAL) \
+  (((GLOBAL) ? DW_EH_PE_indirect | DW_EH_PE_datarel : DW_EH_PE_pcrel) \
+   | (TARGET_64BIT ? DW_EH_PE_sdata8 : DW_EH_PE_sdata4))
+
+#define EH_FRAME_THROUGH_COLLECT2 1
+#define EH_TABLES_CAN_BE_READ_ONLY 1
+
+/* AIX Assembler implicitly assumes DWARF 64 bit extension in 64 bit mode.  */
+#define DWARF_OFFSET_SIZE PTR_SIZE
+
+#define ASM_OUTPUT_DWARF_PCREL(FILE,SIZE,LABEL) \
+  rs6000_asm_output_dwarf_pcrel ((FILE), (SIZE), (LABEL));
+
+#define ASM_OUTPUT_DWARF_DATAREL(FILE,SIZE,LABEL) \
+  rs6000_asm_output_dwarf_datarel ((FILE), (SIZE), (LABEL));
+
+#define MAKE_DECL_ONE_ONLY(DECL) (DECL_WEAK (DECL) = 1)
+

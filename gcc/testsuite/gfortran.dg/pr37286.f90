@@ -1,4 +1,5 @@
 ! { dg-do compile }
+! { dg-require-visibility "" }
 
 module general_rand
   implicit none
@@ -54,5 +55,3 @@ contains
   end function gn_monte_rand
 
 end module general_rand
-
-! { dg-final { cleanup-modules "general_rand" } }

@@ -10,7 +10,7 @@ package math
 
 // The original C code and the long comment below are
 // from FreeBSD's /usr/src/lib/msun/src/e_jn.c and
-// came with this notice.  The go code is a simplified
+// came with this notice. The go code is a simplified
 // version of the original C.
 //
 // ====================================================
@@ -174,7 +174,7 @@ func Jn(n int, x float64) float64 {
 			q1 := w*z - 1
 			k := 1
 			for q1 < 1e9 {
-				k += 1
+				k++
 				z += h
 				q0, q1 = q1, z*q1-q0
 			}
@@ -200,13 +200,11 @@ func Jn(n int, x float64) float64 {
 				for i := n - 1; i > 0; i-- {
 					di := float64(i + i)
 					a, b = b, b*di/x-a
-					di -= 2
 				}
 			} else {
 				for i := n - 1; i > 0; i-- {
 					di := float64(i + i)
 					a, b = b, b*di/x-a
-					di -= 2
 					// scale b to avoid spurious overflow
 					if b > 1e100 {
 						a /= b

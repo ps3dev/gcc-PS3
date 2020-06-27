@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2012, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -242,7 +242,7 @@ package body Sem_Dist is
       Par : Node_Id;
 
    begin
-      if Nkind_In (N, N_Function_Call, N_Procedure_Call_Statement)
+      if Nkind (N) in N_Subprogram_Call
         and then Nkind (Name (N)) in N_Has_Entity
         and then Is_Remote_Call_Interface (Entity (Name (N)))
         and then Has_All_Calls_Remote (Scope (Entity (Name (N))))
@@ -272,15 +272,19 @@ package body Sem_Dist is
    ---------------------------------
 
    function Is_RACW_Stub_Type_Operation (Op : Entity_Id) return Boolean is
-      Dispatching_Type : Entity_Id;
+      Typ : Entity_Id;
 
    begin
       case Ekind (Op) is
-         when E_Function | E_Procedure =>
-            Dispatching_Type := Find_Dispatching_Type (Op);
-            return Present (Dispatching_Type)
-                     and then Is_RACW_Stub_Type (Dispatching_Type)
-                     and then not Is_Internal (Op);
+         when E_Function
+            | E_Procedure
+         =>
+            Typ := Find_Dispatching_Type (Op);
+
+            return
+              Present (Typ)
+                and then Is_RACW_Stub_Type (Typ)
+                and then not Is_Internal (Op);
 
          when others =>
             return False;
@@ -522,8 +526,9 @@ package body Sem_Dist is
       Parameter := First (Parameter_Specifications (Type_Def));
       while Present (Parameter) loop
          if Nkind (Parameter_Type (Parameter)) = N_Access_Definition then
-            Error_Msg_N ("formal parameter& has anonymous access type?",
-              Defining_Identifier (Parameter));
+            Error_Msg_N
+              ("formal parameter& has anonymous access type??",
+               Defining_Identifier (Parameter));
             Is_Degenerate := True;
             exit;
          end if;
@@ -533,7 +538,7 @@ package body Sem_Dist is
 
       if Is_Degenerate then
          Error_Msg_NE
-           ("remote access-to-subprogram type& can only be null?",
+           ("remote access-to-subprogram type& can only be null??",
             Defining_Identifier (Parameter), User_Type);
 
          --  The only legal value for a RAS with a formal parameter of an
@@ -646,7 +651,14 @@ package body Sem_Dist is
                           New_Occurrence_Of (RACW_Type, Loc)))))));
 
       Set_Equivalent_Type (User_Type, Fat_Type);
+
+      --  Set Fat_Type's Etype early so that we can use its
+      --  Corresponding_Remote_Type attribute, whose presence indicates that
+      --  this is the record type used to implement a RAS.
+
+      Set_Ekind (Fat_Type, E_Record_Type);
       Set_Corresponding_Remote_Type (Fat_Type, User_Type);
+
       Insert_After_And_Analyze (Subpkg_Body, Fat_Type_Decl);
 
       --  The reason we suppress the initialization procedure is that we know

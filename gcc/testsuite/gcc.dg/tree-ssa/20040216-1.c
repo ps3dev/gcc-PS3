@@ -1,6 +1,7 @@
 /* { dg-do compile } */
 /* { dg-options "-O1 -fdump-tree-dse1-details" } */
  
+int
 foo(int *z, int *y, int xx)
 {
   *z = 1;
@@ -15,4 +16,3 @@ foo(int *z, int *y, int xx)
 
 /* We should convert two COND_EXPRs into straightline code.  */
 /* { dg-final { scan-tree-dump-times "Deleted dead store" 2 "dse1"} } */
-/* { dg-final { cleanup-tree-dump "dse1" } } */

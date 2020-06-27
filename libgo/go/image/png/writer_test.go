@@ -40,11 +40,7 @@ func encodeDecode(m image.Image) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	m, err = Decode(&b)
-	if err != nil {
-		return nil, err
-	}
-	return m, nil
+	return Decode(&b)
 }
 
 func TestWriter(t *testing.T) {
@@ -81,6 +77,29 @@ func TestWriter(t *testing.T) {
 	}
 }
 
+func TestWriterLevels(t *testing.T) {
+	m := image.NewNRGBA(image.Rect(0, 0, 100, 100))
+
+	var b1, b2 bytes.Buffer
+	if err := (&Encoder{}).Encode(&b1, m); err != nil {
+		t.Fatal(err)
+	}
+	noenc := &Encoder{CompressionLevel: NoCompression}
+	if err := noenc.Encode(&b2, m); err != nil {
+		t.Fatal(err)
+	}
+
+	if b2.Len() <= b1.Len() {
+		t.Error("DefaultCompression encoding was larger than NoCompression encoding")
+	}
+	if _, err := Decode(&b1); err != nil {
+		t.Error("cannot decode DefaultCompression")
+	}
+	if _, err := Decode(&b2); err != nil {
+		t.Error("cannot decode NoCompression")
+	}
+}
+
 func TestSubImage(t *testing.T) {
 	m0 := image.NewRGBA(image.Rect(0, 0, 256, 256))
 	for y := 0; y < 256; y++ {
@@ -98,6 +117,49 @@ func TestSubImage(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 		return
+	}
+}
+
+func BenchmarkEncodeGray(b *testing.B) {
+	b.StopTimer()
+	img := image.NewGray(image.Rect(0, 0, 640, 480))
+	b.SetBytes(640 * 480 * 1)
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		Encode(ioutil.Discard, img)
+	}
+}
+
+func BenchmarkEncodeNRGBOpaque(b *testing.B) {
+	b.StopTimer()
+	img := image.NewNRGBA(image.Rect(0, 0, 640, 480))
+	// Set all pixels to 0xFF alpha to force opaque mode.
+	bo := img.Bounds()
+	for y := bo.Min.Y; y < bo.Max.Y; y++ {
+		for x := bo.Min.X; x < bo.Max.X; x++ {
+			img.Set(x, y, color.NRGBA{0, 0, 0, 255})
+		}
+	}
+	if !img.Opaque() {
+		b.Fatal("expected image to be opaque")
+	}
+	b.SetBytes(640 * 480 * 4)
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		Encode(ioutil.Discard, img)
+	}
+}
+
+func BenchmarkEncodeNRGBA(b *testing.B) {
+	b.StopTimer()
+	img := image.NewNRGBA(image.Rect(0, 0, 640, 480))
+	if img.Opaque() {
+		b.Fatal("expected image not to be opaque")
+	}
+	b.SetBytes(640 * 480 * 4)
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		Encode(ioutil.Discard, img)
 	}
 }
 
@@ -138,7 +200,7 @@ func BenchmarkEncodeRGBA(b *testing.B) {
 	b.StopTimer()
 	img := image.NewRGBA(image.Rect(0, 0, 640, 480))
 	if img.Opaque() {
-		b.Fatal("expected image to not be opaque")
+		b.Fatal("expected image not to be opaque")
 	}
 	b.SetBytes(640 * 480 * 4)
 	b.StartTimer()

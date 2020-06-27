@@ -1,7 +1,6 @@
 // Support for atomic operations -*- C++ -*-
 
-// Copyright (C) 2004, 2005, 2006, 2008, 2009, 2010, 2011, 2012
-// Free Software Foundation, Inc.
+// Copyright (C) 2004-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -29,6 +28,8 @@
 
 #ifndef _GLIBCXX_ATOMICITY_H
 #define _GLIBCXX_ATOMICITY_H	1
+
+#pragma GCC system_header
 
 #include <bits/c++config.h>
 #include <bits/gthr.h>
@@ -107,10 +108,10 @@ _GLIBCXX_END_NAMESPACE_VERSION
 // that the compiler doesn't reorder memory accesses across the
 // barriers.
 #ifndef _GLIBCXX_READ_MEM_BARRIER
-#define _GLIBCXX_READ_MEM_BARRIER __asm __volatile ("":::"memory")
+#define _GLIBCXX_READ_MEM_BARRIER __atomic_thread_fence (__ATOMIC_ACQUIRE)
 #endif
 #ifndef _GLIBCXX_WRITE_MEM_BARRIER
-#define _GLIBCXX_WRITE_MEM_BARRIER __asm __volatile ("":::"memory")
+#define _GLIBCXX_WRITE_MEM_BARRIER __atomic_thread_fence (__ATOMIC_RELEASE)
 #endif
 
 #endif 

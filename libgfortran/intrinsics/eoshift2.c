@@ -1,8 +1,8 @@
 /* Generic implementation of the EOSHIFT intrinsic
-   Copyright 2002, 2005, 2007, 2009 Free Software Foundation, Inc.
+   Copyright (C) 2002-2017 Free Software Foundation, Inc.
    Contributed by Paul Brook <paul@nowt.org>
 
-This file is part of the GNU Fortran 95 runtime library (libgfortran).
+This file is part of the GNU Fortran runtime library (libgfortran).
 
 Libgfortran is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public
@@ -24,8 +24,6 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 <http://www.gnu.org/licenses/>.  */
 
 #include "libgfortran.h"
-#include <stdlib.h>
-#include <assert.h>
 #include <string.h>
 
 /* TODO: make this work for large shifts when
@@ -71,12 +69,16 @@ eoshift2 (gfc_array_char *ret, const gfc_array_char *array,
 
   arraysize = size0 ((array_t *) array);
 
-  if (ret->data == NULL)
+  if (ret->base_addr == NULL)
     {
       int i;
 
       ret->offset = 0;
       ret->dtype = array->dtype;
+
+      /* xmallocarray allocates a single byte for zero size.  */
+      ret->base_addr = xmallocarray (arraysize, size);
+
       for (i = 0; i < GFC_DESCRIPTOR_RANK (array); i++)
         {
 	  index_type ub, str;
@@ -90,10 +92,6 @@ eoshift2 (gfc_array_char *ret, const gfc_array_char *array,
 	      * GFC_DESCRIPTOR_STRIDE(ret,i-1);
 
 	  GFC_DIMENSION_SET(ret->dim[i], 0, ub, str);
-
-          /* internal_malloc_size allocates a single byte for zero size.  */
-	  ret->data = internal_malloc_size (size * arraysize);
-
         }
     }
   else if (unlikely (compile_options.bounds_check))
@@ -149,8 +147,8 @@ eoshift2 (gfc_array_char *ret, const gfc_array_char *array,
   rstride0 = rstride[0];
   sstride0 = sstride[0];
   bstride0 = bstride[0];
-  rptr = ret->data;
-  sptr = array->data;
+  rptr = ret->base_addr;
+  sptr = array->base_addr;
 
   if ((shift >= 0 ? shift : -shift ) > len)
     {
@@ -166,7 +164,7 @@ eoshift2 (gfc_array_char *ret, const gfc_array_char *array,
     }
   
   if (bound)
-    bptr = bound->data;
+    bptr = bound->base_addr;
   else
     bptr = NULL;
 

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2012, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -221,33 +221,31 @@ package body Sinput is
    -- Build_Location_String --
    ---------------------------
 
-   procedure Build_Location_String (Loc : Source_Ptr) is
-      Ptr : Source_Ptr;
+   procedure Build_Location_String
+     (Buf : in out Bounded_String;
+      Loc : Source_Ptr)
+   is
+      Ptr : Source_Ptr := Loc;
 
    begin
       --  Loop through instantiations
 
-      Ptr := Loc;
       loop
-         Get_Name_String_And_Append
-           (Reference_Name (Get_Source_File_Index (Ptr)));
-         Add_Char_To_Name_Buffer (':');
-         Add_Nat_To_Name_Buffer (Nat (Get_Logical_Line_Number (Ptr)));
+         Append (Buf, Reference_Name (Get_Source_File_Index (Ptr)));
+         Append (Buf, ':');
+         Append (Buf, Nat (Get_Logical_Line_Number (Ptr)));
 
          Ptr := Instantiation_Location (Ptr);
          exit when Ptr = No_Location;
-         Add_Str_To_Name_Buffer (" instantiated at ");
+         Append (Buf, " instantiated at ");
       end loop;
-
-      Name_Buffer (Name_Len + 1) := NUL;
-      return;
    end Build_Location_String;
 
    function Build_Location_String (Loc : Source_Ptr) return String is
+      Buf : Bounded_String;
    begin
-      Name_Len := 0;
-      Build_Location_String (Loc);
-      return Name_Buffer (1 .. Name_Len);
+      Build_Location_String (Buf, Loc);
+      return +Buf;
    end Build_Location_String;
 
    -------------------
@@ -258,10 +256,20 @@ package body Sinput is
       BOM : BOM_Kind;
       Len : Natural;
       Tst : String (1 .. 5);
+      C   : Character;
 
    begin
       for J in 1 .. 5 loop
-         Tst (J) := Source (Scan_Ptr + Source_Ptr (J) - 1);
+         C := Source (Scan_Ptr + Source_Ptr (J) - 1);
+
+         --  Definitely no BOM if EOF character marks either end of file, or
+         --  an illegal non-BOM character if not at the end of file.
+
+         if C = EOF then
+            return;
+         end if;
+
+         Tst (J) := C;
       end loop;
 
       Read_BOM (Tst, Len, BOM, False);
@@ -272,13 +280,17 @@ package body Sinput is
             Wide_Character_Encoding_Method := WCEM_UTF8;
             Upper_Half_Encoding := True;
 
-         when UTF16_LE | UTF16_BE =>
+         when UTF16_BE
+            | UTF16_LE
+         =>
             Set_Standard_Error;
             Write_Line ("UTF-16 encoding format not recognized");
             Set_Standard_Output;
             raise Unrecoverable_Error;
 
-         when UTF32_LE | UTF32_BE =>
+         when UTF32_BE
+            | UTF32_LE
+         =>
             Set_Standard_Error;
             Write_Line ("UTF-32 encoding format not recognized");
             Set_Standard_Output;
@@ -291,6 +303,28 @@ package body Sinput is
             raise Program_Error;
       end case;
    end Check_For_BOM;
+
+   ---------------------------------
+   -- Comes_From_Inherited_Pragma --
+   ---------------------------------
+
+   function Comes_From_Inherited_Pragma (S : Source_Ptr) return Boolean is
+      SIE : Source_File_Record renames
+              Source_File.Table (Get_Source_File_Index (S));
+   begin
+      return SIE.Inherited_Pragma;
+   end Comes_From_Inherited_Pragma;
+
+   -----------------------------
+   -- Comes_From_Inlined_Body --
+   -----------------------------
+
+   function Comes_From_Inlined_Body (S : Source_Ptr) return Boolean is
+      SIE : Source_File_Record renames
+              Source_File.Table (Get_Source_File_Index (S));
+   begin
+      return SIE.Inlined_Body;
+   end Comes_From_Inlined_Body;
 
    -----------------------
    -- Get_Column_Number --
@@ -321,11 +355,22 @@ package body Sinput is
          while S < P loop
             if Src (S) = HT then
                C := (C - 1) / 8 * 8 + (8 + 1);
+               S := S + 1;
+
+            --  Deal with wide character case, but don't include brackets
+            --  notation in this circuit, since we know that this will
+            --  display unencoded (no one encodes brackets notation).
+
+            elsif Src (S) /= '[' and then Is_Start_Of_Wide_Char (Src, S) then
+               C := C + 1;
+               Skip_Wide (Src, S);
+
+            --  Normal (non-wide) character case or brackets sequence
+
             else
                C := C + 1;
+               S := S + 1;
             end if;
-
-            S := S + 1;
          end loop;
 
          return C;
@@ -424,44 +469,9 @@ package body Sinput is
    -- Get_Source_File_Index --
    ---------------------------
 
-   Source_Cache_First : Source_Ptr := 1;
-   Source_Cache_Last  : Source_Ptr := 0;
-   --  Records the First and Last subscript values for the most recently
-   --  referenced entry in the source table, to optimize the common case of
-   --  repeated references to the same entry. The initial values force an
-   --  initial search to set the cache value.
-
-   Source_Cache_Index : Source_File_Index := No_Source_File;
-   --  Contains the index of the entry corresponding to Source_Cache
-
    function Get_Source_File_Index (S : Source_Ptr) return Source_File_Index is
    begin
-      if S in Source_Cache_First .. Source_Cache_Last then
-         return Source_Cache_Index;
-
-      else
-         pragma Assert (Source_File_Index_Table (Int (S) / Chunk_Size)
-                          /=
-                        No_Source_File);
-         for J in Source_File_Index_Table (Int (S) / Chunk_Size)
-                                                    .. Source_File.Last
-         loop
-            if S in Source_File.Table (J).Source_First ..
-                    Source_File.Table (J).Source_Last
-            then
-               Source_Cache_Index := J;
-               Source_Cache_First :=
-                 Source_File.Table (Source_Cache_Index).Source_First;
-               Source_Cache_Last :=
-                 Source_File.Table (Source_Cache_Index).Source_Last;
-               return Source_Cache_Index;
-            end if;
-         end loop;
-      end if;
-
-      --  We must find a matching entry in the above loop!
-
-      raise Program_Error;
+      return Source_File_Index_Table (Int (S) / Source_Align);
    end Get_Source_File_Index;
 
    ----------------
@@ -470,14 +480,29 @@ package body Sinput is
 
    procedure Initialize is
    begin
-      Source_Cache_First := 1;
-      Source_Cache_Last  := 0;
-      Source_Cache_Index := No_Source_File;
       Source_gnat_adc    := No_Source_File;
       First_Time_Around  := True;
 
       Source_File.Init;
+
+      Instances.Init;
+      Instances.Append (No_Location);
+      pragma Assert (Instances.Last = No_Instance_Id);
    end Initialize;
+
+   -------------------
+   -- Instantiation --
+   -------------------
+
+   function Instantiation (S : SFI) return Source_Ptr is
+      SIE : Source_File_Record renames Source_File.Table (S);
+   begin
+      if SIE.Inlined_Body or SIE.Inherited_Pragma then
+         return SIE.Inlined_Call;
+      else
+         return Instances.Table (SIE.Instance);
+      end if;
+   end Instantiation;
 
    -------------------------
    -- Instantiation_Depth --
@@ -510,6 +535,17 @@ package body Sinput is
    begin
       return Instantiation (Get_Source_File_Index (S));
    end Instantiation_Location;
+
+   --------------------------
+   -- Iterate_On_Instances --
+   --------------------------
+
+   procedure Iterate_On_Instances is
+   begin
+      for J in 1 .. Instances.Last loop
+         Process (J, Instances.Table (J));
+      end loop;
+   end Iterate_On_Instances;
 
    ----------------------
    -- Last_Source_File --
@@ -685,15 +721,13 @@ package body Sinput is
       Ind : Int;
       SP  : Source_Ptr;
       SL  : constant Source_Ptr := Source_File.Table (Xnew).Source_Last;
-
    begin
-      SP  := (Source_File.Table (Xnew).Source_First + Chunk_Size - 1)
-                                                    / Chunk_Size * Chunk_Size;
-      Ind := Int (SP) / Chunk_Size;
-
+      SP  := Source_File.Table (Xnew).Source_First;
+      pragma Assert (SP mod Source_Align = 0);
+      Ind := Int (SP) / Source_Align;
       while SP <= SL loop
          Source_File_Index_Table (Ind) := Xnew;
-         SP := SP + Chunk_Size;
+         SP := SP + Source_Align;
          Ind := Ind + 1;
       end loop;
    end Set_Source_File_Index_Table;
@@ -771,18 +805,21 @@ package body Sinput is
       -------------
 
       function Process (N : Node_Id) return Traverse_Result is
+         Orig : constant Node_Id := Original_Node (N);
+
       begin
-         if Sloc (N) < Min then
-            if Sloc (N) > No_Location then
-               Min := Sloc (N);
+         if Sloc (Orig) < Min then
+            if Sloc (Orig) > No_Location then
+               Min := Sloc (Orig);
             end if;
-         elsif Sloc (N) > Max then
-            if Sloc (N) > No_Location then
-               Max := Sloc (N);
+
+         elsif Sloc (Orig) > Max then
+            if Sloc (Orig) > No_Location then
+               Max := Sloc (Orig);
             end if;
          end if;
 
-         return OK;
+         return OK_Orig;
       end Process;
 
    --  Start of processing for Sloc_Range
@@ -852,7 +889,7 @@ package body Sinput is
                Tmp1 : Source_Buffer_Ptr;
 
             begin
-               if S.Instantiation /= No_Location then
+               if S.Instance /= No_Instance_Id then
                   null;
 
                else
@@ -882,18 +919,14 @@ package body Sinput is
          end loop;
       end if;
 
-      --  Reset source cache pointers to force new read
-
-      Source_Cache_First := 1;
-      Source_Cache_Last  := 0;
-
-      --  Read in source file table
+      --  Read in source file table and instance table
 
       Source_File.Tree_Read;
+      Instances.Tree_Read;
 
-      --  The pointers we read in there for the source buffer and lines
-      --  table pointers are junk. We now read in the actual data that
-      --  is referenced by these two fields.
+      --  The pointers we read in there for the source buffer and lines table
+      --  pointers are junk. We now read in the actual data that is referenced
+      --  by these two fields.
 
       for J in Source_File.First .. Source_File.Last loop
          declare
@@ -904,7 +937,7 @@ package body Sinput is
             --  we share the data for the generic template entry. Since the
             --  template always occurs first, we can safely refer to its data.
 
-            if S.Instantiation /= No_Location then
+            if S.Instance /= No_Instance_Id then
                declare
                   ST : Source_File_Record renames
                          Source_File.Table (S.Template);
@@ -1004,6 +1037,7 @@ package body Sinput is
    procedure Tree_Write is
    begin
       Source_File.Tree_Write;
+      Instances.Tree_Write;
 
       --  The pointers we wrote out there for the source buffer and lines
       --  table pointers are junk, we now write out the actual data that
@@ -1018,7 +1052,7 @@ package body Sinput is
             --  shared with the generic template. When the tree is read, the
             --  pointers must be set, but no extra data needs to be written.
 
-            if S.Instantiation /= No_Location then
+            if S.Instance /= No_Instance_Id then
                null;
 
             --  For the normal case, write out the data of the tables
@@ -1131,6 +1165,11 @@ package body Sinput is
       return Source_File.Table (S).Debug_Source_Name;
    end Debug_Source_Name;
 
+   function Instance (S : SFI) return Instance_Id is
+   begin
+      return Source_File.Table (S).Instance;
+   end Instance;
+
    function File_Name (S : SFI) return File_Name_Type is
    begin
       return Source_File.Table (S).File_Name;
@@ -1166,15 +1205,20 @@ package body Sinput is
       return Source_File.Table (S).Identifier_Casing;
    end Identifier_Casing;
 
+   function Inherited_Pragma (S : SFI) return Boolean is
+   begin
+      return Source_File.Table (S).Inherited_Pragma;
+   end Inherited_Pragma;
+
    function Inlined_Body (S : SFI) return Boolean is
    begin
       return Source_File.Table (S).Inlined_Body;
    end Inlined_Body;
 
-   function Instantiation (S : SFI) return Source_Ptr is
+   function Inlined_Call (S : SFI) return Source_Ptr is
    begin
-      return Source_File.Table (S).Instantiation;
-   end Instantiation;
+      return Source_File.Table (S).Inlined_Call;
+   end Inlined_Call;
 
    function Keyword_Casing (S : SFI) return Casing_Type is
    begin

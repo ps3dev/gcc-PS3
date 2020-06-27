@@ -1,8 +1,8 @@
 `/* Implementation of the SHAPE intrinsic
-   Copyright 2002, 2006, 2007, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2002-2017 Free Software Foundation, Inc.
    Contributed by Paul Brook <paul@nowt.org>
 
-This file is part of the GNU Fortran 95 runtime library (libgfortran).
+This file is part of the GNU Fortran runtime library (libgfortran).
 
 Libgfortran is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public
@@ -23,21 +23,19 @@ a copy of the GCC Runtime Library Exception along with this program;
 see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 <http://www.gnu.org/licenses/>.  */
 
-#include "libgfortran.h"
-#include <stdlib.h>
-#include <assert.h>'
+#include "libgfortran.h"'
 
 include(iparm.m4)dnl
 
 `#if defined (HAVE_'rtype_name`)
 
 extern void shape_'rtype_kind` ('rtype` * const restrict ret, 
-	const 'rtype` * const restrict array);
+	const array_t * const restrict array);
 export_proto(shape_'rtype_kind`);
 
 void
 shape_'rtype_kind` ('rtype` * const restrict ret, 
-	const 'rtype` * const restrict array)
+	const array_t * const restrict array)
 {
   int n;
   index_type stride;
@@ -46,11 +44,11 @@ shape_'rtype_kind` ('rtype` * const restrict ret,
 
   rank = GFC_DESCRIPTOR_RANK (array);
 
-  if (ret->data == NULL)
+  if (ret->base_addr == NULL)
     {
       GFC_DIMENSION_SET(ret->dim[0], 0, rank - 1, 1);
       ret->offset = 0;
-      ret->data = internal_malloc_size (sizeof ('rtype_name`) * rank);
+      ret->base_addr = xmallocarray (rank, sizeof ('rtype_name`));
     }
 
   stride = GFC_DESCRIPTOR_STRIDE(ret,0);
@@ -61,7 +59,7 @@ shape_'rtype_kind` ('rtype` * const restrict ret,
   for (n = 0; n < rank; n++)
     {
       extent = GFC_DESCRIPTOR_EXTENT(array,n);
-      ret->data[n * stride] = extent > 0 ? extent : 0 ;
+      ret->base_addr[n * stride] = extent > 0 ? extent : 0 ;
     }
 }
 

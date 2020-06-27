@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---                    Copyright (C) 1995-2011, AdaCore                      --
+--                    Copyright (C) 1995-2016, AdaCore                      --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -29,7 +29,7 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-pragma Compiler_Unit;
+pragma Compiler_Unit_Warning;
 
 with Ada.Unchecked_Deallocation;
 with System.String_Hash;
@@ -62,7 +62,6 @@ package body System.HTable is
 
       begin
          Elmt := Table (Hash (K));
-
          loop
             if Elmt = Null_Ptr then
                return Null_Ptr;
@@ -96,10 +95,10 @@ package body System.HTable is
       begin
          if not Iterator_Started then
             return Null_Ptr;
+         else
+            Iterator_Ptr := Next (Iterator_Ptr);
+            return Get_Non_Null;
          end if;
-
-         Iterator_Ptr := Next (Iterator_Ptr);
-         return Get_Non_Null;
       end Get_Next;
 
       ------------------
@@ -150,7 +149,7 @@ package body System.HTable is
 
          else
             loop
-               Next_Elmt :=  Next (Elmt);
+               Next_Elmt := Next (Elmt);
 
                if Next_Elmt = Null_Ptr then
                   return;
@@ -183,7 +182,6 @@ package body System.HTable is
 
       procedure Set (E : Elmt_Ptr) is
          Index : Header_Num;
-
       begin
          Index := Hash (Get_Key (E));
          Set_Next (E, Table (Index));
@@ -260,7 +258,7 @@ package body System.HTable is
       -- Get --
       ---------
 
-      function  Get (K : Key) return Element is
+      function Get (K : Key) return Element is
          Tmp : constant Elmt_Ptr := Tab.Get (K);
       begin
          if Tmp = null then

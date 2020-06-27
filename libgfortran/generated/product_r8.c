@@ -1,5 +1,5 @@
 /* Implementation of the PRODUCT intrinsic
-   Copyright 2002, 2007, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2002-2017 Free Software Foundation, Inc.
    Contributed by Paul Brook <paul@nowt.org>
 
 This file is part of the GNU Fortran runtime library (libgfortran).
@@ -24,8 +24,6 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 <http://www.gnu.org/licenses/>.  */
 
 #include "libgfortran.h"
-#include <stdlib.h>
-#include <assert.h>
 
 
 #if defined (HAVE_GFC_REAL_8) && defined (HAVE_GFC_REAL_8)
@@ -79,7 +77,7 @@ product_r8 (gfc_array_r8 * const restrict retarray,
 	extent[n] = 0;
     }
 
-  if (retarray->data == NULL)
+  if (retarray->base_addr == NULL)
     {
       size_t alloc_size, str;
 
@@ -97,10 +95,9 @@ product_r8 (gfc_array_r8 * const restrict retarray,
       retarray->offset = 0;
       retarray->dtype = (array->dtype & ~GFC_DTYPE_RANK_MASK) | rank;
 
-      alloc_size = sizeof (GFC_REAL_8) * GFC_DESCRIPTOR_STRIDE(retarray,rank-1)
-    		   * extent[rank-1];
+      alloc_size = GFC_DESCRIPTOR_STRIDE(retarray,rank-1) * extent[rank-1];
 
-      retarray->data = internal_malloc_size (alloc_size);
+      retarray->base_addr = xmallocarray (alloc_size, sizeof (GFC_REAL_8));
       if (alloc_size == 0)
 	{
 	  /* Make sure we have a zero-sized array.  */
@@ -130,8 +127,8 @@ product_r8 (gfc_array_r8 * const restrict retarray,
 	return;
     }
 
-  base = array->data;
-  dest = retarray->data;
+  base = array->base_addr;
+  dest = retarray->base_addr;
 
   continue_loop = 1;
   while (continue_loop)
@@ -170,9 +167,9 @@ product_r8 (gfc_array_r8 * const restrict retarray,
 	  base -= sstride[n] * extent[n];
 	  dest -= dstride[n] * extent[n];
 	  n++;
-	  if (n == rank)
+	  if (n >= rank)
 	    {
-	      /* Break out of the look.  */
+	      /* Break out of the loop.  */
 	      continue_loop = 0;
 	      break;
 	    }
@@ -221,7 +218,7 @@ mproduct_r8 (gfc_array_r8 * const restrict retarray,
   if (len <= 0)
     return;
 
-  mbase = mask->data;
+  mbase = mask->base_addr;
 
   mask_kind = GFC_DESCRIPTOR_SIZE (mask);
 
@@ -257,7 +254,7 @@ mproduct_r8 (gfc_array_r8 * const restrict retarray,
 	extent[n] = 0;
     }
 
-  if (retarray->data == NULL)
+  if (retarray->base_addr == NULL)
     {
       size_t alloc_size, str;
 
@@ -272,8 +269,7 @@ mproduct_r8 (gfc_array_r8 * const restrict retarray,
 
 	}
 
-      alloc_size = sizeof (GFC_REAL_8) * GFC_DESCRIPTOR_STRIDE(retarray,rank-1)
-    		   * extent[rank-1];
+      alloc_size = GFC_DESCRIPTOR_STRIDE(retarray,rank-1) * extent[rank-1];
 
       retarray->offset = 0;
       retarray->dtype = (array->dtype & ~GFC_DTYPE_RANK_MASK) | rank;
@@ -285,7 +281,7 @@ mproduct_r8 (gfc_array_r8 * const restrict retarray,
 	  return;
 	}
       else
-	retarray->data = internal_malloc_size (alloc_size);
+	retarray->base_addr = xmallocarray (alloc_size, sizeof (GFC_REAL_8));
 
     }
   else
@@ -310,8 +306,8 @@ mproduct_r8 (gfc_array_r8 * const restrict retarray,
 	return;
     }
 
-  dest = retarray->data;
-  base = array->data;
+  dest = retarray->base_addr;
+  base = array->base_addr;
 
   while (base)
     {
@@ -323,18 +319,13 @@ mproduct_r8 (gfc_array_r8 * const restrict retarray,
       {
 
   result = 1;
-	if (len <= 0)
-	  *dest = 1;
-	else
+	for (n = 0; n < len; n++, src += delta, msrc += mdelta)
 	  {
-	    for (n = 0; n < len; n++, src += delta, msrc += mdelta)
-	      {
 
   if (*msrc)
     result *= *src;
-	      }
-	    *dest = result;
 	  }
+	*dest = result;
       }
       /* Advance to the next element.  */
       count[0]++;
@@ -353,9 +344,9 @@ mproduct_r8 (gfc_array_r8 * const restrict retarray,
 	  mbase -= mstride[n] * extent[n];
 	  dest -= dstride[n] * extent[n];
 	  n++;
-	  if (n == rank)
+	  if (n >= rank)
 	    {
-	      /* Break out of the look.  */
+	      /* Break out of the loop.  */
 	      base = NULL;
 	      break;
 	    }
@@ -417,7 +408,7 @@ sproduct_r8 (gfc_array_r8 * const restrict retarray,
 	extent[n] = 0;
     }
 
-  if (retarray->data == NULL)
+  if (retarray->base_addr == NULL)
     {
       size_t alloc_size, str;
 
@@ -435,8 +426,7 @@ sproduct_r8 (gfc_array_r8 * const restrict retarray,
       retarray->offset = 0;
       retarray->dtype = (array->dtype & ~GFC_DTYPE_RANK_MASK) | rank;
 
-      alloc_size = sizeof (GFC_REAL_8) * GFC_DESCRIPTOR_STRIDE(retarray,rank-1)
-    		   * extent[rank-1];
+      alloc_size = GFC_DESCRIPTOR_STRIDE(retarray,rank-1) * extent[rank-1];
 
       if (alloc_size == 0)
 	{
@@ -445,7 +435,7 @@ sproduct_r8 (gfc_array_r8 * const restrict retarray,
 	  return;
 	}
       else
-	retarray->data = internal_malloc_size (alloc_size);
+	retarray->base_addr = xmallocarray (alloc_size, sizeof (GFC_REAL_8));
     }
   else
     {
@@ -477,7 +467,7 @@ sproduct_r8 (gfc_array_r8 * const restrict retarray,
       dstride[n] = GFC_DESCRIPTOR_STRIDE(retarray,n);
     }
 
-  dest = retarray->data;
+  dest = retarray->base_addr;
 
   while(1)
     {
@@ -494,7 +484,7 @@ sproduct_r8 (gfc_array_r8 * const restrict retarray,
 	     frequently used path so probably not worth it.  */
 	  dest -= dstride[n] * extent[n];
 	  n++;
-	  if (n == rank)
+	  if (n >= rank)
 	    return;
 	  else
 	    {

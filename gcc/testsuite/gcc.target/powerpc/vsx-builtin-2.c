@@ -1,14 +1,15 @@
 /* { dg-do compile { target { powerpc*-*-* } } } */
 /* { dg-skip-if "" { powerpc*-*-darwin* } { "*" } { "" } } */
 /* { dg-require-effective-target powerpc_vsx_ok } */
+/* { dg-skip-if "do not override -mcpu" { powerpc*-*-* } { "-mcpu=*" } { "-mcpu=power7" } } */
 /* { dg-options "-O2 -mcpu=power7" } */
 /* { dg-final { scan-assembler "xvaddsp" } } */
 /* { dg-final { scan-assembler "xvsubsp" } } */
 /* { dg-final { scan-assembler "xvmulsp" } } */
-/* { dg-final { scan-assembler "xvmadd" } } */
+/* { dg-final { scan-assembler "vmadd" } } */
 /* { dg-final { scan-assembler "xvmsub" } } */
 /* { dg-final { scan-assembler "xvnmadd" } } */
-/* { dg-final { scan-assembler "xvnmsub" } } */
+/* { dg-final { scan-assembler "vnmsub" } } */
 /* { dg-final { scan-assembler "xvdivsp" } } */
 /* { dg-final { scan-assembler "xvmaxsp" } } */
 /* { dg-final { scan-assembler "xvminsp" } } */

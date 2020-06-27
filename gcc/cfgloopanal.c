@@ -1,6 +1,5 @@
 /* Natural loop analysis code for GNU compiler.
-   Copyright (C) 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2002-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -21,14 +20,15 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
+#include "backend.h"
 #include "rtl.h"
-#include "hard-reg-set.h"
-#include "obstack.h"
-#include "basic-block.h"
+#include "tree.h"
+#include "predict.h"
+#include "memmodel.h"
+#include "emit-rtl.h"
 #include "cfgloop.h"
+#include "explow.h"
 #include "expr.h"
-#include "output.h"
 #include "graphds.h"
 #include "params.h"
 
@@ -66,7 +66,7 @@ just_once_each_iteration_p (const struct loop *loop, const_basic_block bb)
 
    LOOPS is the loop tree.  */
 
-#define LOOP_REPR(LOOP) ((LOOP)->num + last_basic_block)
+#define LOOP_REPR(LOOP) ((LOOP)->num + last_basic_block_for_fn (cfun))
 #define BB_REPR(BB) ((BB)->index + 1)
 
 bool
@@ -79,7 +79,7 @@ mark_irreducible_loops (void)
   int src, dest;
   unsigned depth;
   struct graph *g;
-  int num = number_of_loops ();
+  int num = number_of_loops (cfun);
   struct loop *cloop;
   bool irred_loop_found = false;
   int i;
@@ -87,7 +87,8 @@ mark_irreducible_loops (void)
   gcc_assert (current_loops != NULL);
 
   /* Reset the flags.  */
-  FOR_BB_BETWEEN (act, ENTRY_BLOCK_PTR, EXIT_BLOCK_PTR, next_bb)
+  FOR_BB_BETWEEN (act, ENTRY_BLOCK_PTR_FOR_FN (cfun),
+		  EXIT_BLOCK_PTR_FOR_FN (cfun), next_bb)
     {
       act->flags &= ~BB_IRREDUCIBLE_LOOP;
       FOR_EACH_EDGE (e, ei, act->succs)
@@ -95,13 +96,14 @@ mark_irreducible_loops (void)
     }
 
   /* Create the edge lists.  */
-  g = new_graph (last_basic_block + num);
+  g = new_graph (last_basic_block_for_fn (cfun) + num);
 
-  FOR_BB_BETWEEN (act, ENTRY_BLOCK_PTR, EXIT_BLOCK_PTR, next_bb)
+  FOR_BB_BETWEEN (act, ENTRY_BLOCK_PTR_FOR_FN (cfun),
+		  EXIT_BLOCK_PTR_FOR_FN (cfun), next_bb)
     FOR_EACH_EDGE (e, ei, act->succs)
       {
 	/* Ignore edges to exit.  */
-	if (e->dest == EXIT_BLOCK_PTR)
+	if (e->dest == EXIT_BLOCK_PTR_FOR_FN (cfun))
 	  continue;
 
 	src = BB_REPR (act);
@@ -130,7 +132,7 @@ mark_irreducible_loops (void)
 	    if (depth == loop_depth (act->loop_father))
 	      cloop = act->loop_father;
 	    else
-	      cloop = VEC_index (loop_p, act->loop_father->superloops, depth);
+	      cloop = (*act->loop_father->superloops)[depth];
 
 	    src = LOOP_REPR (cloop);
 	  }
@@ -174,7 +176,7 @@ num_loop_insns (const struct loop *loop)
 {
   basic_block *bbs, bb;
   unsigned i, ninsns = 0;
-  rtx insn;
+  rtx_insn *insn;
 
   bbs = get_loop_body (loop);
   for (i = 0; i < loop->num_nodes; i++)
@@ -198,7 +200,7 @@ average_num_loop_insns (const struct loop *loop)
 {
   basic_block *bbs, bb;
   unsigned i, binsns, ninsns, ratio;
-  rtx insn;
+  rtx_insn *insn;
 
   ninsns = 0;
   bbs = get_loop_body (loop);
@@ -230,14 +232,22 @@ average_num_loop_insns (const struct loop *loop)
    value.  */
 
 gcov_type
-expected_loop_iterations_unbounded (const struct loop *loop)
+expected_loop_iterations_unbounded (const struct loop *loop,
+				    bool *read_profile_p)
 {
   edge e;
   edge_iterator ei;
+  gcov_type expected;
+  
+  if (read_profile_p)
+    *read_profile_p = false;
 
-  if (loop->latch->count || loop->header->count)
+  /* If we have no profile at all, use AVG_LOOP_NITER.  */
+  if (profile_status_for_fn (cfun) == PROFILE_ABSENT)
+    expected = PARAM_VALUE (PARAM_AVG_LOOP_NITER);
+  else if (loop->latch && (loop->latch->count || loop->header->count))
     {
-      gcov_type count_in, count_latch, expected;
+      gcov_type count_in, count_latch;
 
       count_in = 0;
       count_latch = 0;
@@ -251,9 +261,11 @@ expected_loop_iterations_unbounded (const struct loop *loop)
       if (count_in == 0)
 	expected = count_latch * 2;
       else
-	expected = (count_latch + count_in - 1) / count_in;
-
-      return expected;
+	{
+	  expected = (count_latch + count_in - 1) / count_in;
+	  if (read_profile_p)
+	    *read_profile_p = true;
+	}
     }
   else
     {
@@ -263,23 +275,34 @@ expected_loop_iterations_unbounded (const struct loop *loop)
       freq_latch = 0;
 
       FOR_EACH_EDGE (e, ei, loop->header->preds)
-	if (e->src == loop->latch)
-	  freq_latch = EDGE_FREQUENCY (e);
+	if (flow_bb_inside_loop_p (loop, e->src))
+	  freq_latch += EDGE_FREQUENCY (e);
 	else
 	  freq_in += EDGE_FREQUENCY (e);
 
       if (freq_in == 0)
-	return freq_latch * 2;
-
-      return (freq_latch + freq_in - 1) / freq_in;
+	{
+	  /* If we have no profile at all, use AVG_LOOP_NITER iterations.  */
+	  if (!freq_latch)
+	    expected = PARAM_VALUE (PARAM_AVG_LOOP_NITER);
+	  else
+	    expected = freq_latch * 2;
+	}
+      else
+        expected = (freq_latch + freq_in - 1) / freq_in;
     }
+
+  HOST_WIDE_INT max = get_max_loop_iterations_int (loop);
+  if (max != -1 && max < expected)
+    return max;
+  return expected;
 }
 
 /* Returns expected number of LOOP iterations.  The returned value is bounded
    by REG_BR_PROB_BASE.  */
 
 unsigned
-expected_loop_iterations (const struct loop *loop)
+expected_loop_iterations (struct loop *loop)
 {
   gcov_type expected = expected_loop_iterations_unbounded (loop);
   return (expected > REG_BR_PROB_BASE ? REG_BR_PROB_BASE : expected);
@@ -302,36 +325,16 @@ get_loop_level (const struct loop *loop)
   return mx;
 }
 
-/* Returns estimate on cost of computing SEQ.  */
-
-static unsigned
-seq_cost (const_rtx seq, bool speed)
-{
-  unsigned cost = 0;
-  rtx set;
-
-  for (; seq; seq = NEXT_INSN (seq))
-    {
-      set = single_set (seq);
-      if (set)
-	cost += set_rtx_cost (set, speed);
-      else
-	cost++;
-    }
-
-  return cost;
-}
-
 /* Initialize the constants for computing set costs.  */
 
 void
 init_set_costs (void)
 {
   int speed;
-  rtx seq;
-  rtx reg1 = gen_raw_REG (SImode, FIRST_PSEUDO_REGISTER);
-  rtx reg2 = gen_raw_REG (SImode, FIRST_PSEUDO_REGISTER + 1);
-  rtx addr = gen_raw_REG (Pmode, FIRST_PSEUDO_REGISTER + 2);
+  rtx_insn *seq;
+  rtx reg1 = gen_raw_REG (SImode, LAST_VIRTUAL_REGISTER + 1);
+  rtx reg2 = gen_raw_REG (SImode, LAST_VIRTUAL_REGISTER + 2);
+  rtx addr = gen_raw_REG (Pmode, LAST_VIRTUAL_REGISTER + 3);
   rtx mem = validize_mem (gen_rtx_MEM (SImode, addr));
   unsigned i;
 
@@ -411,7 +414,7 @@ estimate_reg_pressure_cost (unsigned n_new, unsigned n_old, bool speed,
 
   if (optimize && (flag_ira_region == IRA_REGION_ALL
 		   || flag_ira_region == IRA_REGION_MIXED)
-      && number_of_loops () <= (unsigned) IRA_MAX_LOOPS_NUM)
+      && number_of_loops (cfun) <= (unsigned) IRA_MAX_LOOPS_NUM)
     /* IRA regional allocation deals with high register pressure
        better.  So decrease the cost (to do more accurate the cost
        calculation for IRA, we need to know how many registers lives
@@ -429,10 +432,10 @@ mark_loop_exit_edges (void)
   basic_block bb;
   edge e;
 
-  if (number_of_loops () <= 1)
+  if (number_of_loops (cfun) <= 1)
     return;
 
-  FOR_EACH_BB (bb)
+  FOR_EACH_BB_FN (bb, cfun)
     {
       edge_iterator ei;
 
@@ -447,3 +450,73 @@ mark_loop_exit_edges (void)
     }
 }
 
+/* Return exit edge if loop has only one exit that is likely
+   to be executed on runtime (i.e. it is not EH or leading
+   to noreturn call.  */
+
+edge
+single_likely_exit (struct loop *loop)
+{
+  edge found = single_exit (loop);
+  vec<edge> exits;
+  unsigned i;
+  edge ex;
+
+  if (found)
+    return found;
+  exits = get_loop_exit_edges (loop);
+  FOR_EACH_VEC_ELT (exits, i, ex)
+    {
+      if (ex->flags & (EDGE_EH | EDGE_ABNORMAL_CALL))
+	continue;
+      /* The constant of 5 is set in a way so noreturn calls are
+	 ruled out by this test.  The static branch prediction algorithm
+         will not assign such a low probability to conditionals for usual
+         reasons.  */
+      if (profile_status_for_fn (cfun) != PROFILE_ABSENT
+	  && ex->probability < 5 && !ex->count)
+	continue;
+      if (!found)
+	found = ex;
+      else
+	{
+	  exits.release ();
+	  return NULL;
+	}
+    }
+  exits.release ();
+  return found;
+}
+
+
+/* Gets basic blocks of a LOOP.  Header is the 0-th block, rest is in dfs
+   order against direction of edges from latch.  Specially, if
+   header != latch, latch is the 1-st block.  */
+
+vec<basic_block>
+get_loop_hot_path (const struct loop *loop)
+{
+  basic_block bb = loop->header;
+  vec<basic_block> path = vNULL;
+  bitmap visited = BITMAP_ALLOC (NULL);
+
+  while (true)
+    {
+      edge_iterator ei;
+      edge e;
+      edge best = NULL;
+
+      path.safe_push (bb);
+      bitmap_set_bit (visited, bb->index);
+      FOR_EACH_EDGE (e, ei, bb->succs)
+        if ((!best || e->probability > best->probability)
+	    && !loop_exit_edge_p (loop, e)
+	    && !bitmap_bit_p (visited, e->dest->index))
+	  best = e;
+      if (!best || best->dest == loop->header)
+	break;
+      bb = best->dest;
+    }
+  BITMAP_FREE (visited);
+  return path;
+}

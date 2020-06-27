@@ -1,4 +1,4 @@
-// Copyright 2011 The Go Authors.  All rights reserved.
+// Copyright 2011 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -81,11 +81,11 @@ func TestImplicitMapConversion(t *testing.T) {
 			t.Errorf("#5 after SetMapIndex(b1, b2): %p (!= %p), %t (map=%v)", x, b2, ok, m)
 		}
 		if p := mv.MapIndex(ValueOf(b1)).Elem().Pointer(); p != uintptr(unsafe.Pointer(b2)) {
-			t.Errorf("#5 MapIndex(b1) = %p want %p", p, b2)
+			t.Errorf("#5 MapIndex(b1) = %#x want %p", p, b2)
 		}
 	}
 	{
-		// convert channel direction	
+		// convert channel direction
 		m := make(map[<-chan int]chan int)
 		mv := ValueOf(m)
 		c1 := make(chan int)
@@ -96,7 +96,7 @@ func TestImplicitMapConversion(t *testing.T) {
 			t.Errorf("#6 after SetMapIndex(c1, c2): %p (!= %p), %t (map=%v)", x, c2, ok, m)
 		}
 		if p := mv.MapIndex(ValueOf(c1)).Pointer(); p != ValueOf(c2).Pointer() {
-			t.Errorf("#6 MapIndex(c1) = %p want %p", p, c2)
+			t.Errorf("#6 MapIndex(c1) = %#x want %p", p, c2)
 		}
 	}
 	{
@@ -115,7 +115,7 @@ func TestImplicitMapConversion(t *testing.T) {
 			t.Errorf("#7 after SetMapIndex(b1, b2): %p (!= %p), %t (map=%v)", x, b2, ok, m)
 		}
 		if p := mv.MapIndex(ValueOf(b1)).Pointer(); p != uintptr(unsafe.Pointer(b2)) {
-			t.Errorf("#7 MapIndex(b1) = %p want %p", p, b2)
+			t.Errorf("#7 MapIndex(b1) = %#x want %p", p, b2)
 		}
 	}
 
@@ -194,11 +194,13 @@ var assignableTests = []struct {
 	{new(*int), new(IntPtr), true},
 	{new(IntPtr), new(*int), true},
 	{new(IntPtr), new(IntPtr1), false},
+	{new(Ch), new(<-chan interface{}), true},
 	// test runs implementsTests too
 }
 
 type IntPtr *int
 type IntPtr1 *int
+type Ch <-chan interface{}
 
 func TestAssignableTo(t *testing.T) {
 	for _, tt := range append(assignableTests, implementsTests...) {

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -23,23 +23,25 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-with Atree;     use Atree;
-with Debug;     use Debug;
-with Elists;    use Elists;
-with Errout;    use Errout;
-with Lib;       use Lib;
-with Osint;     use Osint;
-with Opt;       use Opt;
-with Osint.C;   use Osint.C;
-with Namet;     use Namet;
-with Nlists;    use Nlists;
-with Stand;     use Stand;
-with Sinput;    use Sinput;
-with Stringt;   use Stringt;
-with Switch;    use Switch;
-with Switch.C;  use Switch.C;
-with System;    use System;
-with Types;     use Types;
+--  This is the version of the Back_End package for GCC back ends
+
+with Atree;    use Atree;
+with Debug;    use Debug;
+with Elists;   use Elists;
+with Errout;   use Errout;
+with Lib;      use Lib;
+with Osint;    use Osint;
+with Opt;      use Opt;
+with Osint.C;  use Osint.C;
+with Namet;    use Namet;
+with Nlists;   use Nlists;
+with Stand;    use Stand;
+with Sinput;   use Sinput;
+with Stringt;  use Stringt;
+with Switch;   use Switch;
+with Switch.C; use Switch.C;
+with System;   use System;
+with Types;    use Types;
 
 with System.OS_Lib; use System.OS_Lib;
 
@@ -51,7 +53,7 @@ package body Back_End is
 
    flag_stack_check : Int;
    pragma Import (C, flag_stack_check);
-   --  Indicates if stack checking is enabled, imported from decl.c
+   --  Indicates if stack checking is enabled, imported from misc.c
 
    save_argc : Nat;
    pragma Import (C, save_argc);
@@ -76,6 +78,7 @@ package body Back_End is
 
       type File_Info_Type is record
          File_Name        : File_Name_Type;
+         Instance         : Instance_Id;
          Num_Source_Lines : Nat;
       end record;
 
@@ -86,6 +89,7 @@ package body Back_End is
          max_gnat_node                 : Int;
          number_name                   : Nat;
          nodes_ptr                     : Address;
+         flags_ptr                     : Address;
 
          next_node_ptr                 : Address;
          prev_node_ptr                 : Address;
@@ -119,9 +123,13 @@ package body Back_End is
 
       for J in 1 .. Last_Source_File loop
          File_Info_Array (J).File_Name        := Full_Debug_Name (J);
+         File_Info_Array (J).Instance         := Instance (J);
          File_Info_Array (J).Num_Source_Lines :=
            Nat (Physical_To_Logical (Last_Source_Line (J), J));
       end loop;
+
+      --  Deal with case of generating SCIL, we should not be here unless
+      --  debugging CodePeer mode in GNAT.
 
       if Generate_SCIL then
          Error_Msg_N ("'S'C'I'L generation not available", Cunit (Main_Unit));
@@ -134,11 +142,22 @@ package body Back_End is
          end if;
       end if;
 
+      --  We should be here in GNATprove mode only when debugging GNAT. Do not
+      --  call gigi in that case, as it is not prepared to handle the special
+      --  form of the tree obtained in GNATprove mode.
+
+      if GNATprove_Mode then
+         return;
+      end if;
+
+      --  The actual call to the back end
+
       gigi
         (gnat_root          => Int (Cunit (Main_Unit)),
          max_gnat_node      => Int (Last_Node_Id - First_Node_Id + 1),
          number_name        => Name_Entries_Count,
          nodes_ptr          => Nodes_Address,
+         flags_ptr          => Flags_Address,
 
          next_node_ptr      => Next_Node_Address,
          prev_node_ptr      => Prev_Node_Address,
@@ -158,6 +177,15 @@ package body Back_End is
          gigi_standard_exception_type  => Standard_Exception_Type,
          gigi_operating_mode           => Mode);
    end Call_Back_End;
+
+   -------------------------------
+   -- Gen_Or_Update_Object_File --
+   -------------------------------
+
+   procedure Gen_Or_Update_Object_File is
+   begin
+      null;
+   end Gen_Or_Update_Object_File;
 
    -------------
    -- Len_Arg --
@@ -179,7 +207,6 @@ package body Back_End is
    -----------------------------
 
    procedure Scan_Compiler_Arguments is
-
       Next_Arg : Positive;
       --  Next argument to be scanned
 
@@ -207,9 +234,10 @@ package body Back_End is
          Last  : constant Natural  := Switch_Last (Switch_Chars);
 
       begin
-         --  Skip -o or internal GCC switches together with their argument
+         --  Skip -o, -G or internal GCC switches together with their argument.
 
          if Switch_Chars (First .. Last) = "o"
+           or else Switch_Chars (First .. Last) = "G"
            or else Is_Internal_GCC_Switch (Switch_Chars)
          then
             Next_Arg := Next_Arg + 1;
@@ -219,23 +247,49 @@ package body Back_End is
          elsif Switch_Chars (First .. Last) = "quiet" then
             null;
 
-         --  Store any other GCC switches
+         --  Store any other GCC switches. Also do special processing for some
+         --  specific switches that the Ada front-end knows about.
 
          else
             Store_Compilation_Switch (Switch_Chars);
 
-            --  Special check, the back end switch -fno-inline also sets the
-            --  front end flag to entirely inhibit all inlining.
+            --  For gcc back ends, -fno-inline disables Inline pragmas only,
+            --  not Inline_Always to remain consistent with the always_inline
+            --  attribute behavior.
 
             if Switch_Chars (First .. Last) = "fno-inline" then
-               Opt.Suppress_All_Inlining := True;
+               Opt.Disable_FE_Inline := True;
 
-            --  Another special check, the switch -fpreserve-control-flow
-            --  which is also a back end switch sets the front end flag
-            --  that inhibits improper control flow transformations.
+            --  Back end switch -fpreserve-control-flow also sets the front end
+            --  flag that inhibits improper control flow transformations.
 
             elsif Switch_Chars (First .. Last) = "fpreserve-control-flow" then
                Opt.Suppress_Control_Flow_Optimizations := True;
+
+            --  Back end switch -fdump-scos, which exists primarily for C, is
+            --  also accepted for Ada as a synonym of -gnateS.
+
+            elsif Switch_Chars (First .. Last) = "fdump-scos" then
+               Opt.Generate_SCO := True;
+               Opt.Generate_SCO_Instance_Table := True;
+
+            elsif Switch_Chars (First) = 'g' then
+               Debugger_Level := 2;
+
+               if First < Last then
+                  case Switch_Chars (First + 1) is
+                     when '0' =>
+                        Debugger_Level := 0;
+                     when '1' =>
+                        Debugger_Level := 1;
+                     when '2' =>
+                        Debugger_Level := 2;
+                     when '3' =>
+                        Debugger_Level := 3;
+                     when others =>
+                        null;
+                  end case;
+               end if;
             end if;
          end if;
       end Scan_Back_End_Switches;
@@ -243,12 +297,15 @@ package body Back_End is
       --  Local variables
 
       Arg_Count : constant Natural := Natural (save_argc - 1);
-      Args : Argument_List (1 .. Arg_Count);
+      Args      : Argument_List (1 .. Arg_Count);
 
    --  Start of processing for Scan_Compiler_Arguments
 
    begin
-      --  Acquire stack checking mode directly from GCC
+      --  Acquire stack checking mode directly from GCC. The reason we do this
+      --  is to make sure that the indication of stack checking being enabled
+      --  is the same in the front end and the back end. This status obtained
+      --  from gcc is affected by more than just the switch -fstack-check.
 
       Opt.Stack_Checking_Enabled := (flag_stack_check /= 0);
 
@@ -270,19 +327,16 @@ package body Back_End is
       Next_Arg := 1;
       while Next_Arg <= Args'Last loop
          Look_At_Arg : declare
-            Argv     : constant String := Args (Next_Arg).all;
+            Argv : constant String := Args (Next_Arg).all;
 
          begin
             --  If the previous switch has set the Output_File_Name_Present
             --  flag (that is we have seen a -gnatO), then the next argument
             --  is the name of the output object file.
 
-            if Output_File_Name_Present
-              and then not Output_File_Name_Seen
-            then
+            if Output_File_Name_Present and then not Output_File_Name_Seen then
                if Is_Switch (Argv) then
                   Fail ("Object file name missing after -gnatO");
-
                else
                   Set_Output_Object_File_Name (Argv);
                   Output_File_Name_Seen := True;
@@ -300,7 +354,9 @@ package body Back_End is
                   Search_Directory_Present := False;
                end if;
 
-            elsif not Is_Switch (Argv) then -- must be a file name
+            --  If not a switch, must be a file name
+
+            elsif not Is_Switch (Argv) then
                Add_File (Argv);
 
             --  We must recognize -nostdinc to suppress visibility on the
@@ -329,26 +385,5 @@ package body Back_End is
          Next_Arg := Next_Arg + 1;
       end loop;
    end Scan_Compiler_Arguments;
-
-   -----------------------------
-   -- Register_Back_End_Types --
-   -----------------------------
-
-   procedure Register_Back_End_Types (Call_Back : Register_Type_Proc) is
-      procedure Enumerate_Modes (Call_Back : Register_Type_Proc);
-      pragma Import (C, Enumerate_Modes, "enumerate_modes");
-
-   begin
-      Enumerate_Modes (Call_Back);
-   end Register_Back_End_Types;
-
-   -------------------------------
-   -- Gen_Or_Update_Object_File --
-   -------------------------------
-
-   procedure Gen_Or_Update_Object_File is
-   begin
-      null;
-   end Gen_Or_Update_Object_File;
 
 end Back_End;

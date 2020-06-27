@@ -3,16 +3,16 @@
 // { dg-do compile }
 
 namespace M {
-  struct S {}; // { dg-error "struct M::S" "candidate 1" }
+  struct S {}; // { dg-message "struct M::S" "candidate 1" }
 }
 
 namespace N {
   int S;
-  struct S {}; // { dg-error "struct N::S" "candidate 2" }
+  struct S {}; // { dg-message "struct N::S" "candidate 2" }
 }
 
 using namespace M;
 using namespace N;
 
 struct ::S s; // { dg-bogus "ambiguous.*ambiguous" "duplicate error" }
-// { dg-error "reference to 'S' is ambiguous|invalid type" "" { target *-*-* } 17 }}
+// { dg-error "reference to 'S' is ambiguous|invalid type" "" { target *-*-* } .-1 }}

@@ -1,7 +1,6 @@
 // 1999-07-01 bkoz
 
-// Copyright (C) 1999, 2000, 2001, 2002, 2003, 2009
-// Free Software Foundation, Inc.
+// Copyright (C) 1999-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -32,7 +31,6 @@
 // based on a bug report libstdc++ 9
 void test04(std::size_t size)
 {
-  bool test __attribute__((unused)) = true;
   std::string str(size, 's');
   std::size_t expected_size = 2 * (size + 1);
   std::ostringstream oss(str);
@@ -44,11 +42,11 @@ void test04(std::size_t size)
   // stress test
   oss << str << std::endl;
   if (!oss.good()) 
-    test = false;
+    VERIFY( false );
 
   oss << str << std::endl;
   if (!oss.good()) 
-    test = false;
+    VERIFY( false );
 
   VERIFY( str.size() == size );
   VERIFY( oss.good() );

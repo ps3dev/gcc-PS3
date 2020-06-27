@@ -1,5 +1,5 @@
 /* Output routines for CR16 processor.
-   Copyright (C) 2012 Free Software Foundation, Inc.
+   Copyright (C) 2012-2017 Free Software Foundation, Inc.
    Contributed by KPIT Cummins Infosystems Limited.
   
    This file is part of GCC.
@@ -21,28 +21,25 @@
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
+#include "backend.h"
+#include "target.h"
 #include "rtl.h"
 #include "tree.h"
+#include "df.h"
+#include "memmodel.h"
 #include "tm_p.h"
 #include "regs.h"
-#include "hard-reg-set.h"
-#include "insn-config.h"
+#include "emit-rtl.h"
+#include "diagnostic-core.h"
+#include "stor-layout.h"
+#include "calls.h"
 #include "conditions.h"
 #include "output.h"
-#include "insn-codes.h"
-#include "insn-attr.h"
-#include "flags.h"
-#include "except.h"
-#include "function.h"
-#include "recog.h"
 #include "expr.h"
-#include "optabs.h"
-#include "diagnostic-core.h"
-#include "basic-block.h"
-#include "target.h"
+#include "builtins.h"
+
+/* This file should be included last.  */
 #include "target-def.h"
-#include "df.h"
 
 /* Definitions.  */
 
@@ -61,7 +58,7 @@
 #define FUNC_IS_NORETURN_P(decl) (TREE_THIS_VOLATILE (decl))
 
 /* Predicate that holds when we need to save registers even for 'noreturn'
-   functions, to accomodate for unwinding.  */
+   functions, to accommodate for unwinding.  */
 #define MUST_SAVE_REGS_P() \
   (flag_unwind_tables || (flag_exceptions && !UI_SJLJ))
 
@@ -126,7 +123,7 @@ static enum data_model_type data_model = DM_DEFAULT;
 
 /* TARGETM Function Prototypes and forward declarations  */
 static void cr16_print_operand (FILE *, rtx, int);
-static void cr16_print_operand_address (FILE *, rtx);
+static void cr16_print_operand_address (FILE *, machine_mode, rtx);
 
 /* Stack layout and calling conventions.  */
 #undef  TARGET_STRUCT_VALUE_RTX
@@ -175,6 +172,9 @@ static void cr16_print_operand_address (FILE *, rtx);
 #define TARGET_LEGITIMATE_CONSTANT_P    cr16_legitimate_constant_p
 #undef TARGET_LEGITIMATE_ADDRESS_P
 #define TARGET_LEGITIMATE_ADDRESS_P     cr16_legitimate_address_p
+
+#undef TARGET_LRA_P
+#define TARGET_LRA_P hook_bool_void_false
 
 /* Returning function value.  */
 #undef TARGET_FUNCTION_VALUE
@@ -354,7 +354,7 @@ cr16_compute_save_regs (void)
       /* If this reg is used and not call-used (except RA), save it.  */
       if (cr16_interrupt_function_p ())
 	{
-	  if (!current_function_is_leaf && call_used_regs[regno])
+	  if (!crtl->is_leaf && call_used_regs[regno])
 	    /* This is a volatile reg in a non-leaf interrupt routine - save 
 	       it for the sake of its sons.  */
 	    current_frame_info.save_regs[regno] = 1;
@@ -463,7 +463,7 @@ cr16_regno_reg_class (int regno)
 
 /* Return 1 if hard register REGNO can hold a value of machine-mode MODE.  */
 int
-cr16_hard_regno_mode_ok (int regno, enum machine_mode mode)
+cr16_hard_regno_mode_ok (int regno, machine_mode mode)
 {
   if ((GET_MODE_SIZE (mode) >= 4) && (regno == 11))
     return 0;
@@ -512,7 +512,7 @@ cr16_function_value_regno_p (const unsigned int regno)
 /* Create an RTX representing the place where a
    library function returns a value of mode MODE.  */
 static rtx
-cr16_libcall_value (enum machine_mode mode,
+cr16_libcall_value (machine_mode mode,
 		    const_rtx func ATTRIBUTE_UNUSED)
 {
   return gen_rtx_REG (mode, cr16_ret_register ());
@@ -534,7 +534,7 @@ cr16_function_value (const_tree type,
    the number of registers needed else 0.  */
 static int
 enough_regs_for_param (CUMULATIVE_ARGS * cum, const_tree type,
-		       enum machine_mode mode)
+		       machine_mode mode)
 {
   int type_size;
   int remaining_size;
@@ -558,7 +558,7 @@ enough_regs_for_param (CUMULATIVE_ARGS * cum, const_tree type,
 
 /* Implements the macro FUNCTION_ARG defined in cr16.h.  */
 static rtx
-cr16_function_arg (cumulative_args_t cum_v, enum machine_mode mode,
+cr16_function_arg (cumulative_args_t cum_v, machine_mode mode,
 		   const_tree type, bool named ATTRIBUTE_UNUSED)
 {
   CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
@@ -567,7 +567,7 @@ cr16_function_arg (cumulative_args_t cum_v, enum machine_mode mode,
   /* function_arg () is called with this type just after all the args have 
      had their registers assigned. The rtx that function_arg returns from 
      this type is supposed to pass to 'gen_call' but currently it is not 
-     implemented (see macro GEN_CALL).  */
+     implemented.  */
   if (type == void_type_node)
     return NULL_RTX;
 
@@ -625,7 +625,7 @@ cr16_init_cumulative_args (CUMULATIVE_ARGS * cum, tree fntype,
 
 /* Implements the macro FUNCTION_ARG_ADVANCE defined in cr16.h.  */
 static void
-cr16_function_arg_advance (cumulative_args_t cum_v, enum machine_mode mode,
+cr16_function_arg_advance (cumulative_args_t cum_v, machine_mode mode,
 			   const_tree type, bool named ATTRIBUTE_UNUSED)
 {
   CUMULATIVE_ARGS * cum = get_cumulative_args (cum_v);
@@ -1121,10 +1121,8 @@ legitimate_pic_operand_p (rtx x)
     {
     case SYMBOL_REF:
       return 0;
-      break;
     case LABEL_REF:
       return 0;
-      break;
     case CONST:
       /* REVISIT: Use something like symbol_referenced_p.  */
       if (GET_CODE (XEXP (x, 0)) == PLUS
@@ -1135,7 +1133,6 @@ legitimate_pic_operand_p (rtx x)
       break;
     case MEM:
       return legitimate_pic_operand_p (XEXP (x, 0));
-      break;
     default:
       break;
     }
@@ -1154,7 +1151,7 @@ legitimate_pic_operand_p (rtx x)
      NOTE: @BRO is added using unspec:BRO
      NOTE: @GOT is added using unspec:GOT.  */
 rtx
-legitimize_pic_address (rtx orig, enum machine_mode mode ATTRIBUTE_UNUSED,
+legitimize_pic_address (rtx orig, machine_mode mode ATTRIBUTE_UNUSED,
 			rtx reg)
 {
   /* First handle a simple SYMBOL_REF or LABEL_REF.  */
@@ -1207,7 +1204,7 @@ legitimize_pic_address (rtx orig, enum machine_mode mode ATTRIBUTE_UNUSED,
 
 /* Implementation of TARGET_LEGITIMATE_ADDRESS_P.  */
 static bool
-cr16_legitimate_address_p (enum machine_mode mode ATTRIBUTE_UNUSED,
+cr16_legitimate_address_p (machine_mode mode ATTRIBUTE_UNUSED,
 			   rtx addr, bool strict)
 {
   enum cr16_addrtype addrtype;
@@ -1286,7 +1283,9 @@ cr16_legitimate_address_p (enum machine_mode mode ATTRIBUTE_UNUSED,
 
 /* Return cost of the memory address x.  */
 static int
-cr16_address_cost (rtx addr, bool speed ATTRIBUTE_UNUSED)
+cr16_address_cost (rtx addr, machine_mode mode ATTRIBUTE_UNUSED,
+		   addr_space_t as ATTRIBUTE_UNUSED,
+		   bool speed ATTRIBUTE_UNUSED)
 {
   enum cr16_addrtype addrtype;
   struct cr16_address address;
@@ -1336,7 +1335,7 @@ cr16_address_cost (rtx addr, bool speed ATTRIBUTE_UNUSED)
 
 /* Implement `TARGET_REGISTER_MOVE_COST'.  */
 static int
-cr16_register_move_cost (enum machine_mode mode ATTRIBUTE_UNUSED,
+cr16_register_move_cost (machine_mode mode ATTRIBUTE_UNUSED,
 			 reg_class_t from ATTRIBUTE_UNUSED, reg_class_t to)
 {
   return (to != GENERAL_REGS ? 8 : 2);
@@ -1349,7 +1348,7 @@ cr16_register_move_cost (enum machine_mode mode ATTRIBUTE_UNUSED,
    nonzero if it is to be read in. This cost is relative to those in
    REGISTER_MOVE_COST.  */
 static int
-cr16_memory_move_cost (enum machine_mode mode,
+cr16_memory_move_cost (machine_mode mode,
 		       reg_class_t rclass ATTRIBUTE_UNUSED,
 		       bool in ATTRIBUTE_UNUSED)
 {
@@ -1368,10 +1367,8 @@ cr16_const_double_ok (rtx op)
 {
   if (GET_MODE (op) == SFmode)
     {
-      REAL_VALUE_TYPE r;
       long l;
-      REAL_VALUE_FROM_CONST_DOUBLE (r, op);
-      REAL_VALUE_TO_TARGET_SINGLE (r, l);
+      REAL_VALUE_TO_TARGET_SINGLE (*CONST_DOUBLE_REAL_VALUE (op), l);
       return UNSIGNED_INT_FITS_N_BITS (l, 4) ? 1 : 0;
     }
 
@@ -1479,6 +1476,7 @@ cr16_print_operand (FILE * file, rtx x, int code)
     case 'g':
       /* 'g' is used for implicit mem: dereference.  */
       ptr_dereference = 1;
+      /* FALLTHRU */
     case 'f':
     case 0:
       /* default.  */
@@ -1498,16 +1496,14 @@ cr16_print_operand (FILE * file, rtx x, int code)
 	  return;
 
 	case MEM:
-	  output_address (XEXP (x, 0));
+	  output_address (GET_MODE (x), XEXP (x, 0));
 	  return;
 
 	case CONST_DOUBLE:
 	  {
-	    REAL_VALUE_TYPE r;
 	    long l;
 
-	    REAL_VALUE_FROM_CONST_DOUBLE (r, x);
-	    REAL_VALUE_TO_TARGET_SINGLE (r, l);
+	    REAL_VALUE_TO_TARGET_SINGLE (*CONST_DOUBLE_REAL_VALUE (x), l);
 
 	    fprintf (file, "$0x%lx", l);
 	    return;
@@ -1530,9 +1526,10 @@ cr16_print_operand (FILE * file, rtx x, int code)
 	    {
 	      putc ('$', file);
 	    }
-	  cr16_print_operand_address (file, x);
+	  cr16_print_operand_address (file, VOIDmode, x);
 	  return;
 	}
+      gcc_unreachable ();
     default:
       output_operand_lossage ("invalid %%xn code");
     }
@@ -1543,7 +1540,7 @@ cr16_print_operand (FILE * file, rtx x, int code)
 /* Implements the macro PRINT_OPERAND_ADDRESS defined in cr16.h.  */
 
 static void
-cr16_print_operand_address (FILE * file, rtx addr)
+cr16_print_operand_address (FILE * file, machine_mode /*mode*/, rtx addr)
 {
   enum cr16_addrtype addrtype;
   struct cr16_address address;
@@ -1801,7 +1798,7 @@ cr16_create_dwarf_for_multi_push (rtx insn)
 {
   rtx dwarf, reg, tmp;
   int i, j, from, to, word_cnt, dwarf_par_index, inc;
-  enum machine_mode mode;
+  machine_mode mode;
   int num_regs = 0, offset = 0, split_here = 0, total_push_bytes = 0;
 
   for (i = 0; i <= current_frame_info.last_reg_to_save; ++i)
@@ -1848,10 +1845,9 @@ cr16_create_dwarf_for_multi_push (rtx insn)
 		}
 	      reg = gen_rtx_REG (mode, j);
 	      offset += 2 * inc;
-	      tmp = gen_rtx_SET (VOIDmode,
-				 gen_frame_mem (mode,
+	      tmp = gen_rtx_SET (gen_frame_mem (mode,
 						plus_constant
-						(stack_pointer_rtx,
+						(Pmode, stack_pointer_rtx,
 						 total_push_bytes - offset)),
 				 reg);
 	      RTX_FRAME_RELATED_P (tmp) = 1;
@@ -1879,7 +1875,7 @@ cr16_create_dwarf_for_multi_push (rtx insn)
       from = i--;
     }
 
-  tmp = gen_rtx_SET (SImode, stack_pointer_rtx,
+  tmp = gen_rtx_SET (stack_pointer_rtx,
 		     gen_rtx_PLUS (SImode, stack_pointer_rtx,
 				   GEN_INT (-offset)));
   RTX_FRAME_RELATED_P (tmp) = 1;
@@ -2043,7 +2039,7 @@ cr16_can_eliminate (const int from ATTRIBUTE_UNUSED, const int to)
    it should assign X (which will always be a C variable) a new value.  */
 static rtx
 cr16_legitimize_address (rtx x, rtx orig_x ATTRIBUTE_UNUSED,
-			 enum machine_mode mode ATTRIBUTE_UNUSED)
+			 machine_mode mode ATTRIBUTE_UNUSED)
 {
   if (flag_pic)
     return legitimize_pic_address (orig_x, mode, NULL_RTX);
@@ -2057,7 +2053,7 @@ cr16_legitimize_address (rtx x, rtx orig_x ATTRIBUTE_UNUSED,
    satisfies CONSTANT_P. In cr16c treat legitimize float 
    constant as an immediate operand.  */
 static bool
-cr16_legitimate_constant_p (enum machine_mode mode ATTRIBUTE_UNUSED,
+cr16_legitimate_constant_p (machine_mode mode ATTRIBUTE_UNUSED,
 			    rtx x ATTRIBUTE_UNUSED)
 {
   return 1;
@@ -2094,7 +2090,7 @@ notice_update_cc (rtx exp)
   return;
 }
 
-static enum machine_mode
+static machine_mode
 cr16_unwind_word_mode (void)
 {
   return SImode;

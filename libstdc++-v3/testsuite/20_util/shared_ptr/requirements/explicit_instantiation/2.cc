@@ -1,7 +1,6 @@
-// { dg-options "-std=gnu++0x" }
-// { dg-do compile }
+// { dg-do compile { target c++11 } }
 
-// Copyright (C) 2007, 2009 Free Software Foundation
+// Copyright (C) 2007-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -27,8 +26,7 @@
 // library this checks the templates can be instantiated for non-default
 // lock policy, for a single-threaded lib this is redundant but harmless.
 using namespace __gnu_test;
-using std::__shared_ptr;
 using std::_S_single;
-template class __shared_ptr<int, _S_single>;
-template class __shared_ptr<ClassType, _S_single>;
-template class __shared_ptr<IncompleteClass, _S_single>;
+template class std::__shared_ptr<int, _S_single>;
+template class std::__shared_ptr<ClassType, _S_single>;
+template class std::__shared_ptr<IncompleteClass, _S_single>;

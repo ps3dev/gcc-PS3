@@ -1,4 +1,4 @@
-// Copyright 2010 The Go Authors.  All rights reserved.
+// Copyright 2010 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -87,7 +87,7 @@ func Dial(network, addr string) (*Conn, error) {
 }
 
 // Cmd is a convenience method that sends a command after
-// waiting its turn in the pipeline.  The command text is the
+// waiting its turn in the pipeline. The command text is the
 // result of formatting format with args and appending \r\n.
 // Cmd returns the id of the command, for use with StartResponse and EndResponse.
 //
@@ -105,7 +105,7 @@ func Dial(network, addr string) (*Conn, error) {
 //	if _, _, err = c.ReadCodeLine(110); err != nil {
 //		return nil, err
 //	}
-//	text, err := c.ReadDotAll()
+//	text, err := c.ReadDotBytes()
 //	if err != nil {
 //		return nil, err
 //	}
@@ -120,4 +120,35 @@ func (c *Conn) Cmd(format string, args ...interface{}) (id uint, err error) {
 		return 0, err
 	}
 	return id, nil
+}
+
+// TrimString returns s without leading and trailing ASCII space.
+func TrimString(s string) string {
+	for len(s) > 0 && isASCIISpace(s[0]) {
+		s = s[1:]
+	}
+	for len(s) > 0 && isASCIISpace(s[len(s)-1]) {
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
+// TrimBytes returns b without leading and trailing ASCII space.
+func TrimBytes(b []byte) []byte {
+	for len(b) > 0 && isASCIISpace(b[0]) {
+		b = b[1:]
+	}
+	for len(b) > 0 && isASCIISpace(b[len(b)-1]) {
+		b = b[:len(b)-1]
+	}
+	return b
+}
+
+func isASCIISpace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
+}
+
+func isASCIILetter(b byte) bool {
+	b |= 0x20 // make lower case
+	return 'a' <= b && b <= 'z'
 }

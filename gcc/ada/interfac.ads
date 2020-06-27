@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 2002-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 2002-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- This specification is derived from the Ada Reference Manual for use with --
 -- GNAT. The copyright notice above, and the license provisions that follow --
@@ -33,7 +33,10 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
+pragma Compiler_Unit_Warning;
+
 package Interfaces is
+   pragma No_Elaboration_Code_All;
    pragma Pure;
 
    --  All identifiers in this unit are implementation defined
@@ -49,20 +52,31 @@ package Interfaces is
    type Integer_32 is range -2 ** 31 .. 2 ** 31 - 1;
    for Integer_32'Size use 32;
 
-   type Integer_64 is range -2 ** 63 .. 2 ** 63 - 1;
+   type Integer_64 is new Long_Long_Integer;
    for Integer_64'Size use 64;
+   --  Note: we use Long_Long_Integer'First instead of -2 ** 63 to allow this
+   --  unit to compile when using custom target configuration files where the
+   --  maximum integer is 32 bits. This is useful for static analysis tools
+   --  such as SPARK or CodePeer. In the normal case Long_Long_Integer is
+   --  always 64-bits so we get the desired 64-bit type.
 
-   type Unsigned_8  is mod 2 **  8;
+   type Unsigned_8  is mod 2 ** 8;
    for Unsigned_8'Size use  8;
 
    type Unsigned_16 is mod 2 ** 16;
    for Unsigned_16'Size use 16;
 
+   type Unsigned_24 is mod 2 ** 24;
+   for Unsigned_24'Size use 24;
+   --  Declare this type for compatibility with legacy Ada compilers.
+   --  This is particularly useful in the context of CodePeer analysis.
+
    type Unsigned_32 is mod 2 ** 32;
    for Unsigned_32'Size use 32;
 
-   type Unsigned_64 is mod 2 ** 64;
+   type Unsigned_64 is mod 2 ** Long_Long_Integer'Size;
    for Unsigned_64'Size use 64;
+   --  See comment on Integer_64 above
 
    function Shift_Left
      (Value  : Unsigned_8;
@@ -150,18 +164,13 @@ package Interfaces is
    pragma Import (Intrinsic, Rotate_Left);
    pragma Import (Intrinsic, Rotate_Right);
 
-   --  IEEE Floating point types. Note that the form of these definitions
-   --  ensures that the work on VMS, even if the standard library is compiled
-   --  using a Float_Representation pragma for Vax_Float.
-
-   pragma Warnings (Off);
-   --  Turn off warnings for targets not providing IEEE floating-point types
+   --  IEEE Floating point types
 
    type IEEE_Float_32 is digits 6;
-   pragma Float_Representation (IEEE_Float, IEEE_Float_32);
+   for IEEE_Float_32'Size use 32;
 
    type IEEE_Float_64 is digits 15;
-   pragma Float_Representation (IEEE_Float, IEEE_Float_64);
+   for IEEE_Float_64'Size use 64;
 
    --  If there is an IEEE extended float available on the machine, we assume
    --  that it is available as Long_Long_Float.

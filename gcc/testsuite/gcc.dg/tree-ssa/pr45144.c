@@ -43,5 +43,4 @@ bar (unsigned orig, unsigned *new)
   *new = foo (&a);
 }
 
-/* { dg-final { scan-tree-dump " = VIEW_CONVERT_EXPR<unsigned int>\\(a\\);" "optimized"} } */
-/* { dg-final { cleanup-tree-dump "optimized" } } */
+/* { dg-final { scan-tree-dump-not "unnamed-unsigned:19" "optimized"} } */

@@ -1,6 +1,8 @@
 /* { dg-do compile } */
 /* { dg-options "-O -fdump-tree-ccp1" } */
 
+void h (void);
+
 int g (int i, int j)
 {
   int t = 0;
@@ -16,4 +18,3 @@ int g (int i, int j)
 }
 
 /* { dg-final { scan-tree-dump-times "Folding predicate.*to 1" 1 "ccp1" } } */
-/* { dg-final { cleanup-tree-dump "ccp1" } } */

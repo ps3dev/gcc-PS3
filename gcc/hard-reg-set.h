@@ -1,6 +1,5 @@
 /* Sets (bit vectors) of hard registers, and operations on them.
-   Copyright (C) 1987, 1992, 1994, 2000, 2003, 2004, 2005, 2007, 2008, 2009,
-   2010, 2012 Free Software Foundation, Inc.
+   Copyright (C) 1987-2017 Free Software Foundation, Inc.
 
 This file is part of GCC
 
@@ -169,32 +168,38 @@ do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
      scan_tp_[1] = -1; } while (0)
 
 #define COPY_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM);	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      scan_tp_[0] = scan_fp_[0];					\
      scan_tp_[1] = scan_fp_[1]; } while (0)
 
 #define COMPL_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      scan_tp_[0] = ~ scan_fp_[0];				\
      scan_tp_[1] = ~ scan_fp_[1]; } while (0)
 
 #define AND_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      scan_tp_[0] &= scan_fp_[0];				\
      scan_tp_[1] &= scan_fp_[1]; } while (0)
 
 #define AND_COMPL_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      scan_tp_[0] &= ~ scan_fp_[0];				\
      scan_tp_[1] &= ~ scan_fp_[1]; } while (0)
 
 #define IOR_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      scan_tp_[0] |= scan_fp_[0];				\
      scan_tp_[1] |= scan_fp_[1]; } while (0)
 
 #define IOR_COMPL_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      scan_tp_[0] |= ~ scan_fp_[0];				\
      scan_tp_[1] |= ~ scan_fp_[1]; } while (0)
 
@@ -237,37 +242,43 @@ do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
      scan_tp_[2] = -1; } while (0)
 
 #define COPY_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM);	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      scan_tp_[0] = scan_fp_[0];					\
      scan_tp_[1] = scan_fp_[1];					\
      scan_tp_[2] = scan_fp_[2]; } while (0)
 
 #define COMPL_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      scan_tp_[0] = ~ scan_fp_[0];				\
      scan_tp_[1] = ~ scan_fp_[1];				\
      scan_tp_[2] = ~ scan_fp_[2]; } while (0)
 
 #define AND_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      scan_tp_[0] &= scan_fp_[0];				\
      scan_tp_[1] &= scan_fp_[1];				\
      scan_tp_[2] &= scan_fp_[2]; } while (0)
 
 #define AND_COMPL_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      scan_tp_[0] &= ~ scan_fp_[0];				\
      scan_tp_[1] &= ~ scan_fp_[1];				\
      scan_tp_[2] &= ~ scan_fp_[2]; } while (0)
 
 #define IOR_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      scan_tp_[0] |= scan_fp_[0];				\
      scan_tp_[1] |= scan_fp_[1];				\
      scan_tp_[2] |= scan_fp_[2]; } while (0)
 
 #define IOR_COMPL_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      scan_tp_[0] |= ~ scan_fp_[0];				\
      scan_tp_[1] |= ~ scan_fp_[1];				\
      scan_tp_[2] |= ~ scan_fp_[2]; } while (0)
@@ -317,42 +328,48 @@ do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
      scan_tp_[3] = -1; } while (0)
 
 #define COPY_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM);	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      scan_tp_[0] = scan_fp_[0];					\
      scan_tp_[1] = scan_fp_[1];					\
      scan_tp_[2] = scan_fp_[2];					\
      scan_tp_[3] = scan_fp_[3]; } while (0)
 
 #define COMPL_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      scan_tp_[0] = ~ scan_fp_[0];				\
      scan_tp_[1] = ~ scan_fp_[1];				\
      scan_tp_[2] = ~ scan_fp_[2];				\
      scan_tp_[3] = ~ scan_fp_[3]; } while (0)
 
 #define AND_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      scan_tp_[0] &= scan_fp_[0];				\
      scan_tp_[1] &= scan_fp_[1];				\
      scan_tp_[2] &= scan_fp_[2];				\
      scan_tp_[3] &= scan_fp_[3]; } while (0)
 
 #define AND_COMPL_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      scan_tp_[0] &= ~ scan_fp_[0];				\
      scan_tp_[1] &= ~ scan_fp_[1];				\
      scan_tp_[2] &= ~ scan_fp_[2];				\
      scan_tp_[3] &= ~ scan_fp_[3]; } while (0)
 
 #define IOR_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      scan_tp_[0] |= scan_fp_[0];				\
      scan_tp_[1] |= scan_fp_[1];				\
      scan_tp_[2] |= scan_fp_[2];				\
      scan_tp_[3] |= scan_fp_[3]; } while (0)
 
 #define IOR_COMPL_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      scan_tp_[0] |= ~ scan_fp_[0];				\
      scan_tp_[1] |= ~ scan_fp_[1];				\
      scan_tp_[2] |= ~ scan_fp_[2];				\
@@ -403,37 +420,43 @@ do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
        *scan_tp_++ = -1; } while (0)
 
 #define COPY_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      int i;							\
      for (i = 0; i < HARD_REG_SET_LONGS; i++)			\
        *scan_tp_++ = *scan_fp_++; } while (0)
 
 #define COMPL_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      int i;							\
      for (i = 0; i < HARD_REG_SET_LONGS; i++)			\
        *scan_tp_++ = ~ *scan_fp_++; } while (0)
 
 #define AND_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      int i;							\
      for (i = 0; i < HARD_REG_SET_LONGS; i++)			\
        *scan_tp_++ &= *scan_fp_++; } while (0)
 
 #define AND_COMPL_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      int i;							\
      for (i = 0; i < HARD_REG_SET_LONGS; i++)			\
        *scan_tp_++ &= ~ *scan_fp_++; } while (0)
 
 #define IOR_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      int i;							\
      for (i = 0; i < HARD_REG_SET_LONGS; i++)			\
        *scan_tp_++ |= *scan_fp_++; } while (0)
 
 #define IOR_COMPL_HARD_REG_SET(TO, FROM)  \
-do { HARD_REG_ELT_TYPE *scan_tp_ = (TO), *scan_fp_ = (FROM); 	\
+do { HARD_REG_ELT_TYPE *scan_tp_ = (TO);			\
+     const HARD_REG_ELT_TYPE *scan_fp_ = (FROM);		\
      int i;							\
      for (i = 0; i < HARD_REG_SET_LONGS; i++)			\
        *scan_tp_++ |= ~ *scan_fp_++; } while (0)
@@ -489,7 +512,7 @@ hard_reg_set_empty_p (const HARD_REG_SET x)
 
 /* Iterator for hard register sets.  */
 
-typedef struct
+struct hard_reg_set_iterator
 {
   /* Pointer to the current element.  */
   HARD_REG_ELT_TYPE *pelt;
@@ -504,7 +527,7 @@ typedef struct
      it is shifted right, so that the actual bit is always the least
      significant bit of ACTUAL.  */
   HARD_REG_ELT_TYPE bits;
-} hard_reg_set_iterator;
+};
 
 #define HARD_REG_ELT_BITS UHOST_BITS_PER_WIDE_INT
 
@@ -590,7 +613,20 @@ hard_reg_set_iter_next (hard_reg_set_iterator *iter, unsigned *regno)
 
 extern char global_regs[FIRST_PSEUDO_REGISTER];
 
+struct simplifiable_subreg;
+struct subreg_shape;
+
+struct simplifiable_subregs_hasher : nofree_ptr_hash <simplifiable_subreg>
+{
+  typedef const subreg_shape *compare_type;
+
+  static inline hashval_t hash (const simplifiable_subreg *);
+  static inline bool equal (const simplifiable_subreg *, const subreg_shape *);
+};
+
 struct target_hard_regs {
+  void finalize ();
+
   /* The set of registers that actually exist on the current target.  */
   HARD_REG_SET x_accessible_reg_set;
 
@@ -623,6 +659,12 @@ struct target_hard_regs {
      STATIC_CHAIN_REGNUM.  These are the registers that cannot hold quantities
      across calls even if we are willing to save and restore them.  */
   HARD_REG_SET x_call_fixed_reg_set;
+
+  /* Contains registers that are fixed use -- i.e. in fixed_reg_set -- but
+     only if they are not merely part of that set because they are global
+     regs.  Global regs that are not otherwise fixed can still take part
+     in register allocation.  */
+  HARD_REG_SET x_fixed_nonglobal_reg_set;
 
   /* Contains 1 for registers that are set or clobbered by calls.  */
   /* ??? Ideally, this would be just call_used_regs plus global_regs, but
@@ -665,6 +707,10 @@ struct target_hard_regs {
 
   /* Vector indexed by hardware reg giving its name.  */
   const char *x_reg_names[FIRST_PSEUDO_REGISTER];
+
+  /* Records which registers can form a particular subreg, with the subreg
+     being identified by its outer mode, inner mode and offset.  */
+  hash_table <simplifiable_subregs_hasher> *x_simplifiable_subregs;
 };
 
 extern struct target_hard_regs default_target_hard_regs;
@@ -682,6 +728,8 @@ extern struct target_hard_regs *this_target_hard_regs;
   (this_target_hard_regs->x_fixed_regs)
 #define fixed_reg_set \
   (this_target_hard_regs->x_fixed_reg_set)
+#define fixed_nonglobal_reg_set \
+  (this_target_hard_regs->x_fixed_nonglobal_reg_set)
 #define call_used_regs \
   (this_target_hard_regs->x_call_used_regs)
 #define call_really_used_regs \

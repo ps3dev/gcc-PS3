@@ -18,7 +18,7 @@ dnl the "ISO C9X: 7.18 Integer types <stdint.h>" section requires the
 dnl existence of an include file <stdint.h> that defines a set of
 dnl typedefs, especially uint8_t,int32_t,uintptr_t.
 dnl Many older installations will not provide this file, but some will
-dnl have the very same definitions in <inttypes.h>. In other enviroments
+dnl have the very same definitions in <inttypes.h>. In other environments
 dnl we can use the inet-types in <sys/types.h> which would define the
 dnl typedefs int8_t and u_int8_t respectivly.
 dnl
@@ -39,7 +39,7 @@ dnl If your installed header files require the stdint-types you will want to
 dnl create an installable file mylib-int.h that all your other installable
 dnl header may include. So, for a library package named "mylib", just use
 dnl      GCC_HEADER_STDINT(mylib-int.h)
-dnl in configure.in and install that header file in Makefile.am along with
+dnl in configure.ac and install that header file in Makefile.am along with
 dnl the other headers (mylib.h).  The mylib-specific headers can simply
 dnl use "#include <mylib-int.h>" to obtain the stdint-types.
 dnl

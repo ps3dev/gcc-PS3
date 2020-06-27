@@ -1,7 +1,5 @@
 /* Definitions of target machine for GCC for Motorola 680x0/ColdFire.
-   Copyright (C) 1987, 1988, 1993, 1994, 1995, 1996, 1997, 1998, 1999,
-   2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 1987-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -42,7 +40,8 @@ along with GCC; see the file COPYING3.  If not see
 %{m68020-40:-m68040}%{m68020-60:-m68040}\
 %{mcpu=*:-mcpu=%*}%{march=*:-march=%*}\
 "
-#define ASM_PCREL_SPEC "%{fPIC|fpic|mpcrel:--pcrel} \
+#define ASM_PCREL_SPEC "%{" FPIE_OR_FPIC_SPEC ":--pcrel} \
+ %{mpcrel:%{" NO_FPIE_AND_FPIC_SPEC ":--pcrel}} \
  %{msep-data|mid-shared-library:--pcrel} \
 "
 
@@ -281,19 +280,6 @@ along with GCC; see the file COPYING3.  If not see
 
 #define LONG_DOUBLE_TYPE_SIZE			\
   ((TARGET_COLDFIRE || TARGET_FIDOA) ? 64 : 80)
-
-/* We need to know the size of long double at compile-time in libgcc2.  */
-
-#if defined(__mcoldfire__) || defined(__mfido__)
-#define LIBGCC2_LONG_DOUBLE_TYPE_SIZE 64
-#else
-#define LIBGCC2_LONG_DOUBLE_TYPE_SIZE 80
-#endif
-
-/* Set the value of FLT_EVAL_METHOD in float.h.  When using 68040 fp
-   instructions, we get proper intermediate rounding, otherwise we
-   get extended precision results.  */
-#define TARGET_FLT_EVAL_METHOD ((TARGET_68040 || ! TARGET_68881) ? 0 : 2)
 
 #define BITS_BIG_ENDIAN 1
 #define BYTES_BIG_ENDIAN 1
@@ -689,7 +675,7 @@ __transfer_from_trampoline ()					\
 
 /* This address is OK as it stands.  */
 #define PIC_CASE_VECTOR_ADDRESS(index) index
-#define CASE_VECTOR_MODE HImode
+#define CASE_VECTOR_MODE (TARGET_LONG_JUMP_TABLE_OFFSETS ? SImode : HImode)
 #define CASE_VECTOR_PC_RELATIVE 1
 
 #define DEFAULT_SIGNED_CHAR 1
@@ -698,7 +684,7 @@ __transfer_from_trampoline ()					\
 
 #define TRULY_NOOP_TRUNCATION(OUTPREC, INPREC) 1
 
-/* The ColdFire FF1 instruction returns 32 for zero. */
+/* The 68020 BFFFO and ColdFire FF1 instructions return 32 for zero. */
 #define CLZ_DEFINED_VALUE_AT_ZERO(MODE, VALUE) ((VALUE) = 32, 1)
 
 #define STORE_FLAG_VALUE (-1)
@@ -777,13 +763,14 @@ do { if (cc_prev_status.flags & CC_IN_68881)			\
 
 /* Before the prologue, RA is at 0(%sp).  */
 #define INCOMING_RETURN_ADDR_RTX \
-  gen_rtx_MEM (VOIDmode, gen_rtx_REG (VOIDmode, STACK_POINTER_REGNUM))
+  gen_rtx_MEM (Pmode, gen_rtx_REG (Pmode, STACK_POINTER_REGNUM))
 
 /* After the prologue, RA is at 4(AP) in the current frame.  */
 #define RETURN_ADDR_RTX(COUNT, FRAME)					   \
   ((COUNT) == 0								   \
-   ? gen_rtx_MEM (Pmode, plus_constant (arg_pointer_rtx, UNITS_PER_WORD)) \
-   : gen_rtx_MEM (Pmode, plus_constant (FRAME, UNITS_PER_WORD)))
+   ? gen_rtx_MEM (Pmode, plus_constant (Pmode, arg_pointer_rtx,	   \
+					UNITS_PER_WORD))		   \
+   : gen_rtx_MEM (Pmode, plus_constant (Pmode, FRAME, UNITS_PER_WORD)))
 
 /* We must not use the DBX register numbers for the DWARF 2 CFA column
    numbers because that maps to numbers beyond FIRST_PSEUDO_REGISTER.
@@ -801,11 +788,7 @@ do { if (cc_prev_status.flags & CC_IN_68881)			\
 /* Before the prologue, the top of the frame is at 4(%sp).  */
 #define INCOMING_FRAME_SP_OFFSET 4
 
-/* All registers are live on exit from an interrupt routine.  */
-#define EPILOGUE_USES(REGNO)					\
-  (reload_completed						\
-   && (m68k_get_function_kind (current_function_decl)	\
-       == m68k_fk_interrupt_handler))
+#define EPILOGUE_USES(REGNO) m68k_epilogue_uses (REGNO)
 
 /* Describe how we implement __builtin_eh_return.  */
 #define EH_RETURN_DATA_REGNO(N) \
@@ -814,7 +797,7 @@ do { if (cc_prev_status.flags & CC_IN_68881)			\
 #define EH_RETURN_HANDLER_RTX					    \
   gen_rtx_MEM (Pmode,						    \
 	       gen_rtx_PLUS (Pmode, arg_pointer_rtx,		    \
-			     plus_constant (EH_RETURN_STACKADJ_RTX, \
+			     plus_constant (Pmode, EH_RETURN_STACKADJ_RTX, \
 					    UNITS_PER_WORD)))
 
 /* Select a format to encode pointers in exception handling data.  CODE
@@ -874,7 +857,11 @@ do { if (cc_prev_status.flags & CC_IN_68881)			\
   asm_fprintf (FILE, "\t.long %LL%d\n", VALUE)
 
 #define ASM_OUTPUT_ADDR_DIFF_ELT(FILE, BODY, VALUE, REL)  \
-  asm_fprintf (FILE, "\t.word %LL%d-%LL%d\n", VALUE, REL)
+  asm_fprintf (FILE,						\
+	       TARGET_LONG_JUMP_TABLE_OFFSETS			\
+	       ? "\t.long %LL%d-%LL%d\n"			\
+	       : "\t.word %LL%d-%LL%d\n",			\
+	       VALUE, REL)
 
 /* We don't have a way to align to more than a two-byte boundary, so do the
    best we can and don't complain.  */
@@ -979,7 +966,7 @@ extern M68K_CONST_METHOD m68k_const_method (HOST_WIDE_INT);
 
 extern void m68k_emit_move_double (rtx [2]);
 
-extern int m68k_sched_address_bypass_p (rtx, rtx);
-extern int m68k_sched_indexed_address_bypass_p (rtx, rtx);
+extern int m68k_sched_address_bypass_p (rtx_insn *, rtx_insn *);
+extern int m68k_sched_indexed_address_bypass_p (rtx_insn *, rtx_insn *);
 
 #define CPU_UNITS_QUERY 1

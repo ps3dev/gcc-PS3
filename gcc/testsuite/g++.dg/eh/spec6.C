@@ -1,9 +1,10 @@
 // Test that we don't allow incomplete types in an exception-specification
 // for a definition, or at a call site.
 
+// { dg-do compile { target c++14_down } }
 // { dg-options "-fpermissive -w" }
 
-struct A;			// { dg-error "" }
+struct A;			// { dg-message "" }
 
 struct B
 {

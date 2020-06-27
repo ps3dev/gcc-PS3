@@ -1,8 +1,6 @@
 // Allocator that wraps "C" malloc -*- C++ -*-
 
-// Copyright (C) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009,
-// 2010, 2011
-// Free Software Foundation, Inc.
+// Copyright (C) 2001-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -32,9 +30,13 @@
 #define _MALLOC_ALLOCATOR_H 1
 
 #include <cstdlib>
+#include <cstddef>
 #include <new>
 #include <bits/functexcept.h>
 #include <bits/move.h>
+#if __cplusplus >= 201103L
+#include <type_traits>
+#endif
 
 namespace __gnu_cxx _GLIBCXX_VISIBILITY(default)
 {
@@ -67,6 +69,12 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
         struct rebind
         { typedef malloc_allocator<_Tp1> other; };
 
+#if __cplusplus >= 201103L
+      // _GLIBCXX_RESOLVE_LIB_DEFECTS
+      // 2103. propagate_on_container_move_assignment
+      typedef std::true_type propagate_on_container_move_assignment;
+#endif
+
       malloc_allocator() _GLIBCXX_USE_NOEXCEPT { }
 
       malloc_allocator(const malloc_allocator&) _GLIBCXX_USE_NOEXCEPT { }
@@ -93,9 +101,31 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	if (__n > this->max_size())
 	  std::__throw_bad_alloc();
 
-	pointer __ret = static_cast<_Tp*>(std::malloc(__n * sizeof(_Tp)));
+	pointer __ret = 0;
+#if __cpp_aligned_new
+#if __cplusplus > 201402L && _GLIBCXX_HAVE_ALIGNED_ALLOC
+	if (alignof(_Tp) > alignof(std::max_align_t))
+	  {
+	    __ret = static_cast<_Tp*>(::aligned_alloc(alignof(_Tp),
+						      __n * sizeof(_Tp)));
+	  }
+#else
+# define _GLIBCXX_CHECK_MALLOC_RESULT
+#endif
+#endif
+	if (!__ret)
+	  __ret = static_cast<_Tp*>(std::malloc(__n * sizeof(_Tp)));
 	if (!__ret)
 	  std::__throw_bad_alloc();
+#ifdef _GLIBCXX_CHECK_MALLOC_RESULT
+#undef _GLIBCXX_CHECK_MALLOC_RESULT
+	  if (reinterpret_cast<std::size_t>(__ret) % alignof(_Tp))
+	    {
+	      // Memory returned by malloc is not suitably aligned for _Tp.
+	      deallocate(__ret, __n);
+	      std::__throw_bad_alloc();
+	    }
+#endif
 	return __ret;
       }
 
@@ -108,7 +138,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       max_size() const _GLIBCXX_USE_NOEXCEPT 
       { return size_t(-1) / sizeof(_Tp); }
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
       template<typename _Up, typename... _Args>
         void
         construct(_Up* __p, _Args&&... __args)

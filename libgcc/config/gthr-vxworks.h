@@ -1,7 +1,6 @@
 /* Threads compatibility routines for libgcc2 and libobjc for VxWorks.  */
 /* Compile this one with gcc.  */
-/* Copyright (C) 1997, 1999, 2000, 2008, 2009, 2011
-   Free Software Foundation, Inc.
+/* Copyright (C) 1997-2017 Free Software Foundation, Inc.
    Contributed by Mike Stump <mrs@wrs.com>.
 
 This file is part of GCC.
@@ -37,7 +36,7 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #ifdef __cplusplus
 #define UNUSED(x)
 #else
-#define UNUSED(x) x __attribute__((unused))
+#define UNUSED(x) x __attribute__((__unused__))
 #endif
 
 #ifdef __cplusplus
@@ -109,6 +108,12 @@ static inline int
 __gthread_recursive_mutex_unlock (__gthread_recursive_mutex_t *mutex)
 {
   return __gthread_mutex_unlock (mutex);
+}
+
+static inline int
+__gthread_recursive_mutex_destroy (__gthread_recursive_mutex_t *__mutex)
+{
+  return __gthread_mutex_destroy (__mutex);
 }
 
 /* pthread_once is complicated enough that it's implemented
