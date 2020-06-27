@@ -75,6 +75,7 @@
    (UNSPECV_CAS			8)
    (UNSPECV_SWAP		9)
    (UNSPECV_LDSTUB		10)
+   (UNSPECV_PROBE_STACK_RANGE	11)
   ])
 
 
@@ -103,9 +104,14 @@
    cypress,
    v8,
    supersparc,
-   sparclite,f930,f934,
-   hypersparc,sparclite86x,
-   sparclet,tsc701,
+   hypersparc,
+   leon,
+   sparclite,
+   f930,
+   f934,
+   sparclite86x,
+   sparclet,
+   tsc701,
    v9,
    ultrasparc,
    ultrasparc3,
@@ -338,6 +344,7 @@
 (include "cypress.md")
 (include "supersparc.md")
 (include "hypersparc.md")
+(include "leon.md")
 (include "sparclet.md")
 (include "ultra1_2.md")
 (include "ultra3.md")
@@ -1106,14 +1113,15 @@
 
 ;; Load in operand 0 the (absolute) address of operand 1, which is a symbolic
 ;; value subject to a PC-relative relocation.  Operand 2 is a helper function
-;; that adds the PC value at the call point to operand 0.
+;; that adds the PC value at the call point to register #(operand 3).
 
 (define_insn "load_pcrel_sym<P:mode>"
   [(set (match_operand:P 0 "register_operand" "=r")
 	(unspec:P [(match_operand:P 1 "symbolic_operand" "")
-		   (match_operand:P 2 "call_address_operand" "")] UNSPEC_LOAD_PCREL_SYM))
+		   (match_operand:P 2 "call_address_operand" "")
+		   (match_operand:P 3 "const_int_operand" "")] UNSPEC_LOAD_PCREL_SYM))
    (clobber (reg:P 15))]
-  ""
+  "REGNO (operands[0]) == INTVAL (operands[3])"
 {
   if (flag_delayed_branch)
     return "sethi\t%%hi(%a1-4), %0\n\tcall\t%a2\n\t add\t%0, %%lo(%a1+4), %0";
@@ -3506,7 +3514,7 @@
     }
 })
 
-(define_insn_and_split "adddi3_insn_sp32"
+(define_insn_and_split "*adddi3_insn_sp32"
   [(set (match_operand:DI 0 "register_operand" "=r")
 	(plus:DI (match_operand:DI 1 "arith_double_operand" "%r")
 		 (match_operand:DI 2 "arith_double_operand" "rHI")))
@@ -3579,7 +3587,7 @@
   "addx\t%r1, %2, %0"
   [(set_attr "type" "ialuX")])
 
-(define_insn_and_split ""
+(define_insn_and_split "*adddi3_extend_sp32"
   [(set (match_operand:DI 0 "register_operand" "=r")
         (plus:DI (zero_extend:DI (match_operand:SI 1 "register_operand" "r"))
                  (match_operand:DI 2 "register_operand" "r")))
@@ -3679,7 +3687,7 @@
     }
 })
 
-(define_insn_and_split "subdi3_insn_sp32"
+(define_insn_and_split "*subdi3_insn_sp32"
   [(set (match_operand:DI 0 "register_operand" "=r")
 	(minus:DI (match_operand:DI 1 "register_operand" "r")
 		  (match_operand:DI 2 "arith_double_operand" "rHI")))
@@ -3751,7 +3759,7 @@
    operands[4] = gen_highpart (SImode, operands[0]);"
   [(set_attr "length" "2")])
 
-(define_insn_and_split ""
+(define_insn_and_split "*subdi3_extend_sp32"
   [(set (match_operand:DI 0 "register_operand" "=r")
       (minus:DI (match_operand:DI 1 "register_operand" "r")
                 (zero_extend:DI (match_operand:SI 2 "register_operand" "r"))))
@@ -5063,7 +5071,7 @@
   [(set (match_operand:DI 0 "register_operand" "=r")
 	(neg:DI (match_operand:DI 1 "register_operand" "r")))
    (clobber (reg:CC 100))]
-  "TARGET_ARCH32"
+  "! TARGET_ARCH64"
   "#"
   "&& reload_completed"
   [(parallel [(set (reg:CC_NOOV 100)
@@ -6314,9 +6322,7 @@
 			       (if_then_else (eq_attr "isa" "v9")
 					     (const_int 2)
 					     (const_int 3))
-			       (if_then_else (eq_attr "isa" "v9")
-					     (const_int 3)
-					     (const_int 4)))
+			       (const_int 4))
 	       (eq_attr "empty_delay_slot" "true")
 		 (if_then_else (eq_attr "delayed_branch" "true")
 			       (const_int 2)
@@ -6339,6 +6345,15 @@
   operands[0]
     = adjust_address (operands[0], GET_MODE (operands[0]), SPARC_STACK_BIAS);
 })
+
+(define_insn "probe_stack_range<P:mode>"
+  [(set (match_operand:P 0 "register_operand" "=r")
+	(unspec_volatile:P [(match_operand:P 1 "register_operand" "0")
+			    (match_operand:P 2 "register_operand" "r")]
+			    UNSPECV_PROBE_STACK_RANGE))]
+  ""
+  "* return output_probe_stack_range (operands[0], operands[2]);"
+  [(set_attr "type" "multi")])
 
 ;; Prepare to return any type including a structure value.
 
@@ -6490,8 +6505,8 @@
 		      (const_int 4)))])
 
 ;; For __builtin_setjmp we need to flush register windows iff the function
-;; calls alloca as well, because otherwise the register window might be
-;; saved after %sp adjustment and thus setjmp would crash
+;; calls alloca as well, because otherwise the current register window might
+;; be saved after the %sp adjustment and thus setjmp would crash.
 (define_expand "builtin_setjmp_setup"
   [(match_operand 0 "register_operand" "r")]
   ""
@@ -6530,19 +6545,26 @@
                (eq_attr "pic" "true")
                  (const_int 4)] (const_int 3)))])
 
-;; Pattern for use after a setjmp to store FP and the return register
-;; into the stack area.
+;; Pattern for use after a setjmp to store registers into the save area.
 
 (define_expand "setjmp"
   [(const_int 0)]
   ""
 {
   rtx mem;
-  
+
+  if (flag_pic)
+    {
+      mem = gen_rtx_MEM (Pmode,
+			 plus_constant (stack_pointer_rtx,
+					SPARC_STACK_BIAS + 7 * UNITS_PER_WORD));
+      emit_insn (gen_rtx_SET (VOIDmode, mem, pic_offset_table_rtx));
+    }
+
   mem = gen_rtx_MEM (Pmode,
 		     plus_constant (stack_pointer_rtx,
 				    SPARC_STACK_BIAS + 14 * UNITS_PER_WORD));
-  emit_insn (gen_rtx_SET (VOIDmode, mem, frame_pointer_rtx));
+  emit_insn (gen_rtx_SET (VOIDmode, mem, hard_frame_pointer_rtx));
 
   mem = gen_rtx_MEM (Pmode,
 		     plus_constant (stack_pointer_rtx,
