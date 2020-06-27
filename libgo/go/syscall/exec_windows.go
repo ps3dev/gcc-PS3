@@ -129,27 +129,23 @@ func SetNonblock(fd Handle, nonblocking bool) (err error) {
 	return nil
 }
 
-// getFullPath retrieves the full path of the specified file.
-// Just a wrapper for Windows GetFullPathName api.
-func getFullPath(name string) (path string, err error) {
-	p := StringToUTF16Ptr(name)
-	buf := make([]uint16, 100)
-	n, err := GetFullPathName(p, uint32(len(buf)), &buf[0], nil)
+// FullPath retrieves the full path of the specified file.
+func FullPath(name string) (path string, err error) {
+	p, err := UTF16PtrFromString(name)
 	if err != nil {
 		return "", err
 	}
-	if n > uint32(len(buf)) {
-		// Windows is asking for bigger buffer.
-		buf = make([]uint16, n)
+	n := uint32(100)
+	for {
+		buf := make([]uint16, n)
 		n, err = GetFullPathName(p, uint32(len(buf)), &buf[0], nil)
 		if err != nil {
 			return "", err
 		}
-		if n > uint32(len(buf)) {
-			return "", EINVAL
+		if n <= uint32(len(buf)) {
+			return UTF16ToString(buf[:n]), nil
 		}
 	}
-	return UTF16ToString(buf[:n]), nil
 }
 
 func isSlash(c uint8) bool {
@@ -157,7 +153,7 @@ func isSlash(c uint8) bool {
 }
 
 func normalizeDir(dir string) (name string, err error) {
-	ndir, err := getFullPath(dir)
+	ndir, err := FullPath(dir)
 	if err != nil {
 		return "", err
 	}
@@ -196,9 +192,9 @@ func joinExeDirAndFName(dir, p string) (name string, err error) {
 				return "", err
 			}
 			if volToUpper(int(p[0])) == volToUpper(int(d[0])) {
-				return getFullPath(d + "\\" + p[2:])
+				return FullPath(d + "\\" + p[2:])
 			} else {
-				return getFullPath(p)
+				return FullPath(p)
 			}
 		}
 	} else {
@@ -208,13 +204,11 @@ func joinExeDirAndFName(dir, p string) (name string, err error) {
 			return "", err
 		}
 		if isSlash(p[0]) {
-			return getFullPath(d[:2] + p)
+			return FullPath(d[:2] + p)
 		} else {
-			return getFullPath(d + "\\" + p)
+			return FullPath(d + "\\" + p)
 		}
 	}
-	// we shouldn't be here
-	return "", EINVAL
 }
 
 type ProcAttr struct {
@@ -225,8 +219,9 @@ type ProcAttr struct {
 }
 
 type SysProcAttr struct {
-	HideWindow bool
-	CmdLine    string // used if non-empty, else the windows command line is built by escaping the arguments passed to StartProcess
+	HideWindow    bool
+	CmdLine       string // used if non-empty, else the windows command line is built by escaping the arguments passed to StartProcess
+	CreationFlags uint32
 }
 
 var zeroProcAttr ProcAttr
@@ -247,6 +242,9 @@ func StartProcess(argv0 string, argv []string, attr *ProcAttr) (pid int, handle 
 	if len(attr.Files) > 3 {
 		return 0, 0, EWINDOWS
 	}
+	if len(attr.Files) < 3 {
+		return 0, 0, EINVAL
+	}
 
 	if len(attr.Dir) != 0 {
 		// StartProcess assumes that argv0 is relative to attr.Dir,
@@ -261,7 +259,10 @@ func StartProcess(argv0 string, argv []string, attr *ProcAttr) (pid int, handle 
 			return 0, 0, err
 		}
 	}
-	argv0p := StringToUTF16Ptr(argv0)
+	argv0p, err := UTF16PtrFromString(argv0)
+	if err != nil {
+		return 0, 0, err
+	}
 
 	var cmdline string
 	// Windows CreateProcess takes the command line as a single string:
@@ -275,12 +276,18 @@ func StartProcess(argv0 string, argv []string, attr *ProcAttr) (pid int, handle 
 
 	var argvp *uint16
 	if len(cmdline) != 0 {
-		argvp = StringToUTF16Ptr(cmdline)
+		argvp, err = UTF16PtrFromString(cmdline)
+		if err != nil {
+			return 0, 0, err
+		}
 	}
 
 	var dirp *uint16
 	if len(attr.Dir) != 0 {
-		dirp = StringToUTF16Ptr(attr.Dir)
+		dirp, err = UTF16PtrFromString(attr.Dir)
+		if err != nil {
+			return 0, 0, err
+		}
 	}
 
 	// Acquire the fork lock so that no other threads
@@ -313,7 +320,8 @@ func StartProcess(argv0 string, argv []string, attr *ProcAttr) (pid int, handle 
 
 	pi := new(ProcessInformation)
 
-	err = CreateProcess(argv0p, argvp, nil, nil, true, CREATE_UNICODE_ENVIRONMENT, createEnvBlock(attr.Env), dirp, si, pi)
+	flags := sys.CreationFlags | CREATE_UNICODE_ENVIRONMENT
+	err = CreateProcess(argv0p, argvp, nil, nil, true, flags, createEnvBlock(attr.Env), dirp, si, pi)
 	if err != nil {
 		return 0, 0, err
 	}

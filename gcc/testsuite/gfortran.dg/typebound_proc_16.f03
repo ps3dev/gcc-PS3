@@ -27,7 +27,7 @@ MODULE rational_numbers
       r = REAL(this%n)/this%d
     END FUNCTION
 
-    ELEMENTAL SUBROUTINE rat_asgn_i(a,b)
+    impure ELEMENTAL SUBROUTINE rat_asgn_i(a,b)
       CLASS(rational),INTENT(OUT) :: a
       INTEGER,INTENT(IN) :: b
       a%n = b
@@ -54,5 +54,3 @@ MODULE rational_numbers
       r%d = a%d*b%d
     END FUNCTION
 END
-
-! { dg-final { cleanup-modules "rational_numbers" } } 

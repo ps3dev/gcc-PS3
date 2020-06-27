@@ -1,7 +1,6 @@
 // Safe sequence implementation  -*- C++ -*-
 
-// Copyright (C) 2003, 2004, 2005, 2006, 2009, 2010, 2011
-// Free Software Foundation, Inc.
+// Copyright (C) 2003-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -30,16 +29,13 @@
 #ifndef _GLIBCXX_DEBUG_SAFE_SEQUENCE_H
 #define _GLIBCXX_DEBUG_SAFE_SEQUENCE_H 1
 
-#include <debug/debug.h>
+#include <debug/assertions.h>
 #include <debug/macros.h>
 #include <debug/functions.h>
 #include <debug/safe_base.h>
 
 namespace __gnu_debug
 {
-  template<typename _Iterator, typename _Sequence>
-    class _Safe_iterator;
-
   /** A simple function object that returns true if the passed-in
    *  value is not equal to the stored value. It saves typing over
    *  using both bind1st and not_equal.
@@ -117,17 +113,36 @@ namespace __gnu_debug
 	  true. @c __pred will be invoked with the normal iterators nested
 	  in the safe ones. */
       template<typename _Predicate>
-        void
-        _M_invalidate_if(_Predicate __pred);
+	void
+	_M_invalidate_if(_Predicate __pred);
 
       /** Transfers all iterators @c x that reference @c from sequence,
 	  are not singular, and for which @c __pred(x) returns @c
 	  true. @c __pred will be invoked with the normal iterators nested
 	  in the safe ones. */
       template<typename _Predicate>
-        void
-        _M_transfer_from_if(_Safe_sequence& __from, _Predicate __pred);
+	void
+	_M_transfer_from_if(_Safe_sequence& __from, _Predicate __pred);
     };
+
+  /// Like _Safe_sequence but with a special _M_invalidate_all implementation
+  /// not invalidating past-the-end iterators. Used by node based sequence.
+  template<typename _Sequence>
+    class _Safe_node_sequence
+    : public _Safe_sequence<_Sequence>
+    {
+    protected:
+      void
+      _M_invalidate_all()
+      {
+	typedef typename _Sequence::const_iterator _Const_iterator;
+	typedef typename _Const_iterator::iterator_type _Base_const_iterator;
+	typedef __gnu_debug::_Not_equal_to<_Base_const_iterator> _Not_equal;
+	const _Sequence& __seq = *static_cast<_Sequence*>(this);
+	this->_M_invalidate_if(_Not_equal(__seq._M_base().end()));
+      }
+    };
+
 } // namespace __gnu_debug
 
 #include <debug/safe_sequence.tcc>

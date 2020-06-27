@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2004-2010, Free Software Foundation, Inc.         --
+--          Copyright (C) 2004-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -30,9 +30,13 @@
 with Ada.Containers.Prime_Numbers;
 with Ada.Unchecked_Deallocation;
 
-with System;  use type System.Address;
+with System; use type System.Address;
 
 package body Ada.Containers.Hash_Tables.Generic_Operations is
+
+   pragma Warnings (Off, "variable ""Busy*"" is not referenced");
+   pragma Warnings (Off, "variable ""Lock*"" is not referenced");
+   --  See comment in Ada.Containers.Helpers
 
    type Buckets_Allocation is access all Buckets_Type;
    --  Used for allocation and deallocation (see New_Buckets and Free_Buckets).
@@ -49,6 +53,12 @@ package body Ada.Containers.Hash_Tables.Generic_Operations is
       Dst_Prev    : Node_Access;
 
    begin
+      --  If the counts are nonzero, execution is technically erroneous, but
+      --  it seems friendly to allow things like concurrent "=" on shared
+      --  constants.
+
+      Zero_Counts (HT.TC);
+
       HT.Buckets := null;
       HT.Length := 0;
 
@@ -75,7 +85,7 @@ package body Ada.Containers.Hash_Tables.Generic_Operations is
 
                --  See note above
 
-               pragma Assert (Index (HT, Dst_Node) = Src_Index);
+               pragma Assert (Checked_Index (HT, Dst_Node) = Src_Index);
 
             begin
                HT.Buckets (Src_Index) := Dst_Node;
@@ -91,7 +101,7 @@ package body Ada.Containers.Hash_Tables.Generic_Operations is
 
                   --  See note above
 
-                  pragma Assert (Index (HT, Dst_Node) = Src_Index);
+                  pragma Assert (Checked_Index (HT, Dst_Node) = Src_Index);
 
                begin
                   Set_Next (Node => Dst_Prev, Next => Dst_Node);
@@ -121,6 +131,28 @@ package body Ada.Containers.Hash_Tables.Generic_Operations is
       return HT.Buckets'Length;
    end Capacity;
 
+   -------------------
+   -- Checked_Index --
+   -------------------
+
+   function Checked_Index
+     (Hash_Table : aliased in out Hash_Table_Type;
+      Buckets    : Buckets_Type;
+      Node       : Node_Access) return Hash_Type
+   is
+      Lock : With_Lock (Hash_Table.TC'Unrestricted_Access);
+   begin
+      return Index (Buckets, Node);
+   end Checked_Index;
+
+   function Checked_Index
+     (Hash_Table : aliased in out Hash_Table_Type;
+      Node       : Node_Access) return Hash_Type
+   is
+   begin
+      return Checked_Index (Hash_Table, Hash_Table.Buckets.all, Node);
+   end Checked_Index;
+
    -----------
    -- Clear --
    -----------
@@ -130,10 +162,7 @@ package body Ada.Containers.Hash_Tables.Generic_Operations is
       Node  : Node_Access;
 
    begin
-      if HT.Busy > 0 then
-         raise Program_Error with
-           "attempt to tamper with cursors (container is busy)";
-      end if;
+      TC_Check (HT.TC);
 
       while HT.Length > 0 loop
          while HT.Buckets (Index) = null loop
@@ -154,6 +183,52 @@ package body Ada.Containers.Hash_Tables.Generic_Operations is
       end loop;
    end Clear;
 
+   --------------------------
+   -- Delete_Node_At_Index --
+   --------------------------
+
+   procedure Delete_Node_At_Index
+     (HT   : in out Hash_Table_Type;
+      Indx : Hash_Type;
+      X    : in out Node_Access)
+   is
+      Prev : Node_Access;
+      Curr : Node_Access;
+
+   begin
+      Prev := HT.Buckets (Indx);
+
+      if Prev = X then
+         HT.Buckets (Indx) := Next (Prev);
+         HT.Length := HT.Length - 1;
+         Free (X);
+         return;
+      end if;
+
+      if Checks and then HT.Length = 1 then
+         raise Program_Error with
+           "attempt to delete node not in its proper hash bucket";
+      end if;
+
+      loop
+         Curr := Next (Prev);
+
+         if Checks and then Curr = null then
+            raise Program_Error with
+              "attempt to delete node not in its proper hash bucket";
+         end if;
+
+         if Curr = X then
+            Set_Next (Node => Prev, Next => Next (Curr));
+            HT.Length := HT.Length - 1;
+            Free (X);
+            return;
+         end if;
+
+         Prev := Curr;
+      end loop;
+   end Delete_Node_At_Index;
+
    ---------------------------
    -- Delete_Node_Sans_Free --
    ---------------------------
@@ -169,15 +244,15 @@ package body Ada.Containers.Hash_Tables.Generic_Operations is
       Curr : Node_Access;
 
    begin
-      if HT.Length = 0 then
+      if Checks and then HT.Length = 0 then
          raise Program_Error with
            "attempt to delete node from empty hashed container";
       end if;
 
-      Indx := Index (HT, X);
+      Indx := Checked_Index (HT, X);
       Prev := HT.Buckets (Indx);
 
-      if Prev = null then
+      if Checks and then Prev = null then
          raise Program_Error with
            "attempt to delete node from empty hash bucket";
       end if;
@@ -188,7 +263,7 @@ package body Ada.Containers.Hash_Tables.Generic_Operations is
          return;
       end if;
 
-      if HT.Length = 1 then
+      if Checks and then HT.Length = 1 then
          raise Program_Error with
            "attempt to delete node not in its proper hash bucket";
       end if;
@@ -196,7 +271,7 @@ package body Ada.Containers.Hash_Tables.Generic_Operations is
       loop
          Curr := Next (Prev);
 
-         if Curr = null then
+         if Checks and then Curr = null then
             raise Program_Error with
               "attempt to delete node not in its proper hash bucket";
          end if;
@@ -288,16 +363,7 @@ package body Ada.Containers.Hash_Tables.Generic_Operations is
    function Generic_Equal
      (L, R : Hash_Table_Type) return Boolean
    is
-      L_Index : Hash_Type;
-      L_Node  : Node_Access;
-
-      N : Count_Type;
-
    begin
-      if L'Address = R'Address then
-         return True;
-      end if;
-
       if L.Length /= R.Length then
          return False;
       end if;
@@ -306,44 +372,57 @@ package body Ada.Containers.Hash_Tables.Generic_Operations is
          return True;
       end if;
 
-      --  Find the first node of hash table L
+      declare
+         --  Per AI05-0022, the container implementation is required to detect
+         --  element tampering by a generic actual subprogram.
 
-      L_Index := 0;
-      loop
-         L_Node := L.Buckets (L_Index);
-         exit when L_Node /= null;
-         L_Index := L_Index + 1;
-      end loop;
+         Lock_L : With_Lock (L.TC'Unrestricted_Access);
+         Lock_R : With_Lock (R.TC'Unrestricted_Access);
 
-      --  For each node of hash table L, search for an equivalent node in hash
-      --  table R.
+         L_Index : Hash_Type;
+         L_Node  : Node_Access;
 
-      N := L.Length;
-      loop
-         if not Find (HT => R, Key => L_Node) then
-            return False;
-         end if;
+         N : Count_Type;
+      begin
+         --  Find the first node of hash table L
 
-         N := N - 1;
+         L_Index := 0;
+         loop
+            L_Node := L.Buckets (L_Index);
+            exit when L_Node /= null;
+            L_Index := L_Index + 1;
+         end loop;
 
-         L_Node := Next (L_Node);
+         --  For each node of hash table L, search for an equivalent node in
+         --  hash table R.
 
-         if L_Node = null then
-            --  We have exhausted the nodes in this bucket
-
-            if N = 0 then
-               return True;
+         N := L.Length;
+         loop
+            if not Find (HT => R, Key => L_Node) then
+               return False;
             end if;
 
-            --  Find the next bucket
+            N := N - 1;
 
-            loop
-               L_Index := L_Index + 1;
-               L_Node := L.Buckets (L_Index);
-               exit when L_Node /= null;
-            end loop;
-         end if;
-      end loop;
+            L_Node := Next (L_Node);
+
+            if L_Node = null then
+               --  We have exhausted the nodes in this bucket
+
+               if N = 0 then
+                  return True;
+               end if;
+
+               --  Find the next bucket
+
+               loop
+                  L_Index := L_Index + 1;
+                  L_Node := L.Buckets (L_Index);
+                  exit when L_Node /= null;
+               end loop;
+            end if;
+         end loop;
+      end;
    end Generic_Equal;
 
    -----------------------
@@ -383,7 +462,7 @@ package body Ada.Containers.Hash_Tables.Generic_Operations is
 
       Count_Type'Base'Read (Stream, N);
 
-      if N < 0 then
+      if Checks and then N < 0 then
          raise Program_Error with "stream appears to be corrupt";
       end if;
 
@@ -407,7 +486,7 @@ package body Ada.Containers.Hash_Tables.Generic_Operations is
       for J in 1 .. N loop
          declare
             Node : constant Node_Access := New_Node (Stream);
-            Indx : constant Hash_Type := Index (HT, Node);
+            Indx : constant Hash_Type := Checked_Index (HT, Node);
             B    : Node_Access renames HT.Buckets (Indx);
          begin
             Set_Next (Node => Node, Next => B);
@@ -476,10 +555,7 @@ package body Ada.Containers.Hash_Tables.Generic_Operations is
          return;
       end if;
 
-      if Source.Busy > 0 then
-         raise Program_Error with
-           "attempt to tamper with cursors (container is busy)";
-      end if;
+      TC_Check (Source.TC);
 
       Clear (Target);
 
@@ -513,17 +589,21 @@ package body Ada.Containers.Hash_Tables.Generic_Operations is
    ----------
 
    function Next
-     (HT   : Hash_Table_Type;
+     (HT   : aliased in out Hash_Table_Type;
       Node : Node_Access) return Node_Access
    is
-      Result : Node_Access := Next (Node);
+      Result : Node_Access;
+      First  : Hash_Type;
 
    begin
+      Result := Next (Node);
+
       if Result /= null then
          return Result;
       end if;
 
-      for Indx in Index (HT, Node) + 1 .. HT.Buckets'Last loop
+      First := Checked_Index (HT, Node) + 1;
+      for Indx in First .. HT.Buckets'Last loop
          Result := HT.Buckets (Indx);
 
          if Result /= null then
@@ -617,10 +697,7 @@ package body Ada.Containers.Hash_Tables.Generic_Operations is
          end if;
       end if;
 
-      if HT.Busy > 0 then
-         raise Program_Error with
-           "attempt to tamper with cursors (container is busy)";
-      end if;
+      TC_Check (HT.TC);
 
       Rehash : declare
          Dst_Buckets : Buckets_Access := New_Buckets (Length => NN);
@@ -643,7 +720,7 @@ package body Ada.Containers.Hash_Tables.Generic_Operations is
                      Src_Node : constant Node_Access := Src_Bucket;
 
                      Dst_Index : constant Hash_Type :=
-                       Index (Dst_Buckets.all, Src_Node);
+                       Checked_Index (HT, Dst_Buckets.all, Src_Node);
 
                      Dst_Bucket : Node_Access renames Dst_Buckets (Dst_Index);
 
@@ -658,12 +735,14 @@ package body Ada.Containers.Hash_Tables.Generic_Operations is
                   pragma Assert (L > 0);
                   L := L - 1;
                end loop;
+
             exception
                when others =>
+
                   --  If there's an error computing a hash value during a
-                  --  rehash, then AI-302 says the nodes "become lost."  The
+                  --  rehash, then AI-302 says the nodes "become lost." The
                   --  issue is whether to actually deallocate these lost nodes,
-                  --  since they might be designated by extant cursors.  Here
+                  --  since they might be designated by extant cursors. Here
                   --  we decide to deallocate the nodes, since it's better to
                   --  solve real problems (storage consumption) rather than
                   --  imaginary ones (the user might, or might not, dereference

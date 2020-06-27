@@ -1,7 +1,6 @@
 ! { dg-do compile }
+! { dg-compile-aux-modules "whole_file_28.f90" }
 ! Test the fix for the problem described in PR45077 comments #4 and #5.
-! Note that the module file from whole_file_28.f90, 'iso_red', is
-! needed for this test.
 !
 ! Contributed by Tobias Burnus  <burnus@gcc.gnu.org>
 !
@@ -24,4 +23,4 @@ contains
   end subroutine syntax_init_from_ifile
 end module syntax_rules
 end
-! { dg-final { cleanup-modules "syntax_rules ifiles iso_red" } }
+! { dg-final { cleanup-modules "iso_red" } }

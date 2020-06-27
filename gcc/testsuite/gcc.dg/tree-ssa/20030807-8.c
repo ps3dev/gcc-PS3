@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-options "-O1 -fdump-tree-dom2" } */
+/* { dg-options "-O1 -fdump-tree-dom2 -std=gnu89" } */
                                                                                 
 struct die_struct;
 typedef struct die_struct *dw_die_ref;
@@ -52,4 +52,3 @@ output_location_lists (die)
 
 /* There should be exactly one IF conditional, in output_location_lists.  */
 /* { dg-final { scan-tree-dump-times "if " 1 "dom2"} } */
-/* { dg-final { cleanup-tree-dump "dom2" } } */

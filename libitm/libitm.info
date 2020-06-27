@@ -1,7 +1,7 @@
-This is libitm.info, produced by makeinfo version 4.12 from
-/space/rguenther/gcc-4.7.0/gcc-4.7.0/libitm/libitm.texi.
+This is libitm.info, produced by makeinfo version 4.13 from
+/space/rguenther/gcc-7.2.0/gcc-7.2.0/libitm/libitm.texi.
 
-Copyright (C) 2011 Free Software Foundation, Inc.
+Copyright (C) 2011-2017 Free Software Foundation, Inc.
 
    Permission is granted to copy, distribute and/or modify this document
 under the terms of the GNU Free Documentation License, Version 1.2 or
@@ -17,7 +17,7 @@ END-INFO-DIR-ENTRY
 
    This manual documents the GNU Transactional Memory Library.
 
-   Copyright (C) 2011 Free Software Foundation, Inc.
+   Copyright (C) 2011-2017 Free Software Foundation, Inc.
 
    Permission is granted to copy, distribute and/or modify this document
 under the terms of the GNU Free Documentation License, Version 1.2 or
@@ -47,7 +47,7 @@ accesses to shared memory by several threads.
 * Internals::                  Notes on libitm's internal synchronization.
 * GNU Free Documentation License::
                                How you can copy and share this manual.
-* Index::                      Index of this documentation.
+* Library Index::              Index of this documentation.
 
 
 File: libitm.info,  Node: Enabling libitm,  Next: C/C++ Language Constructs for TM,  Prev: Top,  Up: Top
@@ -142,6 +142,13 @@ transaction) about which memory locations are shared and which are not
 shared with other threads (i.e., data must be accessed either
 transactionally or nontransactionally). Otherwise, non-write-through TM
 algorithms would not work.
+
+   For memory locations on the stack, this requirement extends to only
+the lifetime of the stack frame that the memory location belongs to (or
+the lifetime of the transaction, whichever is shorter).  Thus, memory
+that is reused for several stack frames could be target of both data
+logging and transactional accesses; however, this is harmless because
+these stack frames' lifetimes will end before the transaction finishes.
 
 3.3.6 [No changes] Scatter/gather calls
 ---------------------------------------
@@ -274,16 +281,26 @@ transactions.
 
      void _ITM_commitTransactionEH(void *exc_ptr) ITM_REGPARM;
      void *_ITM_cxa_allocate_exception (size_t);
+     void _ITM_cxa_free_exception (void *exc_ptr);
      void _ITM_cxa_throw (void *obj, void *tinfo, void *dest);
      void *_ITM_cxa_begin_catch (void *exc_ptr);
      void _ITM_cxa_end_catch (void);
 
-   `_ITM_commitTransactionEH' must be called to commit a transaction if
-an exception could be in flight at this position in the code. `exc_ptr'
-is the current exception or zero if there is no current exception.  The
-`_ITM_cxa...' functions are transactional wrappers for the respective
-`__cxa...' functions and must be called instead of these in
-transactional code.
+   The EH scheme changed in version 6 of GCC.  Previously, the compiler
+added a call to `_ITM_commitTransactionEH' to commit a transaction if
+an exception could be in flight at this position in the code; `exc_ptr'
+is the address of the current exception and must be non-zero.  Now, the
+compiler must catch all exceptions that are about to be thrown out of a
+transaction and call `_ITM_commitTransactionEH' from the catch clause,
+with `exc_ptr' being zero.
+
+   Note that the old EH scheme never worked completely in GCC's
+implementation; libitm currently does not try to be compatible with the
+old scheme.
+
+   The `_ITM_cxa...' functions are transactional wrappers for the
+respective `__cxa...' functions and must be called instead of these in
+transactional code.  `_ITM_cxa_free_exception' is new in GCC 6.
 
    To support this EH scheme, libstdc++ needs to provide one additional
 function (`_cxa_tm_cleanup'), which is used by the TM to clean up the
@@ -292,7 +309,8 @@ exception handling state while rolling back a transaction:
      void __cxa_tm_cleanup (void *unthrown_obj, void *cleanup_exc,
                             unsigned int caught_count);
 
-   `unthrown_obj' is non-null if the program called
+   Since GCC 6, `unthrown_obj' is not used anymore and always null;
+prior to that, `unthrown_obj' is non-null if the program called
 `__cxa_allocate_exception' for this exception but did not yet called
 `__cxa_throw' for it. `cleanup_exc' is non-null if the program is
 currently processing a cleanup along an exception path but has not
@@ -413,6 +431,10 @@ pointer, whereas the second will raise a fatal runtime error.
    These functions are essentially transactional wrappers for `malloc',
 `calloc', and `free'. Within transactions, the compiler should replace
 calls to the original functions with calls to the wrapper functions.
+
+   libitm also provides transactional clones of C++ memory management
+functions such as global operator new and delete.  They are part of
+libitm for historic reasons but do not need to be part of this ABI.
 
 3.6 [No changes] Future Enhancements to the ABI
 ===============================================
@@ -785,7 +807,7 @@ progress guarantees) to use priority inheritance until the TM has
 priority-aware contention management.
 
 
-File: libitm.info,  Node: GNU Free Documentation License,  Next: Index,  Prev: Internals,  Up: Top
+File: libitm.info,  Node: GNU Free Documentation License,  Next: Library Index,  Prev: Internals,  Up: Top
 
 GNU Free Documentation License
 ******************************
@@ -1271,10 +1293,10 @@ free software license, such as the GNU General Public License, to
 permit their use in free software.
 
 
-File: libitm.info,  Node: Index,  Prev: GNU Free Documentation License,  Up: Top
+File: libitm.info,  Node: Library Index,  Prev: GNU Free Documentation License,  Up: Top
 
-Index
-*****
+Library Index
+*************
 
  [index ]
 * Menu:
@@ -1286,15 +1308,15 @@ Index
 
 
 Tag Table:
-Node: Top1177
-Node: Enabling libitm2080
-Node: C/C++ Language Constructs for TM2474
-Node: The libitm ABI3954
-Ref: txn-code-properties7322
-Node: Internals17597
-Ref: serial-lock-impl27622
-Ref: progress-guarantees32372
-Node: GNU Free Documentation License34646
-Node: Index59787
+Node: Top1187
+Node: Enabling libitm2090
+Node: C/C++ Language Constructs for TM2484
+Node: The libitm ABI3964
+Ref: txn-code-properties7757
+Node: Internals18811
+Ref: serial-lock-impl28836
+Ref: progress-guarantees33586
+Node: GNU Free Documentation License35860
+Node: Library Index61009
 
 End Tag Table

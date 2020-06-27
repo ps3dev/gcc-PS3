@@ -20,7 +20,7 @@ type NumError struct {
 }
 
 func (e *NumError) Error() string {
-	return "strconv." + e.Func + ": " + `parsing "` + e.Num + `": ` + e.Err.Error()
+	return "strconv." + e.Func + ": " + "parsing " + Quote(e.Num) + ": " + e.Err.Error()
 }
 
 func syntaxError(fn, str string) *NumError {
@@ -31,61 +31,68 @@ func rangeError(fn, str string) *NumError {
 	return &NumError{fn, str, ErrRange}
 }
 
-const intSize = 32 << uint(^uint(0)>>63)
+const intSize = 32 << (^uint(0) >> 63)
 
-const IntSize = intSize // number of bits in int, uint (32 or 64)
+// IntSize is the size in bits of an int or uint value.
+const IntSize = intSize
 
-// Return the first number n such that n*base >= 1<<64.
-func cutoff64(base int) uint64 {
-	if base < 2 {
-		return 0
-	}
-	return (1<<64-1)/uint64(base) + 1
-}
+const maxUint64 = (1<<64 - 1)
 
 // ParseUint is like ParseInt but for unsigned numbers.
-func ParseUint(s string, b int, bitSize int) (n uint64, err error) {
+func ParseUint(s string, base int, bitSize int) (uint64, error) {
+	var n uint64
+	var err error
 	var cutoff, maxVal uint64
 
 	if bitSize == 0 {
 		bitSize = int(IntSize)
 	}
 
-	s0 := s
+	i := 0
 	switch {
 	case len(s) < 1:
 		err = ErrSyntax
 		goto Error
 
-	case 2 <= b && b <= 36:
+	case 2 <= base && base <= 36:
 		// valid base; nothing to do
 
-	case b == 0:
+	case base == 0:
 		// Look for octal, hex prefix.
 		switch {
 		case s[0] == '0' && len(s) > 1 && (s[1] == 'x' || s[1] == 'X'):
-			b = 16
-			s = s[2:]
-			if len(s) < 1 {
+			if len(s) < 3 {
 				err = ErrSyntax
 				goto Error
 			}
+			base = 16
+			i = 2
 		case s[0] == '0':
-			b = 8
+			base = 8
+			i = 1
 		default:
-			b = 10
+			base = 10
 		}
 
 	default:
-		err = errors.New("invalid base " + Itoa(b))
+		err = errors.New("invalid base " + Itoa(base))
 		goto Error
 	}
 
-	n = 0
-	cutoff = cutoff64(b)
+	// Cutoff is the smallest number such that cutoff*base > maxUint64.
+	// Use compile-time constants for common cases.
+	switch base {
+	case 10:
+		cutoff = maxUint64/10 + 1
+	case 16:
+		cutoff = maxUint64/16 + 1
+	default:
+		cutoff = maxUint64/uint64(base) + 1
+	}
+
 	maxVal = 1<<uint(bitSize) - 1
 
-	for i := 0; i < len(s); i++ {
+	for ; i < len(s); i++ {
 		var v byte
 		d := s[i]
 		switch {
@@ -100,24 +107,24 @@ func ParseUint(s string, b int, bitSize int) (n uint64, err error) {
 			err = ErrSyntax
 			goto Error
 		}
-		if int(v) >= b {
+		if v >= byte(base) {
 			n = 0
 			err = ErrSyntax
 			goto Error
 		}
 
 		if n >= cutoff {
-			// n*b overflows
-			n = 1<<64 - 1
+			// n*base overflows
+			n = maxUint64
 			err = ErrRange
 			goto Error
 		}
-		n *= uint64(b)
+		n *= uint64(base)
 
 		n1 := n + uint64(v)
 		if n1 < n || n1 > maxVal {
 			// n+v overflows
-			n = 1<<64 - 1
+			n = maxUint64
 			err = ErrRange
 			goto Error
 		}
@@ -127,23 +134,25 @@ func ParseUint(s string, b int, bitSize int) (n uint64, err error) {
 	return n, nil
 
 Error:
-	return n, &NumError{"ParseUint", s0, err}
+	return n, &NumError{"ParseUint", s, err}
 }
 
 // ParseInt interprets a string s in the given base (2 to 36) and
-// returns the corresponding value i.  If base == 0, the base is
+// returns the corresponding value i. If base == 0, the base is
 // implied by the string's prefix: base 16 for "0x", base 8 for
 // "0", and base 10 otherwise.
 //
 // The bitSize argument specifies the integer type
-// that the result must fit into.  Bit sizes 0, 8, 16, 32, and 64
+// that the result must fit into. Bit sizes 0, 8, 16, 32, and 64
 // correspond to int, int8, int16, int32, and int64.
 //
 // The errors that ParseInt returns have concrete type *NumError
-// and include err.Num = s.  If s is empty or contains invalid
-// digits, err.Error = ErrSyntax; if the value corresponding
-// to s cannot be represented by a signed integer of the
-// given size, err.Error = ErrRange.
+// and include err.Num = s. If s is empty or contains invalid
+// digits, err.Err = ErrSyntax and the returned value is 0;
+// if the value corresponding to s cannot be represented by a
+// signed integer of the given size, err.Err = ErrRange and the
+// returned value is the maximum magnitude integer of the
+// appropriate bitSize and sign.
 func ParseInt(s string, base int, bitSize int) (i int64, err error) {
 	const fnParseInt = "ParseInt"
 
@@ -188,8 +197,12 @@ func ParseInt(s string, base int, bitSize int) (i int64, err error) {
 	return n, nil
 }
 
-// Atoi is shorthand for ParseInt(s, 10, 0).
-func Atoi(s string) (i int, err error) {
+// Atoi returns the result of ParseInt(s, 10, 0) converted to type int.
+func Atoi(s string) (int, error) {
+	const fnAtoi = "Atoi"
 	i64, err := ParseInt(s, 10, 0)
+	if nerr, ok := err.(*NumError); ok {
+		nerr.Func = fnAtoi
+	}
 	return int(i64), err
 }

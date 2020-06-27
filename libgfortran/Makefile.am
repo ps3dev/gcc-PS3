@@ -4,7 +4,7 @@
 ACLOCAL_AMFLAGS = -I .. -I ../config
 
 ## May be used by toolexeclibdir.
-gcc_version := $(shell cat $(top_srcdir)/../gcc/BASE-VER)
+gcc_version := $(shell @get_gcc_base_ver@ $(top_srcdir)/../gcc/BASE-VER)
 
 ## Symbol versioning (copied from libssp).
 if LIBGFOR_USE_SYMVER
@@ -37,15 +37,11 @@ toolexeclib_LTLIBRARIES = libgfortran.la
 toolexeclib_DATA = libgfortran.spec
 libgfortran_la_LINK = $(LINK) $(libgfortran_la_LDFLAGS)
 libgfortran_la_LDFLAGS = -version-info `grep -v '^\#' $(srcdir)/libtool-version` \
-	$(LTLDFLAGS) $(LIBQUADLIB) -lm $(extra_ldflags_libgfortran) \
+	$(LTLDFLAGS) $(LIBQUADLIB) ../libbacktrace/libbacktrace.la \
+	$(HWCAP_LDFLAGS) \
+	-lm $(extra_ldflags_libgfortran) \
 	$(version_arg) -Wc,-shared-libgcc
 libgfortran_la_DEPENDENCIES = $(version_dep) libgfortran.spec $(LIBQUADLIB_DEP)
-
-myexeclib_LTLIBRARIES = libgfortranbegin.la
-myexeclibdir = $(libdir)/gcc/$(target_alias)/$(gcc_version)$(MULTISUBDIR)
-libgfortranbegin_la_SOURCES = fmain.c
-libgfortranbegin_la_LDFLAGS = -static
-libgfortranbegin_la_LINK = $(LINK) $(libgfortranbegin_la_LDFLAGS)
 
 cafexeclib_LTLIBRARIES = libcaf_single.la
 cafexeclibdir = $(libdir)/gcc/$(target_alias)/$(gcc_version)$(MULTISUBDIR)
@@ -54,13 +50,21 @@ libcaf_single_la_LDFLAGS = -static
 libcaf_single_la_DEPENDENCIES = caf/libcaf.h
 libcaf_single_la_LINK = $(LINK) $(libcaf_single_la_LDFLAGS)
 
+if IEEE_SUPPORT
+fincludedir = $(libdir)/gcc/$(target_alias)/$(gcc_version)$(MULTISUBDIR)/finclude
+nodist_finclude_HEADERS = ieee_arithmetic.mod ieee_exceptions.mod ieee_features.mod
+endif
+
 ## io.h conflicts with a system header on some platforms, so
 ## use -iquote
 AM_CPPFLAGS = -iquote$(srcdir)/io -I$(srcdir)/$(MULTISRCTOP)../gcc \
 	      -I$(srcdir)/$(MULTISRCTOP)../gcc/config $(LIBQUADINCLUDE) \
 	      -I$(MULTIBUILDTOP)../../$(host_subdir)/gcc \
 	      -I$(srcdir)/$(MULTISRCTOP)../libgcc \
-	      -I$(MULTIBUILDTOP)../libgcc
+	      -I$(MULTIBUILDTOP)../libgcc \
+	      -I$(srcdir)/$(MULTISRCTOP)../libbacktrace \
+	      -I$(MULTIBUILDTOP)../libbacktrace \
+	      -I../libbacktrace
 
 # Fortran rules for complex multiplication and division
 AM_CFLAGS += -fcx-fortran-rules
@@ -70,8 +74,18 @@ AM_CFLAGS += $(SECTION_FLAGS)
 
 # Some targets require additional compiler options for IEEE compatibility.
 AM_CFLAGS += $(IEEE_FLAGS)
+AM_FCFLAGS += $(IEEE_FLAGS)
+
+if LIBGFOR_MINIMAL
+AM_CFLAGS += -DLIBGFOR_MINIMAL
+endif
 
 gfor_io_src= \
+io/size_from_kind.c
+
+if !LIBGFOR_MINIMAL
+
+gfor_io_src+= \
 io/close.c \
 io/file_pos.c \
 io/format.c \
@@ -81,13 +95,14 @@ io/list_read.c \
 io/lock.c \
 io/open.c \
 io/read.c \
-io/size_from_kind.c \
 io/transfer.c \
 io/transfer128.c \
 io/unit.c \
 io/unix.c \
 io/write.c \
 io/fbuf.c
+
+endif
 
 gfor_io_headers= \
 io/io.h \
@@ -98,82 +113,108 @@ io/unix.h
 gfor_helper_src= \
 intrinsics/associated.c \
 intrinsics/abort.c \
-intrinsics/access.c \
 intrinsics/args.c \
-intrinsics/bit_intrinsics.c \
+intrinsics/cshift0.c \
+intrinsics/eoshift0.c \
+intrinsics/eoshift2.c \
+intrinsics/erfc_scaled.c \
+intrinsics/extends_type_of.c \
+intrinsics/fnum.c \
+intrinsics/ierrno.c \
+intrinsics/ishftc.c \
+intrinsics/mvbits.c \
+intrinsics/move_alloc.c \
+intrinsics/pack_generic.c \
+intrinsics/selected_char_kind.c \
+intrinsics/size.c \
+intrinsics/spread_generic.c \
+intrinsics/string_intrinsics.c \
+intrinsics/rand.c \
+intrinsics/random.c \
+intrinsics/reshape_generic.c \
+intrinsics/reshape_packed.c \
+intrinsics/selected_int_kind.f90 \
+intrinsics/selected_real_kind.f90 \
+intrinsics/unpack_generic.c \
+runtime/in_pack_generic.c \
+runtime/in_unpack_generic.c
+
+if !LIBGFOR_MINIMAL
+
+gfor_helper_src+= \
+intrinsics/access.c \
 intrinsics/c99_functions.c \
 intrinsics/chdir.c \
 intrinsics/chmod.c \
 intrinsics/clock.c \
 intrinsics/cpu_time.c \
-intrinsics/cshift0.c \
 intrinsics/ctime.c \
 intrinsics/date_and_time.c \
 intrinsics/dtime.c \
 intrinsics/env.c \
-intrinsics/eoshift0.c \
-intrinsics/eoshift2.c \
-intrinsics/erfc_scaled.c \
 intrinsics/etime.c \
 intrinsics/execute_command_line.c \
 intrinsics/exit.c \
-intrinsics/extends_type_of.c \
-intrinsics/fnum.c \
 intrinsics/gerror.c \
 intrinsics/getcwd.c \
 intrinsics/getlog.c \
 intrinsics/getXid.c \
 intrinsics/hostnm.c \
-intrinsics/ierrno.c \
-intrinsics/ishftc.c \
-intrinsics/iso_c_generated_procs.c \
-intrinsics/iso_c_binding.c \
 intrinsics/kill.c \
 intrinsics/link.c \
-intrinsics/malloc.c \
-intrinsics/mvbits.c \
-intrinsics/move_alloc.c \
-intrinsics/pack_generic.c \
 intrinsics/perror.c \
-intrinsics/selected_char_kind.c \
 intrinsics/signal.c \
-intrinsics/size.c \
 intrinsics/sleep.c \
-intrinsics/spread_generic.c \
-intrinsics/string_intrinsics.c \
 intrinsics/system.c \
-intrinsics/rand.c \
-intrinsics/random.c \
 intrinsics/rename.c \
-intrinsics/reshape_generic.c \
-intrinsics/reshape_packed.c \
-intrinsics/selected_int_kind.f90 \
-intrinsics/selected_real_kind.f90 \
 intrinsics/stat.c \
 intrinsics/symlnk.c \
 intrinsics/system_clock.c \
 intrinsics/time.c \
-intrinsics/transpose_generic.c \
 intrinsics/umask.c \
-intrinsics/unlink.c \
-intrinsics/unpack_generic.c \
-runtime/in_pack_generic.c \
-runtime/in_unpack_generic.c
+intrinsics/unlink.c
+
+endif
+
+if IEEE_SUPPORT
+
+gfor_helper_src+=ieee/ieee_helper.c
+
+gfor_ieee_src= \
+ieee/ieee_arithmetic.F90 \
+ieee/ieee_exceptions.F90 \
+ieee/ieee_features.F90
+
+else
+
+gfor_ieee_src=
+
+endif
 
 gfor_src= \
-runtime/backtrace.c \
 runtime/bounds.c \
 runtime/compile_options.c \
+runtime/memory.c \
+runtime/string.c \
+runtime/select.c
+
+if LIBGFOR_MINIMAL
+
+gfor_src+= runtime/minimal.c
+
+else
+
+gfor_src+= \
+runtime/backtrace.c \
 runtime/convert_char.c \
 runtime/environ.c \
 runtime/error.c \
 runtime/fpu.c \
 runtime/main.c \
-runtime/memory.c \
 runtime/pause.c \
-runtime/stop.c \
-runtime/string.c \
-runtime/select.c
+runtime/stop.c
+
+endif
 
 i_all_c= \
 $(srcdir)/generated/all_l1.c \
@@ -424,20 +465,9 @@ $(srcdir)/generated/matmul_l4.c \
 $(srcdir)/generated/matmul_l8.c \
 $(srcdir)/generated/matmul_l16.c
 
-i_transpose_c= \
-$(srcdir)/generated/transpose_i4.c \
-$(srcdir)/generated/transpose_i8.c \
-$(srcdir)/generated/transpose_i16.c \
-$(srcdir)/generated/transpose_r4.c \
-$(srcdir)/generated/transpose_r8.c \
-$(srcdir)/generated/transpose_r10.c \
-$(srcdir)/generated/transpose_r16.c \
-$(srcdir)/generated/transpose_c4.c \
-$(srcdir)/generated/transpose_c8.c \
-$(srcdir)/generated/transpose_c10.c \
-$(srcdir)/generated/transpose_c16.c
-
 i_shape_c= \
+$(srcdir)/generated/shape_i1.c \
+$(srcdir)/generated/shape_i2.c \
 $(srcdir)/generated/shape_i4.c \
 $(srcdir)/generated/shape_i8.c \
 $(srcdir)/generated/shape_i16.c
@@ -515,42 +545,6 @@ $(srcdir)/generated/in_unpack_c4.c \
 $(srcdir)/generated/in_unpack_c8.c \
 $(srcdir)/generated/in_unpack_c10.c \
 $(srcdir)/generated/in_unpack_c16.c
-
-i_exponent_c = \
-$(srcdir)/generated/exponent_r4.c \
-$(srcdir)/generated/exponent_r8.c \
-$(srcdir)/generated/exponent_r10.c \
-$(srcdir)/generated/exponent_r16.c
-
-i_spacing_c = \
-$(srcdir)/generated/spacing_r4.c \
-$(srcdir)/generated/spacing_r8.c \
-$(srcdir)/generated/spacing_r10.c \
-$(srcdir)/generated/spacing_r16.c
-
-i_rrspacing_c = \
-$(srcdir)/generated/rrspacing_r4.c \
-$(srcdir)/generated/rrspacing_r8.c \
-$(srcdir)/generated/rrspacing_r10.c \
-$(srcdir)/generated/rrspacing_r16.c
-
-i_fraction_c = \
-$(srcdir)/generated/fraction_r4.c \
-$(srcdir)/generated/fraction_r8.c \
-$(srcdir)/generated/fraction_r10.c \
-$(srcdir)/generated/fraction_r16.c
-
-i_nearest_c = \
-$(srcdir)/generated/nearest_r4.c \
-$(srcdir)/generated/nearest_r8.c \
-$(srcdir)/generated/nearest_r10.c \
-$(srcdir)/generated/nearest_r16.c
-
-i_set_exponent_c = \
-$(srcdir)/generated/set_exponent_r4.c \
-$(srcdir)/generated/set_exponent_r8.c \
-$(srcdir)/generated/set_exponent_r10.c \
-$(srcdir)/generated/set_exponent_r16.c
 
 i_pow_c = \
 $(srcdir)/generated/pow_i4_i4.c \
@@ -635,9 +629,9 @@ m4_files= m4/iparm.m4 m4/ifunction.m4 m4/iforeach.m4 m4/all.m4 \
     m4/matmul.m4 m4/matmull.m4 m4/ifunction_logical.m4 \
     m4/ctrig.m4 m4/cexp.m4 m4/chyp.m4 m4/mtype.m4 \
     m4/specific.m4 m4/specific2.m4 m4/head.m4 m4/shape.m4 m4/reshape.m4 \
-    m4/transpose.m4 m4/eoshift1.m4 m4/eoshift3.m4 m4/exponent.m4 \
-    m4/fraction.m4 m4/nearest.m4 m4/set_exponent.m4 m4/pow.m4 \
-    m4/misc_specifics.m4 m4/rrspacing.m4 m4/spacing.m4 m4/pack.m4 \
+    m4/eoshift1.m4 m4/eoshift3.m4 \
+    m4/pow.m4 \
+    m4/misc_specifics.m4 m4/pack.m4 \
     m4/unpack.m4 m4/spread.m4 m4/bessel.m4 m4/norm2.m4 m4/parity.m4 \
     m4/iall.m4 m4/iany.m4 m4/iparity.m4
 
@@ -645,12 +639,11 @@ gfor_built_src= $(i_all_c) $(i_any_c) $(i_count_c) $(i_maxloc0_c) \
     $(i_maxloc1_c) $(i_maxval_c) $(i_minloc0_c) $(i_minloc1_c) $(i_minval_c) \
     $(i_product_c) $(i_sum_c) $(i_bessel_c) $(i_iall_c) $(i_iany_c) \
     $(i_iparity_c) $(i_norm2_c) $(i_parity_c) \
-    $(i_matmul_c) $(i_matmull_c) $(i_transpose_c) $(i_shape_c) $(i_eoshift1_c) \
+    $(i_matmul_c) $(i_matmull_c) $(i_shape_c) $(i_eoshift1_c) \
     $(i_eoshift3_c) $(i_cshift1_c) $(i_reshape_c) $(in_pack_c) $(in_unpack_c) \
-    $(i_exponent_c) $(i_fraction_c) $(i_nearest_c) $(i_set_exponent_c) \
-    $(i_pow_c) $(i_rrspacing_c) $(i_spacing_c) $(i_pack_c) $(i_unpack_c) \
+    $(i_pow_c) $(i_pack_c) $(i_unpack_c) \
     $(i_spread_c) selected_int_kind.inc selected_real_kind.inc kinds.h \
-    $(i_cshift0_c) kinds.inc c99_protos.inc fpu-target.h
+    $(i_cshift0_c) kinds.inc c99_protos.inc fpu-target.h fpu-target.inc
 
 # Machine generated specifics
 gfor_built_specific_src= \
@@ -803,7 +796,7 @@ intrinsics/dprod_r8.f90 \
 intrinsics/f2c_specifics.F90
 
 # Turn on vectorization and loop unrolling for matmul.
-$(patsubst %.c,%.lo,$(notdir $(i_matmul_c))): AM_CFLAGS += -ftree-vectorize -funroll-loops
+$(patsubst %.c,%.lo,$(notdir $(i_matmul_c))): AM_CFLAGS += -ffast-math -ftree-vectorize -funroll-loops --param max-unroll-times=4 
 # Logical matmul doesn't vectorize.
 $(patsubst %.c,%.lo,$(notdir $(i_matmull_c))): AM_CFLAGS += -funroll-loops
 
@@ -811,11 +804,27 @@ $(patsubst %.c,%.lo,$(notdir $(i_matmull_c))): AM_CFLAGS += -funroll-loops
 $(patsubst %.F90,%.lo,$(patsubst %.f90,%.lo,$(notdir $(gfor_specific_src)))): AM_FCFLAGS += -fallow-leading-underscore
 selected_real_kind.lo selected_int_kind.lo: AM_FCFLAGS += -fallow-leading-underscore
 
+if IEEE_SUPPORT
+# Add flags for IEEE modules
+$(patsubst %.F90,%.lo,$(notdir $(gfor_ieee_src))): AM_FCFLAGS += -Wno-unused-dummy-argument -Wno-c-binding-type -ffree-line-length-0 -fallow-leading-underscore
+endif
+
+# Dependencies between IEEE_ARITHMETIC and IEEE_EXCEPTIONS
+ieee_arithmetic.lo: ieee/ieee_arithmetic.F90 ieee_exceptions.lo
+	$(LTPPFCCOMPILE) -c -o $@ $<
+
+ieee_features.mod: ieee_features.lo
+	:
+ieee_exceptions.mod: ieee_exceptions.lo
+	:
+ieee_arithmetic.mod: ieee_arithmetic.lo
+	:
+
 BUILT_SOURCES=$(gfor_built_src) $(gfor_built_specific_src) \
     $(gfor_built_specific2_src) $(gfor_misc_specifics)
 
 prereq_SRC = $(gfor_src) $(gfor_built_src) $(gfor_io_src) \
-    $(gfor_helper_src) $(gfor_io_headers) $(gfor_specific_src)
+    $(gfor_helper_src) $(gfor_ieee_src) $(gfor_io_headers) $(gfor_specific_src)
 
 if onestep
 # dummy sources for libtool
@@ -871,6 +880,10 @@ selected_real_kind.inc: $(srcdir)/mk-srk-inc.sh
 fpu-target.h: $(srcdir)/$(FPU_HOST_HEADER)
 	cp $(srcdir)/$(FPU_HOST_HEADER) $@
 
+fpu-target.inc: fpu-target.h $(srcdir)/libgfortran.h
+	grep '^#define GFC_FPE_' < $(top_srcdir)/../gcc/fortran/libgfortran.h > $@ || true
+	grep '^#define GFC_FPE_' < $(srcdir)/libgfortran.h >> $@ || true
+
 ## A 'normal' build shouldn't need to regenerate these
 ## so we only include them in maintainer mode
 
@@ -887,13 +900,13 @@ $(i_any_c): m4/any.m4 $(I_M4_DEPS2)
 $(i_count_c): m4/count.m4 $(I_M4_DEPS2)
 	$(M4) -Dfile=$@ -I$(srcdir)/m4 count.m4 > $@
 
-$(i_iall_c): m4/iall.m4 $(I_M4_DEPS)
+$(i_iall_c): m4/iall.m4 $(I_M4_DEPS1)
 	$(M4) -Dfile=$@ -I$(srcdir)/m4 iall.m4 > $@
 
-$(i_iany_c): m4/iany.m4 $(I_M4_DEPS)
+$(i_iany_c): m4/iany.m4 $(I_M4_DEPS1)
 	$(M4) -Dfile=$@ -I$(srcdir)/m4 iany.m4 > $@
 
-$(i_iparity_c): m4/iparity.m4 $(I_M4_DEPS)
+$(i_iparity_c): m4/iparity.m4 $(I_M4_DEPS1)
 	$(M4) -Dfile=$@ -I$(srcdir)/m4 iparity.m4 > $@
 
 $(i_maxloc0_c): m4/maxloc0.m4 $(I_M4_DEPS0)
@@ -920,20 +933,17 @@ $(i_product_c): m4/product.m4 $(I_M4_DEPS1)
 $(i_sum_c): m4/sum.m4 $(I_M4_DEPS1)
 	$(M4) -Dfile=$@ -I$(srcdir)/m4 sum.m4 > $@
 
-$(i_matmul_c): m4/matmul.m4 $(I_M4_DEPS)
+$(i_matmul_c): m4/matmul.m4 m4/matmul_internal.m4 $(I_M4_DEPS)
 	$(M4) -Dfile=$@ -I$(srcdir)/m4 matmul.m4 > $@
 
 $(i_matmull_c): m4/matmull.m4 $(I_M4_DEPS)
 	$(M4) -Dfile=$@ -I$(srcdir)/m4 matmull.m4 > $@
 
-$(i_norm2_c): m4/norm2.m4 $(I_M4_DEPS)
+$(i_norm2_c): m4/norm2.m4 $(I_M4_DEPS1)
 	$(M4) -Dfile=$@ -I$(srcdir)/m4 norm2.m4 > $@
 
-$(i_parity_c): m4/parity.m4 $(I_M4_DEPS)
+$(i_parity_c): m4/parity.m4 $(I_M4_DEPS1)
 	$(M4) -Dfile=$@ -I$(srcdir)/m4 parity.m4 > $@
-
-$(i_transpose_c): m4/transpose.m4 $(I_M4_DEPS)
-	$(M4) -Dfile=$@ -I$(srcdir)/m4 transpose.m4 > $@
 
 $(i_shape_c): m4/shape.m4 $(I_M4_DEPS)
 	$(M4) -Dfile=$@ -I$(srcdir)/m4 shape.m4 > $@
@@ -958,24 +968,6 @@ $(in_pack_c): m4/in_pack.m4 $(I_M4_DEPS)
 
 $(in_unpack_c): m4/in_unpack.m4 $(I_M4_DEPS)
 	$(M4) -Dfile=$@ -I$(srcdir)/m4 in_unpack.m4 > $@
-
-$(i_exponent_c): m4/exponent.m4 m4/mtype.m4
-	$(M4) -Dfile=$@ -I$(srcdir)/m4 exponent.m4 > $@
-
-$(i_rrspacing_c): m4/rrspacing.m4 m4/mtype.m4
-	$(M4) -Dfile=$@ -I$(srcdir)/m4 rrspacing.m4 > $@
-
-$(i_spacing_c): m4/spacing.m4 m4/mtype.m4
-	$(M4) -Dfile=$@ -I$(srcdir)/m4 spacing.m4 > $@
-
-$(i_fraction_c): m4/fraction.m4 m4/mtype.m4
-	$(M4) -Dfile=$@ -I$(srcdir)/m4 fraction.m4 > $@
-
-$(i_nearest_c): m4/nearest.m4 m4/mtype.m4
-	$(M4) -Dfile=$@ -I$(srcdir)/m4 nearest.m4 > $@
-
-$(i_set_exponent_c): m4/set_exponent.m4 m4/mtype.m4
-	$(M4) -Dfile=$@ -I$(srcdir)/m4 set_exponent.m4 > $@
 
 $(i_pow_c): m4/pow.m4 $(I_M4_DEPS)
 	$(M4) -Dfile=$@ -I$(srcdir)/m4 pow.m4 > $@

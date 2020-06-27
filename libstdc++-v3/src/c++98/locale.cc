@@ -1,6 +1,4 @@
-// Copyright (C) 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005,
-// 2006, 2007, 2008, 2009, 2010
-// Free Software Foundation, Inc.
+// Copyright (C) 1997-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -22,9 +20,9 @@
 // see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 // <http://www.gnu.org/licenses/>.
 
+#define _GLIBCXX_USE_CXX11_ABI 1
 #include <clocale>
 #include <cstring>
-#include <cstdlib>     // For getenv
 #include <cctype>
 #include <cwctype>     // For towupper, etc.
 #include <locale>
@@ -71,7 +69,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   // These are no longer exported.
   locale::_Impl*                locale::_S_classic;
-  locale::_Impl* 		locale::_S_global; 
+  locale::_Impl* 		locale::_S_global;
 
 #ifdef __GTHREADS
   __gthread_once_t 		locale::_S_once = __GTHREAD_ONCE_INIT;
@@ -120,6 +118,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     return *this;
   }
 
+  _GLIBCXX_DEFAULT_ABI_TAG
   string
   locale::name() const
   {
@@ -133,7 +132,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	__ret.reserve(128);
 	__ret += _S_categories[0];
 	__ret += '=';
-	__ret += _M_impl->_M_names[0]; 
+	__ret += _M_impl->_M_names[0];
 	for (size_t __i = 1; __i < _S_categories_size; ++__i)
 	  {
 	    __ret += ';';
@@ -146,7 +145,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   }
 
   locale::category
-  locale::_S_normalize_category(category __cat) 
+  locale::_S_normalize_category(category __cat)
   {
     int __ret = 0;
     if (__cat == none || ((__cat & all) && !(__cat & ~all)))
@@ -156,27 +155,27 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	// NB: May be a C-style "LC_ALL" category; convert.
 	switch (__cat)
 	  {
-	  case LC_COLLATE:  
-	    __ret = collate; 
+	  case LC_COLLATE:
+	    __ret = collate;
 	    break;
-	  case LC_CTYPE:    
+	  case LC_CTYPE:
 	    __ret = ctype;
 	    break;
-	  case LC_MONETARY: 
+	  case LC_MONETARY:
 	    __ret = monetary;
 	    break;
-	  case LC_NUMERIC:  
+	  case LC_NUMERIC:
 	    __ret = numeric;
 	    break;
-	  case LC_TIME:     
-	    __ret = time; 
+	  case LC_TIME:
+	    __ret = time;
 	    break;
 #ifdef _GLIBCXX_HAVE_LC_MESSAGES
-	  case LC_MESSAGES: 
+	  case LC_MESSAGES:
 	    __ret = messages;
 	    break;
-#endif	
-	  case LC_ALL:      
+#endif
+	  case LC_ALL:
 	    __ret = all;
 	    break;
 	  default:
@@ -238,12 +237,12 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     if (_M_caches)
       for (size_t __i = 0; __i < _M_facets_size; ++__i)
 	if (_M_caches[__i])
-	  _M_caches[__i]->_M_remove_reference(); 
+	  _M_caches[__i]->_M_remove_reference();
     delete [] _M_caches;
 
     if (_M_names)
       for (size_t __i = 0; __i < _S_categories_size; ++__i)
-	delete [] _M_names[__i];  
+	delete [] _M_names[__i];
     delete [] _M_names;
   }
 
@@ -267,7 +266,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  {
 	    _M_caches[__j] = __imp._M_caches[__j];
 	    if (_M_caches[__j])
-	      _M_caches[__j]->_M_add_reference(); 	
+	      _M_caches[__j]->_M_add_reference();
 	  }
 	_M_names = new char*[_S_categories_size];
 	for (size_t __k = 0; __k < _S_categories_size; ++__k)
@@ -291,22 +290,22 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   void
   locale::_Impl::
-  _M_replace_category(const _Impl* __imp, 
+  _M_replace_category(const _Impl* __imp,
 		      const locale::id* const* __idpp)
   {
     for (; *__idpp; ++__idpp)
       _M_replace_facet(__imp, *__idpp);
   }
-  
+
   void
   locale::_Impl::
   _M_replace_facet(const _Impl* __imp, const locale::id* __idp)
   {
     size_t __index = __idp->_M_id();
-    if ((__index > (__imp->_M_facets_size - 1)) 
+    if ((__index > (__imp->_M_facets_size - 1))
 	|| !__imp->_M_facets[__index])
       __throw_runtime_error(__N("locale::_Impl::_M_replace_facet"));
-    _M_install_facet(__idp, __imp->_M_facets[__index]); 
+    _M_install_facet(__idp, __imp->_M_facets[__index]);
   }
 
   void
@@ -325,7 +324,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	    // New facet array.
 	    const facet** __oldf = _M_facets;
 	    const facet** __newf;
-	    __newf = new const facet*[__new_size]; 
+	    __newf = new const facet*[__new_size];
 	    for (size_t __i = 0; __i < _M_facets_size; ++__i)
 	      __newf[__i] = _M_facets[__i];
 	    for (size_t __l = _M_facets_size; __l < __new_size; ++__l)
@@ -359,6 +358,38 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	const facet*& __fpr = _M_facets[__index];
 	if (__fpr)
 	  {
+#if _GLIBCXX_USE_DUAL_ABI
+            // If this is a twinned facet replace its twin with a shim.
+            for (const id* const* p = _S_twinned_facets; *p != 0; p += 2)
+              {
+                if (p[0]->_M_id() == __index)
+                  {
+                    // replacing the old ABI facet, also replace new ABI twin
+                    const facet*& __fpr2 = _M_facets[p[1]->_M_id()];
+                    if (__fpr2)
+                      {
+                        const facet* __fp2 = __fp->_M_sso_shim(p[1]);
+                        __fp2->_M_add_reference();
+                        __fpr2->_M_remove_reference();
+                        __fpr2 = __fp2;
+                      }
+                    break;
+                  }
+                else if (p[1]->_M_id() == __index)
+                  {
+                    // replacing the new ABI facet, also replace old ABI twin
+                    const facet*& __fpr2 = _M_facets[p[0]->_M_id()];
+                    if (__fpr2)
+                      {
+                        const facet* __fp2 = __fp->_M_cow_shim(p[0]);
+                        __fp2->_M_add_reference();
+                        __fpr2->_M_remove_reference();
+                        __fpr2 = __fp2;
+                      }
+                    break;
+                  }
+              }
+#endif
 	    // Replacing an existing facet. Order matters.
 	    __fpr->_M_remove_reference();
 	    __fpr = __fp;
@@ -393,6 +424,25 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   _M_install_cache(const facet* __cache, size_t __index)
   {
     __gnu_cxx::__scoped_lock sentry(get_locale_cache_mutex());
+#if _GLIBCXX_USE_DUAL_ABI
+    // If this cache is for one of the facets that is instantiated twice,
+    // for old and new std::string ABI, install it in both slots.
+    size_t __index2 = -1;
+    for (const id* const* p = _S_twinned_facets; *p != 0; p += 2)
+      {
+        if (p[0]->_M_id() == __index)
+          {
+            __index2 = p[1]->_M_id();
+            break;
+          }
+        else if (p[1]->_M_id() == __index)
+          {
+            __index2 = __index;
+            __index = p[0]->_M_id();
+            break;
+          }
+      }
+#endif
     if (_M_caches[__index] != 0)
       {
 	// Some other thread got in first.
@@ -402,6 +452,13 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       {
 	__cache->_M_add_reference();
 	_M_caches[__index] = __cache;
+#if _GLIBCXX_USE_DUAL_ABI
+        if (__index2 != size_t(-1))
+          {
+            __cache->_M_add_reference();
+            _M_caches[__index2] = __cache;
+          }
+#endif
       }
   }
 

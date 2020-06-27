@@ -4,6 +4,7 @@
 struct large { int x[100]; };
 struct large bark();
 extern int test (void) __attribute__((transaction_safe));
+extern int readint (void);
 struct large lacopy;
 
 int f()
@@ -17,5 +18,4 @@ int f()
   return lala.x[i];
 }
 
-/* { dg-final { scan-tree-dump-times "memmoveRtWt \\\(.*, &lacopy" 1 "tmedge" } } */
-/* { dg-final { cleanup-tree-dump "tmedge" } } */
+/* { dg-final { scan-tree-dump-times "memcpyRtWn \\\(.*, &lacopy" 1 "tmedge" } } */

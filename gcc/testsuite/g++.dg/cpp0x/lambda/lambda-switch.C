@@ -1,5 +1,5 @@
 // PR c++/49867
-// { dg-options -std=c++0x }
+// { dg-do compile { target c++11 } }
 
 int
 main ()
@@ -16,7 +16,7 @@ main ()
 	      break;		// { dg-error "break" }
 	    }
 	  };
-	  l = []()
+	  l = []()		// { dg-warning "statement will never be executed" }
 	    {
 	    case 3:		// { dg-error "case" }
 	      break;		// { dg-error "break" }

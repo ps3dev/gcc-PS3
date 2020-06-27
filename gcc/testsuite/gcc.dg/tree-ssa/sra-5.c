@@ -3,6 +3,7 @@
 
 /* Tests for SRA of unions. */
 
+void link_error (void);
 
 typedef union testunion
 {
@@ -71,4 +72,3 @@ copyunion111111 (testunion param)
 
 /* There should be no reference to link_error. */
 /* { dg-final { scan-tree-dump-times "link_error" 0 "optimized"} } */
-/* { dg-final { cleanup-tree-dump "optimized" } } */

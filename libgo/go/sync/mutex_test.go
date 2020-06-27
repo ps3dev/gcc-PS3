@@ -7,9 +7,13 @@
 package sync_test
 
 import (
+	"fmt"
+	"internal/testenv"
+	"os"
+	"os/exec"
 	"runtime"
+	"strings"
 	. "sync"
-	"sync/atomic"
 	"testing"
 )
 
@@ -62,6 +66,10 @@ func HammerMutex(m *Mutex, loops int, cdone chan bool) {
 }
 
 func TestMutex(t *testing.T) {
+	if n := runtime.SetMutexProfileFraction(1); n != 0 {
+		t.Logf("got mutexrate %d expected 0", n)
+	}
+	defer runtime.SetMutexProfileFraction(0)
 	m := new(Mutex)
 	c := make(chan bool)
 	for i := 0; i < 10; i++ {
@@ -72,17 +80,98 @@ func TestMutex(t *testing.T) {
 	}
 }
 
-func TestMutexPanic(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatalf("unlock of unlocked mutex did not panic")
-		}
-	}()
+var misuseTests = []struct {
+	name string
+	f    func()
+}{
+	{
+		"Mutex.Unlock",
+		func() {
+			var mu Mutex
+			mu.Unlock()
+		},
+	},
+	{
+		"Mutex.Unlock2",
+		func() {
+			var mu Mutex
+			mu.Lock()
+			mu.Unlock()
+			mu.Unlock()
+		},
+	},
+	{
+		"RWMutex.Unlock",
+		func() {
+			var mu RWMutex
+			mu.Unlock()
+		},
+	},
+	{
+		"RWMutex.Unlock2",
+		func() {
+			var mu RWMutex
+			mu.RLock()
+			mu.Unlock()
+		},
+	},
+	{
+		"RWMutex.Unlock3",
+		func() {
+			var mu RWMutex
+			mu.Lock()
+			mu.Unlock()
+			mu.Unlock()
+		},
+	},
+	{
+		"RWMutex.RUnlock",
+		func() {
+			var mu RWMutex
+			mu.RUnlock()
+		},
+	},
+	{
+		"RWMutex.RUnlock2",
+		func() {
+			var mu RWMutex
+			mu.Lock()
+			mu.RUnlock()
+		},
+	},
+	{
+		"RWMutex.RUnlock3",
+		func() {
+			var mu RWMutex
+			mu.RLock()
+			mu.RUnlock()
+			mu.RUnlock()
+		},
+	},
+}
 
-	var mu Mutex
-	mu.Lock()
-	mu.Unlock()
-	mu.Unlock()
+func init() {
+	if len(os.Args) == 3 && os.Args[1] == "TESTMISUSE" {
+		for _, test := range misuseTests {
+			if test.name == os.Args[2] {
+				test.f()
+				fmt.Printf("test completed\n")
+				os.Exit(0)
+			}
+		}
+		fmt.Printf("unknown test\n")
+		os.Exit(0)
+	}
+}
+
+func TestMutexMisuse(t *testing.T) {
+	testenv.MustHaveExec(t)
+	for _, test := range misuseTests {
+		out, err := exec.Command(os.Args[0], "TESTMISUSE", test.name).CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "unlocked") {
+			t.Errorf("%s: did not find failure with message about unlocked lock: %s\n%s\n", test.name, err, out)
+		}
+	}
 }
 
 func BenchmarkMutexUncontended(b *testing.B) {
@@ -90,63 +179,34 @@ func BenchmarkMutexUncontended(b *testing.B) {
 		Mutex
 		pad [128]uint8
 	}
-	const CallsPerSched = 1000
-	procs := runtime.GOMAXPROCS(-1)
-	N := int32(b.N / CallsPerSched)
-	c := make(chan bool, procs)
-	for p := 0; p < procs; p++ {
-		go func() {
-			var mu PaddedMutex
-			for atomic.AddInt32(&N, -1) >= 0 {
-				runtime.Gosched()
-				for g := 0; g < CallsPerSched; g++ {
-					mu.Lock()
-					mu.Unlock()
-				}
-			}
-			c <- true
-		}()
-	}
-	for p := 0; p < procs; p++ {
-		<-c
-	}
+	b.RunParallel(func(pb *testing.PB) {
+		var mu PaddedMutex
+		for pb.Next() {
+			mu.Lock()
+			mu.Unlock()
+		}
+	})
 }
 
 func benchmarkMutex(b *testing.B, slack, work bool) {
-	const (
-		CallsPerSched  = 1000
-		LocalWork      = 100
-		GoroutineSlack = 10
-	)
-	procs := runtime.GOMAXPROCS(-1)
-	if slack {
-		procs *= GoroutineSlack
-	}
-	N := int32(b.N / CallsPerSched)
-	c := make(chan bool, procs)
 	var mu Mutex
-	for p := 0; p < procs; p++ {
-		go func() {
-			foo := 0
-			for atomic.AddInt32(&N, -1) >= 0 {
-				runtime.Gosched()
-				for g := 0; g < CallsPerSched; g++ {
-					mu.Lock()
-					mu.Unlock()
-					if work {
-						for i := 0; i < LocalWork; i++ {
-							foo *= 2
-							foo /= 2
-						}
-					}
+	if slack {
+		b.SetParallelism(10)
+	}
+	b.RunParallel(func(pb *testing.PB) {
+		foo := 0
+		for pb.Next() {
+			mu.Lock()
+			mu.Unlock()
+			if work {
+				for i := 0; i < 100; i++ {
+					foo *= 2
+					foo /= 2
 				}
 			}
-			c <- foo == 42
-		}()
-	}
-	for p := 0; p < procs; p++ {
-		<-c
-	}
+		}
+		_ = foo
+	})
 }
 
 func BenchmarkMutex(b *testing.B) {
@@ -163,4 +223,59 @@ func BenchmarkMutexWork(b *testing.B) {
 
 func BenchmarkMutexWorkSlack(b *testing.B) {
 	benchmarkMutex(b, true, true)
+}
+
+func BenchmarkMutexNoSpin(b *testing.B) {
+	// This benchmark models a situation where spinning in the mutex should be
+	// non-profitable and allows to confirm that spinning does not do harm.
+	// To achieve this we create excess of goroutines most of which do local work.
+	// These goroutines yield during local work, so that switching from
+	// a blocked goroutine to other goroutines is profitable.
+	// As a matter of fact, this benchmark still triggers some spinning in the mutex.
+	var m Mutex
+	var acc0, acc1 uint64
+	b.SetParallelism(4)
+	b.RunParallel(func(pb *testing.PB) {
+		c := make(chan bool)
+		var data [4 << 10]uint64
+		for i := 0; pb.Next(); i++ {
+			if i%4 == 0 {
+				m.Lock()
+				acc0 -= 100
+				acc1 += 100
+				m.Unlock()
+			} else {
+				for i := 0; i < len(data); i += 4 {
+					data[i]++
+				}
+				// Elaborate way to say runtime.Gosched
+				// that does not put the goroutine onto global runq.
+				go func() {
+					c <- true
+				}()
+				<-c
+			}
+		}
+	})
+}
+
+func BenchmarkMutexSpin(b *testing.B) {
+	// This benchmark models a situation where spinning in the mutex should be
+	// profitable. To achieve this we create a goroutine per-proc.
+	// These goroutines access considerable amount of local data so that
+	// unnecessary rescheduling is penalized by cache misses.
+	var m Mutex
+	var acc0, acc1 uint64
+	b.RunParallel(func(pb *testing.PB) {
+		var data [16 << 10]uint64
+		for i := 0; pb.Next(); i++ {
+			m.Lock()
+			acc0 -= 100
+			acc1 += 100
+			m.Unlock()
+			for i := 0; i < len(data); i += 4 {
+				data[i]++
+			}
+		}
+	})
 }

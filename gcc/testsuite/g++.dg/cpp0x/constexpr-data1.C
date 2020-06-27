@@ -1,5 +1,4 @@
-// { dg-do compile }
-// { dg-options "-std=gnu++0x" }
+// { dg-do compile { target c++11 } }
 
 // From N2235
 
@@ -37,7 +36,7 @@ class debug_flag
 {
 public:
    explicit debug_flag(bool);
-   constexpr bool is_on(); // { dg-error "enclosing class .* not a literal type" }
+   constexpr bool is_on(); // { dg-error "enclosing class .* not a literal type" "" { target c++11_only } }
 private:
    bool flag;
 };

@@ -1,7 +1,6 @@
 // { dg-do compile }
 
-// Copyright (C) 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2011
-// Free Software Foundation
+// Copyright (C) 2002-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -20,6 +19,8 @@
 
 // 20.4.5 Template class auto_ptr negative tests [lib.auto.ptr]
 
+// { dg-options "-std=c++98" }
+
 #include <memory>
 #include <testsuite_hooks.h>
 
@@ -37,7 +38,6 @@ test01()
 {
   std::auto_ptr<Base> ptr2;
   ptr2 = new Base; // { dg-error "no match" }
-  // { dg-error "candidate" "candidate note" { target *-*-* } 39 }
   return 0;
 }
 
@@ -47,6 +47,3 @@ main()
   test01();
   return 0;
 }
-// { dg-error "::auto_ptr|no known conversion" "" { target *-*-* } 136 } 
-// { dg-error "note" "" { target *-*-* } 154 }
-// { dg-error "::auto_ptr|no known conversion" "" { target *-*-* } 264 } 

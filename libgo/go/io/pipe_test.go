@@ -247,6 +247,18 @@ func TestPipeWriteClose(t *testing.T) {
 	}
 }
 
+// Test close on Write side during Write.
+func TestPipeWriteClose2(t *testing.T) {
+	c := make(chan int, 1)
+	_, w := Pipe()
+	go delayClose(t, w, c, pipeTest{})
+	n, err := w.Write(make([]byte, 64))
+	<-c
+	if n != 0 || err != ErrClosedPipe {
+		t.Errorf("write to closed pipe: %v, %v want %v, %v", n, err, 0, ErrClosedPipe)
+	}
+}
+
 func TestWriteEmpty(t *testing.T) {
 	r, w := Pipe()
 	go func() {
@@ -267,4 +279,36 @@ func TestWriteNil(t *testing.T) {
 	var b [2]byte
 	ReadFull(r, b[0:2])
 	r.Close()
+}
+
+func TestWriteAfterWriterClose(t *testing.T) {
+	r, w := Pipe()
+
+	done := make(chan bool)
+	var writeErr error
+	go func() {
+		_, err := w.Write([]byte("hello"))
+		if err != nil {
+			t.Errorf("got error: %q; expected none", err)
+		}
+		w.Close()
+		_, writeErr = w.Write([]byte("world"))
+		done <- true
+	}()
+
+	buf := make([]byte, 100)
+	var result string
+	n, err := ReadFull(r, buf)
+	if err != nil && err != ErrUnexpectedEOF {
+		t.Fatalf("got: %q; want: %q", err, ErrUnexpectedEOF)
+	}
+	result = string(buf[0:n])
+	<-done
+
+	if result != "hello" {
+		t.Errorf("got: %q; want: %q", result, "hello")
+	}
+	if writeErr != ErrClosedPipe {
+		t.Errorf("got: %q; want: %q", writeErr, ErrClosedPipe)
+	}
 }

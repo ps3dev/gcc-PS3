@@ -1,6 +1,5 @@
 /* Definitions of target machine for GNU compiler, for the pdp-11
-   Copyright (C) 2000, 2003, 2004, 2007, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2000-2017 Free Software Foundation, Inc.
    Contributed by Michael K. Gschwind (mike@vlsivie.tuwien.ac.at).
 
 This file is part of GCC.
@@ -21,7 +20,7 @@ along with GCC; see the file COPYING3.  If not see
 
 /* declarations */
 #ifdef RTX_CODE
-extern int simple_memory_operand (rtx, enum machine_mode);
+extern int simple_memory_operand (rtx, machine_mode);
 
 extern int legitimate_const_double_p (rtx);
 extern void notice_update_cc_on_set (rtx, rtx);
@@ -30,10 +29,10 @@ extern const char *output_move_multiple (rtx *);
 extern const char *output_block_move (rtx *);
 extern const char *output_jump (enum rtx_code, int, int);
 extern void print_operand_address (FILE *, rtx);
-extern bool pdp11_cannot_change_mode_class (enum machine_mode,
-                                            enum machine_mode, enum reg_class);
+extern bool pdp11_cannot_change_mode_class (machine_mode,
+                                            machine_mode, enum reg_class);
 extern bool pdp11_secondary_memory_needed (reg_class_t, reg_class_t, 
-					   enum machine_mode);
+					   machine_mode);
 typedef enum { no_action, dec_before, inc_after } pdp11_action;
 typedef enum { little, either, big } pdp11_partorder;
 extern bool pdp11_expand_operands (rtx *, rtx [][2], int, 
@@ -48,3 +47,4 @@ extern void output_ascii (FILE *, const char *, int);
 extern void pdp11_asm_output_var (FILE *, const char *, int, int, bool);
 extern void pdp11_expand_prologue (void);
 extern void pdp11_expand_epilogue (void);
+extern int pdp11_branch_cost (void);

@@ -357,9 +357,33 @@ func TestScanSelectedMask(t *testing.T) {
 	testScanSelectedMode(t, ScanComments, Comment)
 }
 
+func TestScanCustomIdent(t *testing.T) {
+	const src = "faab12345 a12b123 a12 3b"
+	s := new(Scanner).Init(strings.NewReader(src))
+	// ident = ( 'a' | 'b' ) { digit } .
+	// digit = '0' .. '3' .
+	// with a maximum length of 4
+	s.IsIdentRune = func(ch rune, i int) bool {
+		return i == 0 && (ch == 'a' || ch == 'b') || 0 < i && i < 4 && '0' <= ch && ch <= '3'
+	}
+	checkTok(t, s, 1, s.Scan(), 'f', "f")
+	checkTok(t, s, 1, s.Scan(), Ident, "a")
+	checkTok(t, s, 1, s.Scan(), Ident, "a")
+	checkTok(t, s, 1, s.Scan(), Ident, "b123")
+	checkTok(t, s, 1, s.Scan(), Int, "45")
+	checkTok(t, s, 1, s.Scan(), Ident, "a12")
+	checkTok(t, s, 1, s.Scan(), Ident, "b123")
+	checkTok(t, s, 1, s.Scan(), Ident, "a12")
+	checkTok(t, s, 1, s.Scan(), Int, "3")
+	checkTok(t, s, 1, s.Scan(), Ident, "b")
+	checkTok(t, s, 1, s.Scan(), EOF, "")
+}
+
 func TestScanNext(t *testing.T) {
-	s := new(Scanner).Init(bytes.NewBufferString("if a == bcd /* comment */ {\n\ta += c\n} // line comment ending in eof"))
-	checkTok(t, s, 1, s.Scan(), Ident, "if")
+	const BOM = '\uFEFF'
+	BOMs := string(BOM)
+	s := new(Scanner).Init(strings.NewReader(BOMs + "if a == bcd /* com" + BOMs + "ment */ {\n\ta += c\n}" + BOMs + "// line comment ending in eof"))
+	checkTok(t, s, 1, s.Scan(), Ident, "if") // the first BOM is ignored
 	checkTok(t, s, 1, s.Scan(), Ident, "a")
 	checkTok(t, s, 1, s.Scan(), '=', "=")
 	checkTok(t, s, 0, s.Next(), '=', "")
@@ -372,6 +396,7 @@ func TestScanNext(t *testing.T) {
 	checkTok(t, s, 0, s.Next(), '=', "")
 	checkTok(t, s, 2, s.Scan(), Ident, "c")
 	checkTok(t, s, 3, s.Scan(), '}', "}")
+	checkTok(t, s, 3, s.Scan(), BOM, BOMs)
 	checkTok(t, s, 3, s.Scan(), -1, "")
 	if s.ErrorCount != 0 {
 		t.Errorf("%d errors", s.ErrorCount)
@@ -399,7 +424,7 @@ func TestScanWhitespace(t *testing.T) {
 }
 
 func testError(t *testing.T, src, pos, msg string, tok rune) {
-	s := new(Scanner).Init(bytes.NewBufferString(src))
+	s := new(Scanner).Init(strings.NewReader(src))
 	errorCalled := false
 	s.Error = func(s *Scanner, m string) {
 		if !errorCalled {
@@ -426,34 +451,64 @@ func testError(t *testing.T, src, pos, msg string, tok rune) {
 }
 
 func TestError(t *testing.T) {
-	testError(t, "\x00", "1:1", "illegal character NUL", 0)
-	testError(t, "\x80", "1:1", "illegal UTF-8 encoding", utf8.RuneError)
-	testError(t, "\xff", "1:1", "illegal UTF-8 encoding", utf8.RuneError)
+	testError(t, "\x00", "<input>:1:1", "illegal character NUL", 0)
+	testError(t, "\x80", "<input>:1:1", "illegal UTF-8 encoding", utf8.RuneError)
+	testError(t, "\xff", "<input>:1:1", "illegal UTF-8 encoding", utf8.RuneError)
 
-	testError(t, "a\x00", "1:2", "illegal character NUL", Ident)
-	testError(t, "ab\x80", "1:3", "illegal UTF-8 encoding", Ident)
-	testError(t, "abc\xff", "1:4", "illegal UTF-8 encoding", Ident)
+	testError(t, "a\x00", "<input>:1:2", "illegal character NUL", Ident)
+	testError(t, "ab\x80", "<input>:1:3", "illegal UTF-8 encoding", Ident)
+	testError(t, "abc\xff", "<input>:1:4", "illegal UTF-8 encoding", Ident)
 
-	testError(t, `"a`+"\x00", "1:3", "illegal character NUL", String)
-	testError(t, `"ab`+"\x80", "1:4", "illegal UTF-8 encoding", String)
-	testError(t, `"abc`+"\xff", "1:5", "illegal UTF-8 encoding", String)
+	testError(t, `"a`+"\x00", "<input>:1:3", "illegal character NUL", String)
+	testError(t, `"ab`+"\x80", "<input>:1:4", "illegal UTF-8 encoding", String)
+	testError(t, `"abc`+"\xff", "<input>:1:5", "illegal UTF-8 encoding", String)
 
-	testError(t, "`a"+"\x00", "1:3", "illegal character NUL", String)
-	testError(t, "`ab"+"\x80", "1:4", "illegal UTF-8 encoding", String)
-	testError(t, "`abc"+"\xff", "1:5", "illegal UTF-8 encoding", String)
+	testError(t, "`a"+"\x00", "<input>:1:3", "illegal character NUL", String)
+	testError(t, "`ab"+"\x80", "<input>:1:4", "illegal UTF-8 encoding", String)
+	testError(t, "`abc"+"\xff", "<input>:1:5", "illegal UTF-8 encoding", String)
 
-	testError(t, `'\"'`, "1:3", "illegal char escape", Char)
-	testError(t, `"\'"`, "1:3", "illegal char escape", String)
+	testError(t, `'\"'`, "<input>:1:3", "illegal char escape", Char)
+	testError(t, `"\'"`, "<input>:1:3", "illegal char escape", String)
 
-	testError(t, `01238`, "1:6", "illegal octal number", Int)
-	testError(t, `'aa'`, "1:4", "illegal char literal", Char)
+	testError(t, `01238`, "<input>:1:6", "illegal octal number", Int)
+	testError(t, `01238123`, "<input>:1:9", "illegal octal number", Int)
+	testError(t, `0x`, "<input>:1:3", "illegal hexadecimal number", Int)
+	testError(t, `0xg`, "<input>:1:3", "illegal hexadecimal number", Int)
+	testError(t, `'aa'`, "<input>:1:4", "illegal char literal", Char)
 
-	testError(t, `'`, "1:2", "literal not terminated", Char)
-	testError(t, `'`+"\n", "1:2", "literal not terminated", Char)
-	testError(t, `"abc`, "1:5", "literal not terminated", String)
-	testError(t, `"abc`+"\n", "1:5", "literal not terminated", String)
-	testError(t, "`abc\n", "2:1", "literal not terminated", String)
-	testError(t, `/*/`, "1:4", "comment not terminated", EOF)
+	testError(t, `'`, "<input>:1:2", "literal not terminated", Char)
+	testError(t, `'`+"\n", "<input>:1:2", "literal not terminated", Char)
+	testError(t, `"abc`, "<input>:1:5", "literal not terminated", String)
+	testError(t, `"abc`+"\n", "<input>:1:5", "literal not terminated", String)
+	testError(t, "`abc\n", "<input>:2:1", "literal not terminated", String)
+	testError(t, `/*/`, "<input>:1:4", "comment not terminated", EOF)
+}
+
+// An errReader returns (0, err) where err is not io.EOF.
+type errReader struct{}
+
+func (errReader) Read(b []byte) (int, error) {
+	return 0, io.ErrNoProgress // some error that is not io.EOF
+}
+
+func TestIOError(t *testing.T) {
+	s := new(Scanner).Init(errReader{})
+	errorCalled := false
+	s.Error = func(s *Scanner, msg string) {
+		if !errorCalled {
+			if want := io.ErrNoProgress.Error(); msg != want {
+				t.Errorf("msg = %q, want %q", msg, want)
+			}
+			errorCalled = true
+		}
+	}
+	tok := s.Scan()
+	if tok != EOF {
+		t.Errorf("tok = %s, want EOF", TokenString(tok))
+	}
+	if !errorCalled {
+		t.Errorf("error handler not called")
+	}
 }
 
 func checkPos(t *testing.T, got, want Position) {
@@ -485,13 +540,13 @@ func checkScanPos(t *testing.T, s *Scanner, offset, line, column int, char rune)
 
 func TestPos(t *testing.T) {
 	// corner case: empty source
-	s := new(Scanner).Init(bytes.NewBufferString(""))
+	s := new(Scanner).Init(strings.NewReader(""))
 	checkPos(t, s.Pos(), Position{Offset: 0, Line: 1, Column: 1})
 	s.Peek() // peek doesn't affect the position
 	checkPos(t, s.Pos(), Position{Offset: 0, Line: 1, Column: 1})
 
 	// corner case: source with only a newline
-	s = new(Scanner).Init(bytes.NewBufferString("\n"))
+	s = new(Scanner).Init(strings.NewReader("\n"))
 	checkPos(t, s.Pos(), Position{Offset: 0, Line: 1, Column: 1})
 	checkNextPos(t, s, 1, 2, 1, '\n')
 	// after EOF position doesn't change
@@ -503,7 +558,7 @@ func TestPos(t *testing.T) {
 	}
 
 	// corner case: source with only a single character
-	s = new(Scanner).Init(bytes.NewBufferString("本"))
+	s = new(Scanner).Init(strings.NewReader("本"))
 	checkPos(t, s.Pos(), Position{Offset: 0, Line: 1, Column: 1})
 	checkNextPos(t, s, 3, 1, 2, '本')
 	// after EOF position doesn't change
@@ -515,7 +570,7 @@ func TestPos(t *testing.T) {
 	}
 
 	// positions after calling Next
-	s = new(Scanner).Init(bytes.NewBufferString("  foo६४  \n\n本語\n"))
+	s = new(Scanner).Init(strings.NewReader("  foo६४  \n\n本語\n"))
 	checkNextPos(t, s, 1, 1, 2, ' ')
 	s.Peek() // peek doesn't affect the position
 	checkNextPos(t, s, 2, 1, 3, ' ')
@@ -540,7 +595,7 @@ func TestPos(t *testing.T) {
 	}
 
 	// positions after calling Scan
-	s = new(Scanner).Init(bytes.NewBufferString("abc\n本語\n\nx"))
+	s = new(Scanner).Init(strings.NewReader("abc\n本語\n\nx"))
 	s.Mode = 0
 	s.Whitespace = 0
 	checkScanPos(t, s, 0, 1, 1, 'a')
@@ -559,5 +614,54 @@ func TestPos(t *testing.T) {
 	}
 	if s.ErrorCount != 0 {
 		t.Errorf("%d errors", s.ErrorCount)
+	}
+}
+
+type countReader int
+
+func (r *countReader) Read([]byte) (int, error) {
+	*r++
+	return 0, io.EOF
+}
+
+func TestNextEOFHandling(t *testing.T) {
+	var r countReader
+
+	// corner case: empty source
+	s := new(Scanner).Init(&r)
+
+	tok := s.Next()
+	if tok != EOF {
+		t.Error("1) EOF not reported")
+	}
+
+	tok = s.Peek()
+	if tok != EOF {
+		t.Error("2) EOF not reported")
+	}
+
+	if r != 1 {
+		t.Errorf("scanner called Read %d times, not once", r)
+	}
+}
+
+func TestScanEOFHandling(t *testing.T) {
+	var r countReader
+
+	// corner case: empty source
+	s := new(Scanner).Init(&r)
+
+	tok := s.Scan()
+	if tok != EOF {
+		t.Error("1) EOF not reported")
+	}
+
+	tok = s.Peek()
+	if tok != EOF {
+		t.Error("2) EOF not reported")
+	}
+
+	if r != 1 {
+		t.Errorf("scanner called Read %d times, not once", r)
 	}
 }

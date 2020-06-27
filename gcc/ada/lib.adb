@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -37,6 +37,8 @@ with Atree;    use Atree;
 with Csets;    use Csets;
 with Einfo;    use Einfo;
 with Fname;    use Fname;
+with Nlists;   use Nlists;
+with Opt;      use Opt;
 with Output;   use Output;
 with Sinfo;    use Sinfo;
 with Sinput;   use Sinput;
@@ -67,9 +69,14 @@ package body Lib is
 
    function Get_Code_Or_Source_Unit
      (S                : Source_Ptr;
-      Unwind_Instances : Boolean) return Unit_Number_Type;
-   --  Common code for Get_Code_Unit (get unit of instantiation for location)
-   --  and Get_Source_Unit (get unit of template for location).
+      Unwind_Instances : Boolean;
+      Unwind_Subunits  : Boolean) return Unit_Number_Type;
+   --  Common processing for routines Get_Code_Unit, Get_Source_Unit, and
+   --  Get_Top_Level_Code_Unit. Unwind_Instances is True when the unit for the
+   --  top-level instantiation should be returned instead of the unit for the
+   --  template, in the case of an instantiation. Unwind_Subunits is True when
+   --  the corresponding top-level unit should be returned instead of a
+   --  subunit, in the case of a subunit.
 
    --------------------------------------------
    -- Access Functions for Unit Table Fields --
@@ -105,7 +112,7 @@ package body Lib is
       return Units.Table (U).Expected_Unit;
    end Expected_Unit;
 
-   function Fatal_Error (U : Unit_Number_Type) return Boolean is
+   function Fatal_Error (U : Unit_Number_Type) return Fatal_Type is
    begin
       return Units.Table (U).Fatal_Error;
    end Fatal_Error;
@@ -115,20 +122,10 @@ package body Lib is
       return Units.Table (U).Generate_Code;
    end Generate_Code;
 
-   function Has_Allocator (U : Unit_Number_Type) return Boolean is
-   begin
-      return Units.Table (U).Has_Allocator;
-   end Has_Allocator;
-
    function Has_RACW (U : Unit_Number_Type) return Boolean is
    begin
       return Units.Table (U).Has_RACW;
    end Has_RACW;
-
-   function Is_Compiler_Unit (U : Unit_Number_Type) return Boolean is
-   begin
-      return Units.Table (U).Is_Compiler_Unit;
-   end Is_Compiler_Unit;
 
    function Ident_String (U : Unit_Number_Type) return Node_Id is
    begin
@@ -154,6 +151,11 @@ package body Lib is
    begin
       return Units.Table (U).Munit_Index;
    end Munit_Index;
+
+   function No_Elab_Code_All (U : Unit_Number_Type) return Boolean is
+   begin
+      return Units.Table (U).No_Elab_Code_All;
+   end No_Elab_Code_All;
 
    function OA_Setting (U : Unit_Number_Type) return Character is
    begin
@@ -200,9 +202,9 @@ package body Lib is
       Units.Table (U).Error_Location := W;
    end Set_Error_Location;
 
-   procedure Set_Fatal_Error (U : Unit_Number_Type; B : Boolean := True) is
+   procedure Set_Fatal_Error (U : Unit_Number_Type; V : Fatal_Type) is
    begin
-      Units.Table (U).Fatal_Error := B;
+      Units.Table (U).Fatal_Error := V;
    end Set_Fatal_Error;
 
    procedure Set_Generate_Code (U : Unit_Number_Type; B : Boolean := True) is
@@ -210,23 +212,10 @@ package body Lib is
       Units.Table (U).Generate_Code := B;
    end Set_Generate_Code;
 
-   procedure Set_Has_Allocator (U : Unit_Number_Type; B : Boolean := True) is
-   begin
-      Units.Table (U).Has_Allocator := B;
-   end Set_Has_Allocator;
-
    procedure Set_Has_RACW (U : Unit_Number_Type; B : Boolean := True) is
    begin
       Units.Table (U).Has_RACW := B;
    end Set_Has_RACW;
-
-   procedure Set_Is_Compiler_Unit
-     (U : Unit_Number_Type;
-      B : Boolean := True)
-   is
-   begin
-      Units.Table (U).Is_Compiler_Unit := B;
-   end Set_Is_Compiler_Unit;
 
    procedure Set_Ident_String (U : Unit_Number_Type; N : Node_Id) is
    begin
@@ -248,6 +237,14 @@ package body Lib is
       Units.Table (U).Main_Priority := P;
    end Set_Main_Priority;
 
+   procedure Set_No_Elab_Code_All
+     (U : Unit_Number_Type;
+      B : Boolean := True)
+   is
+   begin
+      Units.Table (U).No_Elab_Code_All := B;
+   end Set_No_Elab_Code_All;
+
    procedure Set_OA_Setting (U : Unit_Number_Type; C : Character) is
    begin
       Units.Table (U).OA_Setting := C;
@@ -263,18 +260,22 @@ package body Lib is
    ------------------------------
 
    function Check_Same_Extended_Unit (S1, S2 : Source_Ptr) return SEU_Result is
-      Sloc1  : Source_Ptr;
-      Sloc2  : Source_Ptr;
-      Sind1  : Source_File_Index;
-      Sind2  : Source_File_Index;
-      Inst1  : Source_Ptr;
-      Inst2  : Source_Ptr;
-      Unum1  : Unit_Number_Type;
-      Unum2  : Unit_Number_Type;
-      Unit1  : Node_Id;
-      Unit2  : Node_Id;
-      Depth1 : Nat;
-      Depth2 : Nat;
+      Max_Iterations : constant Nat := Maximum_Instantiations * 2;
+      --  Limit to prevent a potential infinite loop
+
+      Counter : Nat := 0;
+      Depth1  : Nat;
+      Depth2  : Nat;
+      Inst1   : Source_Ptr;
+      Inst2   : Source_Ptr;
+      Sind1   : Source_File_Index;
+      Sind2   : Source_File_Index;
+      Sloc1   : Source_Ptr;
+      Sloc2   : Source_Ptr;
+      Unit1   : Node_Id;
+      Unit2   : Node_Id;
+      Unum1   : Unit_Number_Type;
+      Unum2   : Unit_Number_Type;
 
    begin
       if S1 = No_Location or else S2 = No_Location then
@@ -439,7 +440,20 @@ package body Lib is
          return No;
 
          <<Continue>>
-            null;
+         Counter := Counter + 1;
+
+         --  Prevent looping forever
+
+         if Counter > Max_Iterations then
+            --  ??? Not quite right, but return a value to be able to generate
+            --  SCIL files and hope for the best.
+
+            if CodePeer_Mode then
+               return No;
+            else
+               raise Program_Error;
+            end if;
+         end if;
       end loop;
    end Check_Same_Extended_Unit;
 
@@ -582,7 +596,8 @@ package body Lib is
 
    function Get_Code_Or_Source_Unit
      (S                : Source_Ptr;
-      Unwind_Instances : Boolean) return Unit_Number_Type
+      Unwind_Instances : Boolean;
+      Unwind_Subunits  : Boolean) return Unit_Number_Type
    is
    begin
       --  Search table unless we have No_Location, which can happen if the
@@ -593,6 +608,7 @@ package body Lib is
          declare
             Source_File : Source_File_Index;
             Source_Unit : Unit_Number_Type;
+            Unit_Node   : Node_Id;
 
          begin
             Source_File := Get_Source_File_Index (S);
@@ -604,6 +620,21 @@ package body Lib is
             end if;
 
             Source_Unit := Unit (Source_File);
+
+            if Unwind_Subunits then
+               Unit_Node := Unit (Cunit (Source_Unit));
+
+               while Nkind (Unit_Node) = N_Subunit
+                 and then Present (Corresponding_Stub (Unit_Node))
+               loop
+                  Source_Unit :=
+                    Get_Code_Or_Source_Unit
+                      (Sloc (Corresponding_Stub (Unit_Node)),
+                       Unwind_Instances => Unwind_Instances,
+                       Unwind_Subunits  => Unwind_Subunits);
+                  Unit_Node := Unit (Cunit (Source_Unit));
+               end loop;
+            end if;
 
             if Source_Unit /= No_Unit then
                return Source_Unit;
@@ -624,8 +655,11 @@ package body Lib is
 
    function Get_Code_Unit (S : Source_Ptr) return Unit_Number_Type is
    begin
-      return Get_Code_Or_Source_Unit (Top_Level_Location (S),
-        Unwind_Instances => False);
+      return
+        Get_Code_Or_Source_Unit
+          (Top_Level_Location (S),
+           Unwind_Instances => False,
+           Unwind_Subunits  => False);
    end Get_Code_Unit;
 
    function Get_Code_Unit (N : Node_Or_Entity_Id) return Unit_Number_Type is
@@ -641,7 +675,6 @@ package body Lib is
    begin
       if N <= Compilation_Switches.Last then
          return Compilation_Switches.Table (N);
-
       else
          return null;
       end if;
@@ -700,13 +733,34 @@ package body Lib is
 
    function Get_Source_Unit (S : Source_Ptr) return Unit_Number_Type is
    begin
-      return Get_Code_Or_Source_Unit (S, Unwind_Instances => True);
+      return
+        Get_Code_Or_Source_Unit
+          (S, Unwind_Instances => True, Unwind_Subunits => False);
    end Get_Source_Unit;
 
    function Get_Source_Unit (N : Node_Or_Entity_Id) return Unit_Number_Type is
    begin
       return Get_Source_Unit (Sloc (N));
    end Get_Source_Unit;
+
+   -----------------------------
+   -- Get_Top_Level_Code_Unit --
+   -----------------------------
+
+   function Get_Top_Level_Code_Unit (S : Source_Ptr) return Unit_Number_Type is
+   begin
+      return
+        Get_Code_Or_Source_Unit
+          (Top_Level_Location (S),
+           Unwind_Instances => False,
+           Unwind_Subunits  => True);
+   end Get_Top_Level_Code_Unit;
+
+   function Get_Top_Level_Code_Unit
+     (N : Node_Or_Entity_Id) return Unit_Number_Type is
+   begin
+      return Get_Top_Level_Code_Unit (Sloc (N));
+   end Get_Top_Level_Code_Unit;
 
    --------------------------------
    -- In_Extended_Main_Code_Unit --
@@ -717,7 +771,7 @@ package body Lib is
    is
    begin
       if Sloc (N) = Standard_Location then
-         return True;
+         return False;
 
       elsif Sloc (N) = No_Location then
          return False;
@@ -749,7 +803,7 @@ package body Lib is
    function In_Extended_Main_Code_Unit (Loc : Source_Ptr) return Boolean is
    begin
       if Loc = Standard_Location then
-         return True;
+         return False;
 
       elsif Loc = No_Location then
          return False;
@@ -786,7 +840,7 @@ package body Lib is
       --  Special value cases
 
       elsif Nloc = Standard_Location then
-         return True;
+         return False;
 
       elsif Nloc = No_Location then
          return False;
@@ -825,7 +879,7 @@ package body Lib is
       --  Special value cases
 
       elsif Loc = Standard_Location then
-         return True;
+         return False;
 
       elsif Loc = No_Location then
          return False;
@@ -1068,8 +1122,17 @@ package body Lib is
    ----------------
 
    procedure Store_Note (N : Node_Id) is
+      Sfile : constant Source_File_Index := Get_Source_File_Index (Sloc (N));
+
    begin
-      Notes.Append ((Pragma_Node => N, Unit => Current_Sem_Unit));
+      --  Notes for a generic are emitted when processing the template, never
+      --  in instances.
+
+      if In_Extended_Main_Code_Unit (N)
+        and then Instance (Sfile) = No_Instance_Id
+      then
+         Notes.Append (N);
+      end if;
    end Store_Note;
 
    -------------------------------
@@ -1154,5 +1217,83 @@ package body Lib is
    begin
       Version_Ref.Append (S);
    end Version_Referenced;
+
+   ---------------------
+   -- Write_Unit_Info --
+   ---------------------
+
+   procedure Write_Unit_Info
+     (Unit_Num : Unit_Number_Type;
+      Item     : Node_Id;
+      Prefix   : String := "";
+      Withs    : Boolean := False)
+   is
+   begin
+      Write_Str (Prefix);
+      Write_Unit_Name (Unit_Name (Unit_Num));
+      Write_Str (", unit ");
+      Write_Int (Int (Unit_Num));
+      Write_Str (", ");
+      Write_Int (Int (Item));
+      Write_Str ("=");
+      Write_Str (Node_Kind'Image (Nkind (Item)));
+
+      if Item /= Original_Node (Item) then
+         Write_Str (", orig = ");
+         Write_Int (Int (Original_Node (Item)));
+         Write_Str ("=");
+         Write_Str (Node_Kind'Image (Nkind (Original_Node (Item))));
+      end if;
+
+      Write_Eol;
+
+      --  Skip the rest if we're not supposed to print the withs
+
+      if not Withs then
+         return;
+      end if;
+
+      declare
+         Context_Item : Node_Id;
+
+      begin
+         Context_Item := First (Context_Items (Cunit (Unit_Num)));
+         while Present (Context_Item)
+           and then (Nkind (Context_Item) /= N_With_Clause
+                      or else Limited_Present (Context_Item))
+         loop
+            Context_Item := Next (Context_Item);
+         end loop;
+
+         if Present (Context_Item) then
+            Indent;
+            Write_Line ("withs:");
+            Indent;
+
+            while Present (Context_Item) loop
+               if Nkind (Context_Item) = N_With_Clause
+                 and then not Limited_Present (Context_Item)
+               then
+                  pragma Assert (Present (Library_Unit (Context_Item)));
+                  Write_Unit_Name
+                    (Unit_Name
+                       (Get_Cunit_Unit_Number (Library_Unit (Context_Item))));
+
+                  if Implicit_With (Context_Item) then
+                     Write_Str (" -- implicit");
+                  end if;
+
+                  Write_Eol;
+               end if;
+
+               Context_Item := Next (Context_Item);
+            end loop;
+
+            Outdent;
+            Write_Line ("end withs");
+            Outdent;
+         end if;
+      end;
+   end Write_Unit_Info;
 
 end Lib;

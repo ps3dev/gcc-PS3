@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2001-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 2001-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -26,10 +26,10 @@
 with Ada.Command_Line;  use Ada.Command_Line;
 with Ada.Text_IO;       use Ada.Text_IO;
 
+with GNAT.Command_Line; use GNAT.Command_Line;
 with GNAT.Dynamic_Tables;
 with GNAT.OS_Lib;       use GNAT.OS_Lib;
 
-with Hostparm;
 with Opt;
 with Osint;    use Osint;
 with Output;   use Output;
@@ -88,7 +88,7 @@ procedure Gnatname is
       Table_Initial        => 10,
       Table_Increment      => 100,
       Table_Name           => "Gnatname.Arguments");
-   --  Table to accumulate the foreign patterns
+   --  Table to accumulate directories and patterns
 
    package Preprocessor_Switches is new Table.Table
      (Table_Component_Type => String_Access,
@@ -289,7 +289,7 @@ procedure Gnatname is
                       Patterns.Last
                         (Arguments.Table (Arguments.Last).Foreign_Patterns) = 0
                   then
-                     Usage;
+                     Try_Help;
                      return;
                   end if;
 
@@ -345,6 +345,11 @@ procedure Gnatname is
                then
                   Subdirs :=
                     new String'(Arg (Subdirs_Switch'Length + 1 .. Arg'Last));
+
+               --  --no-backup
+
+               elsif Arg = "--no-backup" then
+                  Opt.No_Backup := True;
 
                --  -c
 
@@ -429,7 +434,7 @@ procedure Gnatname is
                elsif Arg = "-h" then
                   Usage_Needed := True;
 
-               --  -p
+               --  -P
 
                elsif Arg'Length >= 2 and then Arg (1 .. 2) = "-P" then
                   if File_Set then
@@ -515,6 +520,7 @@ procedure Gnatname is
          Display_Usage_Version_And_Help;
 
          Write_Line ("  --subdirs=dir real obj/lib/exec dirs are subdirs");
+         Write_Line ("  --no-backup   do not create backup of project file");
          Write_Eol;
 
          Write_Line ("  --and        use different patterns");
@@ -542,40 +548,44 @@ procedure Gnatname is
 begin
    --  Add the directory where gnatname is invoked in front of the
    --  path, if gnatname is invoked with directory information.
-   --  Only do this if the platform is not VMS, where the notion of path
-   --  does not really exist.
 
-   if not Hostparm.OpenVMS then
-      declare
-         Command : constant String := Command_Name;
+   declare
+      Command : constant String := Command_Name;
 
-      begin
-         for Index in reverse Command'Range loop
-            if Command (Index) = Directory_Separator then
-               declare
-                  Absolute_Dir : constant String :=
-                                   Normalize_Pathname
-                                     (Command (Command'First .. Index));
+   begin
+      for Index in reverse Command'Range loop
+         if Command (Index) = Directory_Separator then
+            declare
+               Absolute_Dir : constant String :=
+                                Normalize_Pathname
+                                  (Command (Command'First .. Index));
 
-                  PATH         : constant String :=
-                                   Absolute_Dir &
-                                   Path_Separator &
-                                   Getenv ("PATH").all;
+               PATH         : constant String :=
+                                Absolute_Dir &
+                                Path_Separator &
+                                Getenv ("PATH").all;
 
-               begin
-                  Setenv ("PATH", PATH);
-               end;
+            begin
+               Setenv ("PATH", PATH);
+            end;
 
-               exit;
-            end if;
-         end loop;
-      end;
-   end if;
+            exit;
+         end if;
+      end loop;
+   end;
 
    --  Initialize tables
 
    Arguments.Set_Last (0);
-   Arguments.Increment_Last;
+   declare
+      New_Arguments : Argument_Data;
+      pragma Warnings (Off, New_Arguments);
+      --  Declaring this defaulted initialized object ensures that the new
+      --  allocated component of table Arguments is correctly initialized.
+   begin
+      Arguments.Append (New_Arguments);
+   end;
+
    Patterns.Init (Arguments.Table (1).Directories);
    Patterns.Set_Last (Arguments.Table (1).Directories, 0);
    Patterns.Init (Arguments.Table (1).Name_Patterns);
@@ -599,13 +609,73 @@ begin
       Usage;
    end if;
 
+   if Create_Project then
+      declare
+         Gnatname : constant String_Access :=
+                      Program_Name ("gnatname", "gnatname");
+         Arg_Len  : Positive      := Argument_Count;
+         Target   : String_Access := null;
+
+      begin
+         --  Find the target, if any
+
+         if Gnatname.all /= "gnatname" then
+            Target :=
+              new String'(Gnatname (Gnatname'First .. Gnatname'Last - 9));
+            Arg_Len := Arg_Len + 1;
+         end if;
+
+         declare
+            Args    : Argument_List (1 .. Arg_Len);
+            Gprname : String_Access :=
+                        Locate_Exec_On_Path (Exec_Name => "gprname");
+            Success : Boolean;
+
+         begin
+            if Gprname /= null then
+               for J in 1 .. Argument_Count loop
+                  Args (J) := new String'(Argument (J));
+               end loop;
+
+               --  Add the target if there is one
+
+               if Target /= null then
+                  Args (Args'Last) := new String'("--target=" & Target.all);
+               end if;
+
+               Spawn (Gprname.all, Args, Success);
+
+               Free (Gprname);
+
+               if Success then
+                  Exit_Program (E_Success);
+               end if;
+            end if;
+         end;
+      end;
+   end if;
+
+   --  This only happens if gprname is not found or if the invocation of
+   --  gprname did not succeed.
+
+   if Create_Project then
+      Write_Line
+        ("warning: gnatname -P is obsolete and will not be available in the" &
+         " next release; use gprname instead");
+   end if;
+
    --  If no Ada or foreign pattern was specified, print the usage and return
 
    if Patterns.Last (Arguments.Table (Arguments.Last).Name_Patterns) = 0
-      and then
+        and then
       Patterns.Last (Arguments.Table (Arguments.Last).Foreign_Patterns) = 0
    then
-      Usage;
+      if Argument_Count = 0 then
+         Usage;
+      elsif not Usage_Output then
+         Try_Help;
+      end if;
+
       return;
    end if;
 
@@ -614,9 +684,7 @@ begin
    --  information, the current directory is the directory of the specified
    --  file.
 
-   if Patterns.Last
-     (Arguments.Table (Arguments.Last).Directories) = 0
-   then
+   if Patterns.Last (Arguments.Table (Arguments.Last).Directories) = 0 then
       Patterns.Append
         (Arguments.Table (Arguments.Last).Directories, new String'("."));
    end if;

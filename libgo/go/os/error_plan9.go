@@ -4,28 +4,31 @@
 
 package os
 
-// IsExist returns whether the error is known to report that a file already exists.
-func IsExist(err error) bool {
-	if pe, ok := err.(*PathError); ok {
-		err = pe.Err
-	}
-	return contains(err.Error(), " exists")
+func isExist(err error) bool {
+	return checkErrMessageContent(err, " exists")
 }
 
-// IsNotExist returns whether the error is known to report that a file does not exist.
-func IsNotExist(err error) bool {
-	if pe, ok := err.(*PathError); ok {
-		err = pe.Err
-	}
-	return contains(err.Error(), "does not exist")
+func isNotExist(err error) bool {
+	return checkErrMessageContent(err, "does not exist", "not found",
+		"has been removed", "no parent")
 }
 
-// IsPermission returns whether the error is known to report that permission is denied.
-func IsPermission(err error) bool {
-	if pe, ok := err.(*PathError); ok {
-		err = pe.Err
+func isPermission(err error) bool {
+	return checkErrMessageContent(err, "permission denied")
+}
+
+// checkErrMessageContent checks if err message contains one of msgs.
+func checkErrMessageContent(err error, msgs ...string) bool {
+	if err == nil {
+		return false
 	}
-	return contains(err.Error(), "permission denied")
+	err = underlyingError(err)
+	for _, msg := range msgs {
+		if contains(err.Error(), msg) {
+			return true
+		}
+	}
+	return false
 }
 
 // contains is a local version of strings.Contains. It knows len(sep) > 1.

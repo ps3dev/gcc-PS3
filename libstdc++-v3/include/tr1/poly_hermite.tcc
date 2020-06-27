@@ -1,7 +1,6 @@
 // Special functions -*- C++ -*-
 
-// Copyright (C) 2006, 2007, 2008, 2009, 2010, 2011
-// Free Software Foundation, Inc.
+// Copyright (C) 2006-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -42,8 +41,13 @@
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
+#if _GLIBCXX_USE_STD_SPEC_FUNCS
+#elif defined(_GLIBCXX_TR1_CMATH)
 namespace tr1
 {
+#else
+# error do not include this header directly, use <cmath> or <tr1/cmath>
+#endif
   // [5.2] Special functions
 
   // Implementation-space details.
@@ -67,7 +71,7 @@ namespace tr1
      */
     template<typename _Tp>
     _Tp
-    __poly_hermite_recursion(const unsigned int __n, const _Tp __x)
+    __poly_hermite_recursion(unsigned int __n, _Tp __x)
     {
       //  Compute H_0.
       _Tp __H_0 = 1;
@@ -109,7 +113,7 @@ namespace tr1
      */
     template<typename _Tp>
     inline _Tp
-    __poly_hermite(const unsigned int __n, const _Tp __x)
+    __poly_hermite(unsigned int __n, _Tp __x)
     {
       if (__isnan(__x))
         return std::numeric_limits<_Tp>::quiet_NaN();
@@ -118,8 +122,10 @@ namespace tr1
     }
 
   _GLIBCXX_END_NAMESPACE_VERSION
-  } // namespace std::tr1::__detail
-}
+  } // namespace __detail
+#if ! _GLIBCXX_USE_STD_SPEC_FUNCS && defined(_GLIBCXX_TR1_CMATH)
+} // namespace tr1
+#endif
 }
 
 #endif // _GLIBCXX_TR1_POLY_HERMITE_TCC

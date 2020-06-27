@@ -602,6 +602,8 @@ ac_subst_vars='am__EXEEXT_FALSE
 am__EXEEXT_TRUE
 LTLIBOBJS
 LIBOBJS
+HAVE_STAT_TIMESPEC_FALSE
+HAVE_STAT_TIMESPEC_TRUE
 STRUCT_EPOLL_EVENT_FD_OFFSET
 SIZEOF_STRUCT_EPOLL_EVENT
 MATH_FLAG
@@ -616,48 +618,42 @@ PTHREAD_LIBS
 PTHREAD_CFLAGS
 NET_LIBS
 MATH_LIBS
+GOC_IS_LLGO_FALSE
+GOC_IS_LLGO_TRUE
+GO_SPLIT_STACK
 USING_SPLIT_STACK_FALSE
 USING_SPLIT_STACK_TRUE
 SPLIT_STACK
+HWCAP_CFLAGS
 OSCFLAGS
 GO_SYSCALL_OS_ARCH_FILE
 GO_SYSCALL_OS_FILE
 GO_LIBCALL_OS_ARCH_FILE
 GO_LIBCALL_OS_FILE
+ALLGOARCHFAMILY
+ALLGOARCH
+GOARCH_MINFRAMESIZE
+GOARCH_HUGEPAGESIZE
+GOARCH_INT64ALIGN
+GOARCH_PCQUANTUM
+GOARCH_PHYSPAGESIZE
+GOARCH_CACHELINESIZE
+GOARCH_BIGENDIAN
+GOARCH_FAMILY
 GOARCH
-LIBGO_IS_X86_64_FALSE
-LIBGO_IS_X86_64_TRUE
-LIBGO_IS_SPARC64_FALSE
-LIBGO_IS_SPARC64_TRUE
-LIBGO_IS_SPARC_FALSE
-LIBGO_IS_SPARC_TRUE
-LIBGO_IS_PPC64_FALSE
-LIBGO_IS_PPC64_TRUE
-LIBGO_IS_PPC_FALSE
-LIBGO_IS_PPC_TRUE
-LIBGO_IS_MIPSO64_FALSE
-LIBGO_IS_MIPSO64_TRUE
-LIBGO_IS_MIPSN64_FALSE
-LIBGO_IS_MIPSN64_TRUE
-LIBGO_IS_MIPSN32_FALSE
-LIBGO_IS_MIPSN32_TRUE
-LIBGO_IS_MIPSO32_FALSE
-LIBGO_IS_MIPSO32_TRUE
-LIBGO_IS_MIPS_FALSE
-LIBGO_IS_MIPS_TRUE
-LIBGO_IS_M68K_FALSE
-LIBGO_IS_M68K_TRUE
-LIBGO_IS_ARM_FALSE
-LIBGO_IS_ARM_TRUE
-LIBGO_IS_ALPHA_FALSE
-LIBGO_IS_ALPHA_TRUE
-LIBGO_IS_386_FALSE
-LIBGO_IS_386_TRUE
+USE_DEJAGNU
+ALLGOOS
 GOOS
+LIBGO_IS_BSD_FALSE
+LIBGO_IS_BSD_TRUE
 LIBGO_IS_SOLARIS_FALSE
 LIBGO_IS_SOLARIS_TRUE
 LIBGO_IS_RTEMS_FALSE
 LIBGO_IS_RTEMS_TRUE
+LIBGO_IS_DRAGONFLY_FALSE
+LIBGO_IS_DRAGONFLY_TRUE
+LIBGO_IS_OPENBSD_FALSE
+LIBGO_IS_OPENBSD_TRUE
 LIBGO_IS_NETBSD_FALSE
 LIBGO_IS_NETBSD_TRUE
 LIBGO_IS_LINUX_FALSE
@@ -669,6 +665,9 @@ LIBGO_IS_FREEBSD_TRUE
 LIBGO_IS_DARWIN_FALSE
 LIBGO_IS_DARWIN_TRUE
 go_include
+LIBATOMIC
+USE_LIBFFI_FALSE
+USE_LIBFFI_TRUE
 LIBFFIINCS
 LIBFFI
 nover_glibgo_toolexeclibdir
@@ -707,6 +706,7 @@ GOC
 am__fastdepCC_FALSE
 am__fastdepCC_TRUE
 CCDEPMODE
+am__nodep
 AMDEPBACKSLASH
 AMDEP_FALSE
 AMDEP_TRUE
@@ -807,10 +807,11 @@ enable_static
 with_pic
 enable_fast_install
 enable_libtool_lock
+enable_werror
 enable_version_specific_runtime_libs
 with_libffi
+with_libatomic
 with_system_libunwind
-enable_sjlj_exceptions
 '
       ac_precious_vars='build_alias
 host_alias
@@ -1447,11 +1448,10 @@ Optional Features:
   --enable-fast-install[=PKGS]
                           optimize for fast installation [default=yes]
   --disable-libtool-lock  avoid locking (might break parallel builds)
+  --enable-werror         turns on -Werror [default=yes]
   --enable-version-specific-runtime-libs
                           Specify that runtime libraries should be installed
                           in a compiler-specific directory
-  --enable-sjlj-exceptions
-                          force use of builtin_setjmp for exceptions
 
 Optional Packages:
   --with-PACKAGE[=ARG]    use PACKAGE [ARG=yes]
@@ -1460,6 +1460,7 @@ Optional Packages:
   --with-pic              try to use only PIC/non-PIC objects [default=use
                           both]
   --without-libffi        don't use libffi
+  --without-libatomic     don't use libatomic
   --with-system-libunwind use installed libunwind
 
 Some influential environment variables:
@@ -2491,7 +2492,7 @@ ac_compiler_gnu=$ac_cv_c_compiler_gnu
 ac_config_headers="$ac_config_headers config.h"
 
 
-libtool_VERSION=1:0:0
+libtool_VERSION=11:0:0
 
 
 # Default to --enable-multilib
@@ -3127,11 +3128,11 @@ MAKEINFO=${MAKEINFO-"${am_missing_run}makeinfo"}
 
 # We need awk for the "check" target.  The system "awk" is bad on
 # some platforms.
-# Always define AMTAR for backward compatibility.
+# Always define AMTAR for backward compatibility.  Yes, it's still used
+# in the wild :-(  We should find a proper way to deprecate it ...
+AMTAR='$${TAR-tar}'
 
-AMTAR=${AMTAR-"${am_missing_run}tar"}
-
-am__tar='${AMTAR} chof - "$$tardir"'; am__untar='${AMTAR} xf -'
+am__tar='$${TAR-tar} chof - "$$tardir"' am__untar='$${TAR-tar} xf -'
 
 
 
@@ -3958,6 +3959,7 @@ fi
 if test "x$enable_dependency_tracking" != xno; then
   am_depcomp="$ac_aux_dir/depcomp"
   AMDEPBACKSLASH='\'
+  am__nodep='_no'
 fi
  if test "x$enable_dependency_tracking" != xno; then
   AMDEP_TRUE=
@@ -3982,6 +3984,7 @@ else
   # instance it was reported that on HP-UX the gcc test will end up
   # making a dummy file named `D' -- because `-MD' means `put the output
   # in D'.
+  rm -rf conftest.dir
   mkdir conftest.dir
   # Copy depcomp to subdir because otherwise we won't find it if we're
   # using a relative directory.
@@ -4041,7 +4044,7 @@ else
 	break
       fi
       ;;
-    msvisualcpp | msvcmsys)
+    msvc7 | msvc7msys | msvisualcpp | msvcmsys)
       # This compiler won't grok `-c -o', but also, the minuso test has
       # not run yet.  These depmodes are late enough in the game, and
       # so weak that their functioning should not be impacted.
@@ -6496,7 +6499,7 @@ ia64-*-hpux*)
   rm -rf conftest*
   ;;
 
-x86_64-*kfreebsd*-gnu|x86_64-*linux*|ppc*-*linux*|powerpc*-*linux*| \
+x86_64-*kfreebsd*-gnu|x86_64-*linux*|powerpc*-*linux*| \
 s390*-*linux*|s390*-*tpf*|sparc*-*linux*)
   # Find out which ABI we are using.
   echo 'int i;' > conftest.$ac_ext
@@ -6512,9 +6515,19 @@ s390*-*linux*|s390*-*tpf*|sparc*-*linux*)
 	    LD="${LD-ld} -m elf_i386_fbsd"
 	    ;;
 	  x86_64-*linux*)
-	    LD="${LD-ld} -m elf_i386"
+	    case `/usr/bin/file conftest.o` in
+	      *x86-64*)
+		LD="${LD-ld} -m elf32_x86_64"
+		;;
+	      *)
+		LD="${LD-ld} -m elf_i386"
+		;;
+	    esac
 	    ;;
-	  ppc64-*linux*|powerpc64-*linux*)
+	  powerpc64le-*linux*)
+	    LD="${LD-ld} -m elf32lppclinux"
+	    ;;
+	  powerpc64-*linux*)
 	    LD="${LD-ld} -m elf32ppclinux"
 	    ;;
 	  s390x-*linux*)
@@ -6533,7 +6546,10 @@ s390*-*linux*|s390*-*tpf*|sparc*-*linux*)
 	  x86_64-*linux*)
 	    LD="${LD-ld} -m elf_x86_64"
 	    ;;
-	  ppc*-*linux*|powerpc*-*linux*)
+	  powerpcle-*linux*)
+	    LD="${LD-ld} -m elf64lppc"
+	    ;;
+	  powerpc-*linux*)
 	    LD="${LD-ld} -m elf64ppc"
 	    ;;
 	  s390*-*linux*|s390*-*tpf*)
@@ -6596,7 +6612,7 @@ $as_echo "$lt_cv_cc_needs_belf" >&6; }
     CFLAGS="$SAVE_CFLAGS"
   fi
   ;;
-*-*solaris*)
+sparc*-*solaris*)
   # Find out which ABI we are using.
   echo 'int i;' > conftest.$ac_ext
   if { { eval echo "\"\$as_me\":${as_lineno-$LINENO}: \"$ac_compile\""; } >&5
@@ -6607,20 +6623,7 @@ $as_echo "$lt_cv_cc_needs_belf" >&6; }
     case `/usr/bin/file conftest.o` in
     *64-bit*)
       case $lt_cv_prog_gnu_ld in
-      yes*)
-        case $host in
-        i?86-*-solaris* | x86_64-*-solaris2.1[0-9]*)
-          LD="${LD-ld} -m elf_x86_64"
-          ;;
-        sparc*-*-solaris*)
-          LD="${LD-ld} -m elf64_sparc"
-          ;;
-        esac
-        # GNU ld 2.21 introduced _sol2 emulations.  Use them if available.
-        if ${LD-ld} -V | grep _sol2 >/dev/null 2>&1; then
-          LD="${LD-ld}_sol2"
-        fi
-        ;;
+      yes*) LD="${LD-ld} -m elf64_sparc" ;;
       *)
 	if ${LD-ld} -64 -r -o conftest2.o conftest.o >/dev/null 2>&1; then
 	  LD="${LD-ld} -64"
@@ -7228,7 +7231,7 @@ $as_echo "$lt_cv_ld_force_load" >&6; }
       case ${MACOSX_DEPLOYMENT_TARGET-10.0},$host in
 	10.0,*86*-darwin8*|10.0,*-darwin[91]*)
 	  _lt_dar_allow_undefined='${wl}-undefined ${wl}dynamic_lookup' ;;
-	10.[012]*)
+	10.[012][,.]*)
 	  _lt_dar_allow_undefined='${wl}-flat_namespace ${wl}-undefined ${wl}suppress' ;;
 	10.*)
 	  _lt_dar_allow_undefined='${wl}-undefined ${wl}dynamic_lookup' ;;
@@ -8154,6 +8157,7 @@ $as_echo_n "checking for $compiler option to produce PIC... " >&6; }
 	# AIX 5 now supports IA64 processor
 	lt_prog_compiler_static='-Bstatic'
       fi
+      lt_prog_compiler_pic='-fPIC'
       ;;
 
     amigaos*)
@@ -9335,7 +9339,7 @@ if test -z "$aix_libpath"; then aix_libpath="/usr/lib:/lib"; fi
       ;;
 
     # Unfortunately, older versions of FreeBSD 2 do not have this feature.
-    freebsd2*)
+    freebsd2.*)
       archive_cmds='$LD -Bshareable -o $lib $libobjs $deplibs $linker_flags'
       hardcode_direct=yes
       hardcode_minus_L=yes
@@ -10248,7 +10252,7 @@ freebsd* | dragonfly*)
     objformat=`/usr/bin/objformat`
   else
     case $host_os in
-    freebsd[123]*) objformat=aout ;;
+    freebsd[23].*) objformat=aout ;;
     *) objformat=elf ;;
     esac
   fi
@@ -10266,7 +10270,7 @@ freebsd* | dragonfly*)
   esac
   shlibpath_var=LD_LIBRARY_PATH
   case $host_os in
-  freebsd2*)
+  freebsd2.*)
     shlibpath_overrides_runpath=yes
     ;;
   freebsd3.[01]* | freebsdelf3.[01]*)
@@ -11100,7 +11104,7 @@ else
   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
   lt_status=$lt_dlunknown
   cat > conftest.$ac_ext <<_LT_EOF
-#line 11103 "configure"
+#line 11107 "configure"
 #include "confdefs.h"
 
 #if HAVE_DLFCN_H
@@ -11206,7 +11210,7 @@ else
   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
   lt_status=$lt_dlunknown
   cat > conftest.$ac_ext <<_LT_EOF
-#line 11209 "configure"
+#line 11213 "configure"
 #include "confdefs.h"
 
 #if HAVE_DLFCN_H
@@ -11585,6 +11589,7 @@ $as_echo_n "checking for $compiler option to produce PIC... " >&6; }
 	# AIX 5 now supports IA64 processor
 	lt_prog_compiler_static_GO='-Bstatic'
       fi
+      lt_prog_compiler_pic_GO='-fPIC'
       ;;
 
     amigaos*)
@@ -12751,7 +12756,7 @@ if test -z "$aix_libpath"; then aix_libpath="/usr/lib:/lib"; fi
       ;;
 
     # Unfortunately, older versions of FreeBSD 2 do not have this feature.
-    freebsd2*)
+    freebsd2.*)
       archive_cmds_GO='$LD -Bshareable -o $lib $libobjs $deplibs $linker_flags'
       hardcode_direct_GO=yes
       hardcode_minus_L_GO=yes
@@ -13384,7 +13389,14 @@ done
 WARN_FLAGS='-Wall -Wextra -Wwrite-strings -Wcast-qual'
 
 
-WERROR="-Werror"
+# Check whether --enable-werror was given.
+if test "${enable_werror+set}" = set; then :
+  enableval=$enable_werror;
+fi
+
+if test "x$enable_werror" != "xno"; then
+  WERROR="-Werror"
+fi
 
 
 glibgo_toolexecdir=no
@@ -13422,7 +13434,7 @@ else
   nover_glibgo_toolexecdir='${libdir}/gcc/${host_alias}'
   nover_glibgo_toolexeclibdir='${libdir}'
 fi
-multi_os_directory=`$CC -print-multi-os-directory`
+multi_os_directory=`$GOC -print-multi-os-directory`
 case $multi_os_directory in
   .) ;; # Avoid trailing /.
   *) nover_glibgo_toolexeclibdir=${nover_glibgo_toolexeclibdir}/${multi_os_directory} ;;
@@ -13460,17 +13472,50 @@ $as_echo "#define USE_LIBFFI 1" >>confdefs.h
 fi
 
 
+ if test "$with_liffi" != "no"; then
+  USE_LIBFFI_TRUE=
+  USE_LIBFFI_FALSE='#'
+else
+  USE_LIBFFI_TRUE='#'
+  USE_LIBFFI_FALSE=
+fi
+
+
+# See if the user wants to configure without libatomic. This is useful if we are
+# on an architecture for which libgo does not need an atomic support library and
+# libatomic does not support our C compiler.
+
+# Check whether --with-libatomic was given.
+if test "${with_libatomic+set}" = set; then :
+  withval=$with_libatomic; :
+else
+  with_libatomic=${with_libatomic_default-yes}
+fi
+
+
+LIBATOMIC=
+if test "$with_libatomic" != no; then
+   LIBATOMIC=../libatomic/libatomic_convenience.la
+fi
+
 
 # Used to tell GNU make to include a file without telling automake to
 # include it.
 go_include="-include"
 
 
+# All known GOOS values.  This is the union of all operating systems
+# supported by the gofrontend and all operating systems supported by
+# the gc toolchain.
+ALLGOOS="android darwin dragonfly freebsd irix linux netbsd openbsd plan9 rtems solaris windows"
+
 is_darwin=no
 is_freebsd=no
 is_irix=no
 is_linux=no
 is_netbsd=no
+is_openbsd=no
+is_dragonfly=no
 is_rtems=no
 is_solaris=no
 GOOS=unknown
@@ -13480,6 +13525,8 @@ case ${host} in
   *-*-irix6*)    is_irix=yes;    GOOS=irix ;;
   *-*-linux*)    is_linux=yes;   GOOS=linux ;;
   *-*-netbsd*)	 is_netbsd=yes;  GOOS=netbsd ;;
+  *-*-openbsd*)  is_openbsd=yes; GOOS=openbsd ;;
+  *-*-dragonfly*) is_dragonfly=yes; GOOS=dragonfly ;;
   *-*-rtems*)    is_rtems=yes;   GOOS=rtems ;;
   *-*-solaris2*) is_solaris=yes; GOOS=solaris ;;
 esac
@@ -13523,6 +13570,22 @@ else
   LIBGO_IS_NETBSD_FALSE=
 fi
 
+ if test $is_openbsd = yes; then
+  LIBGO_IS_OPENBSD_TRUE=
+  LIBGO_IS_OPENBSD_FALSE='#'
+else
+  LIBGO_IS_OPENBSD_TRUE='#'
+  LIBGO_IS_OPENBSD_FALSE=
+fi
+
+ if test $is_dragonfly = yes; then
+  LIBGO_IS_DRAGONFLY_TRUE=
+  LIBGO_IS_DRAGONFLY_FALSE='#'
+else
+  LIBGO_IS_DRAGONFLY_TRUE='#'
+  LIBGO_IS_DRAGONFLY_FALSE=
+fi
+
  if test $is_rtems = yes; then
   LIBGO_IS_RTEMS_TRUE=
   LIBGO_IS_RTEMS_FALSE='#'
@@ -13539,27 +13602,64 @@ else
   LIBGO_IS_SOLARIS_FALSE=
 fi
 
+ if test $is_darwin = yes -o $is_dragonfly = yes -o $is_freebsd = yes -o $is_netbsd = yes -o $is_openbsd = yes; then
+  LIBGO_IS_BSD_TRUE=
+  LIBGO_IS_BSD_FALSE='#'
+else
+  LIBGO_IS_BSD_TRUE='#'
+  LIBGO_IS_BSD_FALSE=
+fi
 
 
-is_386=no
-is_alpha=no
-is_arm=no
-is_m68k=no
-mips_abi=unknown
-is_ppc=no
-is_ppc64=no
-is_sparc=no
-is_sparc64=no
-is_x86_64=no
+
+
+USE_DEJAGNU=no
+case ${host} in
+  *-*-rtems*) USE_DEJAGNU=yes ;;
+  ${build}) ;;
+  *) USE_DEJAGNU=yes ;;
+esac
+
+
+# All known GOARCH values.  This is the union of all architectures
+# supported by the gofrontend and all architectures supported by the
+# gc toolchain.
+# N.B. Keep in sync with gcc/testsuite/go.test/go-test.exp (go-set-goarch).
+ALLGOARCH="386 alpha amd64 amd64p32 arm armbe arm64 arm64be ia64 m68k mipso32 mipsn32 mipso64 mipsn64 mips mipsle mips64 mips64le mips64p32 mips64p32le ppc ppc64 ppc64le s390 s390x sparc sparc64"
+
+# All known GOARCH_FAMILY values.
+ALLGOARCHFAMILY="I386 ALPHA AMD64 ARM ARM64 IA64 M68K MIPS MIPS64 PPC PPC64 S390 S390X SPARC SPARC64"
+
 GOARCH=unknown
+GOARCH_FAMILY=unknown
+GOARCH_BIGENDIAN=0
+GOARCH_CACHELINESIZE=64
+GOARCH_PHYSPAGESIZE=4096
+GOARCH_PCQUANTUM=1
+GOARCH_INT64ALIGN=8
+GOARCH_HUGEPAGESIZE=0
+GOARCH_MINFRAMESIZE=0
 case ${host} in
   alpha*-*-*)
-    is_alpha=yes
     GOARCH=alpha
+    GOARCH_FAMILY=ALPHA
+    GOARCH_PHYSPAGESIZE=8192
+    GOARCH_PCQUANTUM=4
+    ;;
+  aarch64-*-*)
+    GOARCH=arm64
+    GOARCH_FAMILY=ARM64
+    GOARCH_CACHELINESIZE=32
+    GOARCH_PHYSPAGESIZE=65536
+    GOARCH_PCQUANTUM=4
+    GOARCH_MINFRAMESIZE=8
     ;;
   arm*-*-* | strongarm*-*-* | ep9312*-*-* | xscale-*-*)
-    is_arm=yes
     GOARCH=arm
+    GOARCH_FAMILY=ARM
+    GOARCH_CACHELINESIZE=32
+    GOARCH_PCQUANTUM=4
+    GOARCH_MINFRAMESIZE=4
     ;;
   i[34567]86-*-* | x86_64-*-*)
     cat confdefs.h - <<_ACEOF >conftest.$ac_ext
@@ -13570,20 +13670,32 @@ case ${host} in
 #endif
 _ACEOF
 if ac_fn_c_try_compile "$LINENO"; then :
-  is_386=yes
+  GOARCH=386
+GOARCH_FAMILY=I386
+GOARCH_INT64ALIGN=4
+GOARCH_HUGEPAGESIZE="1 << 21"
+
 else
-  is_x86_64=yes
+  GOARCH=amd64
+GOARCH_FAMILY=AMD64
+GOARCH_HUGEPAGESIZE="1 << 21"
+
 fi
 rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
-    if test "$is_386" = "yes"; then
-      GOARCH=386
-    else
-      GOARCH=amd64
-    fi
+    ;;
+  ia64-*-*)
+    GOARCH=ia64
+    GOARCH_FAMILY=IA64
+    GOARCH_CACHELINESIZE=16384
+    GOARCH_PHYSPAGESIZE=65536
     ;;
   m68k*-*-*)
-    is_m68k=yes
     GOARCH=m68k
+    GOARCH_FAMILY=M68K
+    GOARCH_BIGENDIAN=1
+    GOARCH_CACHELINESIZE=16
+    GOARCH_PCQUANTUM=4
+    GOARCH_INT64ALIGN=2
     ;;
   mips*-*-*)
     cat confdefs.h - <<_ACEOF >conftest.$ac_ext
@@ -13642,6 +13754,26 @@ rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
     "n64") GOARCH=mipsn64 ;;
     "o64") GOARCH=mipso64 ;;
     esac
+    case "$mips_abi" in
+    "o32" | "n32")
+        GOARCH_FAMILY=MIPS
+	GOARCH_MINFRAMESIZE=4
+        ;;
+    "n64" | "o64")
+        GOARCH_FAMILY=MIPS64
+	GOARCH_MINFRAMESIZE=8
+        ;;
+    esac
+    case "${host}" in
+    mips*el)
+        ;;
+    *)
+	GOARCH_BIGENDIAN=1
+        ;;
+    esac
+    GOARCH_CACHELINESIZE=32
+    GOARCH_PHYSPAGESIZE=16384
+    GOARCH_PCQUANTUM=4
     ;;
   rs6000*-*-* | powerpc*-*-*)
     cat confdefs.h - <<_ACEOF >conftest.$ac_ext
@@ -13652,16 +13784,58 @@ rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
 #endif
 _ACEOF
 if ac_fn_c_try_compile "$LINENO"; then :
-  is_ppc=yes
+  GOARCH=ppc
+GOARCH_FAMILY=PPC
+GOARCH_BIGENDIAN=1
+
 else
-  is_ppc64=yes
+
+GOARCH_FAMILY=PPC64
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+#if defined(_BIG_ENDIAN) || defined(__BIG_ENDIAN__)
+#error 64be
+#endif
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"; then :
+  GOARCH=ppc64le
+
+else
+  GOARCH=ppc64
+GOARCH_BIGENDIAN=1
+
 fi
 rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
-    if test "$is_ppc" = "yes"; then
-      GOARCH=ppc
-    else
-      GOARCH=ppc64
-    fi
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
+    GOARCH_PHYSPAGESIZE=65536
+    GOARCH_PCQUANTUM=4
+    GOARCH_MINFRAMESIZE=32
+    ;;
+  s390*-*-*)
+    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+#if defined(__s390x__)
+#error 64-bit
+#endif
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"; then :
+  GOARCH=s390
+GOARCH_FAMILY=S390
+GOARCH_MINFRAMESIZE=4
+
+else
+  GOARCH=s390x
+GOARCH_FAMILY=S390X
+GOARCH_MINFRAMESIZE=8
+
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
+    GOARCH_BIGENDIAN=1
+    GOARCH_CACHELINESIZE=256
+    GOARCH_PCQUANTUM=2
     ;;
   sparc*-*-*)
     cat confdefs.h - <<_ACEOF >conftest.$ac_ext
@@ -13672,129 +13846,29 @@ rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
 #endif
 _ACEOF
 if ac_fn_c_try_compile "$LINENO"; then :
-  is_sparc=yes
+  GOARCH=sparc
+GOARCH_FAMILY=SPARC
+
 else
-  is_sparc64=yes
+  GOARCH=sparc64
+GOARCH_FAMILY=SPARC64
+
 fi
 rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
-    if test "$is_sparc" = "yes"; then
-      GOARCH=sparc
-    else
-      GOARCH=sparc64
-    fi
+    GOARCH_BIGENDIAN=1
+    GOARCH_PHYSPAGESIZE=8192
+    GOARCH_PCQUANTUM=4
     ;;
 esac
- if test $is_386 = yes; then
-  LIBGO_IS_386_TRUE=
-  LIBGO_IS_386_FALSE='#'
-else
-  LIBGO_IS_386_TRUE='#'
-  LIBGO_IS_386_FALSE=
-fi
 
- if test $is_alpha = yes; then
-  LIBGO_IS_ALPHA_TRUE=
-  LIBGO_IS_ALPHA_FALSE='#'
-else
-  LIBGO_IS_ALPHA_TRUE='#'
-  LIBGO_IS_ALPHA_FALSE=
-fi
 
- if test $is_arm = yes; then
-  LIBGO_IS_ARM_TRUE=
-  LIBGO_IS_ARM_FALSE='#'
-else
-  LIBGO_IS_ARM_TRUE='#'
-  LIBGO_IS_ARM_FALSE=
-fi
 
- if test $is_m68k = yes; then
-  LIBGO_IS_M68K_TRUE=
-  LIBGO_IS_M68K_FALSE='#'
-else
-  LIBGO_IS_M68K_TRUE='#'
-  LIBGO_IS_M68K_FALSE=
-fi
 
- if test $mips_abi != unknown; then
-  LIBGO_IS_MIPS_TRUE=
-  LIBGO_IS_MIPS_FALSE='#'
-else
-  LIBGO_IS_MIPS_TRUE='#'
-  LIBGO_IS_MIPS_FALSE=
-fi
 
- if test $mips_abi = o32; then
-  LIBGO_IS_MIPSO32_TRUE=
-  LIBGO_IS_MIPSO32_FALSE='#'
-else
-  LIBGO_IS_MIPSO32_TRUE='#'
-  LIBGO_IS_MIPSO32_FALSE=
-fi
 
- if test $mips_abi = n32; then
-  LIBGO_IS_MIPSN32_TRUE=
-  LIBGO_IS_MIPSN32_FALSE='#'
-else
-  LIBGO_IS_MIPSN32_TRUE='#'
-  LIBGO_IS_MIPSN32_FALSE=
-fi
 
- if test $mips_abi = n64; then
-  LIBGO_IS_MIPSN64_TRUE=
-  LIBGO_IS_MIPSN64_FALSE='#'
-else
-  LIBGO_IS_MIPSN64_TRUE='#'
-  LIBGO_IS_MIPSN64_FALSE=
-fi
 
- if test $mips_abi = o64; then
-  LIBGO_IS_MIPSO64_TRUE=
-  LIBGO_IS_MIPSO64_FALSE='#'
-else
-  LIBGO_IS_MIPSO64_TRUE='#'
-  LIBGO_IS_MIPSO64_FALSE=
-fi
 
- if test $is_ppc = yes; then
-  LIBGO_IS_PPC_TRUE=
-  LIBGO_IS_PPC_FALSE='#'
-else
-  LIBGO_IS_PPC_TRUE='#'
-  LIBGO_IS_PPC_FALSE=
-fi
-
- if test $is_ppc64 = yes; then
-  LIBGO_IS_PPC64_TRUE=
-  LIBGO_IS_PPC64_FALSE='#'
-else
-  LIBGO_IS_PPC64_TRUE='#'
-  LIBGO_IS_PPC64_FALSE=
-fi
-
- if test $is_sparc = yes; then
-  LIBGO_IS_SPARC_TRUE=
-  LIBGO_IS_SPARC_FALSE='#'
-else
-  LIBGO_IS_SPARC_TRUE='#'
-  LIBGO_IS_SPARC_FALSE=
-fi
-
- if test $is_sparc64 = yes; then
-  LIBGO_IS_SPARC64_TRUE=
-  LIBGO_IS_SPARC64_FALSE='#'
-else
-  LIBGO_IS_SPARC64_TRUE='#'
-  LIBGO_IS_SPARC64_FALSE=
-fi
-
- if test $is_x86_64 = yes; then
-  LIBGO_IS_X86_64_TRUE=
-  LIBGO_IS_X86_64_FALSE='#'
-else
-  LIBGO_IS_X86_64_TRUE='#'
-  LIBGO_IS_X86_64_FALSE=
-fi
 
 
 
@@ -13802,17 +13876,17 @@ GO_LIBCALL_OS_FILE=
 GO_LIBCALL_OS_ARCH_FILE=
 GO_SYSCALL_OS_FILE=
 GO_SYSCALL_OS_ARCH_FILE=
-if test -f ${srcdir}/go/syscall/libcall_${GOOS}.go; then
-  GO_LIBCALL_OS_FILE=go/syscall/libcall_${GOOS}.go
+if test -f "${srcdir}/go/syscall/libcall_${GOOS}.go"; then
+  GO_LIBCALL_OS_FILE="go/syscall/libcall_${GOOS}.go"
 fi
-if test -f ${srcdir}/go/syscall/libcall_${GOOS}_${GOARCH}.go; then
-  GO_LIBCALL_OS_ARCH_FILE=go/syscall/libcall_${GOOS}_${GOARCH}.go
+if test -f "${srcdir}/go/syscall/libcall_${GOOS}_${GOARCH}.go"; then
+  GO_LIBCALL_OS_ARCH_FILE="go/syscall/libcall_${GOOS}_${GOARCH}.go"
 fi
-if test -f ${srcdir}/go/syscall/syscall_${GOOS}.go; then
-  GO_SYSCALL_OS_FILE=go/syscall/syscall_${GOOS}.go
+if test -f "${srcdir}/go/syscall/syscall_${GOOS}.go"; then
+  GO_SYSCALL_OS_FILE="go/syscall/syscall_${GOOS}.go"
 fi
-if test -f ${srcdir}/go/syscall/syscall_${GOOS}_${GOARCH}.go; then
-  GO_SYSCALL_OS_ARCH_FILE=go/syscall/syscall_${GOOS}_${GOARCH}.go
+if test -f "${srcdir}/go/syscall/syscall_${GOOS}_${GOARCH}.go"; then
+  GO_SYSCALL_OS_ARCH_FILE="go/syscall/syscall_${GOOS}_${GOARCH}.go"
 fi
 
 
@@ -13826,11 +13900,6 @@ case "$target" in
 	# msghdr in <sys/socket.h>.
 	OSCFLAGS="$OSCFLAGS -D_XOPEN_SOURCE=500"
 	;;
-    *-*-solaris2.[89])
-	# Solaris 8/9 need this so struct msghdr gets the msg_control
-	# etc. fields in <sys/socket.h> (_XPG4_2).
-	OSCFLAGS="$OSCFLAGS -D_XOPEN_SOURCE=500 -D_XOPEN_SOURCE_EXTENDED -D__EXTENSIONS__"
-	;;
     *-*-solaris2.1[01])
 	# Solaris 10+ needs this so struct msghdr gets the msg_control
 	# etc. fields in <sys/socket.h> (_XPG4_2).  _XOPEN_SOURCE=600 as
@@ -13838,6 +13907,48 @@ case "$target" in
 	OSCFLAGS="$OSCFLAGS -std=gnu99 -D_XOPEN_SOURCE=600 -D__EXTENSIONS__"
 	;;
 esac
+
+
+
+  test -z "$HWCAP_CFLAGS" && HWCAP_CFLAGS=''
+
+  # Restrict the test to Solaris, other assemblers (e.g. AIX as) have -nH
+  # with a different meaning.
+  case ${target_os} in
+    solaris2*)
+      ac_save_CFLAGS="$CFLAGS"
+      CFLAGS="$CFLAGS -Wa,-nH"
+
+      { $as_echo "$as_me:${as_lineno-$LINENO}: checking for as that supports -Wa,-nH" >&5
+$as_echo_n "checking for as that supports -Wa,-nH... " >&6; }
+      cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+int
+main ()
+{
+return 0;
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"; then :
+  ac_hwcap_flags=yes
+else
+  ac_hwcap_flags=no
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
+      if test "$ac_hwcap_flags" = "yes"; then
+	HWCAP_CFLAGS="-Wa,-nH $HWCAP_CFLAGS"
+      fi
+      { $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_hwcap_flags" >&5
+$as_echo "$ac_hwcap_flags" >&6; }
+
+      CFLAGS="$ac_save_CFLAGS"
+      ;;
+  esac
+
+
 
 
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking whether -fsplit-stack is supported" >&5
@@ -13861,7 +13972,32 @@ CFLAGS=$CFLAGS_hold
 fi
 { $as_echo "$as_me:${as_lineno-$LINENO}: result: $libgo_cv_c_split_stack_supported" >&5
 $as_echo "$libgo_cv_c_split_stack_supported" >&6; }
-if test "$libgo_cv_c_split_stack_supported" = yes; then
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether linker supports split/non-split linked together" >&5
+$as_echo_n "checking whether linker supports split/non-split linked together... " >&6; }
+if test "${libgo_cv_c_linker_split_non_split+set}" = set; then :
+  $as_echo_n "(cached) " >&6
+else
+  cat > conftest1.c << EOF
+extern void f();
+int main() { f(); return 0; }
+EOF
+cat > conftest2.c << EOF
+void f() {}
+EOF
+$CC -c -fsplit-stack $CFLAGS $CPPFLAGS conftest1.c >/dev/null 2>&1
+$CC -c $CFLAGS $CPPFLAGS conftest2.c > /dev/null 2>&1
+if $CC -o conftest conftest1.$ac_objext conftest2.$ac_objext > /dev/null 2>&1; then
+  libgo_cv_c_linker_split_non_split=yes
+else
+  libgo_cv_c_linker_split_non_split=no
+fi
+rm -f conftest1.* conftest2.* conftest
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $libgo_cv_c_linker_split_non_split" >&5
+$as_echo "$libgo_cv_c_linker_split_non_split" >&6; }
+
+if test "$libgo_cv_c_split_stack_supported" = yes -a "$libgo_cv_c_linker_split_non_split" = yes; then
   SPLIT_STACK=-fsplit-stack
 
 $as_echo "#define USING_SPLIT_STACK 1" >>confdefs.h
@@ -13870,12 +14006,19 @@ else
   SPLIT_STACK=
 fi
 
- if test "$libgo_cv_c_split_stack_supported" = yes; then
+ if test "$libgo_cv_c_split_stack_supported" = yes -a "$libgo_cv_c_linker_split_non_split" = yes; then
   USING_SPLIT_STACK_TRUE=
   USING_SPLIT_STACK_FALSE='#'
 else
   USING_SPLIT_STACK_TRUE='#'
   USING_SPLIT_STACK_FALSE=
+fi
+
+
+if test "$libgo_cv_c_split_stack_supported" = yes -a "$libgo_cv_c_linker_split_non_split" = no; then
+  GO_SPLIT_STACK=-fno-split-stack
+else
+  GO_SPLIT_STACK=
 fi
 
 
@@ -13885,7 +14028,7 @@ if test "${libgo_cv_c_linker_supports_split_stack+set}" = set; then :
   $as_echo_n "(cached) " >&6
 else
   libgo_cv_c_linker_supports_split_stack=no
-if $LD --help 2>/dev/null | grep split-stack-adjust-size >/dev/null 2>&1; then
+if $GOC -Wl,--help 2>/dev/null | grep split-stack-adjust-size >/dev/null 2>&1; then
   libgo_cv_c_linker_supports_split_stack=yes
 fi
 fi
@@ -13896,6 +14039,27 @@ if test "$libgo_cv_c_linker_supports_split_stack" = yes; then
 $as_echo "#define LINKER_SUPPORTS_SPLIT_STACK 1" >>confdefs.h
 
 fi
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether compiler is llgo" >&5
+$as_echo_n "checking whether compiler is llgo... " >&6; }
+if test "${libgo_cv_c_goc_is_llgo+set}" = set; then :
+  $as_echo_n "(cached) " >&6
+else
+  libgo_cv_c_goc_is_llgo=no
+if $GOC -dumpversion 2>/dev/null | grep llgo >/dev/null 2>&1; then
+  libgo_cv_c_goc_is_llgo=yes
+fi
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $libgo_cv_c_goc_is_llgo" >&5
+$as_echo "$libgo_cv_c_goc_is_llgo" >&6; }
+ if test "$libgo_cv_c_goc_is_llgo" = yes; then
+  GOC_IS_LLGO_TRUE=
+  GOC_IS_LLGO_FALSE='#'
+else
+  GOC_IS_LLGO_TRUE='#'
+  GOC_IS_LLGO_FALSE=
+fi
+
 
 MATH_LIBS=
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for sqrt in -lm" >&5
@@ -14049,6 +14213,46 @@ fi
 fi
 
    unset ac_cv_func_gethostbyname
+   ac_fn_c_check_func "$LINENO" "sendfile" "ac_cv_func_sendfile"
+if test "x$ac_cv_func_sendfile" = x""yes; then :
+
+else
+  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for main in -lsendfile" >&5
+$as_echo_n "checking for main in -lsendfile... " >&6; }
+if test "${ac_cv_lib_sendfile_main+set}" = set; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_check_lib_save_LIBS=$LIBS
+LIBS="-lsendfile  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+
+int
+main ()
+{
+return main ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_lib_sendfile_main=yes
+else
+  ac_cv_lib_sendfile_main=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_sendfile_main" >&5
+$as_echo "$ac_cv_lib_sendfile_main" >&6; }
+if test "x$ac_cv_lib_sendfile_main" = x""yes; then :
+  libgo_cv_lib_sockets="$libgo_cv_lib_sockets -lsendfile"
+fi
+
+fi
+
    LIBS=$libgo_old_libs
 
 fi
@@ -14178,6 +14382,118 @@ fi
 { $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_search_sched_yield" >&5
 $as_echo "$ac_cv_search_sched_yield" >&6; }
 ac_res=$ac_cv_search_sched_yield
+if test "$ac_res" != no; then :
+  test "$ac_res" = "none required" || LIBS="$ac_res $LIBS"
+
+fi
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for library containing nanosleep" >&5
+$as_echo_n "checking for library containing nanosleep... " >&6; }
+if test "${ac_cv_search_nanosleep+set}" = set; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_func_search_save_LIBS=$LIBS
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char nanosleep ();
+int
+main ()
+{
+return nanosleep ();
+  ;
+  return 0;
+}
+_ACEOF
+for ac_lib in '' rt; do
+  if test -z "$ac_lib"; then
+    ac_res="none required"
+  else
+    ac_res=-l$ac_lib
+    LIBS="-l$ac_lib  $ac_func_search_save_LIBS"
+  fi
+  if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_search_nanosleep=$ac_res
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext
+  if test "${ac_cv_search_nanosleep+set}" = set; then :
+  break
+fi
+done
+if test "${ac_cv_search_nanosleep+set}" = set; then :
+
+else
+  ac_cv_search_nanosleep=no
+fi
+rm conftest.$ac_ext
+LIBS=$ac_func_search_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_search_nanosleep" >&5
+$as_echo "$ac_cv_search_nanosleep" >&6; }
+ac_res=$ac_cv_search_nanosleep
+if test "$ac_res" != no; then :
+  test "$ac_res" = "none required" || LIBS="$ac_res $LIBS"
+
+fi
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for library containing clock_gettime" >&5
+$as_echo_n "checking for library containing clock_gettime... " >&6; }
+if test "${ac_cv_search_clock_gettime+set}" = set; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_func_search_save_LIBS=$LIBS
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char clock_gettime ();
+int
+main ()
+{
+return clock_gettime ();
+  ;
+  return 0;
+}
+_ACEOF
+for ac_lib in '' rt; do
+  if test -z "$ac_lib"; then
+    ac_res="none required"
+  else
+    ac_res=-l$ac_lib
+    LIBS="-l$ac_lib  $ac_func_search_save_LIBS"
+  fi
+  if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_search_clock_gettime=$ac_res
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext
+  if test "${ac_cv_search_clock_gettime+set}" = set; then :
+  break
+fi
+done
+if test "${ac_cv_search_clock_gettime+set}" = set; then :
+
+else
+  ac_cv_search_clock_gettime=no
+fi
+rm conftest.$ac_ext
+LIBS=$ac_func_search_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_search_clock_gettime" >&5
+$as_echo "$ac_cv_search_clock_gettime" >&6; }
+ac_res=$ac_cv_search_clock_gettime
 if test "$ac_res" != no; then :
   test "$ac_res" = "none required" || LIBS="$ac_res $LIBS"
 
@@ -14446,69 +14762,7 @@ $as_echo "#define HAVE_GETIPINFO 1" >>confdefs.h
   fi
 
 
-# Check whether --enable-sjlj-exceptions was given.
-if test "${enable_sjlj_exceptions+set}" = set; then :
-  enableval=$enable_sjlj_exceptions; case "$enableval" in
-   yes|no|auto) ;;
-   *) as_fn_error "unknown argument to --enable-sjlj-exceptions" "$LINENO" 5 ;;
-   esac
-else
-  enable_sjlj_exceptions=auto
-fi
-
-
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether to use setjmp/longjmp exceptions" >&5
-$as_echo_n "checking whether to use setjmp/longjmp exceptions... " >&6; }
-if test "${libgo_cv_lib_sjlj_exceptions+set}" = set; then :
-  $as_echo_n "(cached) " >&6
-else
-  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-void bar ();
-void clean (int *);
-void foo ()
-{
-  int i __attribute__ ((cleanup (clean)));
-  bar();
-}
-
-_ACEOF
-CFLAGS_hold=$CFLAGS
-CFLAGS="--save-temps -fexceptions"
-libgo_cv_lib_sjlj_exceptions=unknown
-if ac_fn_c_try_compile; then :
-  if grep _Unwind_SjLj_Resume conftest.s >/dev/null 2>&1; then
-    libgo_cv_lib_sjlj_exceptions=yes
-  elif grep _Unwind_Resume conftest.s >/dev/null 2>&1; then
-    libgo_cv_lib_sjlj_exceptions=no
-  fi
-fi
-CFLAGS=$CFLAGS_hold
-rm -f conftest*
-
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $libgo_cv_lib_sjlj_exceptions" >&5
-$as_echo "$libgo_cv_lib_sjlj_exceptions" >&6; }
-
-if test "$enable_sjlj_exceptions" = "auto"; then
-  enable_sjlj_exceptions=$libgo_cv_lib_sjlj_exceptions
-fi
-
-case $enable_sjlj_exceptions in
-yes)
-
-$as_echo "#define LIBGO_SJLJ_EXCEPTIONS 1" >>confdefs.h
-
-  ;;
-no)
-  ;;
-*)
-  as_fn_error "unable to detect exception model" "$LINENO" 5
-  ;;
-esac
-
-for ac_header in sys/mman.h syscall.h sys/epoll.h sys/ptrace.h sys/syscall.h sys/user.h sys/utsname.h sys/select.h sys/socket.h net/if.h sys/prctl.h sys/mount.h sys/vfs.h sys/statfs.h sys/timex.h sys/sysinfo.h utime.h linux/reboot.h
+for ac_header in port.h sched.h semaphore.h sys/file.h sys/mman.h syscall.h sys/epoll.h sys/event.h sys/inotify.h sys/ptrace.h sys/syscall.h sys/user.h sys/utsname.h sys/select.h sys/socket.h net/if.h net/if_arp.h net/route.h netpacket/packet.h sys/prctl.h sys/mount.h sys/vfs.h sys/statfs.h sys/timex.h sys/sysinfo.h utime.h linux/ether.h linux/fs.h linux/reboot.h netinet/icmp6.h netinet/in_syst.h netinet/ip.h netinet/ip_mroute.h netinet/if_ether.h
 do :
   as_ac_Header=`$as_echo "ac_cv_header_$ac_header" | $as_tr_sh`
 ac_fn_c_check_header_mongrel "$LINENO" "$ac_header" "$as_ac_Header" "$ac_includes_default"
@@ -14523,7 +14777,7 @@ fi
 done
 
 
-for ac_header in linux/filter.h linux/netlink.h linux/rtnetlink.h
+for ac_header in linux/filter.h linux/if_addr.h linux/if_ether.h linux/if_tun.h linux/netlink.h linux/rtnetlink.h
 do :
   as_ac_Header=`$as_echo "ac_cv_header_$ac_header" | $as_tr_sh`
 ac_fn_c_check_header_compile "$LINENO" "$ac_header" "$as_ac_Header" "#ifdef HAVE_SYS_SOCKET_H
@@ -14584,7 +14838,7 @@ else
 fi
 
 
-for ac_func in strerror_r strsignal wait4 mincore setenv
+for ac_func in strerror_r strsignal wait4 mincore setenv unsetenv dl_iterate_phdr
 do :
   as_ac_var=`$as_echo "ac_cv_func_$ac_func" | $as_tr_sh`
 ac_fn_c_check_func "$LINENO" "$ac_func" "$as_ac_var"
@@ -14614,7 +14868,7 @@ else
 fi
 
 
-for ac_func in epoll_create1 faccessat fallocate fchmodat fchownat futimesat inotify_add_watch inotify_init inotify_init1 inotify_rm_watch mkdirat mknodat openat renameat sync_file_range splice tee unlinkat unshare
+for ac_func in accept4 dup3 epoll_create1 faccessat fallocate fchmodat fchownat futimesat getxattr inotify_add_watch inotify_init inotify_init1 inotify_rm_watch listxattr mkdirat mknodat open64 openat pipe2 removexattr renameat setxattr sync_file_range splice tee unlinkat unshare utimensat
 do :
   as_ac_var=`$as_echo "ac_cv_func_$ac_func" | $as_tr_sh`
 ac_fn_c_check_func "$LINENO" "$ac_func" "$as_ac_var"
@@ -14648,6 +14902,23 @@ _ACEOF
 
 fi
 
+
+LIBS_hold="$LIBS"
+LIBS="$LIBS -lm"
+for ac_func in cosl expl logl sinl tanl acosl asinl atanl atan2l expm1l ldexpl log10l log1pl
+do :
+  as_ac_var=`$as_echo "ac_cv_func_$ac_func" | $as_tr_sh`
+ac_fn_c_check_func "$LINENO" "$ac_func" "$as_ac_var"
+eval as_val=\$$as_ac_var
+   if test "x$as_val" = x""yes; then :
+  cat >>confdefs.h <<_ACEOF
+#define `$as_echo "HAVE_$ac_func" | $as_tr_cpp` 1
+_ACEOF
+
+fi
+done
+
+LIBS="$LIBS_hold"
 
 CFLAGS_hold="$CFLAGS"
 CFLAGS="$CFLAGS $PTHREAD_CFLAGS"
@@ -14849,6 +15120,8 @@ $as_echo "$libgo_cv_c_fancymath" >&6; }
 MATH_FLAG=
 if test "$libgo_cv_c_fancymath" = yes; then
   MATH_FLAG="-mfancy-math-387 -funsafe-math-optimizations"
+else
+  MATH_FLAG="-ffp-contract=off"
 fi
 
 
@@ -14901,6 +15174,28 @@ $as_echo "$libgo_cv_c_epoll_event_fd_offset" >&6; }
 STRUCT_EPOLL_EVENT_FD_OFFSET=${libgo_cv_c_epoll_event_fd_offset}
 
 
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include <sys/stat.h>
+
+_ACEOF
+if (eval "$ac_cpp conftest.$ac_ext") 2>&5 |
+  $EGREP "timespec_t.*st_atim" >/dev/null 2>&1; then :
+  have_stat_timespec=yes
+else
+  have_stat_timespec=no
+fi
+rm -f conftest*
+
+ if test $have_stat_timespec = yes; then
+  HAVE_STAT_TIMESPEC_TRUE=
+  HAVE_STAT_TIMESPEC_FALSE='#'
+else
+  HAVE_STAT_TIMESPEC_TRUE='#'
+  HAVE_STAT_TIMESPEC_FALSE=
+fi
+
+
 ac_fn_c_check_type "$LINENO" "struct exception" "ac_cv_type_struct_exception" "#include <math.h>
 "
 if test "x$ac_cv_type_struct_exception" = x""yes; then :
@@ -14912,20 +15207,6 @@ fi
 if test "$libgo_has_struct_exception" = "yes"; then
 
 $as_echo "#define HAVE_STRUCT_EXCEPTION 1" >>confdefs.h
-
-fi
-
-case "$target" in
-  sparc*-*-solaris2.[89]*)
-    libgo_cv_lib_makecontext_stack_top=yes
-    ;;
-  *)
-    libgo_cv_lib_makecontext_stack_top=no
-    ;;
-esac
-if test "$libgo_cv_lib_makecontext_stack_top" = "yes"; then
-
-$as_echo "#define MAKECONTEXT_STACK_TOP 1" >>confdefs.h
 
 fi
 
@@ -15067,6 +15348,164 @@ $as_echo "$libgo_cv_lib_setcontext_clobbers_tls" >&6; }
 if test "$libgo_cv_lib_setcontext_clobbers_tls" = "yes"; then
 
 $as_echo "#define SETCONTEXT_CLOBBERS_TLS 1" >>confdefs.h
+
+fi
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether .eh_frame section should be read-only" >&5
+$as_echo_n "checking whether .eh_frame section should be read-only... " >&6; }
+if test "${libgo_cv_ro_eh_frame+set}" = set; then :
+  $as_echo_n "(cached) " >&6
+else
+
+libgo_cv_ro_eh_frame=no
+echo 'extern void foo (void); void bar (void) { foo (); foo (); }' > conftest.c
+if $CC $CFLAGS -S -fpic -fexceptions -o conftest.s conftest.c > /dev/null 2>&1; then
+  if grep '.section.*eh_frame.*"a"' conftest.s > /dev/null; then
+    libgo_cv_ro_eh_frame=yes
+  elif grep '.section.*eh_frame.*#alloc' conftest.c \
+       | grep -v '#write' > /dev/null; then
+    libgo_cv_ro_eh_frame=yes
+  fi
+fi
+rm -f conftest.*
+
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $libgo_cv_ro_eh_frame" >&5
+$as_echo "$libgo_cv_ro_eh_frame" >&6; }
+if test "x$libgo_cv_ro_eh_frame" = xyes; then
+
+$as_echo "#define EH_FRAME_FLAGS \"a\"" >>confdefs.h
+
+else
+
+$as_echo "#define EH_FRAME_FLAGS \"aw\"" >>confdefs.h
+
+fi
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking if compiler supports -Qunused-arguments" >&5
+$as_echo_n "checking if compiler supports -Qunused-arguments... " >&6; }
+if test "${libgo_cv_c_unused_arguments+set}" = set; then :
+  $as_echo_n "(cached) " >&6
+else
+  CFLAGS_hold=$CFLAGS
+CFLAGS="$CFLAGS -Qunused-arguments"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+int i;
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"; then :
+  libgo_cv_c_unused_arguments=yes
+else
+  libgo_cv_c_unused_arguments=no
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
+CFLAGS=$CFLAGS_hold
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $libgo_cv_c_unused_arguments" >&5
+$as_echo "$libgo_cv_c_unused_arguments" >&6; }
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking if assembler supports GNU comdat group syntax" >&5
+$as_echo_n "checking if assembler supports GNU comdat group syntax... " >&6; }
+if test "${libgo_cv_as_comdat_gnu+set}" = set; then :
+  $as_echo_n "(cached) " >&6
+else
+
+echo '.section .text,"axG",@progbits,.foo,comdat' > conftest.s
+CFLAGS_hold=$CFLAGS
+if test "$libgo_cv_c_unused_arguments" = yes; then
+  CFLAGS="$CFLAGS -Qunused-arguments"
+fi
+if $CC $CFLAGS -c conftest.s > /dev/null 2>&1; then
+  libgo_cv_as_comdat_gnu=yes
+else
+  libgo_cv_as_comdat_gnu=no
+fi
+CFLAGS=$CFLAGS_hold
+
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $libgo_cv_as_comdat_gnu" >&5
+$as_echo "$libgo_cv_as_comdat_gnu" >&6; }
+if test "x$libgo_cv_as_comdat_gnu" = xyes; then
+
+$as_echo "#define HAVE_AS_COMDAT_GAS 1" >>confdefs.h
+
+fi
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking assembler supports pc related relocs" >&5
+$as_echo_n "checking assembler supports pc related relocs... " >&6; }
+if test "${libgo_cv_as_x86_pcrel+set}" = set; then :
+  $as_echo_n "(cached) " >&6
+else
+
+libgo_cv_as_x86_pcrel=yes
+echo '.text; foo: nop; .data; .long foo-.; .text' > conftest.s
+CFLAGS_hold=$CFLAGS
+if test "$libgo_cv_c_unused_arguments" = yes; then
+  CFLAGS="$CFLAGS -Qunused-arguments"
+fi
+if $CC $CFLAGS -c conftest.s 2>&1 | $EGREP -i 'illegal|warning' > /dev/null; then
+    libgo_cv_as_x86_pcrel=no
+fi
+CFLAGS=$CFLAGS_hold
+
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $libgo_cv_as_x86_pcrel" >&5
+$as_echo "$libgo_cv_as_x86_pcrel" >&6; }
+if test "x$libgo_cv_as_x86_pcrel" = xyes; then
+
+$as_echo "#define HAVE_AS_X86_PCREL 1" >>confdefs.h
+
+fi
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking assembler supports unwind section type" >&5
+$as_echo_n "checking assembler supports unwind section type... " >&6; }
+if test "${libgo_cv_as_x86_64_unwind_section_type+set}" = set; then :
+  $as_echo_n "(cached) " >&6
+else
+
+libgo_cv_as_x86_64_unwind_section_type=yes
+echo '.section .eh_frame,"a",@unwind' > conftest.s
+CFLAGS_hold=$CFLAGS
+if test "$libgo_cv_c_unused_arguments" = yes; then
+  CFLAGS="$CFLAGS -Qunused-arguments"
+fi
+if $CC $CFLAGS -c conftest.s 2>&1 | grep -i warning > /dev/null; then
+    libgo_cv_as_x86_64_unwind_section_type=no
+fi
+CFLAGS=$CFLAGS_hold
+
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $libgo_cv_as_x86_64_unwind_section_type" >&5
+$as_echo "$libgo_cv_as_x86_64_unwind_section_type" >&6; }
+if test "x$libgo_cv_as_x86_64_unwind_section_type" = xyes; then
+
+$as_echo "#define HAVE_AS_X86_64_UNWIND_SECTION_TYPE 1" >>confdefs.h
+
+fi
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking assembler supports AES instructions" >&5
+$as_echo_n "checking assembler supports AES instructions... " >&6; }
+if test "${libgo_cv_as_x86_aes+set}" = set; then :
+  $as_echo_n "(cached) " >&6
+else
+
+libgo_cv_as_x86_aes=yes
+echo 'aesenc %xmm0, %xmm1' > conftest.s
+CFLAGS_hold=$CFLAGS
+if test "$libgo_cv_c_unused_arguments" = yes; then
+  CFLAGS="$CFLAGS -Qunused-arguments"
+fi
+if $CC $CFLAGS -c conftest.s 2>&1 | grep -i error > /dev/null; then
+    libgo_cv_as_x86_aes=no
+fi
+CFLAGS=$CFLAGS_hold
+
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $libgo_cv_as_x86_aes" >&5
+$as_echo "$libgo_cv_as_x86_aes" >&6; }
+if test "x$libgo_cv_as_x86_aes" = xyes; then
+
+$as_echo "#define HAVE_AS_X86_AES 1" >>confdefs.h
 
 fi
 
@@ -15274,6 +15713,10 @@ if test -z "${MAINTAINER_MODE_TRUE}" && test -z "${MAINTAINER_MODE_FALSE}"; then
   as_fn_error "conditional \"MAINTAINER_MODE\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
+if test -z "${USE_LIBFFI_TRUE}" && test -z "${USE_LIBFFI_FALSE}"; then
+  as_fn_error "conditional \"USE_LIBFFI\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
 if test -z "${LIBGO_IS_DARWIN_TRUE}" && test -z "${LIBGO_IS_DARWIN_FALSE}"; then
   as_fn_error "conditional \"LIBGO_IS_DARWIN\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
@@ -15294,6 +15737,14 @@ if test -z "${LIBGO_IS_NETBSD_TRUE}" && test -z "${LIBGO_IS_NETBSD_FALSE}"; then
   as_fn_error "conditional \"LIBGO_IS_NETBSD\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
+if test -z "${LIBGO_IS_OPENBSD_TRUE}" && test -z "${LIBGO_IS_OPENBSD_FALSE}"; then
+  as_fn_error "conditional \"LIBGO_IS_OPENBSD\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
+if test -z "${LIBGO_IS_DRAGONFLY_TRUE}" && test -z "${LIBGO_IS_DRAGONFLY_FALSE}"; then
+  as_fn_error "conditional \"LIBGO_IS_DRAGONFLY\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
 if test -z "${LIBGO_IS_RTEMS_TRUE}" && test -z "${LIBGO_IS_RTEMS_FALSE}"; then
   as_fn_error "conditional \"LIBGO_IS_RTEMS\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
@@ -15302,64 +15753,16 @@ if test -z "${LIBGO_IS_SOLARIS_TRUE}" && test -z "${LIBGO_IS_SOLARIS_FALSE}"; th
   as_fn_error "conditional \"LIBGO_IS_SOLARIS\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
-if test -z "${LIBGO_IS_386_TRUE}" && test -z "${LIBGO_IS_386_FALSE}"; then
-  as_fn_error "conditional \"LIBGO_IS_386\" was never defined.
-Usually this means the macro was only invoked conditionally." "$LINENO" 5
-fi
-if test -z "${LIBGO_IS_ALPHA_TRUE}" && test -z "${LIBGO_IS_ALPHA_FALSE}"; then
-  as_fn_error "conditional \"LIBGO_IS_ALPHA\" was never defined.
-Usually this means the macro was only invoked conditionally." "$LINENO" 5
-fi
-if test -z "${LIBGO_IS_ARM_TRUE}" && test -z "${LIBGO_IS_ARM_FALSE}"; then
-  as_fn_error "conditional \"LIBGO_IS_ARM\" was never defined.
-Usually this means the macro was only invoked conditionally." "$LINENO" 5
-fi
-if test -z "${LIBGO_IS_M68K_TRUE}" && test -z "${LIBGO_IS_M68K_FALSE}"; then
-  as_fn_error "conditional \"LIBGO_IS_M68K\" was never defined.
-Usually this means the macro was only invoked conditionally." "$LINENO" 5
-fi
-if test -z "${LIBGO_IS_MIPS_TRUE}" && test -z "${LIBGO_IS_MIPS_FALSE}"; then
-  as_fn_error "conditional \"LIBGO_IS_MIPS\" was never defined.
-Usually this means the macro was only invoked conditionally." "$LINENO" 5
-fi
-if test -z "${LIBGO_IS_MIPSO32_TRUE}" && test -z "${LIBGO_IS_MIPSO32_FALSE}"; then
-  as_fn_error "conditional \"LIBGO_IS_MIPSO32\" was never defined.
-Usually this means the macro was only invoked conditionally." "$LINENO" 5
-fi
-if test -z "${LIBGO_IS_MIPSN32_TRUE}" && test -z "${LIBGO_IS_MIPSN32_FALSE}"; then
-  as_fn_error "conditional \"LIBGO_IS_MIPSN32\" was never defined.
-Usually this means the macro was only invoked conditionally." "$LINENO" 5
-fi
-if test -z "${LIBGO_IS_MIPSN64_TRUE}" && test -z "${LIBGO_IS_MIPSN64_FALSE}"; then
-  as_fn_error "conditional \"LIBGO_IS_MIPSN64\" was never defined.
-Usually this means the macro was only invoked conditionally." "$LINENO" 5
-fi
-if test -z "${LIBGO_IS_MIPSO64_TRUE}" && test -z "${LIBGO_IS_MIPSO64_FALSE}"; then
-  as_fn_error "conditional \"LIBGO_IS_MIPSO64\" was never defined.
-Usually this means the macro was only invoked conditionally." "$LINENO" 5
-fi
-if test -z "${LIBGO_IS_PPC_TRUE}" && test -z "${LIBGO_IS_PPC_FALSE}"; then
-  as_fn_error "conditional \"LIBGO_IS_PPC\" was never defined.
-Usually this means the macro was only invoked conditionally." "$LINENO" 5
-fi
-if test -z "${LIBGO_IS_PPC64_TRUE}" && test -z "${LIBGO_IS_PPC64_FALSE}"; then
-  as_fn_error "conditional \"LIBGO_IS_PPC64\" was never defined.
-Usually this means the macro was only invoked conditionally." "$LINENO" 5
-fi
-if test -z "${LIBGO_IS_SPARC_TRUE}" && test -z "${LIBGO_IS_SPARC_FALSE}"; then
-  as_fn_error "conditional \"LIBGO_IS_SPARC\" was never defined.
-Usually this means the macro was only invoked conditionally." "$LINENO" 5
-fi
-if test -z "${LIBGO_IS_SPARC64_TRUE}" && test -z "${LIBGO_IS_SPARC64_FALSE}"; then
-  as_fn_error "conditional \"LIBGO_IS_SPARC64\" was never defined.
-Usually this means the macro was only invoked conditionally." "$LINENO" 5
-fi
-if test -z "${LIBGO_IS_X86_64_TRUE}" && test -z "${LIBGO_IS_X86_64_FALSE}"; then
-  as_fn_error "conditional \"LIBGO_IS_X86_64\" was never defined.
+if test -z "${LIBGO_IS_BSD_TRUE}" && test -z "${LIBGO_IS_BSD_FALSE}"; then
+  as_fn_error "conditional \"LIBGO_IS_BSD\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${USING_SPLIT_STACK_TRUE}" && test -z "${USING_SPLIT_STACK_FALSE}"; then
   as_fn_error "conditional \"USING_SPLIT_STACK\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
+if test -z "${GOC_IS_LLGO_TRUE}" && test -z "${GOC_IS_LLGO_FALSE}"; then
+  as_fn_error "conditional \"GOC_IS_LLGO\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 
@@ -15373,6 +15776,10 @@ Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${HAVE_WAIT4_TRUE}" && test -z "${HAVE_WAIT4_FALSE}"; then
   as_fn_error "conditional \"HAVE_WAIT4\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
+if test -z "${HAVE_STAT_TIMESPEC_TRUE}" && test -z "${HAVE_STAT_TIMESPEC_FALSE}"; then
+  as_fn_error "conditional \"HAVE_STAT_TIMESPEC\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 
@@ -15971,7 +16378,6 @@ CONFIG_SHELL=${CONFIG_SHELL-/bin/sh}
 CC="$CC"
 CXX="$CXX"
 GFORTRAN="$GFORTRAN"
-GCJ="$GCJ"
 AMDEP_TRUE="$AMDEP_TRUE" ac_aux_dir="$ac_aux_dir"
 
 

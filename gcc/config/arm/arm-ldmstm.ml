@@ -1,5 +1,5 @@
 (* Auto-generate ARM ldm/stm patterns
-   Copyright (C) 2010 Free Software Foundation, Inc.
+   Copyright (C) 2010-2017 Free Software Foundation, Inc.
    Contributed by CodeSourcery.
 
    This file is part of GCC.
@@ -33,9 +33,20 @@ type amode = IA | IB | DA | DB
 
 type optype = IN | OUT | INOUT
 
-let rec string_of_addrmode addrmode =
+let rec string_of_addrmode addrmode thumb update =
+  if thumb || update
+then
   match addrmode with
-    IA -> "ia" | IB -> "ib" | DA -> "da" | DB -> "db"
+    IA -> "ia"
+  | IB -> "ib"
+  | DA -> "da"
+  | DB -> "db"
+else
+  match addrmode with
+    IA -> ""
+  | IB -> "ib"
+  | DA -> "da"
+  | DB -> "db"
 
 let rec initial_offset addrmode nregs =
   match addrmode with
@@ -67,10 +78,13 @@ let destreg nregs first op_type thumb =
     Printf.sprintf ("(match_operand:SI %d \"s_register_operand\" \"%s%s\")")
       (nregs + 1) (inout_constr op_type) (constr thumb)
 
+let reg_predicate thumb =
+  if thumb then "low_register_operand" else "arm_hard_general_register_operand"
+
 let write_ldm_set thumb nregs offset opnr first =
   let indent = "     " in
   Printf.printf "%s" (if first then "    [" else indent);
-  Printf.printf "(set (match_operand:SI %d \"arm_hard_register_operand\" \"\")\n" opnr;
+  Printf.printf "(set (match_operand:SI %d \"%s\" \"\")\n" opnr (reg_predicate thumb);
   Printf.printf "%s     (mem:SI " indent;
   begin if offset != 0 then Printf.printf "(plus:SI " end;
   Printf.printf "%s" (destreg nregs first IN thumb);
@@ -84,7 +98,7 @@ let write_stm_set thumb nregs offset opnr first =
   begin if offset != 0 then Printf.printf "(plus:SI " end;
   Printf.printf "%s" (destreg nregs first IN thumb);
   begin if offset != 0 then Printf.printf " (const_int %d))" offset end;
-  Printf.printf ")\n%s     (match_operand:SI %d \"arm_hard_register_operand\" \"\"))" indent opnr 
+  Printf.printf ")\n%s     (match_operand:SI %d \"%s\" \"\"))" indent opnr (reg_predicate thumb)
 
 let write_ldm_peep_set extra_indent nregs opnr first =
   let indent = "   " ^ extra_indent in
@@ -146,15 +160,18 @@ let can_thumb addrmode update is_store =
   | IA, true, true -> true
   | _ -> false
 
+exception InvalidAddrMode of string;;
+
 let target addrmode thumb =
   match addrmode, thumb with
     IA, true -> "TARGET_THUMB1"
   | IA, false -> "TARGET_32BIT"
   | DB, false -> "TARGET_32BIT"
   | _, false -> "TARGET_ARM"
+  | _, _ -> raise (InvalidAddrMode "ERROR: Invalid Addressing mode for Thumb1.")
 
 let write_pattern_1 name ls addrmode nregs write_set_fn update thumb =
-  let astr = string_of_addrmode addrmode in
+  let astr = string_of_addrmode addrmode thumb update in
   Printf.printf "(define_insn \"*%s%s%d_%s%s\"\n"
     (if thumb then "thumb_" else "") name nregs astr
     (if update then "_update" else "");
@@ -174,15 +191,19 @@ let write_pattern_1 name ls addrmode nregs write_set_fn update thumb =
   Printf.printf ")]\n  \"%s && XVECLEN (operands[0], 0) == %d\"\n"
     (target addrmode thumb)
     (if update then nregs + 1 else nregs);
-  Printf.printf "  \"%s%%(%s%%)\\t%%%d%s, {"
-    name astr (nregs + 1) (if update then "!" else "");
+  if thumb then
+      Printf.printf "  \"%s%s\\t%%%d%s, {"   name astr (nregs + 1) (if update then "!" else "")
+   else
+      Printf.printf "  \"%s%s%%?\\t%%%d%s, {"  name astr (nregs + 1) (if update then "!" else "");
   for n = 1 to nregs; do
     Printf.printf "%%%d%s" n (if n < nregs then ", " else "")
   done;
   Printf.printf "}\"\n";
   Printf.printf "  [(set_attr \"type\" \"%s%d\")" ls nregs;
-  begin if not thumb then
+  if not thumb then begin
     Printf.printf "\n   (set_attr \"predicable\" \"yes\")";
+    if addrmode == IA || addrmode == DB then
+      Printf.printf "\n   (set_attr \"predicable_short_it\" \"no\")";
   end;
   Printf.printf "])\n\n"
 
@@ -216,9 +237,14 @@ let write_ldm_commutative_peephole thumb =
     Printf.printf "%s          (match_operand:SI %d \"s_register_operand\" \"\")]))\n" indent (nregs * 2 + 3);
     Printf.printf "%s   (clobber (reg:CC CC_REGNUM))])]\n" indent
   end;
-  Printf.printf "  \"(((operands[%d] == operands[0] && operands[%d] == operands[1])\n" (nregs * 2 + 2) (nregs * 2 + 3);
-  Printf.printf "     || (operands[%d] == operands[0] && operands[%d] == operands[1]))\n" (nregs * 2 + 3) (nregs * 2 + 2);
-  Printf.printf "    && peep2_reg_dead_p (%d, operands[0]) && peep2_reg_dead_p (%d, operands[1]))\"\n" (nregs + 1) (nregs + 1);
+  Printf.printf "  \"((((REGNO (operands[%d]) == REGNO (operands[0]))\n" (nregs * 2 + 2);
+  Printf.printf "         && (REGNO (operands[%d]) == REGNO (operands[1])))\n"  (nregs * 2 + 3);
+  Printf.printf "      || ((REGNO (operands[%d]) == REGNO (operands[0]))\n" (nregs * 2 + 3);
+  Printf.printf "         && (REGNO (operands[%d]) == REGNO (operands[1]))))\n" (nregs * 2 + 2);
+  Printf.printf "    && (peep2_regno_dead_p (%d, REGNO (operands[0]))\n" (nregs + 1);
+  Printf.printf "      || (REGNO (operands[0]) == REGNO (operands[%d])))\n"  (nregs * 2);
+  Printf.printf "    && (peep2_regno_dead_p (%d, REGNO (operands[1]))\n" (nregs + 1);
+  Printf.printf "      || (REGNO (operands[1]) == REGNO (operands[%d]))))\"\n" (nregs * 2);
   begin
     if thumb then
       Printf.printf "  [(set (match_dup %d) (match_op_dup %d [(match_dup %d) (match_dup %d)]))]\n"
@@ -309,7 +335,7 @@ let _ =
 "/* ARM ldm/stm instruction patterns.  This file was automatically generated";
 "   using arm-ldmstm.ml.  Please do not edit manually.";
 "";
-"   Copyright (C) 2010 Free Software Foundation, Inc.";
+"   Copyright (C) 2010-2017 Free Software Foundation, Inc.";
 "   Contributed by CodeSourcery.";
 "";
 "   This file is part of GCC.";

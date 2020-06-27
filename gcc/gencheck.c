@@ -1,6 +1,5 @@
 /* Generate check macros for tree codes.
-   Copyright (C) 1998, 1999, 2000, 2002, 2003, 2004, 2007, 2008
-   Free Software Foundation, Inc.
+   Copyright (C) 1998-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -17,6 +16,9 @@ for more details.
 You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
+
+/* We don't have insn-modes.h, but we include tm.h.  */
+#define BITS_PER_UNIT 8
 
 #include "bconfig.h"
 #include "system.h"

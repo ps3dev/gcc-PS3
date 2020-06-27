@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -42,32 +42,28 @@ package ALI is
    -- Id Types --
    --------------
 
-   --  The various entries are stored in tables with distinct subscript ranges.
-   --  The following type definitions show the ranges used for the subscripts
-   --  (Id values) for the various tables.
-
-   type ALI_Id is range 0 .. 999_999;
+   type ALI_Id is range 0 .. 99_999_999;
    --  Id values used for ALIs table entries
 
-   type Unit_Id is range 1_000_000 .. 1_999_999;
+   type Unit_Id is range 0 .. 99_999_999;
    --  Id values used for Unit table entries
 
-   type With_Id is range 2_000_000 .. 2_999_999;
+   type With_Id is range 0 .. 99_999_999;
    --  Id values used for Withs table entries
 
-   type Arg_Id is range 3_000_000 .. 3_999_999;
+   type Arg_Id is range 0 .. 99_999_999;
    --  Id values used for argument table entries
 
-   type Sdep_Id is range 4_000_000 .. 4_999_999;
+   type Sdep_Id is range 0 .. 99_999_999;
    --  Id values used for Sdep table entries
 
-   type Source_Id is range 5_000_000 .. 5_999_999;
+   type Source_Id is range 0 .. 99_999_999;
    --  Id values used for Source table entries
 
-   type Interrupt_State_Id is range 6_000_000 .. 6_999_999;
+   type Interrupt_State_Id is range 0 .. 99_999_999;
    --  Id values used for Interrupt_State table entries
 
-   type Priority_Specific_Dispatching_Id is range 7_000_000 .. 7_999_999;
+   type Priority_Specific_Dispatching_Id is range 0 .. 99_999_999;
    --  Id values used for Priority_Specific_Dispatching table entries
 
    --------------------
@@ -142,10 +138,6 @@ package ALI is
       --  line. A value of -1 indicates that no T=xxx parameter was found, or
       --  no M line was present. Not set if 'M' appears in Ignore_Lines.
 
-      Allocator_In_Body : Boolean;
-      --  Set True if an AB switch appears on the main program line. False
-      --  if no M line, or AB not present, or 'M appears in Ignore_Lines.
-
       WC_Encoding : Character;
       --  Wide character encoding if main procedure. Otherwise not relevant.
       --  Not set if 'M' appears in Ignore_Lines.
@@ -153,6 +145,12 @@ package ALI is
       Locking_Policy : Character;
       --  Indicates locking policy for units in this file. Space means tasking
       --  was not used, or that no Locking_Policy pragma was present or that
+      --  this is a language defined unit. Otherwise set to first character
+      --  (upper case) of policy name. Not set if 'P' appears in Ignore_Lines.
+
+      Partition_Elaboration_Policy : Character;
+      --  Indicates partition elaboration policy for units in this file. Space
+      --  means that no Partition_Elaboration_Policy pragma was present or that
       --  this is a language defined unit. Otherwise set to first character
       --  (upper case) of policy name. Not set if 'P' appears in Ignore_Lines.
 
@@ -174,9 +172,10 @@ package ALI is
       --  always be set as well in this case. Not set if 'P' appears in
       --  Ignore_Lines.
 
-      Float_Format : Character;
-      --  Set to float format (set to I if no float-format given). Not set if
-      --  'P' appears in Ignore_Lines.
+      GNATprove_Mode : Boolean;
+      --  Set to True if ALI and object file produced in GNATprove_Mode as
+      --  signalled by GP appearing on the P line. Not set if 'P' appears in
+      --  Ignore_Lines.
 
       No_Object : Boolean;
       --  Set to True if no object file generated. Not set if 'P' appears in
@@ -186,9 +185,19 @@ package ALI is
       --  Set to True if file was compiled with Normalize_Scalars. Not set if
       --  'P' appears in Ignore_Lines.
 
+      SSO_Default : Character;
+      --  Set to 'H' or 'L' if file was compiled with a configuration pragma
+      --  file containing Default_Scalar_Storage_Order (High/Low_Order_First).
+      --  Set to ' ' if neither pragma was present. Not set if 'P' appears in
+      --  Ignore_Lines.
+
       Unit_Exception_Table : Boolean;
       --  Set to True if unit exception table pointer generated. Not set if 'P'
       --  appears in Ignore_Lines.
+
+      Frontend_Exceptions : Boolean;
+      --  Set to True if file was compiled with front-end exceptions. Not set
+      --  if 'P' appears in Ignore_Lines.
 
       Zero_Cost_Exceptions : Boolean;
       --  Set to True if file was compiled with zero cost exceptions. Not set
@@ -283,7 +292,7 @@ package ALI is
       Set_Elab_Entity : Boolean;
       --  Indicates presence of EE parameter for a unit which has an
       --  elaboration entity which must be set true as part of the
-      --  elaboration of the entity.
+      --  elaboration of the unit.
 
       Has_RACW : Boolean;
       --  Indicates presence of RA parameter for a package that declares at
@@ -292,6 +301,10 @@ package ALI is
       Remote_Types : Boolean;
       --  Indicates presence of RT parameter for a package which has a
       --  pragma Remote_Types.
+
+      Serious_Errors : Boolean;
+      --  Indicates presence of SE parameter indicating that compilation of
+      --  the unit encountered as serious error.
 
       Shared_Passive : Boolean;
       --  Indicates presence of SP parameter for a package which has a pragma
@@ -461,10 +474,12 @@ package ALI is
    --  Set to False by Initialize_ALI. Set to True if Scan_ALI reads
    --  a unit for which dynamic elaboration checking is enabled.
 
-   Float_Format_Specified : Character := ' ';
-   --  Set to blank by Initialize_ALI. Set to appropriate float format
-   --  character (V or I, see Opt.Float_Format) if an ali file that
-   --  is read contains an F line setting the floating point format.
+   Frontend_Exceptions_Specified : Boolean := False;
+   --  Set to False by Initialize_ALI. Set to True if an ali file is read that
+   --  has a P line specifying the generation of front-end exceptions.
+
+   GNATprove_Mode_Specified : Boolean := False;
+   --  Set to True if an ali file was produced in GNATprove mode.
 
    Initialize_Scalars_Used : Boolean := False;
    --  Set True if an ali file contains the Initialize_Scalars flag
@@ -485,6 +500,11 @@ package ALI is
    --  Set to False by Initialize_ALI. Set to True if an ali file indicates
    --  that the file was compiled in Normalize_Scalars mode.
 
+   Partition_Elaboration_Policy_Specified : Character := ' ';
+   --  Set to blank by Initialize_ALI. Set to the appropriate partition
+   --  elaboration policy character if an ali file contains a P line setting
+   --  the policy.
+
    Queuing_Policy_Specified : Character := ' ';
    --  Set to blank by Initialize_ALI. Set to the appropriate queuing policy
    --  character if an ali file contains a P line setting the queuing policy.
@@ -494,14 +514,14 @@ package ALI is
    --  ali files, showing whether a restriction pragma exists anywhere, and
    --  accumulating the aggregate knowledge of violations.
 
+   SSO_Default_Specified : Boolean := False;
+   --  Set to True if at least one ALI file contains an OH/OL flag indicating
+   --  that it was compiled with a configuration pragmas file containing the
+   --  pragma Default_Scalar_Storage_Order (OH/OL present in ALI file P line).
+
    Stack_Check_Switch_Set : Boolean := False;
    --  Set to True if at least one ALI file contains '-fstack-check' in its
    --  argument list.
-
-   Static_Elaboration_Model_Used : Boolean := False;
-   --  Set to False by Initialize_ALI. Set to True if any ALI file for a
-   --  non-internal unit compiled with the static elaboration model is
-   --  encountered.
 
    Task_Dispatching_Policy_Specified : Character := ' ';
    --  Set to blank by Initialize_ALI. Set to the appropriate task dispatching
@@ -558,6 +578,9 @@ package ALI is
 
       Limited_With : Boolean := False;
       --  True if unit is named in a limited_with_clause
+
+      Implicit_With_From_Instantiation : Boolean := False;
+      --  True if this is an implicit with from a generic instantiation
    end record;
 
    package Withs is new Table.Table (
@@ -648,8 +671,8 @@ package ALI is
       Pragma_Col : Nat;
       --  Column number of pragma
 
-      Unit : Unit_Id;
-      --  Unit_Id for the entry
+      Pragma_Source_File : File_Name_Type;
+      --  Source file of pragma
 
       Pragma_Args : Name_Id;
       --  Pragma arguments. No_Name if no arguments, otherwise a single
@@ -757,6 +780,8 @@ package ALI is
       Subunit_Name : Name_Id;
       --  Name_Id for subunit name if present, else No_Name
 
+      Unit_Name : Name_Id;
+      --  Name_Id for the unit name if not a subunit (No_Name for a subunit)
       Rfile : File_Name_Type;
       --  Reference file name. Same as Sfile unless a Source_Reference pragma
       --  was used, in which case it reflects the name used in the pragma.

@@ -1,6 +1,903 @@
-2012-03-22  Release Manager
+2017-08-14  Release Manager
 
-	* GCC 4.7.0 released.
+	* GCC 7.2.0 released.
+
+2017-05-11  Ian Lance Taylor  <iant@google.com>
+
+	PR go/64238
+	* go-gcc.cc (Gcc_backend::implicit_variable_reference): Set
+	DECL_EXTERNAL, clear TREE_STATIC.
+
+2017-05-02  Release Manager
+
+	* GCC 7.1.0 released.
+
+2017-03-28  Than McIntosh  <thanm@google.com>
+
+	PR go/80226
+	* go-gcc.cc (Gcc_backend::return_statement): Check for
+	void_type_node when checking result size.
+
+2017-02-20  Ian Lance Taylor  <iant@golang.org>
+
+	PR go/79642
+	* lang.opt (-fgo-relative-import-path): Change space to tab.
+
+2017-02-07  Richard Biener  <rguenther@suse.de>
+
+	PR tree-optimization/79256
+	PR middle-end/79278
+	* go-backend.c (go_field_alignment): Adjust.
+
+2017-01-11  Than McIntosh  <thanm@google.com>
+
+	* go-gcc.cc (conditional_expression): Add Bfunction parameter.
+
+2017-01-01  Jakub Jelinek  <jakub@redhat.com>
+
+	Update copyright years.
+
+	* gccgo.texi: Bump @copyrights-go year.
+
+2016-12-16  Than McIntosh  <thanm@google.com>
+
+	* go-gcc.cc (Gcc_backend::expression_statement): Add Bfunction*
+	parameter.
+	(Gcc_backend::init_statement): Likewise.
+	(Gcc_backend::assignment_statement): Likewise.
+	(Gcc_backend::if_statement): Likewise.
+
+2016-12-06  Than McIntosh  <thanm@google.com>
+
+	* go-gcc.cc (Gcc_backend::var_expression): Add Varexpr_context
+	parameter.
+
+2016-11-22  Than McIntosh  <thanm@google.com>
+
+	* go-gcc.cc (char_needs_encoding): Remove.
+	(needs_encoding, fetch_utf8_char, encode_id): Remove.
+	(Gcc_backend::global_variable): Add asm_name parameter.  Don't
+	compute asm_name here.
+	(Gcc_backend::implicit_variable): Likewise.
+	(Gcc_backend::implicit_variable_reference): Likewise.
+	(Gcc_backend::immutable_struct): Likewise.
+	(Gcc_backend::immutable_struct_reference): Likewise.
+	* Make-lang.in (GO_OBJS): Add go/go-encode-id.o.
+
+2016-11-22  Ian Lance Taylor  <iant@google.com>
+
+	* go-gcc.cc (Gcc_backend::Gcc_backend): Add builtin function
+	__builtin_frame_address.
+
+2016-10-25  David Malcolm  <dmalcolm@redhat.com>
+
+	* go-lang.c (go_langhook_type_for_mode): Remove redundant cast
+	from result of GET_MODE_CLASS.  Minor formatting fixes.
+
+2016-10-13  Thomas Preud'homme  <thomas.preudhomme@arm.com>
+
+	* go-backend.c: Include memmodel.h.
+
+2016-10-10  Than McIntosh  <thanm@google.com>
+
+	* go-gcc.h: New file.
+	* go-c.h (struct go_create_gogo_args): Add backend and linemap
+	fields.
+	* go-lang.c: Include "go-gcc.h".
+	(go_langhook_init): Set linemap and backend fields of args.
+	* go-gcc.cc: Include "go-gcc.h".
+	* go-linemap.cc: Include "go-gcc.h".
+
+2016-10-10  Than McIntosh  <thanm@google.com>
+
+	* go-linemap.cc (Gcc_linemap::location_line): New method.
+
+2016-10-10  Eric Botcazou  <ebotcazou@adacore.com>
+
+	* config-lang.in (lang_requires_boot_languages): Delete.
+
+2016-10-06  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::stack_allocation_expression): Clear the
+	returned memory.
+
+2016-09-27  Than McIntosh  <thanm@google.com>
+
+	* go-linemap.cc (Gcc_linemap::to_string): New method.
+
+2016-09-23  Than McIntosh  <thanm@google.com>
+
+	* go-gcc-diagnostics.cc: New file.
+	* go-location.h (Location): Remove operator source_location.  Add
+	operator==.
+	* go-system.h: #include <sstream>.
+	* Make-lang.in (GO_OBJS): Add go/go-diagnostics.o and
+	go/go-gcc-diagnostics.o.
+	(CFLAGS-go/go-gcc-diagnostics.o): New variable.
+
+2016-09-23  Chris Manghane  <cmang@google.com>
+
+	PR go/77701
+	* go-gcc.cc (Gcc_backend::Gcc_backend): Fix calls to integer_type
+	to pass arguments in the correct order.
+
+2016-09-22  Ian Lance Taylor  <iant@golang.org>
+
+	* go-gcc.cc (Gcc_backend::Gcc_backend): Declare
+	__builtin_frame_address.
+
+2016-09-11  Ian Lance Taylor  <iant@golang.org>
+
+	* go-gcc.cc (Gcc_backend::Gcc_backend): Add builtin versions of
+	ctz, ctzll, bswap32, bswap64.
+
+2016-09-10  Ian Lance Taylor  <iant@golang.org>
+
+	* go-backend.c (go_trampoline_info): Remove.
+	* go-c.h (go_trampoline_info): Don't declare.
+
+2016-09-09  Than McIntosh  <thanm@google.com>
+
+	* go-sha1.cc: New file.
+	* Make-lang.in (GO_OBJS): Add go/go-sha1.o.
+	(CFLAGS-go/go-sha1.o): New variable.
+
+2016-08-29  Ian Lance Taylor  <iant@google.com>
+
+	* lang.opt (fgo-c-header, fgo-compiling-runtime): New options.
+	* go-c.h (struct go_create_gogo_args): Define.
+	(go_create_gogo): Change declaration to take struct pointer.
+	* go-lang.c (go_c_header): New static variable.
+	(go_langhook_init): Update call to go_create_gogo.
+	* gccgo.texi (Invoking gccgo): Document -fgo-c-header and
+	-fgo-compiling-runtime.
+
+2016-08-09  Ian Lance Taylor  <iant@google.com>
+
+	* gccgo.texi (Invoking gccgo): Document -fgo-optimize-allocs and
+	-fgo-debug-escae.
+	(Compiler Directives): New chapter.
+	(Function Names): Describe using //go:linkname.  Suggest using
+	-fgo-pkgpath rather than -fgo-prefix.
+
+2016-08-08  Ian Lance Taylor  <iant@google.com>
+
+	PR go/72814
+	* go-gcc.cc (Gcc_backend::function_type): If the return type is
+	zero bytes, treat the function as returning void.
+	(return_statement): If the return type is zero bytes, don't
+	actually return any values.
+
+2016-08-05  Ian Lance Taylor  <iant@google.com>
+
+	PR go/72812
+	* go-gcc.cc (char_needs_encoding): New static function.
+	(needs_encoding, fetch_utf8_char): New static functions.
+	(encode_id): New static function.
+	(Gcc_backend::global_variable): Set asm name if the name is not
+	simple ASCII.
+	(Gcc_backend::implicit_variable): Likewise.
+	(Gcc_backend::implicit_variable_reference): Likewise.
+	(Gcc_backend::immutable_struct): Likewise.
+	(Gcc_backend::immutable_struct_reference): Likewise.
+	(Gcc_backend::function): Likewise.
+
+2016-08-02  Chris Manghane  <cmang@google.com>
+
+	* lang.opt: Add -fgo-debug-escape option.
+	* go-c.h (go_create_gogo): Add debug_escape_level parameter.
+	* go-lang.c (go_langhook_init): Pass go_debug_escape_level to
+	go_create_gogo.
+
+2016-05-06  Chris Manghane  <cmang@google.com>
+
+	* Make-lang.in (GO_OBJS): Add go/escape.o (based on an entirely
+	new escape.cc).
+
+2016-04-29  Chris Manghane  <cmang@google.com>
+
+	* Make-lang.in (GO_OBJS): Remove go/dataflow.o, go/escape.o.
+
+2016-04-18  Michael Matz  <matz@suse.de>
+
+	* go-gcc.cc (Gcc_backend::implicit_variable): Use SET_DECL_ALIGN.
+
+2016-02-12  Jakub Jelinek  <jakub@redhat.com>
+
+	* gofrontend/lex.cc: Spelling fixes - behaviour -> behavior and
+	neighbour -> neighbor.
+	* gccgo.texi: Likewise.
+
+2016-01-27  Ian Lance Taylor  <iant@google.com>
+
+	* go-lang.c (go_langhook_init_options_struct): Default to
+	-fkeep-gc-roots-live.
+
+2016-01-04  Jakub Jelinek  <jakub@redhat.com>
+
+	Update copyright years.
+
+	* gccgo.texi: Bump @copyrights-go year.
+
+2015-12-21  Ian Lance Taylor  <iant@google.com>
+
+	* go-gcc.cc (class Bvariable): Remove Gcc_tree parent class.  Add
+	t_ and orig_type_ fields.  Add new two parameter constructor.  Add
+	get_tree and get_decl methods.
+	(Gcc_backend::var_expression): Pass location to var get_tree.
+	(Gcc_backend::global_variable): Don't add VIEW_CONVERT_EXPR.  Use
+	two parameter constructor for Bvariable.
+	(Gcc_backend::global_variable_set_init): Don't remove
+	VIEW_CONVERT_EXPR.  Use var get_decl, not get_tree.
+	(Gcc_backend::write_global_definitions): Likewise.
+	(Gcc_backend::init_statement): Call var get_decl, not get_tree.
+	(Gcc_backend::block): Likewise.
+	(Gcc_backend::implicit_variable_set_init): Likewise.
+	(Gcc_backend::immutable_struct_set_init): Likewise.
+	(Gcc_backend::function_set_parameters): Likewise.
+
+2015-12-21  Ian Lance Taylor  <iant@google.com>
+
+	* go-gcc.cc (Gcc_backend::global_variable): If type is zero-sized,
+	add a VIEW_CONVERT_EXPR to the tree.
+	(Gcc_backend::global_variable_set_init): Remove any
+	VIEW_CONVERT_EXPR.
+	(Gcc_backend::write_global_definitions): Likewise.
+
+2015-11-30  Ian Lance Taylor  <iant@google.com>
+
+	PR go/68477
+	* go-gcc.cc (Gcc_backend::string_constant_expression): Don't set
+	TYPE_STRING_FLAG on a variant type.
+
+2015-11-11  Andrew MacLeod  <amacleod@redhat.com>
+
+	* go-backend.c: Remove unused header files.
+	* go-gcc.cc: Likewise.
+	* go-lang.c: Likewise.
+	* gospec.c: Likewise.
+
+2015-10-29  Andrew MacLeod  <amacleod@redhat.com>
+
+	* go-backend.c: Reorder #include's and remove duplicates.
+	* go-lang.c: Likewise.
+
+2015-10-20  Alan Modra  <amodra@gmail.com>
+
+	PR go/66870
+	* gospec.c (saw_opt_m32): Rename to..
+	(is_m64): ..this, initialised by TARGET_CAN_SPLIT_STACK_64BIT.
+	Update uses.
+	(lang_specific_driver): Set is_m64 if OPT_m64, clear if OPT_m32.
+
+2015-10-01  Ian Lance Taylor  <iant@google.com>
+
+	PR go/66870
+	* gospec.c (lang_specific_driver): Only look for OPT_m32 if
+	TARGET_CAN_SPLIT_STACK_64BIT is defined.
+
+2015-10-01  Lynn Boger  <laboger@linux.vnet.ibm.com>
+
+	PR target/66870
+	* gospec.c (lang_specific_driver): Set appropriate split stack
+	options for 64 bit compiles based on TARGET_CAN_SPLIT_STACK_64BIT.
+
+2015-09-10  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::type_size): Return -1 for
+	unrepresentable size.
+
+2015-08-24  Marek Polacek  <polacek@redhat.com>
+
+	PR tree-optimization/67284
+	* go-gcc.cc (Gcc_backend::define_builtin): Add NORETURN_P parameter.
+	Set TREE_THIS_VOLATILE.
+	(Gcc_backend::Gcc_backend): Mark __builtin_trap as a noreturn call.
+	Pass false to the rest of define_builtin calls.
+
+2015-07-31  Andreas Schwab  <schwab@linux-m68k.org>
+
+	* go-lang.c (go_langhook_init_options_struct): Don't set
+	x_flag_split_stack.
+	(go_langhook_post_options): Set it here instead.
+
+2015-07-12  Aldy Hernandez  <aldyh@redhat.com>
+
+	* gofrontend/backend.h: Fix double word typos.
+        * gofrontend/expressions.cc: Same.
+	* gospec.c: Same.
+
+2015-07-07  Andrew MacLeod  <amacleod@redhat.com>
+
+	* go-backend.c: Adjust includes.
+	* go-gcc.cc: Likewise.
+	* go-lang.c: Likewise.
+
+2015-06-25  Andrew MacLeod  <amacleod@redhat.com>
+
+	* go-gcc.cc: Remove ipa-ref.h and plugin-api.h from include list.
+
+2015-06-17  Andrew MacLeod  <amacleod@redhat.com>
+
+	* go-backend.c: Do not include input.h, line-map.h or is-a.h.
+	* go-gcc.cc: Likewise.
+	* go-lang.c: Likewise.
+	* go-system.h: Likewise.
+
+2015-06-08  Andrew MacLeod  <amacleod@redhat.com>
+
+	* go-backend.c : Adjust include files.
+	* go-gcc.cc : Likewise.
+	* go-lang.c : Likewise.
+
+2015-06-05  Aldy Hernandez  <aldyh@redhat.com>
+
+	* go-gcc.cc (write_global_definitions): Remove call to
+	finalize_compilation_unit.
+	Remove Go specific debug generation.
+	* go-lang.c (go_langhook_parse_file): Call go_write_globals.
+	(go_langhook_write_globals): Remove.
+	Remove LANG_HOOKS_WRITE_GLOBALS everywhere.
+
+2015-06-04  Andrew MacLeod  <amacleod@redhat.com>
+
+	* go-backend.c: Adjust includes for restructured coretypes.h.
+	* go-c.h: Likewise.
+	* go-gcc.cc: Likewise.
+	* go-lang.c: Likewise.
+
+2015-04-30  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::stack_allocation_expression): New
+	method.
+
+2015-04-27  Jim Wilson  <jim.wilson@linaro.org>
+
+	* Make-lang.in (go.mostlyclean): Remove gccgo, gccgo-cross, and go1.
+
+2015-04-17  Chris Manghane  <cmang@google.com>
+
+	* Make-lang.in (GO_OBJS): Add go/escape.o.
+
+2015-02-02  Ian Lance Taylor  <iant@google.com>
+
+	PR go/64836
+	PR go/64838
+	* go-gcc.cc (Gcc_backend::type_size): Change return type to
+	int64_t.
+	(Gcc_backend::type_alignment): Likewise.
+	(Gcc_backend::type_field_alignment): Likewise.
+	(Gcc_backend::type_field_offset): Likewise.
+	(Gcc_backend::implicit_variable): Change alignment parameter type
+	to int64_t.
+
+2015-01-23  Ian Lance Taylor  <iant@google.com>
+
+	PR go/63565
+	* gccgo.texi (Invoking gccgo): Mention that Go programs should not
+	be stripped.
+
+	* gccgo.texi (C Interoperability): Mention that people should use
+	cgo.
+
+2015-01-23  Ian Lance Taylor  <iant@google.com>
+
+	PR go/64595
+	* go-lang.c (go_langhook_init_options_struct): Set default
+	debug_info_level.
+	(go_langhook_post_options): If debug_info_level is still the
+	default, make sure write_symbols is set.
+	* gccgo.texi (Invoking gccgo): Document that -g1 is the default.
+
+2015-01-16  Richard Henderson  <rth@redhat.com>
+
+	* go-gcc.cc (Gcc_backend::call_expression): Add chain_expr argument.
+	(Gcc_backend::static_chain_variable): New method.
+
+2015-01-09  Ian Lance Taylor  <iant@google.com>
+
+	* config-lang.in (lang_dirs): Define.
+
+2015-01-09  Michael Collison  <michael.collison@linaro.org>
+
+	* go-gcc.cc: Include hash-set.h, machmode.h, vec.h, double-int.h,
+	input.h, alias.h, symtab.h, options.h, fold-const.h,
+	wide-int.h, and inchash.h due to flattening of tree.h.
+	* go-lang.c: Ditto.
+	* go-backend.c: Ditto.
+
+2015-01-07  Chris Manghane  <cmang@google.com>
+
+	PR go/61204
+	* go-gcc.cc (Gcc_backend::temporary_variable): Don't initialize
+	zero-sized variable.
+
+2015-01-06  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::constructor_expression): Don't
+	initialize zero-sized fields, just evaluate the values for side
+	effects.
+
+2015-01-05  Jakub Jelinek  <jakub@redhat.com>
+
+	Update copyright years.
+
+	* gccgo.texi: Bump @copyrights-go year.
+
+2014-12-19  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::array_constructor_expression): Don't
+	construct arrays of zero-sized values.
+
+2014-10-29  Richard Sandiford  <richard.sandiford@arm.com>
+
+	* go-lang.c: Remove redundant enum from machine_mode.
+
+2014-10-28  Andrew MacLeod  <amacleod@redhat.com>
+
+	* go-gcc.cc: Adjust include files.
+
+2014-10-27  Andrew MacLeod  <amacleod@redhat.com>
+
+	* go-gcc.cc: Adjust include files.
+	* go-lang.c: Ditto.
+
+2014-10-23  Ian Lance Taylor  <iant@google.com>
+
+	* go-gcc.cc (Gcc_backend::complex_constant_expression): Take one
+	mpc_t parameter instead of two mpfr_t parameters.
+
+2014-09-15  Jakub Jelinek  <jakub@redhat.com>
+
+	* Make-lang.in (check_go_parallelize): Change to just an upper bound
+	number.
+
+2014-09-03  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::implicit_variable): Remove init
+	parameter.  Add is_hidden parameter.
+	(Gcc_backend::implicit_variable_set_init): New method.
+	(Gcc_backend::implicit_variable_reference): New method.
+
+2014-08-08  Ian Lance Taylor  <iant@google.com>
+
+	* go-gcc.cc (Gcc_backend::compound_statement): Don't return
+	NULL_TREE.
+
+2014-07-24  Uros Bizjak  <ubizjak@gmail.com>
+
+	* go-gcc.cc (Gcc_backend::global_variable_set_init): Rename
+	symtab_get_node to symtab_node::get.
+
+2014-06-13  Ian Lance Taylor  <iant@google.com>
+
+	PR go/61496
+	* gospec.c (lang_specific_driver): On Solaris, when not using GNU
+	ld, add -t option to avoid warning about common symbol changing
+	size.
+
+2014-06-10  Jan Hubicka  <hubicka@ucw.cz>
+
+	* go-gcc.cc (Gcc_backend::global_variable_set_init): Use
+	symtab_get_node(var_decl)->implicit_section.
+
+2014-06-07  Jan Hubicka  <hubicka@ucw.cz>
+
+	* go-gcc.cc (global_variable_set_init): Use
+	set_decl_section_name.
+
+2014-06-04  Ian Lance Taylor  <iant@google.com>
+
+	* go-gcc.cc (Gcc_backend::implicit_variable): Add is_common and
+	alignment parameters.  Permit init parameter to be NULL.
+
+2014-06-02  Andrew MacLeod  <amacleod@redhat.com>
+
+	* go-gcc.cc: Include builtins.h.
+
+2014-05-17  Trevor Saunders  <tsaunders@mozilla.com>
+
+	* go-lang.c (struct GTY): Don't use variable_size gty attribute.
+
+2014-05-06  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::nil_pointer_expression): New method.
+	(Gcc_backend::boolean_constant_expression): New method.
+	(Gcc_backend::zero_expression): Use this->make_expression rather
+	than tree_to_expr.
+	(Gcc_backend::var_expression): Likewise.
+	(Gcc_backend::integer_constant_expression): Likewise.
+	(Gcc_backend::float_constant_expression): Likewise.
+	(Gcc_backend::complex_constant_expression): Likewise.
+	(Gcc_backend::struct_field_expression): Likewise.
+	(tree_to_type, tree_to_expr, tree_to_stat): Remove functions.
+	(tree_to_function, tree_to_block): Remove functions.
+	(type_to_tree, expr_to_tree, stat_to_tree): Remove functions.
+	(block_to_tree, var_to_tree, function_to_tree): Remove functions.
+
+2014-05-06  Kenneth Zadeck  <zadeck@naturalbridge.com>
+	    Mike Stump  <mikestump@comcast.net>
+	    Richard Sandiford  <rdsandiford@googlemail.com>
+
+	* go-gcc.cc (Gcc_backend::type_size): Use tree_fits_uhwi_p.
+
+2014-05-06  Chris Manghane  <cmang@google.com>
+
+	* go-c.h (go_create_gogo): Update declaration to add
+	check_divide_zero and check_divide_overflow parameters.
+	* go-lang.c (go_langhook_init): Pass new arguments to
+	go_create_gogo.
+
+2014-05-05  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::implicit_variable): Rename from
+	gc_root_variable.  Add name and is_constant parameters.
+
+2014-05-05  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::indirect_expression): Add btype
+	parameter.
+	(Gcc_backend::temporary_variable): Check for erroneous function.
+
+2014-04-30  Chris Manghane  <cmang@google.com>
+
+	* go-backend.c: #include "diagnostics.h".
+	(saw_errors): New function.
+	* go-c.h (saw_errors): Declare.
+	* Make-lang.in (GO_OBJS): Remove go/gogo-tree.o.
+
+2014-04-30  Chris Manghane  <cmang@google.com>
+
+	* go-lang.c (go_langhook_type_for_size): Do it here, rather than
+	calling into Go frontend.
+	(go_langhook_type_for_mode): Likewise.
+	* go-c.h (go_type_for_size, go_type_for_mode): Don't declare.
+
+2014-04-30  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc: #include "langhooks.h".
+	(Gcc_backend::Gcc_backend): Add constructor.
+	(Gcc_backend::lookup_function): New function.
+	(Gcc_backend::define_builtin): New private function.
+	(Gcc_backend::gcc_backend): Remove.
+	(go_get_backend): Use new to create new Gcc_backend.
+
+2014-04-25  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc: Include "cgraph.h" and "gimplify.h".
+	(Gcc_backend::return_statement): Push and pop function.
+	(Gcc_backend::label): Likewise.
+	(Gcc_backend::function_defer_statement): Likewise.
+	(Gcc_backend::switch_statement): Add function parameter.
+	(Gcc_backend::block): Don't permit function to be NULL.
+	(Gcc_backend::temporary_variable): Change go_assert to
+	gcc_assert.
+	(Gcc_backend::gc_root_variable): New function.
+	(Gcc_backend::write_global_definitions): New function.
+
+2014-04-22  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::temporary_variable): Push cfun around
+	call to create_tmp_var.  Require that function be non-NULL.
+
+2014-04-17  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::named_constant_expression): New
+	function.
+
+2014-04-14  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc: Include "convert.h".
+	(Gcc_backend::string_constant_expression): New function.
+	(Gcc_backend::real_part_expression): Likewise.
+	(Gcc_backend::imag_part_expression): Likewise.
+	(Gcc_backend::complex_expression): Likewise.
+	(Gcc_backend::constructor_expression): Likewise.
+	(Gcc_backend::array_constructor_expression): Likewise.
+	(Gcc_backend::pointer_offset_expression): Likewise.
+	(Gcc_backend::array_index_expression): Likewise.
+	(Gcc_backend::call_expression): Likewise.
+	(Gcc_backend::exception_handler_statement): Likewise.
+	(Gcc_backend::function_defer_statement): Likewise.
+	(Gcc_backend::function_set_parameters): Likewise.
+	(Gcc_backend::function_set_body): Likewise.
+	(Gcc_backend::convert_expression): Handle various type
+	conversions.
+
+2014-03-03  Ian Lance Taylor  <iant@google.com>
+
+	* go-gcc.cc (Gcc_backend::immutable_struct): If IS_COMMON, set
+	DECL_WEAK.
+	(GCC_backend::immutable_struct_set_init): If IS_COMMON, clear
+	DECL_WEAK.
+
+2014-01-24  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::unary_expression): New function.
+
+2014-01-16  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::conditional_expression): Add btype
+	parameter.
+	(operator_to_tree_code): New static function.
+	(Gcc_backend::binary_expression): New function.
+
+2014-01-14  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::compound_expression): New function.
+	(Gcc_backend::conditional_expression): New function.
+
+2014-01-02  Richard Sandiford  <rdsandiford@googlemail.com>
+
+	Update copyright years
+
+2014-01-02  Tobias Burnus  <burnus@net-b.de>
+
+	* gccgo.texi: Bump @copying's copyright year.
+
+2013-12-16  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::struct_field_expression): New function.
+
+2013-12-11  Ian Lance Taylor  <iant@google.com>
+
+	* go-lang.c (go_langhook_post_options): Disable sibling calls by
+	default.
+
+2013-12-10  Ian Lance Taylor  <iant@google.com>
+
+	* Make-lang.in (check_go_parallelize): Test go-test.exp r* tests
+	separately.
+
+2013-12-05  Ian Lance Taylor  <iant@google.com>
+
+	Revert this change; no longer required.
+	2013-11-06  Ian Lance Taylor  <iant@google.com>
+
+	* go-lang.c (go_langhook_post_options): If
+	-fisolate-erroneous-paths was turned on by an optimization option,
+	turn it off.
+
+2013-11-23  Ian Lance Taylor  <iant@google.com>
+
+	* go-gcc.cc (Gcc_backend::function_type): Add result_struct
+	parameter.
+
+2013-11-22  Andrew MacLeod  <amacleod@redhat.com>
+
+	* go-gcc.cc: Add required include files from gimple.h.
+	* go-lang.c: Likewise
+
+2013-11-18  Richard Sandiford  <rdsandiford@googlemail.com>
+
+	* gofrontend/expressions.cc: Replace tree_low_cst (..., 0) with
+	tree_to_shwi throughout.
+
+2013-11-18  Richard Sandiford  <rdsandiford@googlemail.com>
+
+	* gofrontend/expressions.cc: Replace host_integerp (..., 0) with
+	tree_fits_shwi_p throughout.
+
+2013-11-14  Andrew MacLeod  <amacleod@redhat.com>
+
+	* go-lang.c: Include only gimplify.h and gimple.h as needed.
+
+2013-11-14  Diego Novillo  <dnovillo@google.com>
+
+	* go-backend.c: Include stor-layout.h.
+	* go-gcc.cc: Include stringpool.h.
+	Include stor-layout.h.
+	Include varasm.h.
+	* go-lang.c: Include stor-layout.h.
+
+2013-11-12  Andrew MacLeod  <amacleod@redhat.com>
+
+	* go-lang.c: Include gimplify.h.
+
+2013-11-06  Ian Lance Taylor  <iant@google.com>
+
+	* go-lang.c (go_langhook_post_options): If
+	-fisolate-erroneous-paths was turned on by an optimization option,
+	turn it off.
+
+2013-10-14  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::address_expression): New function.
+
+2013-10-11  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::function_code_expression): New
+	function.
+
+2013-10-10  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::error_function): New function.
+	(Gcc_backend::function): New function.
+	(Gcc_backend::make_function): New function.
+	(function_to_tree): New function.
+
+2013-10-04  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::convert_expression): New function.
+
+2013-10-02  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc: Include "real.h" and "realmpfr.h".
+	(Gcc_backend::integer_constant_expression): New function.
+	(Gcc_backend::float_constant_expression): New function.
+	(Gcc_backend::complex_constant_expression): New function.
+
+2013-09-30  Chris Manghane  <cmang@google.com>
+
+	* go-gcc.cc (Gcc_backend::error_expression): New function.
+	(Gcc_backend::var_expression): New function.
+	(Gcc_backend::indirect_expression): New function.
+
+2013-09-25  Tom Tromey  <tromey@redhat.com>
+
+	* Make-lang.in (gospec.o): Remove.
+	(CFLAGS-go/gospec.o): New variable.
+	(GCCGO_OBJS): Update to use go/gospec.o.
+	(go_OBJS): Define.
+	(GO_SYSTEM_H, GO_C_H, GO_LINEMAP_H, GO_LEX_H, GO_PARSE_H)
+	(GO_GOGO_H, GO_TYPES_H, GO_STATEMENTS_H, GO_EXPRESSIONS_H)
+	(GO_EXPORT_H, GO_IMPORT_H, GO_RUNTIME_H, GO_AST_DUMP_H)
+	(go/go-backend.o, go/go-lang.o, go/go-gcc.o, go/go-linemap.o)
+	(go/ast-dump.o, go/dataflow.o, go/export.o, go/expressions.o)
+	(go/go.o, go/go-dump.o, go/go-optimize.o, go/gogo-tree.o)
+	(go/gogo.o, go/import.o, go/import-archive.o, go/lex.o)
+	(go/parse.o, go/runtime.o, go/statements.o, go/types.o)
+	(go/unsafe.o): Remove.
+	(CFLAGS-go/go-gcc.o, CFLAGS-go/go-linemap.o): New variables.
+	(go/%.o: go/gofrontend/%.cc): Use COMPILE and POSTCOMPILE.
+
+2013-09-25  Tom Tromey  <tromey@redhat.com>
+
+	* Make-lang.in (gospec.o): Don't use subshell.
+
+2013-08-28  Ian Lance Taylor  <iant@google.com>
+
+	* go-gcc.cc (Gcc_backend::immutable_struct): Set TREE_PUBLIC if
+	the struct is not hidden.
+	(Gcc_backend::immutable_struct_set_init): Don't set TREE_PUBLIC.
+
+2013-08-06  Ian Lance Taylor  <iant@google.com>
+
+	* go-gcc.cc (Gcc_backend::immutable_struct_set_init): Use
+	compute_reloc_for_constant.
+
+2013-08-02  Ian Lance Taylor  <iant@google.com>
+
+	* go-gcc.cc (immutable_struct_set_init): Always call
+	resolve_unique_section.
+
+2013-07-24  Ian Lance Taylor  <iant@google.com>
+
+	* go-gcc.cc (Gcc_backend::non_zero_size_type): If a struct has a
+	fields, recreate those fields with the first one with a non-zero
+	size.
+
+2013-07-23  Ian Lance Taylor  <iant@google.com>
+
+	* go-backend.c: Don't #include "rtl.h".
+	(go_imported_unsafe): Don't call init_varasm_once.
+	* Make-lang.in (go/go-backend.o): Don't depend on $(RTL_H).
+
+2013-07-23  Ian Lance Taylor  <iant@google.com>
+
+	* go-lang.c: Don't #include "except.h".
+	* Make-lang.in (go/go-lang.o): Don't depend on $(EXCEPT_H).
+
+2013-06-18  Ian Lance Taylor  <iant@google.com>
+
+	* go-gcc.cc (Gcc_backend::immutable_struct): Add is_hidden
+	parameter.
+	(Gcc_backend::immutable_struct_set_init): Likewise.
+
+2013-05-16  Jason Merrill  <jason@redhat.com>
+
+	* Make-lang.in (go1$(exeext)): Use link mutex.
+
+2013-01-16  Shenghou Ma  <minux.ma@gmail.com>
+
+	* gospec.c: pass -u pthread_create to linker when static linking.
+
+2012-12-21  Ian Lance Taylor  <iant@google.com>
+
+	PR bootstrap/54659
+	* go-system.h: Don't include <cstdio>.
+
+2012-12-18  Ian Lance Taylor  <iant@google.com>
+
+	PR go/55201
+	* gospec.c: Revert last patch.
+
+2012-12-18  Andreas Schwab  <schwab@linux-m68k.org>
+
+	PR go/55201
+	* gospec.c (LIBATOMIC): Define.
+	(LIBATOMIC_PROFILE): Define.
+	(lang_specific_driver): Add LIBATOMIC[_PROFILE] option.
+
+2012-11-29  Ian Lance Taylor  <iant@google.com>
+
+	* go-gcc.cc: Include "output.h".
+	(global_variable): Add is_unique_section parameter.
+	(global_variable_set_init): Adjust unique section if necessary.
+	* Make-lang.in (go/go-gcc.o): Add dependency on output.h.
+
+2012-11-17  Diego Novillo  <dnovillo@google.com>
+
+	Adjust for new vec API (http://gcc.gnu.org/wiki/cxx-conversion/cxx-vec)
+
+	* go-lang.c: Use new vec API in vec.h.
+
+2012-11-16  Ian Lance Taylor  <iant@google.com>
+
+	* Make-lang.in (gccgo$(exeext)): Add + at start of command.
+	(go1$(exeext)): Likewise.
+
+2012-10-30  Ian Lance Taylor  <iant@google.com>
+
+	* lang.opt (-fgo-relative-import-path): New option.
+	* go-lang.c (go_relative_import_path): New static variable.
+	(go_langhook_init): Pass go_relative_import_path to
+	go_create_gogo.
+	(go_langhook_handle_option): Handle -fgo-relative-import-path.
+	* go-c.h (go_create_gogo): Update declaration.
+	* gccgo.texi (Invoking gccgo): Document
+	-fgo-relative-import-path.
+
+2012-09-17  Ian Lance Taylor  <iant@google.com>
+
+	* config-lang.in (target_libs): Add target-libbacktrace.
+
+2012-09-16  Ian Lance Taylor  <iant@google.com>
+
+	* Make-lang.in (go/gogo.o): Depend on filenames.h.
+
+2012-08-14   Diego Novillo  <dnovillo@google.com>
+
+	Merge from cxx-conversion branch.  Configury.
+
+	* go-c.h: Remove all handlers of ENABLE_BUILD_WITH_CXX.
+	* go-gcc.cc: Likewise.
+	* go-system.h: Likewise.
+
+2012-07-24  Uros Bizjak  <ubizjak@gmail.com>
+
+	* go-lang.c (lang_decl): Add variable_size GTY option.
+
+2012-05-09  Ian Lance Taylor  <iant@google.com>
+
+	* lang.opt: Add -fgo-pkgpath.
+	* go-lang.c (go_pkgpath): New static variable.
+	(go_prefix): New static variable.
+	(go_langhook_init): Pass go_pkgpath and go_prefix to
+	go_create_gogo.
+	(go_langhook_handle_option): Handle -fgo-pkgpath.  Change
+	-fgo-prefix handling to just set go_prefix.
+	* go-c.h (go_set_prefix): Don't declare.
+	(go_create_gogo): Add pkgpath and prefix to declaration.
+	* go-gcc.cc (Gcc_backend::global_variable): Change unique_prefix
+	to pkgpath.  Don't include the package name in the asm name.
+	* gccgo.texi (Invoking gccgo): Document -fgo-pkgpath.  Update the
+	docs for -fgo-prefix.
+
+2012-04-23  Ian Lance Taylor  <iant@google.com>
+
+	* go-lang.c (go_langhook_init): Set MPFR precision to 256.
+
+2012-04-20  Ian Lance Taylor  <iant@google.com>
+
+	* lang.opt: Add -fgo-check-divide-zero and
+	-fgo-check-divide-overflow.
+	* gccgo.texi (Invoking gccgo): Document new options.
+
+2012-04-18  Steven Bosscher  <steven@gcc.gnu.org>
+
+	* go-gcc.cc (Gcc_backend::switch_statement): Build SWITCH_EXPR
+	with NULL_TREE type instead of void_type_node.
 
 2012-03-09  Ian Lance Taylor  <iant@google.com>
 
@@ -329,7 +1226,7 @@
 
 2011-04-14  Ian Lance Taylor  <iant@google.com>
 
-	* go-gcc.cc (Backend::error_statement): New function.
+	* go-gcc.cc (Gcc_backend::error_statement): New function.
 
 2011-04-13  Ian Lance Taylor  <iant@google.com>
 
@@ -483,3 +1380,9 @@
 2010-12-02  Ian Lance Taylor  <iant@google.com>
 
 	Go frontend added to gcc repository.
+
+Copyright (C) 2010-2017 Free Software Foundation, Inc.
+
+Copying and distribution of this file, with or without modification,
+are permitted in any medium without royalty provided the copyright
+notice and this notice are preserved.

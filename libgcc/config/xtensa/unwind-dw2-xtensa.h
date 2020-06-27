@@ -1,6 +1,5 @@
 /* DWARF2 frame unwind data structure for Xtensa.
-   Copyright (C) 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2007, 2008,
-   2009  Free Software Foundation, Inc.
+   Copyright (C) 1997-2017 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -22,12 +21,6 @@
    a copy of the GCC Runtime Library Exception along with this program;
    see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
    <http://www.gnu.org/licenses/>.  */
-
-/* A target can override (perhaps for backward compatibility) how
-   many dwarf2 columns are unwound.  */
-#ifndef DWARF_FRAME_REGISTERS
-#define DWARF_FRAME_REGISTERS FIRST_PSEUDO_REGISTER
-#endif
 
 /* Xtensa's variable-size register window save areas can be unwound without
    any unwind info.  This is a stripped down version of the standard DWARF

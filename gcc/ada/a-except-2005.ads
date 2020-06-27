@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- This specification is derived from the Ada Reference Manual for use with --
 -- GNAT. The copyright notice above, and the license provisions that follow --
@@ -33,12 +33,13 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
---  This version of Ada.Exceptions fully supports both Ada 95 and Ada 2005.
---  It is used in all situations except for the build of the compiler and
---  other basic tools. For these latter builds, we use an Ada 95-only version.
+--  This version of Ada.Exceptions fully supports Ada 95 and later language
+--  versions.  It is used in all situations except for the build of the
+--  compiler and other basic tools. For these latter builds, we use an
+--  Ada 95-only version.
 
---  The reason for this splitting off of a separate version is that bootstrap
---  compilers often will be used that do not support Ada 2005 features, and
+--  The reason for this splitting off of a separate version is to support
+--  older bootstrap compilers that do not support Ada 2005 features, and
 --  Ada.Exceptions is part of the compiler sources.
 
 pragma Polling (Off);
@@ -51,12 +52,8 @@ with System.Standard_Library;
 with System.Traceback_Entries;
 
 package Ada.Exceptions is
-   pragma Warnings (Off);
-   pragma Preelaborate_05;
-   pragma Warnings (On);
-   --  In accordance with Ada 2005 AI-362. The warnings pragmas are so that we
-   --  can compile this using older compiler versions, which will ignore the
-   --  pragma, which is fine for the bootstrap.
+   pragma Preelaborate;
+   --  In accordance with Ada 2005 AI-362.
 
    type Exception_Id is private;
    pragma Preelaborable_Initialization (Exception_Id);
@@ -180,18 +177,6 @@ private
    -- Private Subprograms --
    -------------------------
 
-   function Current_Target_Exception return Exception_Occurrence;
-   pragma Export
-     (Ada, Current_Target_Exception,
-      "__gnat_current_target_exception");
-   --  This routine should return the current raised exception on targets which
-   --  have built-in exception handling such as the Java Virtual Machine. For
-   --  other targets this routine is simply ignored. Currently, only JGNAT
-   --  uses this. See 4jexcept.ads for details. The pragma Export allows this
-   --  routine to be accessed elsewhere in the run-time, even though it is in
-   --  the private part of this package (it is not allowed to be in the visible
-   --  part, since this is set by the reference manual).
-
    function Exception_Name_Simple (X : Exception_Occurrence) return String;
    --  Like Exception_Name, but returns the simple non-qualified name of the
    --  exception. This is used to implement the Exception_Name function in
@@ -236,6 +221,13 @@ private
    --  Raise Program_Error, providing information about X (an exception raised
    --  during a controlled operation) in the exception message.
 
+   procedure Reraise_Library_Exception_If_Any;
+   pragma Export
+     (Ada, Reraise_Library_Exception_If_Any,
+           "__gnat_reraise_library_exception_if_any");
+   --  If there was an exception raised during library-level finalization,
+   --  reraise the exception.
+
    procedure Reraise_Occurrence_Always (X : Exception_Occurrence);
    pragma No_Return (Reraise_Occurrence_Always);
    --  This differs from Raise_Occurrence only in that the caller guarantees
@@ -273,7 +265,7 @@ private
 
    --  Note: this used to be in a separate unit called System.Poll, but that
    --  caused horrible circular elaboration problems between System.Poll and
-   --  Ada.Exceptions. One way of solving such circularities is unification!
+   --  Ada.Exceptions.
 
    procedure Poll;
    --  Check for asynchronous abort. Note that we do not inline the body.
@@ -288,16 +280,16 @@ private
    Max_Tracebacks : constant := 50;
    --  Maximum number of trace backs stored in exception occurrence
 
-   type Tracebacks_Array is array (1 .. Max_Tracebacks) of TBE.Traceback_Entry;
+   subtype Tracebacks_Array is TBE.Tracebacks_Array (1 .. Max_Tracebacks);
    --  Traceback array stored in exception occurrence
 
    type Exception_Occurrence is record
       Id : Exception_Id;
       --  Exception_Identity for this exception occurrence
-      --
-      --  WARNING System.System.Finalization_Implementation.Finalize_List
-      --  relies on the fact that this field is always first in the exception
-      --  occurrence
+
+      Machine_Occurrence : System.Address;
+      --  The underlying machine occurrence. For GCC, this corresponds to the
+      --  _Unwind_Exception structure address.
 
       Msg_Length : Natural := 0;
       --  Length of message (zero = no message)
@@ -330,18 +322,28 @@ private
    --  this, and it would not work right, because of the Msg and Tracebacks
    --  fields which have unused entries not copied by Save_Occurrence.
 
+   function Get_Exception_Machine_Occurrence
+     (X : Exception_Occurrence) return System.Address;
+   pragma Export (Ada, Get_Exception_Machine_Occurrence,
+                  "__gnat_get_exception_machine_occurrence");
+   --  Get the machine occurrence corresponding to an exception occurrence.
+   --  It is Null_Address if there is no machine occurrence (in runtimes that
+   --  doesn't use GCC mechanism) or if it has been lost (Save_Occurrence
+   --  doesn't save the machine occurrence).
+
    function EO_To_String (X : Exception_Occurrence) return String;
    function String_To_EO (S : String) return Exception_Occurrence;
    pragma Stream_Convert (Exception_Occurrence, String_To_EO, EO_To_String);
    --  Functions for implementing Exception_Occurrence stream attributes
 
    Null_Occurrence : constant Exception_Occurrence := (
-     Id               => null,
-     Msg_Length       => 0,
-     Msg              => (others => ' '),
-     Exception_Raised => False,
-     Pid              => 0,
-     Num_Tracebacks   => 0,
-     Tracebacks       => (others => TBE.Null_TB_Entry));
+     Id                 => null,
+     Machine_Occurrence => System.Null_Address,
+     Msg_Length         => 0,
+     Msg                => (others => ' '),
+     Exception_Raised   => False,
+     Pid                => 0,
+     Num_Tracebacks     => 0,
+     Tracebacks         => (others => TBE.Null_TB_Entry));
 
 end Ada.Exceptions;

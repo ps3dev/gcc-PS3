@@ -1,4 +1,4 @@
-// { dg-options "-std=gnu++0x" }
+// { dg-do compile { target c++11 } }
 
 template<typename T, typename U> struct is_same {
   static const bool value = false;
@@ -33,7 +33,7 @@ template<typename... Args> void g(Args... args)
 {
    f(const_cast<const Args*>(&args)...); // okay: ``Args'' and ``args'' are expanded
    f(5 ...); // { dg-error "contains no argument packs" }
-   f(args); // { dg-error "parameter packs not expanded" }
-   // { dg-message "args" "note" { target *-*-* } 36 }
+   f(args); // { dg-error "5:parameter packs not expanded" }
+   // { dg-message "args" "note" { target *-*-* } .-1 }
    f(h(args...) + args...); // okay: first ``args'' expanded within h, second ``args'' expanded within f.
 }

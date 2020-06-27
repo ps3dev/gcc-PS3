@@ -102,14 +102,10 @@
 	    in the following directories:
 	  </para>
 	  <para>
-	    <filename class="directory">
-	      doc/libstdc++/libstdc++-api.html
-	    </filename>
+	    <filename>doc/libstdc++/libstdc++-api.html</filename>
 	  </para>
 	  <para>
-	    <filename class="directory">
-	      doc/libstdc++/libstdc++-manual.html
-	    </filename>
+	    <filename>doc/libstdc++/libstdc++-manual.html</filename>
 	  </para>
 	</listitem>
       </varlistentry>
@@ -210,7 +206,7 @@
     
     <section xml:id="doxygen.prereq"><info><title>Prerequisites</title></info>
       
- <table frame="all">
+ <table frame="all" xml:id="table.doxygen_prereq">
 <title>Doxygen Prerequisites</title>
 
 <tgroup cols="3" align="center" colsep="1" rowsep="1">
@@ -265,7 +261,7 @@
 
       <para>
 	Prerequisite tools are Bash 2.0 or later,
-	<link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://www.doxygen.org/">Doxygen</link>, and
+	<link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://www.doxygen.org">Doxygen</link>, and
 	the <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://www.gnu.org/software/coreutils/">GNU
 	coreutils</link>. (GNU versions of find, xargs, and possibly
 	sed and grep are used, just because the GNU versions make
@@ -278,7 +274,9 @@
 	<link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://www.graphviz.org">Graphviz</link> package
 	will need to be installed. For PDF
 	output, <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://www.tug.org/applications/pdftex/">
-	pdflatex</link> is required.
+	pdflatex</link> is required as well as a number of TeX packages
+	such as <package>texlive-xtab</package> and
+	<package>texlive-tocloft</package>.
       </para>
 
       <para>
@@ -346,6 +344,94 @@
 
     </section>
 
+ <section xml:id="doxygen.debug">
+   <info><title>Debugging Generation</title></info>
+   
+	<para>
+	  Sometimes, mis-configuration of the pre-requisite tools can
+	  lead to errors when attempting to build the
+	  documentation. Here are some of the obvious errors, and ways
+	  to fix some common issues that may appear quite cryptic.
+	</para>
+	
+	<para>
+	  First, if using a rule like <code>make pdf</code>, try to
+	  narrow down the scope of the error to either docbook
+	  (<code>make doc-pdf-docbook</code>) or doxygen (<code>make
+	  doc-pdf-doxygen</code>).
+	</para>
+	<para>
+	  Working on the doxygen path only, closely examine the
+	  contents of the following build directory: <filename
+	  class="directory">build/target/libstdc++-v3/doc/doxygen/latex</filename>.
+	  Pay attention to three files enclosed within, annotated as follows.
+	</para>
+<itemizedlist>
+
+<listitem>
+  <para>
+   <emphasis>refman.tex</emphasis>
+  </para>
+
+  <para>
+    The actual latex file, or partial latex file. This is generated
+    via <command>doxygen</command>, and is the LaTeX version of the
+    Doxygen XML file <filename>libstdc++-api.xml</filename>. Go to a specific
+    line, and look at the generated LaTeX, and try to deduce what
+    markup in <filename>libstdc++-api.xml</filename> is causing it.
+  </para>
+</listitem>
+
+<listitem>
+  <para>
+   <emphasis>refman.log</emphasis>
+  </para>
+
+  <para>
+    A log created by <command>latex</command> as it processes the
+    <filename>refman.tex</filename> file. If generating the PDF fails
+    look at the end of this file for errors such as:
+    <screen>
+    ! LaTeX Error: File `xtab.sty' not found.
+    </screen>
+    This indicates a required TeX package is missing. For the example
+    above the <package>texlive-xtab</package> package needs to be
+    installed.
+  </para>
+</listitem>
+
+<listitem>
+  <para>
+   <emphasis>refman.out</emphasis>
+  </para>
+
+  <para>
+    A log of the compilation of the converted LaTeX form to PDF. This
+    is a linear list, from the beginning of the
+    <filename>refman.tex</filename> file: the last entry of this file
+    should be the end of the LaTeX file. If it is truncated, then you
+    know that the last entry is the last part of the generated LaTeX
+    source file that is valid. Often this file contains an error with
+    a specific line number of <filename>refman.tex</filename> that is
+    incorrect, or will have clues at the end of the file with the dump
+    of the memory usage of LaTeX.
+  </para>
+</listitem>
+</itemizedlist>
+
+	<para>
+	  If the error at hand is not obvious after examination, a
+	  fall-back strategy is to start commenting out the doxygen
+	  input sources, which can be found in
+	  <filename>doc/doxygen/user.cfg.in</filename>, look for the
+	  <literal>INPUT</literal> tag. Start by commenting out whole
+	  directories of header files, until the offending header is
+	  identified. Then, read the latex log files to try and find
+	  surround text, and look for that in the offending header.
+	</para>
+
+ </section>
+
     <section xml:id="doxygen.markup"><info><title>Markup</title></info>
       
 
@@ -370,16 +456,15 @@
 	<classname>deque</classname>/<classname>vector</classname>/<classname>list</classname>
 	and <classname>std::pair</classname> as examples.  For
 	functions, see their member functions, and the free functions
-	in <filename>stl_algobase.h</filename>. Member functions of
-	other container-like types should read similarly to these
-	member functions.
+	in <filename class="headerfile">stl_algobase.h</filename>. Member
+	functions of other container-like types should read similarly to
+	these member functions.
       </para>
 
       <para>
 	Some commentary to accompany
-	the first list in the <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://www.stack.nl/~dimitri/doxygen/docblocks.html">Special
-	Documentation Blocks</link> section of
-	the Doxygen manual:
+	the first list in the <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://www.stack.nl/~dimitri/doxygen/manual/docblocks.html">Special
+	Documentation Blocks</link> section of the Doxygen manual:
       </para>
 
       <orderedlist inheritnum="ignore" continuation="restarts">
@@ -423,8 +508,8 @@
       <para>
 	Use either kind of grouping, as
 	appropriate. <filename>doxygroups.cc</filename> exists for this
-	purpose. See <filename>stl_iterator.h</filename> for a good example
-	of the <quote>other</quote> kind of grouping.
+	purpose. See <filename class="headerfile">stl_iterator.h</filename>
+	for a good example of the <quote>other</quote> kind of grouping.
       </para>
 
       <para>
@@ -435,8 +520,8 @@
       </para>
 
       <para>
-	Complicated math functions should use the multi-line
-	format. An example from <filename>random.h</filename>:
+	Complicated math functions should use the multi-line format.
+	An example from <filename class="headerfile">random.h</filename>:
       </para>
 
       <para>
@@ -470,9 +555,9 @@
       <para>
 	The other relevant detail for header files is the use of a
 	libstdc++-specific doxygen alias that helps distinguish
-	between public header files (like <filename>random</filename>)
+	between public header files (like <filename class="headerfile">random</filename>)
 	from implementation or private header files (like
-	<filename>bits/c++config.h</filename>.) This alias is spelled
+	<filename class="headerfile">bits/c++config.h</filename>.) This alias is spelled
 	<literal>@headername</literal> and can take one or two
 	arguments that detail the public header file or files that
 	should be included to use the contents of the file. All header
@@ -497,7 +582,7 @@
 	doubt, consult the following table.
       </para>
 
-<table frame="all">
+<table frame="all" xml:id="table.doxygen_cmp">
 <title>HTML to Doxygen Markup Comparison</title>
 
 <tgroup cols="2" align="left" colsep="1" rowsep="1">
@@ -567,7 +652,7 @@
     <section xml:id="docbook.prereq"><info><title>Prerequisites</title></info>
       
       
- <table frame="all">
+ <table frame="all" xml:id="table.docbook_prereq">
 <title>Docbook Prerequisites</title>
 
 <tgroup cols="3" align="center" colsep="1" rowsep="1">
@@ -680,9 +765,8 @@
 	For PDF output, something that transforms valid Docbook XML to PDF is
 	required. Possible solutions include <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://dblatex.sourceforge.net">dblatex</link>,
 	<command>xmlto</command>, or <command>prince</command>. Of
-	these, <command>dblatex</command> is the default. Other
-	options are listed on the DocBook web <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://wiki.docbook.org/topic/DocBookPublishingTools">pages</link>. Please
-	consult the <email>libstdc++@gcc.gnu.org</email> list when
+	these, <command>dblatex</command> is the default.
+	Please consult the <email>libstdc++@gcc.gnu.org</email> list when
 	preparing printed manuals for current best practice and
 	suggestions.
       </para>
@@ -693,7 +777,7 @@
       </para>
 
       <para>
-	For epub output, the <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://sourceforge.net/projects/docbook/files/epub3/">stylesheets</link> for EPUB3 are required. These stylesheets are still in development. To validate the created file, <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="https://code.google.com/p/epubcheck/">epubcheck</link> is necessary.
+	For epub output, the <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="https://sourceforge.net/projects/docbook/files/epub3/">stylesheets</link> for EPUB3 are required. These stylesheets are still in development. To validate the created file, <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="https://github.com/IDPF/epubcheck">epubcheck</link> is necessary.
       </para>
     </section>
 
@@ -741,6 +825,95 @@ make <literal>XSL_STYLE_DIR="/usr/share/xml/docbook/stylesheet/nwalsh"</literal>
       </screen>
 
       </section>
+
+    <section xml:id="docbook.debug">
+	<info><title>Debugging Generation</title></info>
+
+	<para>
+	  Sometimes, mis-configuration of the pre-requisite tools can
+	  lead to errors when attempting to build the
+	  documentation. Here are some of the obvious errors, and ways
+	  to fix some common issues that may appear quite cryptic.
+	</para>
+	
+	<para>
+	  First, if using a rule like <code>make pdf</code>, try to
+	  narrow down the scope of the error to either docbook
+	  (<code>make doc-pdf-docbook</code>) or doxygen (<code>make
+	  doc-pdf-doxygen</code>).
+	</para>
+
+	<para>
+	  Working on the docbook path only, closely examine the
+	  contents of the following build directory:
+	  <filename class="directory">build/target/libstdc++-v3/doc/docbook/latex</filename>.
+	  Pay attention to three files enclosed within, annotated as follows.
+	</para>
+
+<itemizedlist>
+
+<listitem>
+  <para>
+   <emphasis>spine.tex</emphasis>
+  </para>
+
+  <para>
+    The actual latex file, or partial latex file. This is generated
+    via <command>dblatex</command>, and is the LaTeX version of the
+    DocBook XML file <filename>spine.xml</filename>. Go to a specific
+    line, and look at the generated LaTeX, and try to deduce what
+    markup in <filename>spine.xml</filename> is causing it.
+  </para>
+</listitem>
+
+<listitem>
+  <para>
+   <emphasis>spine.out</emphasis>
+  </para>
+
+  <para>
+    A log of the conversion from the XML form to the LaTeX form. This
+    is a linear list, from the beginning of the
+    <filename>spine.xml</filename> file: the last entry of this file
+    should be the end of the DocBook file. If it is truncated, then
+    you know that the last entry is the last part of the XML source
+    file that is valid. The error is after this point.
+  </para>
+</listitem>
+
+
+<listitem>
+  <para>
+   <emphasis>spine.log</emphasis>
+  </para>
+
+  <para>
+    A log of the compilation of the converted LaTeX form to pdf. This
+    is a linear list, from the beginning of the
+    <filename>spine.tex</filename> file: the last entry of this file
+    should be the end of the LaTeX file. If it is truncated, then you
+    know that the last entry is the last part of the generated LaTeX
+    source file that is valid. Often this file contains an error with
+    a specific line number of <filename>spine.tex</filename> that is
+    incorrect.
+  </para>
+</listitem>
+
+</itemizedlist>
+
+	<para>
+	  If the error at hand is not obvious after examination, or if one
+	  encounters the inscruitable <quote>Incomplete
+	  \ifmmode</quote> error, a fall-back strategy is to start
+	  commenting out parts of the XML document (regardless of what
+	  this does to over-all document validity). Start by
+	  commenting out each of the largest parts of the
+	  <filename>spine.xml</filename> file, section by section,
+	  until the offending section is identified.
+	</para>
+
+
+    </section>
 
     <section xml:id="docbook.validation"><info><title>Editing and Validation</title></info>
 
@@ -848,14 +1021,13 @@ make <literal>XSL_STYLE_DIR="/usr/share/xml/docbook/stylesheet/nwalsh"</literal>
       
 
       <para>
-	Complete details on Docbook markup can be found in the DocBook
-	Element Reference,
-	<link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://www.docbook.org/tdg/en/html/part2.html">online</link>.
+	Complete details on Docbook markup can be found in the
+	<link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://tdg.docbook.org/tdg/5.0/ref-elements.html">DocBook Element Reference</link>.
 	An incomplete reference for HTML to Docbook conversion is
 	detailed in the table below.
       </para>
 
-<table frame="all">
+<table frame="all" xml:id="table.docbook_cmp">
 <title>HTML to Docbook XML Markup Comparison</title>
 
 <tgroup cols="2" align="left" colsep="1" rowsep="1">
@@ -933,7 +1105,7 @@ make <literal>XSL_STYLE_DIR="/usr/share/xml/docbook/stylesheet/nwalsh"</literal>
   equivalents are listed in the table below.
 </para>
 
-<table frame="all">
+<table frame="all" xml:id="table.docbook_elem">
 <title>Docbook XML Element Use</title>
 
 <tgroup cols="2" align="left" colsep="1" rowsep="1">

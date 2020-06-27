@@ -1,8 +1,7 @@
 /* sha1.c - Functions to compute SHA1 message digest of files or
    memory blocks according to the NIST specification FIPS-180-1.
 
-   Copyright (C) 2000, 2001, 2003, 2004, 2005, 2006, 2008 Free Software
-   Foundation, Inc.
+   Copyright (C) 2000-2017 Free Software Foundation, Inc.
 
    This program is free software; you can redistribute it and/or modify it
    under the terms of the GNU General Public License as published by the
@@ -300,8 +299,7 @@ sha1_process_block (const void *buffer, size_t len, struct sha1_ctx *ctx)
      length of the file up to 2^64 bits.  Here we only compute the
      number of bytes.  Do a double word increment.  */
   ctx->total[0] += len;
-  if (ctx->total[0] < len)
-    ++ctx->total[1];
+  ctx->total[1] += ((len >> 31) >> 1) + (ctx->total[0] < len);
 
 #define rol(x, n) (((x) << (n)) | ((sha1_uint32) (x) >> (32 - (n))))
 

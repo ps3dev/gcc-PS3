@@ -1,4 +1,5 @@
 ! { dg-do compile }
+! { dg-require-visibility "" }
 !
 ! PR32535: namelist with private items contained in sub-sub-procedure of a module rejected
 !
@@ -22,5 +23,3 @@ contains
     end subroutine subsub
   end subroutine sub
 end module mo
-
-! { dg-final { cleanup-modules "mo" } }

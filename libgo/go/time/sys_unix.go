@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build darwin freebsd linux netbsd openbsd
+// +build darwin dragonfly freebsd linux nacl netbsd openbsd solaris
 
 package time
 
@@ -55,9 +55,9 @@ func closefd(fd uintptr) {
 }
 
 func preadn(fd uintptr, buf []byte, off int) error {
-	whence := 0
+	whence := seekStart
 	if off < 0 {
-		whence = 2
+		whence = seekEnd
 	}
 	if _, err := syscall.Seek(int(fd), int64(off), whence); err != nil {
 		return err
@@ -74,3 +74,5 @@ func preadn(fd uintptr, buf []byte, off int) error {
 	}
 	return nil
 }
+
+func isNotExist(err error) bool { return err == syscall.ENOENT }

@@ -1,7 +1,8 @@
+/* { dg-require-effective-target size32plus } */
 int toto()
 {
   int i, j, k;
-  int a[100][100];
+  int a[100][200];
   int b[100];
 
   for (i = 1; i < 100; i++)
@@ -25,4 +26,3 @@ int toto()
 }
 
 /* { dg-final { scan-tree-dump-times "number of SCoPs: 1" 1 "graphite"} } */
-/* { dg-final { cleanup-tree-dump "graphite" } } */

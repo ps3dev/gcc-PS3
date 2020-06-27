@@ -1,10 +1,10 @@
 // Before Solaris 11, iconv -f ISO-8859-1 -t ISO-8859-1 fails with
 // Not supported ISO-8859-1 to ISO-8859-1
 //
-// { dg-do run { xfail *-*-solaris2.[89] *-*-solaris2.10 } }
+// { dg-do run { xfail *-*-solaris2.10 } }
 // { dg-require-iconv "ISO-8859-1" }
 
-// Copyright (C) 2004, 2005, 2006, 2007, 2009, 2010 Free Software Foundation
+// Copyright (C) 2004-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -29,7 +29,6 @@
 
 int main()
 {
-  bool test __attribute__((unused)) = true;
   typedef char char_type;
   typedef __gnu_cxx::enc_filebuf<char_type> filebuf_type;
   typedef filebuf_type::state_type state_type;

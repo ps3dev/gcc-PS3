@@ -1,5 +1,5 @@
 /* Wrapper to call lto.  Used by collect2 and the linker plugin.
-   Copyright (C) 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2009-2017 Free Software Foundation, Inc.
 
    Factored out of collect2 by Rafael Espindola <espindola@google.com>
 
@@ -46,16 +46,12 @@ along with GCC; see the file COPYING3.  If not see
 #include "opts.h"
 #include "options.h"
 #include "simple-object.h"
+#include "lto-section-names.h"
+#include "collect-utils.h"
 
-/* From lto-streamer.h which we cannot include with -fkeep-inline-functions.
-   ???  Split out a lto-streamer-core.h.  */
-
-#define LTO_SECTION_NAME_PREFIX         ".gnu.lto_"
-
-/* End of lto-streamer.h copy.  */
-
-int debug;				/* true if -save-temps.  */
-int verbose;				/* true if -v.  */
+/* Environment variable, used for passing the names of offload targets from GCC
+   driver to lto-wrapper.  */
+#define OFFLOAD_TARGET_NAMES_ENV	"OFFLOAD_TARGET_NAMES"
 
 enum lto_mode_d {
   LTO_MODE_NONE,			/* Not doing LTO.  */
@@ -68,223 +64,57 @@ static enum lto_mode_d lto_mode = LTO_MODE_NONE;
 
 static char *ltrans_output_file;
 static char *flto_out;
-static char *args_name;
 static unsigned int nr;
 static char **input_names;
 static char **output_names;
+static char **offload_names;
+static char *offload_objects_file_name;
 static char *makefile;
 
-static void maybe_unlink_file (const char *);
+const char tool_name[] = "lto-wrapper";
 
- /* Delete tempfiles.  */
+/* Delete tempfiles.  Called from utils_cleanup.  */
+
+void
+tool_cleanup (bool)
+{
+  unsigned int i;
+
+  if (ltrans_output_file)
+    maybe_unlink (ltrans_output_file);
+  if (flto_out)
+    maybe_unlink (flto_out);
+  if (offload_objects_file_name)
+    maybe_unlink (offload_objects_file_name);
+  if (makefile)
+    maybe_unlink (makefile);
+  for (i = 0; i < nr; ++i)
+    {
+      maybe_unlink (input_names[i]);
+      if (output_names[i])
+	maybe_unlink (output_names[i]);
+    }
+}
 
 static void
 lto_wrapper_cleanup (void)
 {
-  static bool cleanup_done = false;
-  unsigned int i;
-
-  if (cleanup_done)
-    return;
-
-  /* Setting cleanup_done prevents an infinite loop if one of the
-     calls to maybe_unlink_file fails. */
-  cleanup_done = true;
-
-  if (ltrans_output_file)
-    maybe_unlink_file (ltrans_output_file);
-  if (flto_out)
-    maybe_unlink_file (flto_out);
-  if (args_name)
-    maybe_unlink_file (args_name);
-  if (makefile)
-    maybe_unlink_file (makefile);
-  for (i = 0; i < nr; ++i)
-    {
-      maybe_unlink_file (input_names[i]);
-      if (output_names[i])
-	maybe_unlink_file (output_names[i]);
-    }
+  utils_cleanup (false);
 }
-
-static void
-fatal_signal (int signum)
-{
-  signal (signum, SIG_DFL);
-  lto_wrapper_cleanup ();
-  /* Get the same signal again, this time not handled,
-     so its normal effect occurs.  */
-  kill (getpid (), signum);
-}
-
-/* Just die. CMSGID is the error message. */
-
-static void __attribute__ ((format (printf, 1, 2)))
-fatal (const char * cmsgid, ...)
-{
-  va_list ap;
-
-  va_start (ap, cmsgid);
-  fprintf (stderr, "lto-wrapper: ");
-  vfprintf (stderr, _(cmsgid), ap);
-  fprintf (stderr, "\n");
-  va_end (ap);
-
-  lto_wrapper_cleanup ();
-  exit (FATAL_EXIT_CODE);
-}
-
-
-/* Die when sys call fails. CMSGID is the error message.  */
-
-static void __attribute__ ((format (printf, 1, 2)))
-fatal_perror (const char *cmsgid, ...)
-{
-  int e = errno;
-  va_list ap;
-
-  va_start (ap, cmsgid);
-  fprintf (stderr, "lto-wrapper: ");
-  vfprintf (stderr, _(cmsgid), ap);
-  fprintf (stderr, ": %s\n", xstrerror (e));
-  va_end (ap);
-
-  lto_wrapper_cleanup ();
-  exit (FATAL_EXIT_CODE);
-}
-
-
-/* Execute a program, and wait for the reply. ARGV are the arguments. The
-   last one must be NULL. */
-
-static struct pex_obj *
-collect_execute (char **argv)
-{
-  struct pex_obj *pex;
-  const char *errmsg;
-  int err;
-
-  if (verbose)
-    {
-      char **p_argv;
-      const char *str;
-
-      for (p_argv = argv; (str = *p_argv) != (char *) 0; p_argv++)
-	fprintf (stderr, " %s", str);
-
-      fprintf (stderr, "\n");
-    }
-
-  fflush (stdout);
-  fflush (stderr);
-
-  pex = pex_init (0, "lto-wrapper", NULL);
-  if (pex == NULL)
-    fatal_perror ("pex_init failed");
-
-  /* Do not use PEX_LAST here, we use our stdout for communicating with
-     collect2 or the linker-plugin.  Any output from the sub-process
-     will confuse that.  */
-  errmsg = pex_run (pex, PEX_SEARCH, argv[0], argv, NULL,
-		    NULL, &err);
-  if (errmsg != NULL)
-    {
-      if (err != 0)
-	{
-	  errno = err;
-	  fatal_perror (errmsg);
-	}
-      else
-	fatal (errmsg);
-    }
-
-  return pex;
-}
-
-
-/* Wait for a process to finish, and exit if a nonzero status is found.
-   PROG is the program name. PEX is the process we should wait for. */
-
-static int
-collect_wait (const char *prog, struct pex_obj *pex)
-{
-  int status;
-
-  if (!pex_get_status (pex, 1, &status))
-    fatal_perror ("can't get program status");
-  pex_free (pex);
-
-  if (status)
-    {
-      if (WIFSIGNALED (status))
-	{
-	  int sig = WTERMSIG (status);
-	  if (WCOREDUMP (status))
-	    fatal ("%s terminated with signal %d [%s], core dumped",
-		   prog, sig, strsignal (sig));
-	  else
-	    fatal ("%s terminated with signal %d [%s]",
-		   prog, sig, strsignal (sig));
-	}
-
-      if (WIFEXITED (status))
-	fatal ("%s returned %d exit status", prog, WEXITSTATUS (status));
-    }
-
-  return 0;
-}
-
 
 /* Unlink a temporary LTRANS file unless requested otherwise.  */
 
-static void
-maybe_unlink_file (const char *file)
+void
+maybe_unlink (const char *file)
 {
-  if (! debug)
+  if (!save_temps)
     {
       if (unlink_if_ordinary (file)
 	  && errno != ENOENT)
-	fatal_perror ("deleting LTRANS file %s", file);
+	fatal_error (input_location, "deleting LTRANS file %s: %m", file);
     }
-  else
+  else if (verbose)
     fprintf (stderr, "[Leaving LTRANS %s]\n", file);
-}
-
-
-/* Execute program ARGV[0] with arguments ARGV. Wait for it to finish.  */
-
-static void
-fork_execute (char **argv)
-{
-  struct pex_obj *pex;
-  char *new_argv[3];
-  char *at_args;
-  FILE *args;
-  int status;
-
-  args_name = make_temp_file (".args");
-  at_args = concat ("@", args_name, NULL);
-  args = fopen (args_name, "w");
-  if (args == NULL)
-    fatal ("failed to open %s", args_name);
-
-  status = writeargv (&argv[1], args);
-
-  if (status)
-    fatal ("could not write to temporary file %s",  args_name);
-
-  fclose (args);
-
-  new_argv[0] = argv[0];
-  new_argv[1] = at_args;
-  new_argv[2] = NULL;
-
-  pex = collect_execute (new_argv);
-  collect_wait (new_argv[0], pex);
-
-  maybe_unlink_file (args_name);
-  args_name = NULL;
-  free (at_args);
 }
 
 /* Template of LTRANS dumpbase suffix.  */
@@ -318,7 +148,7 @@ get_options_from_collect_gcc_options (const char *collect_gcc,
 	  do
 	    {
 	      if (argv_storage[j] == '\0')
-		fatal ("malformed COLLECT_GCC_OPTIONS");
+		fatal_error (input_location, "malformed COLLECT_GCC_OPTIONS");
 	      else if (strncmp (&argv_storage[j], "'\\''", 4) == 0)
 		{
 		  argv_storage[k++] = '\'';
@@ -393,16 +223,28 @@ merge_and_complain (struct cl_decoded_option **decoded_options,
       struct cl_decoded_option *foption = &fdecoded_options[i];
       switch (foption->opt_index)
 	{
+	case OPT_SPECIAL_unknown:
+	case OPT_SPECIAL_ignore:
+	case OPT_SPECIAL_program_name:
+	case OPT_SPECIAL_input_file:
+	  break;
+
 	default:
 	  if (!(cl_options[foption->opt_index].flags & CL_TARGET))
 	    break;
 
 	  /* Fallthru.  */
+	case OPT_fdiagnostics_show_caret:
+	case OPT_fdiagnostics_show_option:
+	case OPT_fdiagnostics_show_location_:
+	case OPT_fshow_column:
 	case OPT_fPIC:
 	case OPT_fpic:
+	case OPT_fPIE:
 	case OPT_fpie:
 	case OPT_fcommon:
 	case OPT_fexceptions:
+	case OPT_fnon_call_exceptions:
 	case OPT_fgnu_tm:
 	  /* Do what the old LTO code did - collect exactly one option
 	     setting per OPT code, we pick the first we encounter.
@@ -414,8 +256,688 @@ merge_and_complain (struct cl_decoded_option **decoded_options,
 	  if (j == *decoded_options_count)
 	    append_option (decoded_options, decoded_options_count, foption);
 	  break;
+
+	case OPT_ftrapv:
+	case OPT_fstrict_overflow:
+	case OPT_ffp_contract_:
+	  /* For selected options we can merge conservatively.  */
+	  for (j = 0; j < *decoded_options_count; ++j)
+	    if ((*decoded_options)[j].opt_index == foption->opt_index)
+	      break;
+	  if (j == *decoded_options_count)
+	    append_option (decoded_options, decoded_options_count, foption);
+	  /* FP_CONTRACT_OFF < FP_CONTRACT_ON < FP_CONTRACT_FAST,
+	     -fno-trapv < -ftrapv,
+	     -fno-strict-overflow < -fstrict-overflow  */
+	  else if (foption->value < (*decoded_options)[j].value)
+	    (*decoded_options)[j] = *foption;
+	  break;
+
+	case OPT_fmath_errno:
+	case OPT_fsigned_zeros:
+	case OPT_ftrapping_math:
+	case OPT_fwrapv:
+	case OPT_fopenmp:
+	case OPT_fopenacc:
+	case OPT_fcilkplus:
+	case OPT_fcheck_pointer_bounds:
+	  /* For selected options we can merge conservatively.  */
+	  for (j = 0; j < *decoded_options_count; ++j)
+	    if ((*decoded_options)[j].opt_index == foption->opt_index)
+	      break;
+	  if (j == *decoded_options_count)
+	    append_option (decoded_options, decoded_options_count, foption);
+	  /* -fmath-errno > -fno-math-errno,
+	     -fsigned-zeros > -fno-signed-zeros,
+	     -ftrapping-math > -fno-trapping-math,
+	     -fwrapv > -fno-wrapv.  */
+	  else if (foption->value > (*decoded_options)[j].value)
+	    (*decoded_options)[j] = *foption;
+	  break;
+
+	case OPT_fopenacc_dim_:
+	  /* Append or check identical.  */
+	  for (j = 0; j < *decoded_options_count; ++j)
+	    if ((*decoded_options)[j].opt_index == foption->opt_index)
+	      break;
+	  if (j == *decoded_options_count)
+	    append_option (decoded_options, decoded_options_count, foption);
+	  else if (strcmp ((*decoded_options)[j].arg, foption->arg))
+	    fatal_error (input_location,
+			 "Option %s with different values",
+			 foption->orig_option_with_args_text);
+	  break;
+
+	case OPT_freg_struct_return:
+	case OPT_fpcc_struct_return:
+	  for (j = 0; j < *decoded_options_count; ++j)
+	    if ((*decoded_options)[j].opt_index == foption->opt_index)
+	      break;
+	  if (j == *decoded_options_count)
+	    fatal_error (input_location,
+			 "Option %s not used consistently in all LTO input"
+			 " files", foption->orig_option_with_args_text);
+	  break;
+
+	case OPT_foffload_abi_:
+	  for (j = 0; j < *decoded_options_count; ++j)
+	    if ((*decoded_options)[j].opt_index == foption->opt_index)
+	      break;
+	  if (j == *decoded_options_count)
+	    append_option (decoded_options, decoded_options_count, foption);
+	  else if (foption->value != (*decoded_options)[j].value)
+	    fatal_error (input_location,
+			 "Option %s not used consistently in all LTO input"
+			 " files", foption->orig_option_with_args_text);
+	  break;
+
+	case OPT_O:
+	case OPT_Ofast:
+	case OPT_Og:
+	case OPT_Os:
+	  for (j = 0; j < *decoded_options_count; ++j)
+	    if ((*decoded_options)[j].opt_index == OPT_O
+		|| (*decoded_options)[j].opt_index == OPT_Ofast
+		|| (*decoded_options)[j].opt_index == OPT_Og
+		|| (*decoded_options)[j].opt_index == OPT_Os)
+	      break;
+	  if (j == *decoded_options_count)
+	    append_option (decoded_options, decoded_options_count, foption);
+	  else if ((*decoded_options)[j].opt_index == foption->opt_index
+		   && foption->opt_index != OPT_O)
+	    /* Exact same options get merged.  */
+	    ;
+	  else
+	    {
+	      /* For mismatched option kinds preserve the optimization
+	         level only, thus merge it as -On.  This also handles
+		 merging of same optimization level -On.  */
+	      int level = 0;
+	      switch (foption->opt_index)
+		{
+		case OPT_O:
+		  if (foption->arg[0] == '\0')
+		    level = MAX (level, 1);
+		  else
+		    level = MAX (level, atoi (foption->arg));
+		  break;
+		case OPT_Ofast:
+		  level = MAX (level, 3);
+		  break;
+		case OPT_Og:
+		  level = MAX (level, 1);
+		  break;
+		case OPT_Os:
+		  level = MAX (level, 2);
+		  break;
+		default:
+		  gcc_unreachable ();
+		}
+	      switch ((*decoded_options)[j].opt_index)
+		{
+		case OPT_O:
+		  if ((*decoded_options)[j].arg[0] == '\0')
+		    level = MAX (level, 1);
+		  else
+		    level = MAX (level, atoi ((*decoded_options)[j].arg));
+		  break;
+		case OPT_Ofast:
+		  level = MAX (level, 3);
+		  break;
+		case OPT_Og:
+		  level = MAX (level, 1);
+		  break;
+		case OPT_Os:
+		  level = MAX (level, 2);
+		  break;
+		default:
+		  gcc_unreachable ();
+		}
+	      (*decoded_options)[j].opt_index = OPT_O;
+	      char *tem;
+	      tem = xasprintf ("-O%d", level);
+	      (*decoded_options)[j].arg = &tem[2];
+	      (*decoded_options)[j].canonical_option[0] = tem;
+	      (*decoded_options)[j].value = 1;
+	    }
+	  break;
+
+	case OPT_foffload_:
+	  append_option (decoded_options, decoded_options_count, foption);
+	  break;
 	}
     }
+}
+
+/* Auxiliary function that frees elements of PTR and PTR itself.
+   N is number of elements to be freed.  If PTR is NULL, nothing is freed.
+   If an element is NULL, subsequent elements are not freed.  */
+
+static void **
+free_array_of_ptrs (void **ptr, unsigned n)
+{
+  if (!ptr)
+    return NULL;
+  for (unsigned i = 0; i < n; i++)
+    {
+      if (!ptr[i])
+	break;
+      free (ptr[i]);
+    }
+  free (ptr);
+  return NULL;
+}
+
+/* Parse STR, saving found tokens into PVALUES and return their number.
+   Tokens are assumed to be delimited by ':'.  If APPEND is non-null,
+   append it to every token we find.  */
+
+static unsigned
+parse_env_var (const char *str, char ***pvalues, const char *append)
+{
+  const char *curval, *nextval;
+  char **values;
+  unsigned num = 1, i;
+
+  curval = strchr (str, ':');
+  while (curval)
+    {
+      num++;
+      curval = strchr (curval + 1, ':');
+    }
+
+  values = (char**) xmalloc (num * sizeof (char*));
+  curval = str;
+  nextval = strchr (curval, ':');
+  if (nextval == NULL)
+    nextval = strchr (curval, '\0');
+
+  int append_len = append ? strlen (append) : 0;
+  for (i = 0; i < num; i++)
+    {
+      int l = nextval - curval;
+      values[i] = (char*) xmalloc (l + 1 + append_len);
+      memcpy (values[i], curval, l);
+      values[i][l] = 0;
+      if (append)
+	strcat (values[i], append);
+      curval = nextval + 1;
+      nextval = strchr (curval, ':');
+      if (nextval == NULL)
+	nextval = strchr (curval, '\0');
+    }
+  *pvalues = values;
+  return num;
+}
+
+/* Append options OPTS from lto or offload_lto sections to ARGV_OBSTACK.  */
+
+static void
+append_compiler_options (obstack *argv_obstack, struct cl_decoded_option *opts,
+			 unsigned int count)
+{
+  /* Append compiler driver arguments as far as they were merged.  */
+  for (unsigned int j = 1; j < count; ++j)
+    {
+      struct cl_decoded_option *option = &opts[j];
+
+      /* File options have been properly filtered by lto-opts.c.  */
+      switch (option->opt_index)
+	{
+	/* Drop arguments that we want to take from the link line.  */
+	case OPT_flto_:
+	case OPT_flto:
+	case OPT_flto_partition_:
+	  continue;
+
+	default:
+	  break;
+	}
+
+      /* For now do what the original LTO option code was doing - pass
+	 on any CL_TARGET flag and a few selected others.  */
+      switch (option->opt_index)
+	{
+	case OPT_fdiagnostics_show_caret:
+	case OPT_fdiagnostics_show_option:
+	case OPT_fdiagnostics_show_location_:
+	case OPT_fshow_column:
+	case OPT_fPIC:
+	case OPT_fpic:
+	case OPT_fPIE:
+	case OPT_fpie:
+	case OPT_fcommon:
+	case OPT_fexceptions:
+	case OPT_fnon_call_exceptions:
+	case OPT_fgnu_tm:
+	case OPT_freg_struct_return:
+	case OPT_fpcc_struct_return:
+	case OPT_ffp_contract_:
+	case OPT_fmath_errno:
+	case OPT_fsigned_zeros:
+	case OPT_ftrapping_math:
+	case OPT_fwrapv:
+	case OPT_fopenmp:
+	case OPT_fopenacc:
+	case OPT_fopenacc_dim_:
+	case OPT_fcilkplus:
+	case OPT_ftrapv:
+	case OPT_fstrict_overflow:
+	case OPT_foffload_abi_:
+	case OPT_O:
+	case OPT_Ofast:
+	case OPT_Og:
+	case OPT_Os:
+	case OPT_fcheck_pointer_bounds:
+	  break;
+
+	default:
+	  if (!(cl_options[option->opt_index].flags & CL_TARGET))
+	    continue;
+	}
+
+      /* Pass the option on.  */
+      for (unsigned int i = 0; i < option->canonical_option_num_elements; ++i)
+	obstack_ptr_grow (argv_obstack, option->canonical_option[i]);
+    }
+}
+
+/* Append diag options in OPTS with length COUNT to ARGV_OBSTACK.  */
+
+static void
+append_diag_options (obstack *argv_obstack, struct cl_decoded_option *opts,
+		     unsigned int count)
+{
+  /* Append compiler driver arguments as far as they were merged.  */
+  for (unsigned int j = 1; j < count; ++j)
+    {
+      struct cl_decoded_option *option = &opts[j];
+
+      switch (option->opt_index)
+	{
+	case OPT_fdiagnostics_color_:
+	case OPT_fdiagnostics_show_caret:
+	case OPT_fdiagnostics_show_option:
+	case OPT_fdiagnostics_show_location_:
+	case OPT_fshow_column:
+	  break;
+	default:
+	  continue;
+	}
+
+      /* Pass the option on.  */
+      for (unsigned int i = 0; i < option->canonical_option_num_elements; ++i)
+	obstack_ptr_grow (argv_obstack, option->canonical_option[i]);
+    }
+}
+
+
+/* Append linker options OPTS to ARGV_OBSTACK.  */
+
+static void
+append_linker_options (obstack *argv_obstack, struct cl_decoded_option *opts,
+		       unsigned int count)
+{
+  /* Append linker driver arguments.  Compiler options from the linker
+     driver arguments will override / merge with those from the compiler.  */
+  for (unsigned int j = 1; j < count; ++j)
+    {
+      struct cl_decoded_option *option = &opts[j];
+
+      /* Do not pass on frontend specific flags not suitable for lto.  */
+      if (!(cl_options[option->opt_index].flags
+	    & (CL_COMMON|CL_TARGET|CL_DRIVER|CL_LTO)))
+	continue;
+
+      switch (option->opt_index)
+	{
+	case OPT_o:
+	case OPT_flto_:
+	case OPT_flto:
+	  /* We've handled these LTO options, do not pass them on.  */
+	  continue;
+
+	case OPT_freg_struct_return:
+	case OPT_fpcc_struct_return:
+	  /* Ignore these, they are determined by the input files.
+	     ???  We fail to diagnose a possible mismatch here.  */
+	  continue;
+
+	case OPT_fopenmp:
+	case OPT_fopenacc:
+	case OPT_fcilkplus:
+	  /* Ignore -fno-XXX form of these options, as otherwise
+	     corresponding builtins will not be enabled.  */
+	  if (option->value == 0)
+	    continue;
+	  break;
+
+	default:
+	  break;
+	}
+
+      /* Pass the option on.  */
+      for (unsigned int i = 0; i < option->canonical_option_num_elements; ++i)
+	obstack_ptr_grow (argv_obstack, option->canonical_option[i]);
+    }
+}
+
+/* Extract options for TARGET offload compiler from OPTIONS and append
+   them to ARGV_OBSTACK.  */
+
+static void
+append_offload_options (obstack *argv_obstack, const char *target,
+			struct cl_decoded_option *options,
+			unsigned int options_count)
+{
+  for (unsigned i = 0; i < options_count; i++)
+    {
+      const char *cur, *next, *opts;
+      char **argv;
+      unsigned argc;
+      struct cl_decoded_option *option = &options[i];
+
+      if (option->opt_index != OPT_foffload_)
+	continue;
+
+      /* If option argument starts with '-' then no target is specified.  That
+	 means offload options are specified for all targets, so we need to
+	 append them.  */
+      if (option->arg[0] == '-')
+	opts = option->arg;
+      else
+	{
+	  opts = strchr (option->arg, '=');
+	  /* If there are offload targets specified, but no actual options,
+	     there is nothing to do here.  */
+	  if (!opts)
+	    continue;
+
+	  cur = option->arg;
+
+	  while (cur < opts)
+	    {
+	      next = strchr (cur, ',');
+	      if (next == NULL)
+		next = opts;
+	      next = (next > opts) ? opts : next;
+
+	      /* Are we looking for this offload target?  */
+	      if (strlen (target) == (size_t) (next - cur)
+		  && strncmp (target, cur, next - cur) == 0)
+		break;
+
+	      /* Skip the comma or equal sign.  */
+	      cur = next + 1;
+	    }
+
+	  if (cur >= opts)
+	    continue;
+
+	  opts++;
+	}
+
+      argv = buildargv (opts);
+      for (argc = 0; argv[argc]; argc++)
+	obstack_ptr_grow (argv_obstack, argv[argc]);
+    }
+}
+
+/* Check whether NAME can be accessed in MODE.  This is like access,
+   except that it never considers directories to be executable.  */
+
+static int
+access_check (const char *name, int mode)
+{
+  if (mode == X_OK)
+    {
+      struct stat st;
+
+      if (stat (name, &st) < 0
+	  || S_ISDIR (st.st_mode))
+	return -1;
+    }
+
+  return access (name, mode);
+}
+
+/* Prepare a target image for offload TARGET, using mkoffload tool from
+   COMPILER_PATH.  Return the name of the resultant object file.  */
+
+static char *
+compile_offload_image (const char *target, const char *compiler_path,
+		       unsigned in_argc, char *in_argv[],
+		       struct cl_decoded_option *compiler_opts,
+		       unsigned int compiler_opt_count,
+		       struct cl_decoded_option *linker_opts,
+		       unsigned int linker_opt_count)
+{
+  char *filename = NULL;
+  char **argv;
+  char *suffix
+    = XALLOCAVEC (char, sizeof ("/accel//mkoffload") + strlen (target));
+  strcpy (suffix, "/accel/");
+  strcat (suffix, target);
+  strcat (suffix, "/mkoffload");
+
+  char **paths = NULL;
+  unsigned n_paths = parse_env_var (compiler_path, &paths, suffix);
+
+  const char *compiler = NULL;
+  for (unsigned i = 0; i < n_paths; i++)
+    if (access_check (paths[i], X_OK) == 0)
+      {
+	compiler = paths[i];
+	break;
+      }
+
+  if (compiler)
+    {
+      /* Generate temporary output file name.  */
+      filename = make_temp_file (".target.o");
+
+      struct obstack argv_obstack;
+      obstack_init (&argv_obstack);
+      obstack_ptr_grow (&argv_obstack, compiler);
+      if (save_temps)
+	obstack_ptr_grow (&argv_obstack, "-save-temps");
+      if (verbose)
+	obstack_ptr_grow (&argv_obstack, "-v");
+      obstack_ptr_grow (&argv_obstack, "-o");
+      obstack_ptr_grow (&argv_obstack, filename);
+
+      /* Append names of input object files.  */
+      for (unsigned i = 0; i < in_argc; i++)
+	obstack_ptr_grow (&argv_obstack, in_argv[i]);
+
+      /* Append options from offload_lto sections.  */
+      append_compiler_options (&argv_obstack, compiler_opts,
+			       compiler_opt_count);
+      append_diag_options (&argv_obstack, linker_opts, linker_opt_count);
+
+      /* Append options specified by -foffload last.  In case of conflicting
+	 options we expect offload compiler to choose the latest.  */
+      append_offload_options (&argv_obstack, target, compiler_opts,
+			      compiler_opt_count);
+      append_offload_options (&argv_obstack, target, linker_opts,
+			      linker_opt_count);
+
+      obstack_ptr_grow (&argv_obstack, NULL);
+      argv = XOBFINISH (&argv_obstack, char **);
+      fork_execute (argv[0], argv, true);
+      obstack_free (&argv_obstack, NULL);
+    }
+
+  free_array_of_ptrs ((void **) paths, n_paths);
+  return filename;
+}
+
+
+/* The main routine dealing with offloading.
+   The routine builds a target image for each offload target.  IN_ARGC and
+   IN_ARGV specify options and input object files.  As all of them could contain
+   target sections, we pass them all to target compilers.  */
+
+static void
+compile_images_for_offload_targets (unsigned in_argc, char *in_argv[],
+				    struct cl_decoded_option *compiler_opts,
+				    unsigned int compiler_opt_count,
+				    struct cl_decoded_option *linker_opts,
+				    unsigned int linker_opt_count)
+{
+  char **names = NULL;
+  const char *target_names = getenv (OFFLOAD_TARGET_NAMES_ENV);
+  if (!target_names)
+    return;
+  unsigned num_targets = parse_env_var (target_names, &names, NULL);
+
+  int next_name_entry = 0;
+  const char *compiler_path = getenv ("COMPILER_PATH");
+  if (!compiler_path)
+    goto out;
+
+  /* Prepare an image for each target and save the name of the resultant object
+     file to the OFFLOAD_NAMES array.  It is terminated by a NULL entry.  */
+  offload_names = XCNEWVEC (char *, num_targets + 1);
+  for (unsigned i = 0; i < num_targets; i++)
+    {
+      /* HSA does not use LTO-like streaming and a different compiler, skip
+	 it. */
+      if (strcmp (names[i], "hsa") == 0)
+	continue;
+
+      offload_names[next_name_entry]
+	= compile_offload_image (names[i], compiler_path, in_argc, in_argv,
+				 compiler_opts, compiler_opt_count,
+				 linker_opts, linker_opt_count);
+      if (!offload_names[next_name_entry])
+	fatal_error (input_location,
+		     "problem with building target image for %s\n", names[i]);
+      next_name_entry++;
+    }
+
+ out:
+  free_array_of_ptrs ((void **) names, num_targets);
+}
+
+/* Copy a file from SRC to DEST.  */
+
+static void
+copy_file (const char *dest, const char *src)
+{
+  FILE *d = fopen (dest, "wb");
+  FILE *s = fopen (src, "rb");
+  char buffer[512];
+  while (!feof (s))
+    {
+      size_t len = fread (buffer, 1, 512, s);
+      if (ferror (s) != 0)
+	fatal_error (input_location, "reading input file");
+      if (len > 0)
+	{
+	  fwrite (buffer, 1, len, d);
+	  if (ferror (d) != 0)
+	    fatal_error (input_location, "writing output file");
+	}
+    }
+}
+
+/* Find the crtoffloadtable.o file in LIBRARY_PATH, make copy and pass name of
+   the copy to the linker.  */
+
+static void
+find_crtoffloadtable (void)
+{
+  char **paths = NULL;
+  const char *library_path = getenv ("LIBRARY_PATH");
+  if (!library_path)
+    return;
+  unsigned n_paths = parse_env_var (library_path, &paths, "/crtoffloadtable.o");
+
+  unsigned i;
+  for (i = 0; i < n_paths; i++)
+    if (access_check (paths[i], R_OK) == 0)
+      {
+	/* The linker will delete the filename we give it, so make a copy.  */
+	char *crtoffloadtable = make_temp_file (".crtoffloadtable.o");
+	copy_file (crtoffloadtable, paths[i]);
+	printf ("%s\n", crtoffloadtable);
+	XDELETEVEC (crtoffloadtable);
+	break;
+      }
+  if (i == n_paths)
+    fatal_error (input_location,
+		 "installation error, can't find crtoffloadtable.o");
+
+  free_array_of_ptrs ((void **) paths, n_paths);
+}
+
+/* A subroutine of run_gcc.  Examine the open file FD for lto sections with
+   name prefix PREFIX, at FILE_OFFSET, and store any options we find in OPTS
+   and OPT_COUNT.  Return true if we found a matchingn section, false
+   otherwise.  COLLECT_GCC holds the value of the environment variable with
+   the same name.  */
+
+static bool
+find_and_merge_options (int fd, off_t file_offset, const char *prefix,
+			struct cl_decoded_option **opts,
+			unsigned int *opt_count, const char *collect_gcc)
+{
+  off_t offset, length;
+  char *data;
+  char *fopts;
+  const char *errmsg;
+  int err;
+  struct cl_decoded_option *fdecoded_options = *opts;
+  unsigned int fdecoded_options_count = *opt_count;
+
+  simple_object_read *sobj;
+  sobj = simple_object_start_read (fd, file_offset, "__GNU_LTO",
+				   &errmsg, &err);
+  if (!sobj)
+    return false;
+
+  char *secname = XALLOCAVEC (char, strlen (prefix) + sizeof (".opts"));
+  strcpy (secname, prefix);
+  strcat (secname, ".opts");
+  if (!simple_object_find_section (sobj, secname, &offset, &length,
+				   &errmsg, &err))
+    {
+      simple_object_release_read (sobj);
+      return false;
+    }
+
+  lseek (fd, file_offset + offset, SEEK_SET);
+  data = (char *)xmalloc (length);
+  read (fd, data, length);
+  fopts = data;
+  do
+    {
+      struct cl_decoded_option *f2decoded_options;
+      unsigned int f2decoded_options_count;
+      get_options_from_collect_gcc_options (collect_gcc,
+					    fopts, CL_LANG_ALL,
+					    &f2decoded_options,
+					    &f2decoded_options_count);
+      if (!fdecoded_options)
+       {
+	 fdecoded_options = f2decoded_options;
+	 fdecoded_options_count = f2decoded_options_count;
+       }
+      else
+	merge_and_complain (&fdecoded_options,
+			    &fdecoded_options_count,
+			    f2decoded_options, f2decoded_options_count);
+
+      fopts += strlen (fopts) + 1;
+    }
+  while (fopts - data < length);
+
+  free (data);
+  simple_object_release_read (sobj);
+  *opts = fdecoded_options;
+  *opt_count = fdecoded_options_count;
+  return true;
 }
 
 /* Execute gcc. ARGC is the number of arguments. ARGV contains the arguments. */
@@ -433,39 +955,55 @@ run_gcc (unsigned argc, char *argv[])
   int jobserver = 0;
   bool no_partition = false;
   struct cl_decoded_option *fdecoded_options = NULL;
+  struct cl_decoded_option *offload_fdecoded_options = NULL;
   unsigned int fdecoded_options_count = 0;
+  unsigned int offload_fdecoded_options_count = 0;
   struct cl_decoded_option *decoded_options;
   unsigned int decoded_options_count;
   struct obstack argv_obstack;
   int new_head_argc;
+  bool have_lto = false;
+  bool have_offload = false;
+  unsigned lto_argc = 0;
+  char **lto_argv;
 
   /* Get the driver and options.  */
   collect_gcc = getenv ("COLLECT_GCC");
   if (!collect_gcc)
-    fatal ("environment variable COLLECT_GCC must be set");
+    fatal_error (input_location,
+		 "environment variable COLLECT_GCC must be set");
   collect_gcc_options = getenv ("COLLECT_GCC_OPTIONS");
   if (!collect_gcc_options)
-    fatal ("environment variable COLLECT_GCC_OPTIONS must be set");
+    fatal_error (input_location,
+		 "environment variable COLLECT_GCC_OPTIONS must be set");
   get_options_from_collect_gcc_options (collect_gcc, collect_gcc_options,
 					CL_LANG_ALL,
 					&decoded_options,
 					&decoded_options_count);
 
+  /* Allocate array for input object files with LTO IL,
+     and for possible preceding arguments.  */
+  lto_argv = XNEWVEC (char *, argc);
+
   /* Look at saved options in the IL files.  */
   for (i = 1; i < argc; ++i)
     {
-      char *data, *p;
-      char *fopts;
+      char *p;
       int fd;
-      const char *errmsg;
-      int err;
-      off_t file_offset = 0, offset, length;
+      off_t file_offset = 0;
       long loffset;
-      simple_object_read *sobj;
       int consumed;
-      struct cl_decoded_option *f2decoded_options;
-      unsigned int f2decoded_options_count;
       char *filename = argv[i];
+
+      if (strncmp (argv[i], "-foffload-objects=",
+		   sizeof ("-foffload-objects=") - 1) == 0)
+	{
+	  have_offload = true;
+	  offload_objects_file_name
+	    = argv[i] + sizeof ("-foffload-objects=") - 1;
+	  continue;
+	}
+
       if ((p = strrchr (argv[i], '@'))
 	  && p != argv[i] 
 	  && sscanf (p, "@%li%n", &loffset, &consumed) >= 1
@@ -476,49 +1014,20 @@ run_gcc (unsigned argc, char *argv[])
 	  filename[p - argv[i]] = '\0';
 	  file_offset = (off_t) loffset;
 	}
-      fd = open (argv[i], O_RDONLY);
+      fd = open (filename, O_RDONLY | O_BINARY);
       if (fd == -1)
-	continue;
-      sobj = simple_object_start_read (fd, file_offset, "__GNU_LTO", 
-	  			       &errmsg, &err);
-      if (!sobj)
 	{
-	  close (fd);
+	  lto_argv[lto_argc++] = argv[i];
 	  continue;
 	}
-      if (!simple_object_find_section (sobj, LTO_SECTION_NAME_PREFIX "." "opts",
-				       &offset, &length, &errmsg, &err))
-	{
-	  simple_object_release_read (sobj);
-	  close (fd);
-	  continue;
-	}
-      lseek (fd, file_offset + offset, SEEK_SET);
-      data = (char *)xmalloc (length);
-      read (fd, data, length);
-      fopts = data;
-      do
-	{
-	  get_options_from_collect_gcc_options (collect_gcc,
-						fopts, CL_LANG_ALL,
-						&f2decoded_options,
-						&f2decoded_options_count);
-	  if (!fdecoded_options)
-	    {
-	      fdecoded_options = f2decoded_options;
-	      fdecoded_options_count = f2decoded_options_count;
-	    }
-	  else
-	    merge_and_complain (&fdecoded_options,
-				&fdecoded_options_count,
-				f2decoded_options, f2decoded_options_count);
 
-	  fopts += strlen (fopts) + 1;
+      if (find_and_merge_options (fd, file_offset, LTO_SECTION_NAME_PREFIX,
+				  &fdecoded_options, &fdecoded_options_count,
+				  collect_gcc))
+	{
+	  have_lto = true;
+	  lto_argv[lto_argc++] = argv[i];
 	}
-      while (fopts - data < length);
-
-      free (data);
-      simple_object_release_read (sobj);
       close (fd);
     }
 
@@ -528,76 +1037,31 @@ run_gcc (unsigned argc, char *argv[])
   obstack_ptr_grow (&argv_obstack, "-xlto");
   obstack_ptr_grow (&argv_obstack, "-c");
 
-  /* Append compiler driver arguments as far as they were merged.  */
-  for (j = 1; j < fdecoded_options_count; ++j)
-    {
-      struct cl_decoded_option *option = &fdecoded_options[j];
+  append_compiler_options (&argv_obstack, fdecoded_options,
+			   fdecoded_options_count);
+  append_linker_options (&argv_obstack, decoded_options, decoded_options_count);
 
-      /* File options have been properly filtered by lto-opts.c.  */
-      switch (option->opt_index)
-	{
-	  /* Drop arguments that we want to take from the link line.  */
-	  case OPT_flto_:
-	  case OPT_flto:
-	  case OPT_flto_partition_none:
-	  case OPT_flto_partition_1to1:
-	  case OPT_flto_partition_balanced:
-	      continue;
-
-	  default:
-	      break;
-	}
-
-      /* For now do what the original LTO option code was doing - pass
-	 on any CL_TARGET flag and a few selected others.  */
-      switch (option->opt_index)
-	{
-	case OPT_fPIC:
-	case OPT_fpic:
-	case OPT_fpie:
-	case OPT_fcommon:
-	case OPT_fexceptions:
-	case OPT_fgnu_tm:
-	  break;
-
-	default:
-	  if (!(cl_options[option->opt_index].flags & CL_TARGET))
-	    continue;
-	}
-
-      /* Pass the option on.  */
-      for (i = 0; i < option->canonical_option_num_elements; ++i)
-	obstack_ptr_grow (&argv_obstack, option->canonical_option[i]);
-    }
-
-  /* Append linker driver arguments.  Compiler options from the linker
-     driver arguments will override / merge with those from the compiler.  */
+  /* Scan linker driver arguments for things that are of relevance to us.  */
   for (j = 1; j < decoded_options_count; ++j)
     {
       struct cl_decoded_option *option = &decoded_options[j];
-
-      /* Do not pass on frontend specific flags not suitable for lto.  */
-      if (!(cl_options[option->opt_index].flags
-	    & (CL_COMMON|CL_TARGET|CL_DRIVER|CL_LTO)))
-	continue;
-
       switch (option->opt_index)
 	{
 	case OPT_o:
 	  linker_output = option->arg;
-	  /* We generate new intermediate output, drop this arg.  */
-	  continue;
+	  break;
 
 	case OPT_save_temps:
-	  debug = 1;
+	  save_temps = 1;
 	  break;
 
 	case OPT_v:
 	  verbose = 1;
 	  break;
 
-	case OPT_flto_partition_none:
-	  no_partition = true;
+	case OPT_flto_partition_:
+	  if (strcmp (option->arg, "none") == 0)
+	    no_partition = true;
 	  break;
 
 	case OPT_flto_:
@@ -616,16 +1080,11 @@ run_gcc (unsigned argc, char *argv[])
 
 	case OPT_flto:
 	  lto_mode = LTO_MODE_WHOPR;
-	  /* We've handled these LTO options, do not pass them on.  */
-	  continue;
+	  break;
 
 	default:
 	  break;
 	}
-
-      /* Pass the option on.  */
-      for (i = 0; i < option->canonical_option_num_elements; ++i)
-	obstack_ptr_grow (&argv_obstack, option->canonical_option[i]);
     }
 
   if (no_partition)
@@ -665,6 +1124,105 @@ run_gcc (unsigned argc, char *argv[])
   /* Remember at which point we can scrub args to re-use the commons.  */
   new_head_argc = obstack_object_size (&argv_obstack) / sizeof (void *);
 
+  if (have_offload)
+    {
+      unsigned i, num_offload_files;
+      char **offload_argv;
+      FILE *f;
+
+      f = fopen (offload_objects_file_name, "r");
+      if (f == NULL)
+	fatal_error (input_location, "cannot open %s: %m",
+		     offload_objects_file_name);
+      if (fscanf (f, "%u ", &num_offload_files) != 1)
+	fatal_error (input_location, "cannot read %s: %m",
+		     offload_objects_file_name);
+      offload_argv = XCNEWVEC (char *, num_offload_files);
+
+      /* Read names of object files with offload.  */
+      for (i = 0; i < num_offload_files; i++)
+	{
+	  const unsigned piece = 32;
+	  char *buf, *filename = XNEWVEC (char, piece);
+	  size_t len;
+
+	  buf = filename;
+cont1:
+	  if (!fgets (buf, piece, f))
+	    break;
+	  len = strlen (filename);
+	  if (filename[len - 1] != '\n')
+	    {
+	      filename = XRESIZEVEC (char, filename, len + piece);
+	      buf = filename + len;
+	      goto cont1;
+	    }
+	  filename[len - 1] = '\0';
+	  offload_argv[i] = filename;
+	}
+      fclose (f);
+      if (offload_argv[num_offload_files - 1] == NULL)
+	fatal_error (input_location, "invalid format of %s",
+		     offload_objects_file_name);
+      maybe_unlink (offload_objects_file_name);
+      offload_objects_file_name = NULL;
+
+      /* Look at saved offload options in files.  */
+      for (i = 0; i < num_offload_files; i++)
+	{
+	  char *p;
+	  long loffset;
+	  int fd, consumed;
+	  off_t file_offset = 0;
+	  char *filename = offload_argv[i];
+
+	  if ((p = strrchr (offload_argv[i], '@'))
+	      && p != offload_argv[i]
+	      && sscanf (p, "@%li%n", &loffset, &consumed) >= 1
+	      && strlen (p) == (unsigned int) consumed)
+	    {
+	      filename = XNEWVEC (char, p - offload_argv[i] + 1);
+	      memcpy (filename, offload_argv[i], p - offload_argv[i]);
+	      filename[p - offload_argv[i]] = '\0';
+	      file_offset = (off_t) loffset;
+	    }
+	  fd = open (filename, O_RDONLY | O_BINARY);
+	  if (fd == -1)
+	    fatal_error (input_location, "cannot open %s: %m", filename);
+	  if (!find_and_merge_options (fd, file_offset,
+				       OFFLOAD_SECTION_NAME_PREFIX,
+				       &offload_fdecoded_options,
+				       &offload_fdecoded_options_count,
+				       collect_gcc))
+	    fatal_error (input_location, "cannot read %s: %m", filename);
+	  close (fd);
+	  if (filename != offload_argv[i])
+	    XDELETEVEC (filename);
+	}
+
+      compile_images_for_offload_targets (num_offload_files, offload_argv,
+					  offload_fdecoded_options,
+					  offload_fdecoded_options_count,
+					  decoded_options,
+					  decoded_options_count);
+
+      free_array_of_ptrs ((void **) offload_argv, num_offload_files);
+
+      if (offload_names)
+	{
+	  find_crtoffloadtable ();
+	  for (i = 0; offload_names[i]; i++)
+	    printf ("%s\n", offload_names[i]);
+	  free_array_of_ptrs ((void **) offload_names, i);
+	}
+    }
+
+  /* If object files contain offload sections, but do not contain LTO sections,
+     then there is no need to perform a link-time recompilation, i.e.
+     lto-wrapper is used only for a compilation of offload images.  */
+  if (have_offload && !have_lto)
+    goto finish;
+
   if (lto_mode == LTO_MODE_LTO)
     {
       flto_out = make_temp_file (".lto.o");
@@ -688,7 +1246,7 @@ run_gcc (unsigned argc, char *argv[])
 	  obstack_ptr_grow (&argv_obstack, dumpbase);
 	}
 
-      if (linker_output && debug)
+      if (linker_output && save_temps)
 	{
 	  ltrans_output_file = (char *) xmalloc (strlen (linker_output)
 						 + sizeof (".ltrans.out") + 1);
@@ -706,21 +1264,30 @@ run_gcc (unsigned argc, char *argv[])
       tmp += list_option_len;
       strcpy (tmp, ltrans_output_file);
 
-      obstack_ptr_grow (&argv_obstack, "-fwpa");
+      if (jobserver)
+	obstack_ptr_grow (&argv_obstack, xstrdup ("-fwpa=jobserver"));
+      else if (parallel > 1)
+	{
+	  char buf[256];
+	  sprintf (buf, "-fwpa=%i", parallel);
+	  obstack_ptr_grow (&argv_obstack, xstrdup (buf));
+	}
+      else
+        obstack_ptr_grow (&argv_obstack, "-fwpa");
     }
 
-  /* Append the input objects and possible preceeding arguments.  */
-  for (i = 1; i < argc; ++i)
-    obstack_ptr_grow (&argv_obstack, argv[i]);
+  /* Append the input objects and possible preceding arguments.  */
+  for (i = 0; i < lto_argc; ++i)
+    obstack_ptr_grow (&argv_obstack, lto_argv[i]);
   obstack_ptr_grow (&argv_obstack, NULL);
 
   new_argv = XOBFINISH (&argv_obstack, const char **);
   argv_ptr = &new_argv[new_head_argc];
-  fork_execute (CONST_CAST (char **, new_argv));
+  fork_execute (new_argv[0], CONST_CAST (char **, new_argv), true);
 
   if (lto_mode == LTO_MODE_LTO)
     {
-      printf("%s\n", flto_out);
+      printf ("%s\n", flto_out);
       free (flto_out);
       flto_out = NULL;
     }
@@ -731,7 +1298,7 @@ run_gcc (unsigned argc, char *argv[])
       struct obstack env_obstack;
 
       if (!stream)
-	fatal_perror ("fopen: %s", ltrans_output_file);
+	fatal_error (input_location, "fopen: %s: %m", ltrans_output_file);
 
       /* Parse the list of LTRANS inputs from the WPA stage.  */
       obstack_init (&env_obstack);
@@ -766,7 +1333,7 @@ cont:
 	  output_names[nr-1] = output_name;
 	}
       fclose (stream);
-      maybe_unlink_file (ltrans_output_file);
+      maybe_unlink (ltrans_output_file);
       ltrans_output_file = NULL;
 
       if (parallel)
@@ -796,9 +1363,9 @@ cont:
 	    {
 	      char *dumpbase
 		  = (char *) xmalloc (strlen (linker_output)
-				      + sizeof(DUMPBASE_SUFFIX) + 1);
+				      + sizeof (DUMPBASE_SUFFIX) + 1);
 	      snprintf (dumpbase,
-			strlen (linker_output) + sizeof(DUMPBASE_SUFFIX),
+			strlen (linker_output) + sizeof (DUMPBASE_SUFFIX),
 			"%s.ltrans%u", linker_output, i);
 	      argv_ptr[0] = dumpbase;
 	    }
@@ -817,15 +1384,16 @@ cont:
 	      /* If we are not preserving the ltrans input files then
 	         truncate them as soon as we have processed it.  This
 		 reduces temporary disk-space usage.  */
-	      if (! debug)
+	      if (! save_temps)
 		fprintf (mstream, "\t@-touch -r %s %s.tem > /dev/null 2>&1 "
 			 "&& mv %s.tem %s\n",
 			 input_name, input_name, input_name, input_name); 
 	    }
 	  else
 	    {
-	      fork_execute (CONST_CAST (char **, new_argv));
-	      maybe_unlink_file (input_name);
+	      fork_execute (new_argv[0], CONST_CAST (char **, new_argv),
+			    true);
+	      maybe_unlink (input_name);
 	    }
 
 	  output_names[i] = output_name;
@@ -860,12 +1428,13 @@ cont:
 	    }
 	  new_argv[i++] = "all";
 	  new_argv[i++] = NULL;
-	  pex = collect_execute (CONST_CAST (char **, new_argv));
-	  collect_wait (new_argv[0], pex);
-	  maybe_unlink_file (makefile);
+	  pex = collect_execute (new_argv[0], CONST_CAST (char **, new_argv),
+				 NULL, NULL, PEX_SEARCH, false);
+	  do_wait (new_argv[0], pex);
+	  maybe_unlink (makefile);
 	  makefile = NULL;
 	  for (i = 0; i < nr; ++i)
-	    maybe_unlink_file (input_names[i]);
+	    maybe_unlink (input_names[i]);
 	}
       for (i = 0; i < nr; ++i)
 	{
@@ -880,6 +1449,8 @@ cont:
       obstack_free (&env_obstack, NULL);
     }
 
+ finish:
+  XDELETE (lto_argv);
   obstack_free (&argv_obstack, NULL);
 }
 
@@ -891,6 +1462,8 @@ main (int argc, char *argv[])
 {
   const char *p;
 
+  init_opts_obstack ();
+
   p = argv[0] + strlen (argv[0]);
   while (p != argv[0] && !IS_DIR_SEPARATOR (p[-1]))
     --p;
@@ -901,6 +1474,9 @@ main (int argc, char *argv[])
   gcc_init_libintl ();
 
   diagnostic_initialize (global_dc, 0);
+
+  if (atexit (lto_wrapper_cleanup) != 0)
+    fatal_error (input_location, "atexit failed");
 
   if (signal (SIGINT, SIG_IGN) != SIG_IGN)
     signal (SIGINT, fatal_signal);

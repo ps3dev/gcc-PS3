@@ -8,130 +8,286 @@ import (
 	"os"
 	"reflect"
 	"runtime"
+	"sync"
 	"testing"
 )
 
-type listenerFile interface {
-	Listener
-	File() (f *os.File, err error)
+// The full stack test cases for IPConn have been moved to the
+// following:
+//      golang.org/x/net/ipv4
+//      golang.org/x/net/ipv6
+//      golang.org/x/net/icmp
+
+var fileConnTests = []struct {
+	network string
+}{
+	{"tcp"},
+	{"udp"},
+	{"unix"},
+	{"unixpacket"},
 }
 
-type packetConnFile interface {
-	PacketConn
-	File() (f *os.File, err error)
+func TestFileConn(t *testing.T) {
+	switch runtime.GOOS {
+	case "nacl", "plan9", "windows":
+		t.Skipf("not supported on %s", runtime.GOOS)
+	}
+
+	for _, tt := range fileConnTests {
+		if !testableNetwork(tt.network) {
+			t.Logf("skipping %s test", tt.network)
+			continue
+		}
+
+		var network, address string
+		switch tt.network {
+		case "udp":
+			c, err := newLocalPacketListener(tt.network)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close()
+			network = c.LocalAddr().Network()
+			address = c.LocalAddr().String()
+		default:
+			handler := func(ls *localServer, ln Listener) {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				defer c.Close()
+				var b [1]byte
+				c.Read(b[:])
+			}
+			ls, err := newLocalServer(tt.network)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ls.teardown()
+			if err := ls.buildup(handler); err != nil {
+				t.Fatal(err)
+			}
+			network = ls.Listener.Addr().Network()
+			address = ls.Listener.Addr().String()
+		}
+
+		c1, err := Dial(network, address)
+		if err != nil {
+			if perr := parseDialError(err); perr != nil {
+				t.Error(perr)
+			}
+			t.Fatal(err)
+		}
+		addr := c1.LocalAddr()
+
+		var f *os.File
+		switch c1 := c1.(type) {
+		case *TCPConn:
+			f, err = c1.File()
+		case *UDPConn:
+			f, err = c1.File()
+		case *UnixConn:
+			f, err = c1.File()
+		}
+		if err := c1.Close(); err != nil {
+			if perr := parseCloseError(err); perr != nil {
+				t.Error(perr)
+			}
+			t.Error(err)
+		}
+		if err != nil {
+			if perr := parseCommonError(err); perr != nil {
+				t.Error(perr)
+			}
+			t.Fatal(err)
+		}
+
+		c2, err := FileConn(f)
+		if err := f.Close(); err != nil {
+			t.Error(err)
+		}
+		if err != nil {
+			if perr := parseCommonError(err); perr != nil {
+				t.Error(perr)
+			}
+			t.Fatal(err)
+		}
+		defer c2.Close()
+
+		if _, err := c2.Write([]byte("FILECONN TEST")); err != nil {
+			if perr := parseWriteError(err); perr != nil {
+				t.Error(perr)
+			}
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(c2.LocalAddr(), addr) {
+			t.Fatalf("got %#v; want %#v", c2.LocalAddr(), addr)
+		}
+	}
 }
 
-type connFile interface {
-	Conn
-	File() (f *os.File, err error)
-}
-
-func testFileListener(t *testing.T, net, laddr string) {
-	if net == "tcp" {
-		laddr += ":0" // any available port
-	}
-	l, err := Listen(net, laddr)
-	if err != nil {
-		t.Fatalf("Listen failed: %v", err)
-	}
-	defer l.Close()
-	lf := l.(listenerFile)
-	f, err := lf.File()
-	if err != nil {
-		t.Fatalf("File failed: %v", err)
-	}
-	c, err := FileListener(f)
-	if err != nil {
-		t.Fatalf("FileListener failed: %v", err)
-	}
-	if !reflect.DeepEqual(l.Addr(), c.Addr()) {
-		t.Fatalf("Addrs not equal: %#v != %#v", l.Addr(), c.Addr())
-	}
-	if err := c.Close(); err != nil {
-		t.Fatalf("Close failed: %v", err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatalf("Close failed: %v", err)
-	}
+var fileListenerTests = []struct {
+	network string
+}{
+	{"tcp"},
+	{"unix"},
+	{"unixpacket"},
 }
 
 func TestFileListener(t *testing.T) {
-	if runtime.GOOS == "windows" || runtime.GOOS == "plan9" {
-		return
+	switch runtime.GOOS {
+	case "nacl", "plan9", "windows":
+		t.Skipf("not supported on %s", runtime.GOOS)
 	}
-	testFileListener(t, "tcp", "127.0.0.1")
-	testFileListener(t, "tcp", "127.0.0.1")
-	if supportsIPv6 && supportsIPv4map {
-		testFileListener(t, "tcp", "[::ffff:127.0.0.1]")
-		testFileListener(t, "tcp", "127.0.0.1")
-		testFileListener(t, "tcp", "[::ffff:127.0.0.1]")
-	}
-	if runtime.GOOS == "linux" {
-		testFileListener(t, "unix", "@gotest/net")
-		testFileListener(t, "unixpacket", "@gotest/net")
-	}
-}
 
-func testFilePacketConn(t *testing.T, pcf packetConnFile, listen bool) {
-	f, err := pcf.File()
-	if err != nil {
-		t.Fatalf("File failed: %v", err)
-	}
-	c, err := FilePacketConn(f)
-	if err != nil {
-		t.Fatalf("FilePacketConn failed: %v", err)
-	}
-	if !reflect.DeepEqual(pcf.LocalAddr(), c.LocalAddr()) {
-		t.Fatalf("LocalAddrs not equal: %#v != %#v", pcf.LocalAddr(), c.LocalAddr())
-	}
-	if listen {
-		if _, err := c.WriteTo([]byte{}, c.LocalAddr()); err != nil {
-			t.Fatalf("WriteTo failed: %v", err)
+	for _, tt := range fileListenerTests {
+		if !testableNetwork(tt.network) {
+			t.Logf("skipping %s test", tt.network)
+			continue
+		}
+
+		ln1, err := newLocalListener(tt.network)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch tt.network {
+		case "unix", "unixpacket":
+			defer os.Remove(ln1.Addr().String())
+		}
+		addr := ln1.Addr()
+
+		var f *os.File
+		switch ln1 := ln1.(type) {
+		case *TCPListener:
+			f, err = ln1.File()
+		case *UnixListener:
+			f, err = ln1.File()
+		}
+		switch tt.network {
+		case "unix", "unixpacket":
+			defer ln1.Close() // UnixListener.Close calls syscall.Unlink internally
+		default:
+			if err := ln1.Close(); err != nil {
+				t.Error(err)
+			}
+		}
+		if err != nil {
+			if perr := parseCommonError(err); perr != nil {
+				t.Error(perr)
+			}
+			t.Fatal(err)
+		}
+
+		ln2, err := FileListener(f)
+		if err := f.Close(); err != nil {
+			t.Error(err)
+		}
+		if err != nil {
+			if perr := parseCommonError(err); perr != nil {
+				t.Error(perr)
+			}
+			t.Fatal(err)
+		}
+		defer ln2.Close()
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c, err := Dial(ln2.Addr().Network(), ln2.Addr().String())
+			if err != nil {
+				if perr := parseDialError(err); perr != nil {
+					t.Error(perr)
+				}
+				t.Error(err)
+				return
+			}
+			c.Close()
+		}()
+		c, err := ln2.Accept()
+		if err != nil {
+			if perr := parseAcceptError(err); perr != nil {
+				t.Error(perr)
+			}
+			t.Fatal(err)
+		}
+		c.Close()
+		wg.Wait()
+		if !reflect.DeepEqual(ln2.Addr(), addr) {
+			t.Fatalf("got %#v; want %#v", ln2.Addr(), addr)
 		}
 	}
-	if err := c.Close(); err != nil {
-		t.Fatalf("Close failed: %v", err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatalf("Close failed: %v", err)
-	}
 }
 
-func testFilePacketConnListen(t *testing.T, net, laddr string) {
-	l, err := ListenPacket(net, laddr)
-	if err != nil {
-		t.Fatalf("Listen failed: %v", err)
-	}
-	testFilePacketConn(t, l.(packetConnFile), true)
-	if err := l.Close(); err != nil {
-		t.Fatalf("Close failed: %v", err)
-	}
-}
-
-func testFilePacketConnDial(t *testing.T, net, raddr string) {
-	c, err := Dial(net, raddr)
-	if err != nil {
-		t.Fatalf("Dial failed: %v", err)
-	}
-	testFilePacketConn(t, c.(packetConnFile), false)
-	if err := c.Close(); err != nil {
-		t.Fatalf("Close failed: %v", err)
-	}
+var filePacketConnTests = []struct {
+	network string
+}{
+	{"udp"},
+	{"unixgram"},
 }
 
 func TestFilePacketConn(t *testing.T) {
-	if runtime.GOOS == "windows" || runtime.GOOS == "plan9" {
-		return
+	switch runtime.GOOS {
+	case "nacl", "plan9", "windows":
+		t.Skipf("not supported on %s", runtime.GOOS)
 	}
-	testFilePacketConnListen(t, "udp", "127.0.0.1:0")
-	testFilePacketConnDial(t, "udp", "127.0.0.1:12345")
-	if supportsIPv6 {
-		testFilePacketConnListen(t, "udp", "[::1]:0")
-	}
-	if supportsIPv6 && supportsIPv4map {
-		testFilePacketConnDial(t, "udp", "[::ffff:127.0.0.1]:12345")
-	}
-	if runtime.GOOS == "linux" {
-		testFilePacketConnListen(t, "unixgram", "@gotest1/net")
+
+	for _, tt := range filePacketConnTests {
+		if !testableNetwork(tt.network) {
+			t.Logf("skipping %s test", tt.network)
+			continue
+		}
+
+		c1, err := newLocalPacketListener(tt.network)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch tt.network {
+		case "unixgram":
+			defer os.Remove(c1.LocalAddr().String())
+		}
+		addr := c1.LocalAddr()
+
+		var f *os.File
+		switch c1 := c1.(type) {
+		case *UDPConn:
+			f, err = c1.File()
+		case *UnixConn:
+			f, err = c1.File()
+		}
+		if err := c1.Close(); err != nil {
+			if perr := parseCloseError(err); perr != nil {
+				t.Error(perr)
+			}
+			t.Error(err)
+		}
+		if err != nil {
+			if perr := parseCommonError(err); perr != nil {
+				t.Error(perr)
+			}
+			t.Fatal(err)
+		}
+
+		c2, err := FilePacketConn(f)
+		if err := f.Close(); err != nil {
+			t.Error(err)
+		}
+		if err != nil {
+			if perr := parseCommonError(err); perr != nil {
+				t.Error(perr)
+			}
+			t.Fatal(err)
+		}
+		defer c2.Close()
+
+		if _, err := c2.WriteTo([]byte("FILEPACKETCONN TEST"), addr); err != nil {
+			if perr := parseWriteError(err); perr != nil {
+				t.Error(perr)
+			}
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(c2.LocalAddr(), addr) {
+			t.Fatalf("got %#v; want %#v", c2.LocalAddr(), addr)
+		}
 	}
 }

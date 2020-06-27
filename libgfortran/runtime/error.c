@@ -1,5 +1,4 @@
-/* Copyright (C) 2002, 2003, 2005, 2006, 2007, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+/* Copyright (C) 2002-2017 Free Software Foundation, Inc.
    Contributed by Andy Vaught
 
 This file is part of the GNU Fortran runtime library (libgfortran).
@@ -34,8 +33,6 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #include <unistd.h>
 #endif
 
-#include <stdlib.h>
-
 #ifdef HAVE_SYS_TIME_H
 #include <sys/time.h>
 #endif
@@ -44,6 +41,13 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
    around PR 30518; otherwise, MacOS 10.3.9 headers are just broken.  */
 #ifdef HAVE_SYS_RESOURCE_H
 #include <sys/resource.h>
+#endif
+
+
+#include <locale.h>
+
+#ifdef HAVE_XLOCALE_H
+#include <xlocale.h>
 #endif
 
 
@@ -68,15 +72,17 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 
    2.3.5 also explains how co-images synchronize during termination.
 
-   In libgfortran we have two ways of ending a program. exit(code) is
-   a normal exit; calling exit() also causes open units to be
-   closed. No backtrace or core dump is needed here. When something
-   goes wrong, we have sys_abort() which tries to print the backtrace
-   if -fbacktrace is enabled, and then dumps core; whether a core file
-   is generated is system dependent. When aborting, we don't flush and
-   close open units, as program memory might be corrupted and we'd
-   rather risk losing dirty data in the buffers rather than corrupting
-   files on disk.
+   In libgfortran we have three ways of ending a program. exit(code)
+   is a normal exit; calling exit() also causes open units to be
+   closed. No backtrace or core dump is needed here.  For error
+   termination, we have exit_error(status), which prints a backtrace
+   if backtracing is enabled, then exits.  Finally, when something
+   goes terribly wrong, we have sys_abort() which tries to print the
+   backtrace if -fbacktrace is enabled, and then dumps core; whether a
+   core file is generated is system dependent. When aborting, we don't
+   flush and close open units, as program memory might be corrupted
+   and we'd rather risk losing dirty data in the buffers rather than
+   corrupting files on disk.
 
 */
 
@@ -166,12 +172,30 @@ sys_abort (void)
   if (options.backtrace == 1
       || (options.backtrace == -1 && compile_options.backtrace == 1))
     {
-      show_backtrace ();
+      estr_write ("\nProgram aborted. Backtrace:\n");
+      show_backtrace (false);
       signal (SIGABRT, SIG_DFL);
     }
 
   abort();
 }
+
+
+/* Exit in case of error termination. If backtracing is enabled, print
+   backtrace, then exit.  */
+
+void
+exit_error (int status)
+{
+  if (options.backtrace == 1
+      || (options.backtrace == -1 && compile_options.backtrace == 1))
+    {
+      estr_write ("\nError termination. Backtrace:\n");
+      show_backtrace (false);
+    }
+  exit (status);
+}
+
 
 
 /* gfc_xtoa()-- Integer to hexadecimal conversion.  */
@@ -204,14 +228,35 @@ gfc_xtoa (GFC_UINTEGER_LARGEST n, char *buffer, size_t len)
 }
 
 
-/* Hopefully thread-safe wrapper for a strerror_r() style function.  */
+/* Hopefully thread-safe wrapper for a strerror() style function.  */
 
 char *
 gf_strerror (int errnum, 
              char * buf __attribute__((unused)), 
 	     size_t buflen __attribute__((unused)))
 {
-#ifdef HAVE_STRERROR_R
+#ifdef HAVE_STRERROR_L
+  locale_t myloc = newlocale (LC_CTYPE_MASK | LC_MESSAGES_MASK, "",
+			      (locale_t) 0);
+  char *p;
+  if (myloc)
+    {
+      p = strerror_l (errnum, myloc);
+      freelocale (myloc);
+    }
+  else
+    /* newlocale might fail e.g. due to running out of memory, fall
+       back to the simpler strerror.  */
+    p = strerror (errnum);
+  return p;
+#elif defined(HAVE_STRERROR_R)
+#ifdef HAVE_USELOCALE
+  /* Some targets (Darwin at least) have the POSIX 2008 extended
+     locale functions, but not strerror_l.  So reset the per-thread
+     locale here.  */
+  uselocale (LC_GLOBAL_LOCALE);
+#endif
+  /* POSIX returns an "int", GNU a "char*".  */
   return
     __builtin_choose_expr (__builtin_classify_type (strerror_r (0, buf, 0))
 			   == 5,
@@ -219,6 +264,9 @@ gf_strerror (int errnum,
 			   strerror_r (errnum, buf, buflen),
 			   /* POSIX strerror_r ()  */
 			   (strerror_r (errnum, buf, buflen), buf));
+#elif defined(HAVE_STRERROR_R_2ARGS)
+  strerror_r (errnum, buf);
+  return buf;
 #else
   /* strerror () is not necessarily thread-safe, but should at least
      be available everywhere.  */
@@ -295,7 +343,7 @@ os_error (const char *message)
   estr_write ("\n");
   estr_write (message);
   estr_write ("\n");
-  exit (1);
+  exit_error (1);
 }
 iexport(os_error);
 
@@ -314,7 +362,7 @@ runtime_error (const char *message, ...)
   st_vprintf (message, ap);
   va_end (ap);
   estr_write ("\n");
-  exit (2);
+  exit_error (2);
 }
 iexport(runtime_error);
 
@@ -333,7 +381,7 @@ runtime_error_at (const char *where, const char *message, ...)
   st_vprintf (message, ap);
   va_end (ap);
   estr_write ("\n");
-  exit (2);
+  exit_error (2);
 }
 iexport(runtime_error_at);
 
@@ -371,7 +419,7 @@ internal_error (st_parameter_common *cmp, const char *message)
      because hopefully it doesn't happen too often).  */
   stupid_function_name_for_static_linking();
 
-  exit (3);
+ exit_error (3);
 }
 
 
@@ -465,6 +513,10 @@ translate_error (int code)
       p = "Unformatted file structure has been corrupted";
       break;
 
+    case LIBERROR_INQUIRE_INTERNAL_UNIT:
+      p = "Inquire statement identifies an internal file";
+      break;
+
     default:
       p = "Unknown error code";
       break;
@@ -539,7 +591,7 @@ generate_error (st_parameter_common *cmp, int family, const char *message)
   estr_write ("Fortran runtime error: ");
   estr_write (message);
   estr_write ("\n");
-  exit (2);
+  exit_error (2);
 }
 iexport(generate_error);
 
@@ -582,17 +634,17 @@ notification_std (int std)
    feature.  An error/warning will be issued if the currently selected
    standard does not contain the requested bits.  */
 
-try
+bool
 notify_std (st_parameter_common *cmp, int std, const char * message)
 {
   int warning;
 
   if (!compile_options.pedantic)
-    return SUCCESS;
+    return true;
 
   warning = compile_options.warn_std & std;
   if ((compile_options.allow_std & std) != 0 && !warning)
-    return SUCCESS;
+    return true;
 
   if (!warning)
     {
@@ -601,7 +653,7 @@ notify_std (st_parameter_common *cmp, int std, const char * message)
       estr_write ("Fortran runtime error: ");
       estr_write (message);
       estr_write ("\n");
-      exit (2);
+      exit_error (2);
     }
   else
     {
@@ -610,5 +662,5 @@ notify_std (st_parameter_common *cmp, int std, const char * message)
       estr_write (message);
       estr_write ("\n");
     }
-  return FAILURE;
+  return false;
 }

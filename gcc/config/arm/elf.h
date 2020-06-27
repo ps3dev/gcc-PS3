@@ -1,7 +1,6 @@
 /* Definitions of target machine for GNU compiler.
    For ARM with ELF obj format.
-   Copyright (C) 1995, 1996, 1997, 1998, 1999, 2000, 2001, 2004, 2005, 2007,
-   2008, 2009, 2011 Free Software Foundation, Inc.
+   Copyright (C) 1995-2017 Free Software Foundation, Inc.
    Contributed by Philip Blundell <philb@gnu.org> and
    Catherine Moore <clm@cygnus.com>
    
@@ -17,8 +16,13 @@
    or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
    License for more details.
 
-   You should have received a copy of the GNU General Public License
-   along with GCC; see the file COPYING3.  If not see
+   Under Section 7 of GPL version 3, you are granted additional
+   permissions described in the GCC Runtime Library Exception, version
+   3.1, as published by the Free Software Foundation.
+
+   You should have received a copy of the GNU General Public License and
+   a copy of the GCC Runtime Library Exception along with this program;
+   see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
    <http://www.gnu.org/licenses/>.  */
 
 #ifndef OBJECT_FORMAT_ELF
@@ -71,16 +75,7 @@
 
 /* We might need a ARM specific header to function declarations.  */
 #undef  ASM_DECLARE_FUNCTION_NAME
-#define ASM_DECLARE_FUNCTION_NAME(FILE, NAME, DECL)		\
-  do								\
-    {								\
-      ARM_DECLARE_FUNCTION_NAME (FILE, NAME, DECL);		\
-      ASM_OUTPUT_TYPE_DIRECTIVE (FILE, NAME, "function");	\
-      ASM_DECLARE_RESULT (FILE, DECL_RESULT (DECL));		\
-      ASM_OUTPUT_LABEL(FILE, NAME);				\
-      ARM_OUTPUT_FN_UNWIND (FILE, TRUE);			\
-    }								\
-  while (0)
+#define ASM_DECLARE_FUNCTION_NAME arm_asm_declare_function_name
 
 /* We might need an ARM specific trailer for function declarations.  */
 #undef  ASM_DECLARE_FUNCTION_SIZE
@@ -100,7 +95,8 @@
    the code more efficient, but for Thumb-1 it's better to put them out of
    band unless we are generating compressed tables.  */
 #define JUMP_TABLES_IN_TEXT_SECTION					\
-   (TARGET_32BIT || (TARGET_THUMB && (optimize_size || flag_pic)))
+   ((TARGET_32BIT || (TARGET_THUMB && (optimize_size || flag_pic))) \
+    && !target_pure_code)
 
 #ifndef LINK_SPEC
 #define LINK_SPEC "%{mbig-endian:-EB} %{mlittle-endian:-EL} -X"
@@ -116,7 +112,6 @@
   { "marm", "mlittle-endian", "mfloat-abi=soft", "mno-thumb-interwork", "fno-leading-underscore" }
 #endif
 
-#define TARGET_ASM_FILE_START_APP_OFF true
 #define TARGET_ASM_FILE_START_FILE_DIRECTIVE true
 
 
@@ -145,8 +140,9 @@
   while (0)
 
 /* Horrible hack: We want to prevent some libgcc routines being included
-   for some multilibs.  */
-#ifndef __ARM_ARCH_6M__
+   for some multilibs.  The condition should match the one in
+   libgcc/config/arm/lib1funcs.S.  */
+#if __ARM_ARCH_ISA_ARM || __ARM_ARCH_ISA_THUMB != 1
 #undef L_fixdfsi
 #undef L_fixunsdfsi
 #undef L_truncdfsf2

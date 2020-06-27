@@ -1,4 +1,4 @@
-/* Copyright (C) 2009, 2010 Free Software Foundation, Inc.
+/* Copyright (C) 2009-2017 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -49,7 +49,14 @@ __bswapd (int __X)
   return __builtin_bswap32 (__X);
 }
 
-#ifdef __SSE4_2__
+#ifndef __iamcu__
+
+#ifndef __SSE4_2__
+#pragma GCC push_options
+#pragma GCC target("sse4.2")
+#define __DISABLE_SSE4_2__
+#endif /* __SSE4_2__ */
+
 /* 32bit accumulate CRC32 (polynomial 0x11EDC6F41) value.  */
 extern __inline unsigned int
 __attribute__((__gnu_inline__, __always_inline__, __artificial__))
@@ -71,7 +78,13 @@ __crc32d (unsigned int __C, unsigned int __V)
 {
   return __builtin_ia32_crc32si (__C, __V);
 }
-#endif /* SSE4.2 */
+
+#ifdef __DISABLE_SSE4_2__
+#undef __DISABLE_SSE4_2__
+#pragma GCC pop_options
+#endif /* __DISABLE_SSE4_2__ */
+
+#endif /* __iamcu__ */
 
 /* 32bit popcnt */
 extern __inline int
@@ -81,6 +94,8 @@ __popcntd (unsigned int __X)
   return __builtin_popcount (__X);
 }
 
+#ifndef __iamcu__
+
 /* rdpmc */
 extern __inline unsigned long long
 __attribute__((__gnu_inline__, __always_inline__, __artificial__))
@@ -88,6 +103,8 @@ __rdpmc (int __S)
 {
   return __builtin_ia32_rdpmc (__S);
 }
+
+#endif /* __iamcu__ */
 
 /* rdtsc */
 extern __inline unsigned long long
@@ -97,6 +114,8 @@ __rdtsc (void)
   return __builtin_ia32_rdtsc ();
 }
 
+#ifndef __iamcu__
+
 /* rdtscp */
 extern __inline unsigned long long
 __attribute__((__gnu_inline__, __always_inline__, __artificial__))
@@ -104,6 +123,8 @@ __rdtscp (unsigned int *__A)
 {
   return __builtin_ia32_rdtscp (__A);
 }
+
+#endif /* __iamcu__ */
 
 /* 8bit rol */
 extern __inline unsigned char
@@ -186,7 +207,12 @@ __bswapq (long long __X)
   return __builtin_bswap64 (__X);
 }
 
-#ifdef __SSE4_2__
+#ifndef __SSE4_2__
+#pragma GCC push_options
+#pragma GCC target("sse4.2")
+#define __DISABLE_SSE4_2__
+#endif /* __SSE4_2__ */
+
 /* 64bit accumulate CRC32 (polynomial 0x11EDC6F41) value.  */
 extern __inline unsigned long long
 __attribute__((__gnu_inline__, __always_inline__, __artificial__))
@@ -194,7 +220,11 @@ __crc32q (unsigned long long __C, unsigned long long __V)
 {
   return __builtin_ia32_crc32di (__C, __V);
 }
-#endif
+
+#ifdef __DISABLE_SSE4_2__
+#undef __DISABLE_SSE4_2__
+#pragma GCC pop_options
+#endif /* __DISABLE_SSE4_2__ */
 
 /* 64bit popcnt */
 extern __inline long long
@@ -220,8 +250,47 @@ __rorq (unsigned long long __X, int __C)
   return (__X >> __C) | (__X << (64 - __C));
 }
 
+/* Read flags register */
+extern __inline unsigned long long
+__attribute__((__gnu_inline__, __always_inline__, __artificial__))
+__readeflags (void)
+{
+  return __builtin_ia32_readeflags_u64 ();
+}
+
+/* Write flags register */
+extern __inline void
+__attribute__((__gnu_inline__, __always_inline__, __artificial__))
+__writeeflags (unsigned long long __X)
+{
+  __builtin_ia32_writeeflags_u64 (__X);
+}
+
 #define _bswap64(a)		__bswapq(a)
 #define _popcnt64(a)		__popcntq(a)
+#else
+
+/* Read flags register */
+extern __inline unsigned int
+__attribute__((__gnu_inline__, __always_inline__, __artificial__))
+__readeflags (void)
+{
+  return __builtin_ia32_readeflags_u32 ();
+}
+
+/* Write flags register */
+extern __inline void
+__attribute__((__gnu_inline__, __always_inline__, __artificial__))
+__writeeflags (unsigned int __X)
+{
+  __builtin_ia32_writeeflags_u32 (__X);
+}
+
+#endif
+
+/* On LP64 systems, longs are 64-bit.  Use the appropriate rotate
+ * function.  */
+#ifdef __LP64__
 #define _lrotl(a,b)		__rolq((a), (b))
 #define _lrotr(a,b)		__rorq((a), (b))
 #else
@@ -233,9 +302,11 @@ __rorq (unsigned long long __X, int __C)
 #define _bit_scan_reverse(a)	__bsrd(a)
 #define _bswap(a)		__bswapd(a)
 #define _popcnt32(a)		__popcntd(a)
+#ifndef __iamcu__
 #define _rdpmc(a)		__rdpmc(a)
-#define _rdtsc()		__rdtsc()
 #define _rdtscp(a)		__rdtscp(a)
+#endif /* __iamcu__ */
+#define _rdtsc()		__rdtsc()
 #define _rotwl(a,b)		__rolw((a), (b))
 #define _rotwr(a,b)		__rorw((a), (b))
 #define _rotl(a,b)		__rold((a), (b))

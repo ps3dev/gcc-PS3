@@ -1,5 +1,5 @@
 /* crtend object for windows32 targets.
-   Copyright (C) 2007, 2008, 2009, 2010, 2011 Free Software Foundation, Inc.
+   Copyright (C) 2007-2017 Free Software Foundation, Inc.
 
    Contributed by Danny Smith <dannysmith@users.sourceforge.net>
 
@@ -48,17 +48,9 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
    this would be the 'length' field in a real FDE.  */
 
 static EH_FRAME_SECTION_CONST int __FRAME_END__[]
-  __attribute__ ((used,  section(EH_FRAME_SECTION_NAME),
+  __attribute__ ((used,  section(__LIBGCC_EH_FRAME_SECTION_NAME__),
 		  aligned(4)))
   = { 0 };
-#endif
-
-#if TARGET_USE_JCR_SECTION
-/* Null terminate the .jcr section array.  */
-static void *__JCR_END__[1] 
-   __attribute__ ((used, section(JCR_SECTION_NAME),
-		   aligned(sizeof(void *))))
-   = { 0 };
 #endif
 
 extern void __gcc_register_frame (void); 
@@ -70,12 +62,6 @@ static void
 register_frame_ctor (void)
 {
   __gcc_register_frame ();
-#if DEFAULT_USE_CXA_ATEXIT
-  /* If we use the __cxa_atexit method to register C++ dtors
-     at object construction,  also use atexit to register eh frame
-     info cleanup.  */
-  atexit (__gcc_deregister_frame);
-#endif
 }
 
 #if !DEFAULT_USE_CXA_ATEXIT

@@ -1,11 +1,11 @@
 // Test that private base dtor makes derived ctor deleted
-// { dg-options -std=c++0x }
+// { dg-do compile { target c++11 } }
 
 struct A
 {
   A();
 private:
-  ~A();				// { dg-error "private" }
+  ~A();				// { dg-message "private" }
 };
 
 struct B: A { };		// { dg-error "implicitly deleted|context" }

@@ -1,4 +1,4 @@
-// Copyright 2010 The Go Authors.  All rights reserved.
+// Copyright 2010 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -35,6 +35,10 @@ func (r *rngReader) Read(b []byte) (n int, err error) {
 		}
 	}
 	r.mu.Unlock()
+
+	if len(b) == 0 {
+		return 0, nil
+	}
 	err = syscall.CryptGenRandom(r.prov, uint32(len(b)), &b[0])
 	if err != nil {
 		return 0, os.NewSyscallError("CryptGenRandom", err)

@@ -5,7 +5,7 @@
 
 template <typename A>
 class S {
-  class T {};				// { dg-error "private" }
+  class T {};				// { dg-message "private" }
 };
 
 template <typename A>
@@ -14,5 +14,5 @@ typename A::T* f (A) {			// { dg-error "this context" }
 }
 
 void g () {
-  f (S<int> ());			// { dg-message "required" }
+  f (S<int> ());			// { dg-message "required|no match" }
 }

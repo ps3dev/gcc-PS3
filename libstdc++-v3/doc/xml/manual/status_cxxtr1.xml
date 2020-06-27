@@ -4,12 +4,8 @@
 
 <info><title>C++ TR1</title>
   <keywordset>
-    <keyword>
-      ISO C++
-    </keyword>
-    <keyword>
-      tr1
-    </keyword>
+    <keyword>ISO C++</keyword>
+    <keyword>tr1</keyword>
   </keywordset>
 </info>
 
@@ -39,7 +35,7 @@ release.
    Broken/Partial
       <?dbhtml bgcolor="#B0B0B0" ?>
 -->
-<table frame="all">
+<table frame="all" xml:id="table.tr1_status">
 <title>C++ TR1 Implementation Status</title>
 
 <tgroup cols="4" align="left" colsep="0" rowsep="1">

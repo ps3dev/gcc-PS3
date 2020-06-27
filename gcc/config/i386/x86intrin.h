@@ -1,4 +1,4 @@
-/* Copyright (C) 2008, 2009, 2010 Free Software Foundation, Inc.
+/* Copyright (C) 2008-2017 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -26,75 +26,77 @@
 
 #include <ia32intrin.h>
 
-#ifdef __MMX__
+#ifndef __iamcu__
+
 #include <mmintrin.h>
-#endif
 
-#ifdef __SSE__
 #include <xmmintrin.h>
-#endif
 
-#ifdef __SSE2__
 #include <emmintrin.h>
-#endif
 
-#ifdef __SSE3__
 #include <pmmintrin.h>
-#endif
 
-#ifdef __SSSE3__
 #include <tmmintrin.h>
-#endif
 
-#ifdef __SSE4A__
 #include <ammintrin.h>
-#endif
 
-#if defined (__SSE4_2__) || defined (__SSE4_1__)
 #include <smmintrin.h>
-#endif
 
-#if defined (__AES__) || defined (__PCLMUL__)
 #include <wmmintrin.h>
-#endif
 
 /* For including AVX instructions */
 #include <immintrin.h>
 
-#ifdef __3dNOW__
 #include <mm3dnow.h>
-#endif
 
-#ifdef __FMA4__
 #include <fma4intrin.h>
-#endif
 
-#ifdef __XOP__
 #include <xopintrin.h>
-#endif
 
-#ifdef __LWP__
 #include <lwpintrin.h>
-#endif
 
-#ifdef __BMI__
 #include <bmiintrin.h>
-#endif
 
-#ifdef __BMI2__
 #include <bmi2intrin.h>
-#endif
 
-#ifdef __TBM__
 #include <tbmintrin.h>
-#endif
 
-#ifdef __LZCNT__
 #include <lzcntintrin.h>
-#endif
 
-#ifdef __POPCNT__
 #include <popcntintrin.h>
-#endif
+
+#include <rdseedintrin.h>
+
+#include <prfchwintrin.h>
+
+#include <fxsrintrin.h>
+
+#include <xsaveintrin.h>
+
+#include <xsaveoptintrin.h>
+
+#include <sgxintrin.h>
+
+#endif /* __iamcu__ */
+
+#include <adxintrin.h>
+
+#ifndef __iamcu__
+
+#include <clwbintrin.h>
+
+#include <clflushoptintrin.h>
+
+#include <xsavesintrin.h>
+
+#include <xsavecintrin.h>
+
+#include <mwaitxintrin.h>
+
+#include <clzerointrin.h>
+
+#include <pkuintrin.h>
+
+#endif /* __iamcu__ */
 
 #endif /* _X86INTRIN_H_INCLUDED */

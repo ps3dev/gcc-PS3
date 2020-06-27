@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---                     Copyright (C) 1997-2010, AdaCore                     --
+--                     Copyright (C) 1997-2015, AdaCore                     --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -729,7 +729,7 @@ package GNAT.Spitbol.Patterns is
    function "*" (P : PString; Var : VString_Var)  return Pattern;
    function "*" (P : PChar;   Var : VString_Var)  return Pattern;
    --  Matches P, and if the match succeeds, assigns the matched substring
-   --  to the given VString variable S. This assignment happens as soon as
+   --  to the given VString variable Var. This assignment happens as soon as
    --  the substring is matched, and if the pattern P1 is matched more than
    --  once during the course of the match, then the assignment will occur
    --  more than once.
@@ -899,7 +899,7 @@ package GNAT.Spitbol.Patterns is
    function Span   (Str : VString_Func)                     return Pattern;
    --  Constructs a pattern that matches the longest possible string
    --  consisting entirely of characters from the given argument. The
-   --  string cannot be empty , so the pattern fails if the current
+   --  string cannot be empty, so the pattern fails if the current
    --  character is not one of the characters in Str.
 
    function Succeed                                         return Pattern;

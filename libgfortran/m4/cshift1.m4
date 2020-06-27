@@ -1,8 +1,8 @@
 `/* Implementation of the CSHIFT intrinsic
-   Copyright 2003, 2007, 2009 Free Software Foundation, Inc.
+   Copyright (C) 2003-2017 Free Software Foundation, Inc.
    Contributed by Feng Wang <wf_cs@yahoo.com>
 
-This file is part of the GNU Fortran 95 runtime library (libgfortran).
+This file is part of the GNU Fortran runtime library (libgfortran).
 
 Libgfortran is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public
@@ -24,8 +24,6 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 <http://www.gnu.org/licenses/>.  */
 
 #include "libgfortran.h"
-#include <stdlib.h>
-#include <assert.h>
 #include <string.h>'
 
 include(iparm.m4)dnl
@@ -77,11 +75,11 @@ cshift1 (gfc_array_char * const restrict ret,
 
   arraysize = size0 ((array_t *)array);
 
-  if (ret->data == NULL)
+  if (ret->base_addr == NULL)
     {
       int i;
 
-      ret->data = internal_malloc_size (size * arraysize);
+      ret->base_addr = xmallocarray (arraysize, size);
       ret->offset = 0;
       ret->dtype = array->dtype;
       for (i = 0; i < GFC_DESCRIPTOR_RANK (array); i++)
@@ -157,9 +155,9 @@ cshift1 (gfc_array_char * const restrict ret,
   rstride0 = rstride[0];
   sstride0 = sstride[0];
   hstride0 = hstride[0];
-  rptr = ret->data;
-  sptr = array->data;
-  hptr = h->data;
+  rptr = ret->base_addr;
+  sptr = array->base_addr;
+  hptr = h->base_addr;
 
   while (rptr)
     {

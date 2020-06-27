@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// SHA256 hash algorithm.  See FIPS 180-2.
+// SHA256 hash algorithm. See FIPS 180-2.
 
 package sha256
 
 import (
+	"crypto/rand"
 	"fmt"
 	"io"
 	"testing"
@@ -88,6 +89,10 @@ var golden224 = []sha256Test{
 func TestGolden(t *testing.T) {
 	for i := 0; i < len(golden); i++ {
 		g := golden[i]
+		s := fmt.Sprintf("%x", Sum256([]byte(g.in)))
+		if s != g.out {
+			t.Fatalf("Sum256 function: sha256(%s) = %s want %s", g.in, s, g.out)
+		}
 		c := New()
 		for j := 0; j < 3; j++ {
 			if j < 2 {
@@ -106,6 +111,10 @@ func TestGolden(t *testing.T) {
 	}
 	for i := 0; i < len(golden224); i++ {
 		g := golden224[i]
+		s := fmt.Sprintf("%x", Sum224([]byte(g.in)))
+		if s != g.out {
+			t.Fatalf("Sum224 function: sha224(%s) = %s want %s", g.in, s, g.out)
+		}
 		c := New224()
 		for j := 0; j < 3; j++ {
 			if j < 2 {
@@ -122,4 +131,59 @@ func TestGolden(t *testing.T) {
 			c.Reset()
 		}
 	}
+}
+
+func TestSize(t *testing.T) {
+	c := New()
+	if got := c.Size(); got != Size {
+		t.Errorf("Size = %d; want %d", got, Size)
+	}
+	c = New224()
+	if got := c.Size(); got != Size224 {
+		t.Errorf("New224.Size = %d; want %d", got, Size224)
+	}
+}
+
+func TestBlockSize(t *testing.T) {
+	c := New()
+	if got := c.BlockSize(); got != BlockSize {
+		t.Errorf("BlockSize = %d want %d", got, BlockSize)
+	}
+}
+
+// Tests that blockGeneric (pure Go) and block (in assembly for some architectures) match.
+func TestBlockGeneric(t *testing.T) {
+	gen, asm := New().(*digest), New().(*digest)
+	buf := make([]byte, BlockSize*20) // arbitrary factor
+	rand.Read(buf)
+	blockGeneric(gen, buf)
+	block(asm, buf)
+	if *gen != *asm {
+		t.Error("block and blockGeneric resulted in different states")
+	}
+}
+
+var bench = New()
+var buf = make([]byte, 8192)
+
+func benchmarkSize(b *testing.B, size int) {
+	b.SetBytes(int64(size))
+	sum := make([]byte, bench.Size())
+	for i := 0; i < b.N; i++ {
+		bench.Reset()
+		bench.Write(buf[:size])
+		bench.Sum(sum[:0])
+	}
+}
+
+func BenchmarkHash8Bytes(b *testing.B) {
+	benchmarkSize(b, 8)
+}
+
+func BenchmarkHash1K(b *testing.B) {
+	benchmarkSize(b, 1024)
+}
+
+func BenchmarkHash8K(b *testing.B) {
+	benchmarkSize(b, 8192)
 }

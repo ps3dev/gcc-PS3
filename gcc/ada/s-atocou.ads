@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---                       Copyright (C) 2011, AdaCore                        --
+--          Copyright (C) 2011-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -37,10 +37,9 @@
 --    - all x86 platforms
 --    - all x86_64 platforms
 
---  Why isn't this package available to application programs???
-
 package System.Atomic_Counters is
 
+   pragma Pure;
    pragma Preelaborate;
 
    type Atomic_Counter is limited private;
@@ -52,6 +51,8 @@ package System.Atomic_Counters is
    --  Atomic_Counter is declared as private limited type to provide highest
    --  level of protection from unexpected use. All available operations are
    --  declared below, and this set should be as small as possible.
+   --  Increment/Decrement operations for this type raise Program_Error on
+   --  platforms not supporting the atomic primitives.
 
    procedure Increment (Item : in out Atomic_Counter);
    pragma Inline_Always (Increment);
@@ -59,18 +60,47 @@ package System.Atomic_Counters is
 
    function Decrement (Item : in out Atomic_Counter) return Boolean;
    pragma Inline_Always (Decrement);
-   --  Decrements value of atomic counter, returns True when value reach zero.
+   --  Decrements value of atomic counter, returns True when value reach zero
 
    function Is_One (Item : Atomic_Counter) return Boolean;
    pragma Inline_Always (Is_One);
-   --  Returns True when value of the atomic counter is one.
+   --  Returns True when value of the atomic counter is one
+
+   procedure Initialize (Item : out Atomic_Counter);
+   pragma Inline_Always (Initialize);
+   --  Initialize counter by setting its value to one. This subprogram is
+   --  intended to be used in special cases when the counter object cannot be
+   --  initialized in standard way.
+
+   type Atomic_Unsigned is mod 2 ** 32 with Default_Value => 0, Atomic;
+   --  Modular compatible atomic unsigned type.
+   --  Increment/Decrement operations for this type are atomic only on
+   --  supported platforms. See top of the file.
+
+   procedure Increment
+     (Item : aliased in out Atomic_Unsigned) with Inline_Always;
+   --  Increments value of atomic counter
+
+   function Decrement
+     (Item : aliased in out Atomic_Unsigned) return Boolean with Inline_Always;
+
+   procedure Decrement
+     (Item : aliased in out Atomic_Unsigned) with Inline_Always;
+   --  Decrements value of atomic counter
+
+   --  The "+" and "-" abstract routine provided below to disable BT := BT + 1
+   --  constructions.
+
+   function "+"
+     (Left, Right : Atomic_Unsigned) return Atomic_Unsigned is abstract;
+
+   function "-"
+     (Left, Right : Atomic_Unsigned) return Atomic_Unsigned is abstract;
 
 private
 
-   type Unsigned_32 is mod 2 ** 32;
-
-   type Atomic_Counter is limited record
-      Value : aliased Unsigned_32 := 1;
+   type Atomic_Counter is record
+      Value : aliased Atomic_Unsigned := 1;
       pragma Atomic (Value);
    end record;
 

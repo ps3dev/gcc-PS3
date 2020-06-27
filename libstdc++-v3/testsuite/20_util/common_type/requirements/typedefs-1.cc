@@ -1,6 +1,6 @@
-// { dg-options "-std=gnu++0x" }
+// { dg-do run { target c++11 } }
 //
-// Copyright (C) 2008, 2009 Free Software Foundation, Inc.
+// Copyright (C) 2008-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -66,7 +66,6 @@ struct B : A { };
 
 void test01()
 {
-  bool test __attribute__((unused)) = true;
   using std::common_type;
   using std::is_same;
 
@@ -98,14 +97,13 @@ void test01()
 
 void test02()
 {
-  bool test __attribute__((unused)) = true;
   using std::common_type;
   using std::is_same;
   
   COMMON_TYPE_TEST_ALL_2(int, int, int, 1);
   COMMON_TYPE_TEST_ALL_2(int, double, double, 2);
   COMMON_TYPE_TEST_2(NO_CV, A, A, A, 3);
-  COMMON_TYPE_TEST_2(const, A, A, const A, 4);
+  COMMON_TYPE_TEST_2(const, A, A, A, 4);
   COMMON_TYPE_TEST_2(NO_CV, B, A, A, 5);  
 }
 

@@ -1,6 +1,6 @@
 /* Verify that simple virtual calls are inlined even without early
    inlining.  */
-/* { dg-do run } */
+/* { dg-do run { target nonpic } } */
 /* { dg-options "-O3 -fdump-ipa-inline -fno-early-inlining -fno-ipa-cp"  } */
 
 extern "C" void abort (void);
@@ -61,4 +61,3 @@ int main (int argc, char *argv[])
 }
 
 /* { dg-final { scan-ipa-dump "B::foo\[^\\n\]*inline copy in int main"  "inline"  } } */
-/* { dg-final { cleanup-ipa-dump "inline" } } */

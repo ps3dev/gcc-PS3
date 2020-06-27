@@ -14,11 +14,8 @@
 #include <fpu_control.h>
 #endif
 
-#include "go-alloc.h"
-#include "array.h"
-#include "go-string.h"
-
 #include "runtime.h"
+#include "array.h"
 #include "arch.h"
 #include "malloc.h"
 
@@ -32,25 +29,32 @@
 
 extern char **environ;
 
-extern void runtime_main (void);
-static void mainstart (void *);
+/* A copy of _end that a shared library can reasonably refer to.  */
+uintptr __go_end;
+
+extern byte _end[];
 
 /* The main function.  */
 
 int
 main (int argc, char **argv)
 {
+  runtime_isarchive = false;
+
+  if (runtime_isstarted)
+    return 0;
+  runtime_isstarted = true;
+
+  if (runtime_iscgo)
+    setIsCgo ();
+
+  __go_end = (uintptr)_end;
+  runtime_cpuinit ();
   runtime_check ();
   runtime_args (argc, (byte **) argv);
   runtime_osinit ();
   runtime_schedinit ();
-  __go_go (mainstart, NULL);
+  __go_go (runtime_main, NULL);
   runtime_mstart (runtime_m ());
   abort ();
-}
-
-static void
-mainstart (void *arg __attribute__ ((unused)))
-{
-  runtime_main ();
 }

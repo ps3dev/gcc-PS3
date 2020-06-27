@@ -1,8 +1,7 @@
-// { dg-options "-std=gnu++0x" }
-// { dg-do compile }
+// { dg-do compile { target c++11 } }
 // -*- C++ -*-
 
-// Copyright (C) 2008, 2009 Free Software Foundation, Inc.
+// Copyright (C) 2008-2017 Free Software Foundation, Inc.
 
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU General Public License as
@@ -26,4 +25,4 @@ int main()
   __gnu_test::has_bitwise_operators test;
   using __gnu_test::atomic_integrals_no_bool;
   __gnu_cxx::typelist::apply_generator(test, atomic_integrals_no_bool::type());
-};
+}

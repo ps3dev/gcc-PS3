@@ -1,5 +1,5 @@
 // PR c++/49181
-// { dg-options -std=c++0x }
+// { dg-do compile { target c++11 } }
 
 namespace std
 {
@@ -39,7 +39,11 @@ namespace std
 struct bad_alloc { };
 }
 
-void* operator new(std::size_t) throw (std::bad_alloc);
+void* operator new(std::size_t)
+#if __cplusplus <= 201402L
+throw (std::bad_alloc)			// { dg-warning "deprecated" "" { target { ! c++1z } } }
+#endif
+;
 
 namespace std
 {

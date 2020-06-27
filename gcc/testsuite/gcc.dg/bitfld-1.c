@@ -5,7 +5,7 @@
    Source: Neil Booth, 26 Jan 2002.
 */
 
-/* { dg-options -pedantic } */
+/* { dg-options "-pedantic -std=gnu89" } */
 
 enum foo {e1 = 0, e2, e3, e4, e5};
 
@@ -25,7 +25,7 @@ struct bf1
   unsigned long g: 5;		/* { dg-warning "GCC extension|ISO C" } */
   ui h: 5;
   enum foo i: 2;		/* { dg-warning "narrower" } */
-    /* { dg-warning "GCC extension|ISO C" "extension" { target *-*-* } 27 } */
+    /* { dg-warning "GCC extension|ISO C" "extension" { target *-*-* } .-1 } */
   enum foo j: 3;		/* { dg-warning "GCC extension|ISO C" } */
   unsigned int k: 256;		/* { dg-error "exceeds its type" } */
 };

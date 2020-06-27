@@ -5,12 +5,16 @@
 package os_test
 
 import (
+	"internal/testenv"
+	"io/ioutil"
 	. "os"
 	"path/filepath"
 	"runtime"
 	"syscall"
 	"testing"
 )
+
+var isReadonlyError = func(error) bool { return false }
 
 func TestMkdirAll(t *testing.T) {
 	tmpDir := TempDir()
@@ -90,7 +94,7 @@ func TestRemoveAll(t *testing.T) {
 	if err = RemoveAll(path); err != nil {
 		t.Fatalf("RemoveAll %q (first): %s", path, err)
 	}
-	if _, err := Lstat(path); err == nil {
+	if _, err = Lstat(path); err == nil {
 		t.Fatalf("Lstat %q succeeded after RemoveAll (first)", path)
 	}
 
@@ -144,7 +148,7 @@ func TestRemoveAll(t *testing.T) {
 		// No error checking here: either RemoveAll
 		// will or won't be able to remove dpath;
 		// either way we want to see if it removes fpath
-		// and path/zzz.  Reasons why RemoveAll might
+		// and path/zzz. Reasons why RemoveAll might
 		// succeed in removing dpath as well include:
 		//	* running as root
 		//	* running on a file system without permissions (FAT)
@@ -152,7 +156,7 @@ func TestRemoveAll(t *testing.T) {
 		Chmod(dpath, 0777)
 
 		for _, s := range []string{fpath, path + "/zzz"} {
-			if _, err := Lstat(s); err == nil {
+			if _, err = Lstat(s); err == nil {
 				t.Fatalf("Lstat %q succeeded after partial RemoveAll", s)
 			}
 		}
@@ -160,31 +164,31 @@ func TestRemoveAll(t *testing.T) {
 	if err = RemoveAll(path); err != nil {
 		t.Fatalf("RemoveAll %q after partial RemoveAll: %s", path, err)
 	}
-	if _, err := Lstat(path); err == nil {
+	if _, err = Lstat(path); err == nil {
 		t.Fatalf("Lstat %q succeeded after RemoveAll (final)", path)
 	}
 }
 
 func TestMkdirAllWithSymlink(t *testing.T) {
-	if runtime.GOOS == "windows" || runtime.GOOS == "plan9" {
-		t.Log("Skipping test: symlinks don't exist under Windows/Plan 9")
-		return
-	}
+	testenv.MustHaveSymlink(t)
 
-	tmpDir := TempDir()
+	tmpDir, err := ioutil.TempDir("", "TestMkdirAllWithSymlink-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer RemoveAll(tmpDir)
+
 	dir := tmpDir + "/dir"
-	err := Mkdir(dir, 0755)
+	err = Mkdir(dir, 0755)
 	if err != nil {
 		t.Fatalf("Mkdir %s: %s", dir, err)
 	}
-	defer RemoveAll(dir)
 
 	link := tmpDir + "/link"
 	err = Symlink("dir", link)
 	if err != nil {
 		t.Fatalf("Symlink %s: %s", link, err)
 	}
-	defer RemoveAll(link)
 
 	path := link + "/foo"
 	err = MkdirAll(path, 0755)
@@ -194,18 +198,25 @@ func TestMkdirAllWithSymlink(t *testing.T) {
 }
 
 func TestMkdirAllAtSlash(t *testing.T) {
-	if runtime.GOOS == "windows" || runtime.GOOS == "plan9" {
-		return
+	switch runtime.GOOS {
+	case "android", "plan9", "windows":
+		t.Skipf("skipping on %s", runtime.GOOS)
+	case "darwin":
+		switch runtime.GOARCH {
+		case "arm", "arm64":
+			t.Skipf("skipping on darwin/%s, mkdir returns EPERM", runtime.GOARCH)
+		}
 	}
 	RemoveAll("/_go_os_test")
-	err := MkdirAll("/_go_os_test/dir", 0777)
+	const dir = "/_go_os_test/dir"
+	err := MkdirAll(dir, 0777)
 	if err != nil {
 		pathErr, ok := err.(*PathError)
 		// common for users not to be able to write to /
-		if ok && pathErr.Err == syscall.EACCES {
-			return
+		if ok && (pathErr.Err == syscall.EACCES || isReadonlyError(pathErr.Err)) {
+			t.Skipf("could not create %v: %v", dir, err)
 		}
-		t.Fatalf(`MkdirAll "/_go_os_test/dir": %v`, err)
+		t.Fatalf(`MkdirAll "/_go_os_test/dir": %v, %s`, err, pathErr.Err)
 	}
 	RemoveAll("/_go_os_test")
 }

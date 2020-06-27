@@ -1,6 +1,5 @@
 ;; Machine Descriptions for R8C/M16C/M32C
-;; Copyright (C) 2005, 2007, 2008
-;; Free Software Foundation, Inc.
+;; Copyright (C) 2005-2017 Free Software Foundation, Inc.
 ;; Contributed by Red Hat.
 ;;
 ;; This file is part of GCC.
@@ -76,7 +75,7 @@
 )
 
 (define_insn "stzx_16"
-  [(set (match_operand:QI 0 "mrai_operand" "=R0w,R0w,R0w")
+  [(set (match_operand:QI 0 "register_operand" "=R0w,R0w,R0w")
 	(if_then_else:QI (eq (reg:CC FLG_REGNO) (const_int 0))
 			 (match_operand:QI 1 "const_int_operand" "i,i,0")
 			 (match_operand:QI 2 "const_int_operand" "i,0,i")))]
@@ -89,7 +88,7 @@
 )
 
 (define_insn "stzx_24_<mode>"
-  [(set (match_operand:QHI 0 "mrai_operand" "=RraSd,RraSd,RraSd")
+  [(set (match_operand:QHI 0 "mra_operand" "=RraSd,RraSd,RraSd")
 	(if_then_else:QHI (eq (reg:CC FLG_REGNO) (const_int 0))
 			 (match_operand:QHI 1 "const_int_operand" "i,i,0")
 			 (match_operand:QHI 2 "const_int_operand" "i,0,i")))]
@@ -152,14 +151,31 @@
 
 ;; These are the pre-split patterns for the conditional sets.
 
-(define_insn_and_split "cstore<mode>4"
+(define_expand "cstore<mode>4"
+  [(set (match_operand:QI 0 "register_operand")
+	(match_operator:QI 1 "ordered_comparison_operator"
+	 [(match_operand:QHPSI 2 "mra_operand")
+	  (match_operand:QHPSI 3 "mrai_operand")]))]
+  ""
+{
+  if (TARGET_A24)
+    {
+      rtx o = gen_reg_rtx (HImode);
+      emit_insn (gen_cstore<mode>4_24 (o, operands[1],
+				       operands[2], operands[3]));
+      emit_move_insn (operands[0], gen_lowpart (QImode, o));
+      DONE;
+    }
+})
+
+(define_insn_and_split "*cstore<mode>4_16"
   [(set (match_operand:QI 0 "register_operand" "=Rqi")
 	(match_operator:QI 1 "ordered_comparison_operator"
 	 [(match_operand:QHPSI 2 "mra_operand" "RraSd")
 	  (match_operand:QHPSI 3 "mrai_operand" "RraSdi")]))]
   "TARGET_A16"
   "#"
-  "reload_completed"
+  "&& reload_completed"
   [(set (reg:CC FLG_REGNO)
 	(compare (match_dup 2)
 		 (match_dup 3)))
@@ -176,7 +192,7 @@
 	  (match_operand:QHPSI 3 "mrai_operand" "RraSdi")]))]
   "TARGET_A24"
   "#"
-  "reload_completed"
+  "&& reload_completed"
   [(set (reg:CC FLG_REGNO)
 	(compare (match_dup 2)
 		 (match_dup 3)))
@@ -188,8 +204,8 @@
 
 (define_insn_and_split "movqicc_<code>_<mode>"
   [(set (match_operand:QI 0 "register_operand" "=R0w")
-        (if_then_else:QI (eqne_cond:QI (match_operand:QHPSI 1 "mra_operand" "RraSd")
-				       (match_operand:QHPSI 2 "mrai_operand" "RraSdi"))
+        (if_then_else:QI (eqne_cond (match_operand:QHPSI 1 "mra_operand" "RraSd")
+				    (match_operand:QHPSI 2 "mrai_operand" "RraSdi"))
 			  (match_operand:QI 3 "const_int_operand" "")
 			  (match_operand:QI 4 "const_int_operand" "")))]
   ""
@@ -199,7 +215,7 @@
 	(compare (match_dup 1)
 		 (match_dup 2)))
    (set (match_dup 0)
-        (if_then_else:QI (eqne_cond:QI (reg:CC FLG_REGNO) (const_int 0))
+        (if_then_else:QI (eqne_cond (reg:CC FLG_REGNO) (const_int 0))
 			 (match_dup 3)
 			 (match_dup 4)))]
   ""
@@ -208,10 +224,10 @@
 
 (define_insn_and_split "movhicc_<code>_<mode>"
   [(set (match_operand:HI 0 "register_operand" "=R0w")
-        (if_then_else:HI (eqne_cond:HI (match_operand:QHPSI 1 "mra_operand" "RraSd")
-				       (match_operand:QHPSI 2 "mrai_operand" "RraSdi"))
-			  (match_operand:QI 3 "const_int_operand" "")
-			  (match_operand:QI 4 "const_int_operand" "")))]
+        (if_then_else:HI (eqne_cond (match_operand:QHPSI 1 "mra_operand" "RraSd")
+				    (match_operand:QHPSI 2 "mrai_operand" "RraSdi"))
+			  (match_operand:HI 3 "const_int_operand" "")
+			  (match_operand:HI 4 "const_int_operand" "")))]
   "TARGET_A24"
   "#"
   "reload_completed"
@@ -219,7 +235,7 @@
 	(compare (match_dup 1)
 		 (match_dup 2)))
    (set (match_dup 0)
-        (if_then_else:HI (eqne_cond:HI (reg:CC FLG_REGNO) (const_int 0))
+        (if_then_else:HI (eqne_cond (reg:CC FLG_REGNO) (const_int 0))
 			 (match_dup 3)
 			 (match_dup 4)))]
   ""

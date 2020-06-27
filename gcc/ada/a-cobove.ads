@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 2004-2012, Free Software Foundation, Inc.         --
+--          Copyright (C) 2004-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- This specification is derived from the Ada Reference Manual for use with --
 -- GNAT. The copyright notice above, and the license provisions that follow --
@@ -33,7 +33,9 @@
 
 with Ada.Iterator_Interfaces;
 
+with Ada.Containers.Helpers;
 private with Ada.Streams;
+private with Ada.Finalization;
 
 generic
    type Index_Type is range <>;
@@ -42,6 +44,7 @@ generic
    with function "=" (Left, Right : Element_Type) return Boolean is <>;
 
 package Ada.Containers.Bounded_Vectors is
+   pragma Annotate (CodePeer, Skip_Analysis);
    pragma Pure;
    pragma Remote_Types;
 
@@ -363,7 +366,12 @@ private
    pragma Inline (Next);
    pragma Inline (Previous);
 
+   use Ada.Containers.Helpers;
+   package Implementation is new Generic_Implementation;
+   use Implementation;
+
    use Ada.Streams;
+   use Ada.Finalization;
 
    type Elements_Array is array (Count_Type range <>) of aliased Element_Type;
    function "=" (L, R : Elements_Array) return Boolean is abstract;
@@ -371,8 +379,7 @@ private
    type Vector (Capacity : Count_Type) is tagged record
       Elements : Elements_Array (1 .. Capacity) := (others => <>);
       Last     : Extended_Index := No_Index;
-      Busy     : Natural := 0;
-      Lock     : Natural := 0;
+      TC       : aliased Tamper_Counts;
    end record;
 
    procedure Write
@@ -407,8 +414,18 @@ private
 
    for Cursor'Read use Read;
 
+   subtype Reference_Control_Type is Implementation.Reference_Control_Type;
+   --  It is necessary to rename this here, so that the compiler can find it
+
    type Constant_Reference_Type
-      (Element : not null access constant Element_Type) is null record;
+     (Element : not null access constant Element_Type) is
+      record
+         Control : Reference_Control_Type :=
+           raise Program_Error with "uninitialized reference";
+         --  The RM says, "The default initialization of an object of
+         --  type Constant_Reference_Type or Reference_Type propagates
+         --  Program_Error."
+      end record;
 
    procedure Read
      (Stream : not null access Root_Stream_Type'Class;
@@ -422,8 +439,13 @@ private
 
    for Constant_Reference_Type'Write use Write;
 
-   type Reference_Type
-      (Element : not null access Element_Type) is null record;
+   type Reference_Type (Element : not null access Element_Type) is record
+      Control : Reference_Control_Type :=
+        raise Program_Error with "uninitialized reference";
+      --  The RM says, "The default initialization of an object of
+      --  type Constant_Reference_Type or Reference_Type propagates
+      --  Program_Error."
+   end record;
 
    procedure Read
      (Stream : not null access Root_Stream_Type'Class;
@@ -437,8 +459,48 @@ private
 
    for Reference_Type'Write use Write;
 
+   --  Three operations are used to optimize in the expansion of "for ... of"
+   --  loops: the Next(Cursor) procedure in the visible part, and the following
+   --  Pseudo_Reference and Get_Element_Access functions. See Exp_Ch5 for
+   --  details.
+
+   function Pseudo_Reference
+     (Container : aliased Vector'Class) return Reference_Control_Type;
+   pragma Inline (Pseudo_Reference);
+   --  Creates an object of type Reference_Control_Type pointing to the
+   --  container, and increments the Lock. Finalization of this object will
+   --  decrement the Lock.
+
+   type Element_Access is access all Element_Type with
+     Storage_Size => 0;
+
+   function Get_Element_Access
+     (Position : Cursor) return not null Element_Access;
+   --  Returns a pointer to the element designated by Position.
+
    Empty_Vector : constant Vector := (Capacity => 0, others => <>);
 
    No_Element : constant Cursor := Cursor'(null, Index_Type'First);
+
+   type Iterator is new Limited_Controlled and
+     Vector_Iterator_Interfaces.Reversible_Iterator with
+   record
+      Container : Vector_Access;
+      Index     : Index_Type'Base;
+   end record
+     with Disable_Controlled => not T_Check;
+
+   overriding procedure Finalize (Object : in out Iterator);
+
+   overriding function First (Object : Iterator) return Cursor;
+   overriding function Last  (Object : Iterator) return Cursor;
+
+   overriding function Next
+     (Object   : Iterator;
+      Position : Cursor) return Cursor;
+
+   overriding function Previous
+     (Object   : Iterator;
+      Position : Cursor) return Cursor;
 
 end Ada.Containers.Bounded_Vectors;

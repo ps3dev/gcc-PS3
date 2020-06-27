@@ -1,6 +1,6 @@
-// { dg-require-namedlocale "de_DE" }
+// { dg-require-namedlocale "de_DE.ISO8859-15" }
 
-// Copyright (C) 2011 Free Software Foundation
+// Copyright (C) 2011-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -19,6 +19,7 @@
 
 #include <locale>
 #include <ext/pod_char_traits.h>
+#include <testsuite_hooks.h>
 
 #define mychar __gnu_cxx::character<unsigned short, int>
 
@@ -52,12 +53,12 @@ namespace std
 
   template<>
   int
-  codecvt<mychar, char, mbstate_t>::do_encoding() const
+  codecvt<mychar, char, mbstate_t>::do_encoding() const throw()
   { return 0; }
 
   template<>
   bool
-  codecvt<mychar, char, mbstate_t>::do_always_noconv() const
+  codecvt<mychar, char, mbstate_t>::do_always_noconv() const throw()
   { return false; }
 
   template<>
@@ -69,7 +70,7 @@ namespace std
 
   template<>
   int
-  codecvt<mychar, char, mbstate_t>::do_max_length() const
+  codecvt<mychar, char, mbstate_t>::do_max_length() const throw()
   { return 4; }
 }
 
@@ -84,7 +85,7 @@ void test01()
   }
   {
     locale loc2(locale::classic(),
-		new codecvt_byname<mychar, char, mbstate_t>("de_DE"));
+		new codecvt_byname<mychar, char, mbstate_t>(ISO_8859(15,de_DE)));
   }
 }
 

@@ -1,6 +1,8 @@
 // { dg-options "-fwhole-program" }
+// { dg-additional-options "-static-libstdc++" { target *-*-mingw* } }
+// { dg-xfail-run-if "AIX operator new" { powerpc-ibm-aix* } }
 
-// Copyright (C) 2011 Free Software Foundation
+// Copyright (C) 2011-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -26,7 +28,7 @@ bool user_new_called;
 bool user_delete_called;
 
 void* operator new(std::size_t n)
-#ifndef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus < 201103L
   throw(std::bad_alloc)
 #endif
 {
@@ -41,7 +43,7 @@ void* operator new(std::size_t n)
 }
 
 void operator delete(void* p)
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
   noexcept
 #else
   throw()
@@ -55,10 +57,8 @@ void operator delete(void* p)
 // libstdc++/50594
 void test01()
 {
-  bool test __attribute__((unused)) = true;
-
   {
-    std::string s = "Hello World.";
+    std::string s = "Hello World, this is not a small string.";
   }
 
   VERIFY( user_new_called );

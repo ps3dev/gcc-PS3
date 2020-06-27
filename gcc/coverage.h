@@ -1,6 +1,5 @@
 /* coverage.h - Defines data exported from coverage.c
-   Copyright (C) 1998, 1999, 2000, 2001, 2003, 2004, 2005, 2007, 2008
-   Free Software Foundation, Inc.
+   Copyright (C) 1998-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -25,6 +24,7 @@ along with GCC; see the file COPYING3.  If not see
 
 extern void coverage_init (const char *);
 extern void coverage_finish (void);
+extern void coverage_remove_note_file (void);
 
 /* Start outputting coverage information for the current
    function.  */
@@ -33,8 +33,11 @@ extern int coverage_begin_function (unsigned, unsigned);
 /* Complete the coverage information for the current function.  */
 extern void coverage_end_function (unsigned, unsigned);
 
-/* Compute the control flow checksum for the current function.  */
-extern unsigned coverage_compute_cfg_checksum (void);
+/* Compute the control flow checksum for the function FN given as argument.  */
+extern unsigned coverage_compute_cfg_checksum (struct function *fn);
+
+/* Compute the profile id of function N.  */
+extern unsigned coverage_compute_profile_id (struct cgraph_node *n);
 
 /* Compute the line number checksum for the current function.  */
 extern unsigned coverage_compute_lineno_checksum (void);
@@ -54,5 +57,6 @@ extern gcov_type *get_coverage_counts (unsigned /*counter*/,
 				       const struct gcov_ctr_summary **);
 
 extern tree get_gcov_type (void);
+extern bool coverage_node_map_initialized_p (void);
 
 #endif

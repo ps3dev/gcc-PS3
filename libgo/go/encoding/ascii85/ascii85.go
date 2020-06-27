@@ -20,7 +20,7 @@ import (
 //
 // The encoding handles 4-byte chunks, using a special encoding
 // for the last fragment, so Encode is not appropriate for use on
-// individual blocks of a large data stream.  Use NewEncoder() instead.
+// individual blocks of a large data stream. Use NewEncoder() instead.
 //
 // Often, ascii85-encoded data is wrapped in <~ and ~> symbols.
 // Encode does not add these.
@@ -57,6 +57,7 @@ func Encode(dst, src []byte) int {
 		if v == 0 && len(src) >= 4 {
 			dst[0] = 'z'
 			dst = dst[1:]
+			src = src[4:]
 			n++
 			continue
 		}
@@ -84,7 +85,7 @@ func Encode(dst, src []byte) int {
 // MaxEncodedLen returns the maximum length of an encoding of n source bytes.
 func MaxEncodedLen(n int) int { return (n + 3) / 4 * 5 }
 
-// NewEncoder returns a new ascii85 stream encoder.  Data written to
+// NewEncoder returns a new ascii85 stream encoder. Data written to
 // the returned writer will be encoded and then written to w.
 // Ascii85 encodings operate in 32-bit blocks; when finished
 // writing, the caller must Close the returned encoder to flush any
@@ -248,7 +249,6 @@ type decoder struct {
 	err     error
 	readErr error
 	r       io.Reader
-	end     bool       // saw end of message
 	buf     [1024]byte // leftover input
 	nbuf    int
 	out     []byte // leftover decoded output
@@ -280,9 +280,21 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 				d.nbuf = copy(d.buf[0:], d.buf[nsrc:d.nbuf])
 				continue // copy out and return
 			}
+			if ndst == 0 && d.err == nil {
+				// Special case: input buffer is mostly filled with non-data bytes.
+				// Filter out such bytes to make room for more input.
+				off := 0
+				for i := 0; i < d.nbuf; i++ {
+					if d.buf[i] > ' ' {
+						d.buf[off] = d.buf[i]
+						off++
+					}
+				}
+				d.nbuf = off
+			}
 		}
 
-		// Out of input, out of decoded output.  Check errors.
+		// Out of input, out of decoded output. Check errors.
 		if d.err != nil {
 			return 0, d.err
 		}
@@ -295,5 +307,4 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 		nn, d.readErr = d.r.Read(d.buf[d.nbuf:])
 		d.nbuf += nn
 	}
-	panic("unreachable")
 }

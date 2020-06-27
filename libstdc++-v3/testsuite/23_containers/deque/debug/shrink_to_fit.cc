@@ -1,4 +1,4 @@
-// Copyright (C) 2011 Free Software Foundation, Inc.
+// Copyright (C) 2011-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -15,9 +15,8 @@
 // with this library; see the file COPYING3.  If not see
 // <http://www.gnu.org/licenses/>.
 //
+// { dg-do run { target c++11 xfail *-*-* } }
 // { dg-require-debug-mode "" }
-// { dg-options "-std=gnu++0x" }
-// { dg-do run { xfail *-*-* } }
 
 #include <deque>
 
@@ -25,7 +24,7 @@ void test01()
 {
   using std::deque;
   deque<int> d;
-  // Lets generate a hole at the begining of the deque:
+  // Let's generate a hole at the beginning of the deque:
   d.push_back(0);
   d.push_back(1);
   d.pop_front();

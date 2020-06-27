@@ -1,4 +1,5 @@
 ! { dg-do compile }
+! { dg-require-visibility "" }
 ! This tests that PR32760, in its various manifestations is fixed.
 !
 ! Contributed by Harald Anlauf <anlauf@gmx.de>
@@ -74,4 +75,3 @@ program testit
   print *, "in the main:", k
   call write(33)
 end program testit
-! { dg-final { cleanup-modules "gfcbug68 gfcbug68a m n" } }

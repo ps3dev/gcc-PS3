@@ -23,6 +23,8 @@ AC_CONFIG_HEADER(config.h)
 AC_CANONICAL_SYSTEM
 ACX_NONCANONICAL_TARGET
 
+AM_ENABLE_MULTILIB(, ..)
+
 target_alias=${target_alias-$host_alias}
 AC_SUBST(target_alias)
 
@@ -51,7 +53,7 @@ ACX_CHECK_PROG_VER([MAKEINFO], [makeinfo], [--version],
                    [4.[4-9]*|4.[1-9][0-9]*|[5-9]*|[1-9][0-9]*])
 AM_CONDITIONAL(BUILD_INFO, test $gcc_cv_prog_makeinfo_modern = "yes")
 
-ACX_BUGURL([http://gcc.gnu.org/bugs.html])
+ACX_BUGURL([https://gcc.gnu.org/bugs/])
 
 # Configure libtool
 AM_PROG_LIBTOOL
@@ -60,7 +62,6 @@ AC_SUBST(enable_shared)
 AC_SUBST(enable_static)
 
 AM_MAINTAINER_MODE
-AM_ENABLE_MULTILIB(, ..)
 
 AC_LANG_C
 # The same as in boehm-gc and libstdc++. Have to borrow it from there.
@@ -113,6 +114,7 @@ AC_SUBST(toolexecdir)
 AC_SUBST(toolexeclibdir)
 
 AC_CHECK_HEADERS(fenv.h langinfo.h locale.h wchar.h wctype.h limits.h ctype.h printf.h errno.h)
+LIBQUAD_CHECK_MATH_H_SIGNGAM
 
 # If available, sqrtl and cbrtl speed up the calculation -
 # but they are not required
@@ -169,7 +171,7 @@ AS_HELP_STRING([--disable-symvers],
   [disable symbol versioning for libquadmath]),
 quadmath_use_symver=$enableval,
 quadmath_use_symver=yes)
-if test "x$quadmath_use_symver" = xyes; then
+if test "x$quadmath_use_symver" != xno; then
   if test x$gcc_no_link = xyes; then
     # If we cannot link, we cannot build shared libraries, so do not use
     # symbol versioning.
@@ -362,6 +364,8 @@ AS_HELP_STRING([--enable-generated-files-in-srcdir],
 AC_MSG_RESULT($enable_generated_files_in_srcdir)
 AM_CONDITIONAL(GENINSRC, test "$enable_generated_files_in_srcdir" = yes)
 
+# Determine what GCC version number to use in filesystem paths.
+GCC_BASE_VER
 
 AC_CONFIG_FILES(Makefile)
 AC_OUTPUT

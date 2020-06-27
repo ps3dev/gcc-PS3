@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1997-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1997-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -47,8 +47,6 @@ with Sem_Aux;  use Sem_Aux;
 with Sem_Cat;  use Sem_Cat;
 with Sem_Ch7;  use Sem_Ch7;
 with Sem_Ch8;  use Sem_Ch8;
-with Sem_Res;  use Sem_Res;
-with Sem_Type; use Sem_Type;
 with Sem_Util; use Sem_Util;
 with Sinfo;    use Sinfo;
 with Sinput;   use Sinput;
@@ -93,16 +91,16 @@ package body Sem_Elab is
      Table_Increment      => 100,
      Table_Name           => "Elab_Visited");
 
-   --  This table stores calls to Check_Internal_Call that are delayed
-   --  until all generics are instantiated, and in particular that all
-   --  generic bodies have been inserted. We need to delay, because we
-   --  need to be able to look through the inserted bodies.
+   --  This table stores calls to Check_Internal_Call that are delayed until
+   --  all generics are instantiated and in particular until after all generic
+   --  bodies have been inserted. We need to delay, because we need to be able
+   --  to look through the inserted bodies.
 
    type Delay_Element is record
       N : Node_Id;
-      --  The parameter N from the call to Check_Internal_Call. Note that
-      --  this node may get rewritten over the delay period by expansion
-      --  in the call case (but not in the instantiation case).
+      --  The parameter N from the call to Check_Internal_Call. Note that this
+      --  node may get rewritten over the delay period by expansion in the call
+      --  case (but not in the instantiation case).
 
       E : Entity_Id;
       --  The parameter E from the call to Check_Internal_Call
@@ -111,8 +109,11 @@ package body Sem_Elab is
       --  The parameter Orig_Ent from the call to Check_Internal_Call
 
       Curscop : Entity_Id;
-      --  The current scope of the call. This is restored when we complete
-      --  the delayed call, so that we do this in the right scope.
+      --  The current scope of the call. This is restored when we complete the
+      --  delayed call, so that we do this in the right scope.
+
+      From_SPARK_Code : Boolean;
+      --  Save indication of whether this call is under SPARK_Mode => On
 
       From_Elab_Code : Boolean;
       --  Save indication of whether this call is from elaboration code
@@ -130,7 +131,7 @@ package body Sem_Elab is
      Table_Name           => "Delay_Check");
 
    C_Scope : Entity_Id;
-   --  Top level scope of current scope. Compute this only once at the outer
+   --  Top-level scope of current scope. Compute this only once at the outer
    --  level, i.e. for a call to Check_Elab_Call from outside this unit.
 
    Outer_Level_Sloc : Source_Ptr;
@@ -153,7 +154,7 @@ package body Sem_Elab is
    --  This is set True till the compilation is complete, including the
    --  insertion of all instance bodies. Then when Check_Elab_Calls is called,
    --  the delay table is used to make the delayed calls and this flag is reset
-   --  to False, so that the calls are processed
+   --  to False, so that the calls are processed.
 
    -----------------------
    -- Local Subprograms --
@@ -180,16 +181,31 @@ package body Sem_Elab is
       Inter_Unit_Only   : Boolean;
       Generate_Warnings : Boolean := True;
       In_Init_Proc      : Boolean := False);
-   --  This is the internal recursive routine that is called to check for a
+   --  This is the internal recursive routine that is called to check for
    --  possible elaboration error. The argument N is a subprogram call or
-   --  generic instantiation to be checked, and E is the entity of the called
-   --  subprogram, or instantiated generic unit. The flag Outer_Scope is the
-   --  outer level scope for the original call. Inter_Unit_Only is set if the
-   --  call is only to be checked in the case where it is to another unit (and
-   --  skipped if within a unit). Generate_Warnings is set to False to suppress
-   --  warning messages about missing pragma Elaborate_All's. These messages
-   --  are not wanted for inner calls in the dynamic model. Flag In_Init_Proc
-   --  should be set whenever the current context is a type init proc.
+   --  generic instantiation, or 'Access attribute reference to be checked, and
+   --  E is the entity of the called subprogram, or instantiated generic unit,
+   --  or subprogram referenced by 'Access.
+   --
+   --  In SPARK mode, N can also be a variable reference, since in SPARK this
+   --  also triggers a requirement for Elaborate_All, and in this case E is the
+   --  entity being referenced.
+   --
+   --  Outer_Scope is the outer level scope for the original reference.
+   --  Inter_Unit_Only is set if the call is only to be checked in the
+   --  case where it is to another unit (and skipped if within a unit).
+   --  Generate_Warnings is set to False to suppress warning messages about
+   --  missing pragma Elaborate_All's. These messages are not wanted for
+   --  inner calls in the dynamic model. Note that an instance of the Access
+   --  attribute applied to a subprogram also generates a call to this
+   --  procedure (since the referenced subprogram may be called later
+   --  indirectly). Flag In_Init_Proc should be set whenever the current
+   --  context is a type init proc.
+   --
+   --  Note: this might better be called Check_A_Reference to recognize the
+   --  variable case for SPARK, but we prefer to retain the historical name
+   --  since in practice this is mostly about checking calls for the possible
+   --  occurrence of an access-before-elaboration exception.
 
    procedure Check_Bad_Instantiation (N : Node_Id);
    --  N is a node for an instantiation (if called with any other node kind,
@@ -253,14 +269,21 @@ package body Sem_Elab is
    --  or instantiation node for which the check code is required. C is the
    --  test whose failure triggers the raise.
 
+   function Is_Call_Of_Generic_Formal (N : Node_Id) return Boolean;
+   --  Returns True if node N is a call to a generic formal subprogram
+
    function Is_Finalization_Procedure (Id : Entity_Id) return Boolean;
    --  Determine whether entity Id denotes a [Deep_]Finalize procedure
 
-   procedure Output_Calls (N : Node_Id);
+   procedure Output_Calls
+     (N               : Node_Id;
+      Check_Elab_Flag : Boolean);
    --  Outputs chain of calls stored in the Elab_Call table. The caller has
    --  already generated the main warning message, so the warnings generated
    --  are all continuation messages. The argument is the call node at which
-   --  the messages are to be placed.
+   --  the messages are to be placed. When Check_Elab_Flag is set, calls are
+   --  enumerated only when flag Elab_Warning is set for the dynamic case or
+   --  when flag Elab_Info_Messages is set for the static case.
 
    function Same_Elaboration_Scope (Scop1, Scop2 : Entity_Id) return Boolean;
    --  Given two scopes, determine whether they are the same scope from an
@@ -270,11 +293,21 @@ package body Sem_Elab is
    --  On entry C_Scope is set to some scope. On return, C_Scope is reset
    --  to be the enclosing compilation unit of this scope.
 
+   function Get_Referenced_Ent (N : Node_Id) return Entity_Id;
+   --  N is either a function or procedure call or an access attribute that
+   --  references a subprogram. This call retrieves the relevant entity. If
+   --  this is a call to a protected subprogram, the entity is a selected
+   --  component. The callable entity may be absent, in which case Empty is
+   --  returned. This happens with non-analyzed calls in nested generics.
+   --
+   --  If SPARK_Mode is On, then N can also be a reference to an E_Variable
+   --  entity, in which case, the value returned is simply this entity.
+
    procedure Set_Elaboration_Constraint
     (Call : Node_Id;
      Subp : Entity_Id;
      Scop : Entity_Id);
-   --  The current unit U may depend semantically on some unit P which is not
+   --  The current unit U may depend semantically on some unit P that is not
    --  in the current context. If there is an elaboration call that reaches P,
    --  we need to indicate that P requires an Elaborate_All, but this is not
    --  effective in U's ali file, if there is no with_clause for P. In this
@@ -301,9 +334,9 @@ package body Sem_Elab is
    procedure Supply_Bodies (N : Node_Id);
    --  Given a node, N, that is either a subprogram declaration or a package
    --  declaration, this procedure supplies dummy bodies for the subprogram
-   --  or for all subprograms in the package. If the given node is not one
-   --  of these two possibilities, then Supply_Bodies does nothing. The
-   --  dummy body contains a single Raise statement.
+   --  or for all subprograms in the package. If the given node is not one of
+   --  these two possibilities, then Supply_Bodies does nothing. The dummy body
+   --  contains a single Raise statement.
 
    procedure Supply_Bodies (L : List_Id);
    --  Calls Supply_Bodies for all elements of the given list L
@@ -312,11 +345,13 @@ package body Sem_Elab is
    --  Given two scopes E1 and E2, returns True if E1 is equal to E2, or is one
    --  of its contained scopes, False otherwise.
 
-   function Within_Elaborate_All (E : Entity_Id) return Boolean;
-   --  Before emitting a warning on a scope E for a missing elaborate_all,
-   --  check whether E may be in the context of a directly visible unit U to
-   --  which the pragma applies. This prevents spurious warnings when the
-   --  called entity is renamed within U.
+   function Within_Elaborate_All
+     (Unit : Unit_Number_Type;
+      E    : Entity_Id) return Boolean;
+   --  Return True if we are within the scope of an Elaborate_All for E, or if
+   --  we are within the scope of an Elaborate_All for some other unit U, and U
+   --  with's E. This prevents spurious warnings when the called entity is
+   --  renamed within U, or in case of generic instances.
 
    --------------------------------------
    -- Activate_Elaborate_All_Desirable --
@@ -414,6 +449,15 @@ package body Sem_Elab is
          return;
       end if;
 
+      --  If an instance of a generic package contains a controlled object (so
+      --  we're calling Initialize at elaboration time), and the instance is in
+      --  a package body P that says "with P;", then we need to return without
+      --  adding "pragma Elaborate_All (P);" to P.
+
+      if U = Main_Unit_Entity then
+         return;
+      end if;
+
       Itm := First (CI);
       while Present (Itm) loop
          if Nkind (Itm) = N_With_Clause then
@@ -463,10 +507,8 @@ package body Sem_Elab is
       end if;
 
       --  Here if we do not find with clause on spec or body. We just ignore
-      --  this case, it means that the elaboration involves some other unit
+      --  this case; it means that the elaboration involves some other unit
       --  than the unit being compiled, and will be caught elsewhere.
-
-      null;
    end Activate_Elaborate_All_Desirable;
 
    ------------------
@@ -481,18 +523,160 @@ package body Sem_Elab is
       Generate_Warnings : Boolean := True;
       In_Init_Proc      : Boolean := False)
    is
-      Loc  : constant Source_Ptr := Sloc (N);
-      Ent  : Entity_Id;
-      Decl : Node_Id;
+      Access_Case : constant Boolean := Nkind (N) = N_Attribute_Reference;
+      --  Indicates if we have Access attribute case
+
+      function Call_To_Instance_From_Outside (Id : Entity_Id) return Boolean;
+      --  True if we're calling an instance of a generic subprogram, or a
+      --  subprogram in an instance of a generic package, and the call is
+      --  outside that instance.
+
+      procedure Elab_Warning
+        (Msg_D : String;
+         Msg_S : String;
+         Ent   : Node_Or_Entity_Id);
+       --  Generate a call to Error_Msg_NE with parameters Msg_D or Msg_S (for
+       --  dynamic or static elaboration model), N and Ent. Msg_D is a real
+       --  warning (output if Msg_D is non-null and Elab_Warnings is set),
+       --  Msg_S is an info message (output if Elab_Info_Messages is set).
+
+      function Find_W_Scope return Entity_Id;
+      --  Find top-level scope for called entity (not following renamings
+      --  or derivations). This is where the Elaborate_All will go if it is
+      --  needed. We start with the called entity, except in the case of an
+      --  initialization procedure outside the current package, where the init
+      --  proc is in the root package, and we start from the entity of the name
+      --  in the call.
+
+      -----------------------------------
+      -- Call_To_Instance_From_Outside --
+      -----------------------------------
+
+      function Call_To_Instance_From_Outside (Id : Entity_Id) return Boolean is
+         Scop : Entity_Id := Id;
+
+      begin
+         loop
+            if Scop = Standard_Standard then
+               return False;
+            end if;
+
+            if Is_Generic_Instance (Scop) then
+               return not In_Open_Scopes (Scop);
+            end if;
+
+            Scop := Scope (Scop);
+         end loop;
+      end Call_To_Instance_From_Outside;
+
+      ------------------
+      -- Elab_Warning --
+      ------------------
+
+      procedure Elab_Warning
+        (Msg_D : String;
+         Msg_S : String;
+         Ent   : Node_Or_Entity_Id)
+      is
+      begin
+         --  Dynamic elaboration checks, real warning
+
+         if Dynamic_Elaboration_Checks then
+            if not Access_Case then
+               if Msg_D /= "" and then Elab_Warnings then
+                  Error_Msg_NE (Msg_D, N, Ent);
+               end if;
+
+            --  In the access case emit first warning message as well,
+            --  otherwise list of calls will appear as errors.
+
+            elsif Elab_Warnings then
+               Error_Msg_NE (Msg_S, N, Ent);
+            end if;
+
+         --  Static elaboration checks, info message
+
+         else
+            if Elab_Info_Messages then
+               Error_Msg_NE (Msg_S, N, Ent);
+            end if;
+         end if;
+      end Elab_Warning;
+
+      ------------------
+      -- Find_W_Scope --
+      ------------------
+
+      function Find_W_Scope return Entity_Id is
+         Refed_Ent : constant Entity_Id := Get_Referenced_Ent (N);
+         W_Scope   : Entity_Id;
+
+      begin
+         if Is_Init_Proc (Refed_Ent)
+           and then not In_Same_Extended_Unit (N, Refed_Ent)
+         then
+            W_Scope := Scope (Refed_Ent);
+         else
+            W_Scope := E;
+         end if;
+
+         --  Now loop through scopes to get to the enclosing compilation unit
+
+         while not Is_Compilation_Unit (W_Scope) loop
+            W_Scope := Scope (W_Scope);
+         end loop;
+
+         return W_Scope;
+      end Find_W_Scope;
+
+      --  Locals
+
+      Variable_Case : constant Boolean :=
+                        Nkind (N) in N_Has_Entity
+                          and then Present (Entity (N))
+                          and then Ekind (Entity (N)) = E_Variable;
+      --  Indicates if we have variable reference case
+
+      Loc : constant Source_Ptr := Sloc (N);
+
+      Inst_Case : constant Boolean := Nkind (N) in N_Generic_Instantiation;
+      --  Indicates if we have instantiation case
+
+      Ent                  : Entity_Id;
+      Callee_Unit_Internal : Boolean;
+      Caller_Unit_Internal : Boolean;
+      Decl                 : Node_Id;
+      Inst_Callee          : Source_Ptr;
+      Inst_Caller          : Source_Ptr;
+      Unit_Callee          : Unit_Number_Type;
+      Unit_Caller          : Unit_Number_Type;
+
+      Body_Acts_As_Spec : Boolean;
+      --  Set to true if call is to body acting as spec (no separate spec)
+
+      Cunit_SC : Boolean := False;
+      --  Set to suppress dynamic elaboration checks where one of the
+      --  enclosing scopes has Elaboration_Checks_Suppressed set, or else
+      --  if a pragma Elaborate[_All] applies to that scope, in which case
+      --  warnings on the scope are also suppressed. For the internal case,
+      --  we ignore this flag.
 
       E_Scope : Entity_Id;
-      --  Top level scope of entity for called subprogram. This value includes
+      --  Top-level scope of entity for called subprogram. This value includes
       --  following renamings and derivations, so this scope can be in a
       --  non-visible unit. This is the scope that is to be investigated to
       --  see whether an elaboration check is required.
 
-      W_Scope : Entity_Id;
-      --  Top level scope of directly called entity for subprogram. This
+      Is_DIC_Proc : Boolean := False;
+      --  Flag set when the call denotes the Default_Initial_Condition
+      --  procedure of a private type that wraps a nontrivial assertion
+      --  expression.
+
+      Issue_In_SPARK : Boolean;
+      --  Flag set when a source entity is called during elaboration in SPARK
+
+      W_Scope : constant Entity_Id := Find_W_Scope;
+      --  Top-level scope of directly called entity for subprogram. This
       --  differs from E_Scope in the case where renamings or derivations
       --  are involved, since it does not follow these links. W_Scope is
       --  generally in a visible unit, and it is this scope that may require
@@ -503,79 +687,90 @@ package body Sem_Elab is
       --  on this intermediate package. These special cases are handled in
       --  Set_Elaboration_Constraint.
 
-      Body_Acts_As_Spec : Boolean;
-      --  Set to true if call is to body acting as spec (no separate spec)
-
-      Inst_Case : constant Boolean := Nkind (N) in N_Generic_Instantiation;
-      --  Indicates if we have instantiation case
-
-      Caller_Unit_Internal : Boolean;
-      Callee_Unit_Internal : Boolean;
-
-      Inst_Caller : Source_Ptr;
-      Inst_Callee : Source_Ptr;
-
-      Unit_Caller : Unit_Number_Type;
-      Unit_Callee : Unit_Number_Type;
-
-      Cunit_SC : Boolean := False;
-      --  Set to suppress dynamic elaboration checks where one of the
-      --  enclosing scopes has Elaboration_Checks_Suppressed set, or else
-      --  if a pragma Elaborate (_All) applies to that scope, in which case
-      --  warnings on the scope are also suppressed. For the internal case,
-      --  we ignore this flag.
+   --  Start of processing for Check_A_Call
 
    begin
       --  If the call is known to be within a local Suppress Elaboration
-      --  pragma, nothing to check. This can happen in task bodies.
+      --  pragma, nothing to check. This can happen in task bodies. But
+      --  we ignore this for a call to a generic formal.
 
-      if (Nkind (N) = N_Function_Call
-           or else Nkind (N) = N_Procedure_Call_Statement)
+      if Nkind (N) in N_Subprogram_Call
         and then No_Elaboration_Check (N)
+        and then not Is_Call_Of_Generic_Formal (N)
       then
          return;
       end if;
 
-      --  Go to parent for derived subprogram, or to original subprogram in the
-      --  case of a renaming (Alias covers both these cases).
+      --  If this is a rewrite of a Valid_Scalars attribute, then nothing to
+      --  check, we don't mind in this case if the call occurs before the body
+      --  since this is all generated code.
+
+      if Nkind (Original_Node (N)) = N_Attribute_Reference
+        and then Attribute_Name (Original_Node (N)) = Name_Valid_Scalars
+      then
+         return;
+      end if;
+
+      --  Intrinsics such as instances of Unchecked_Deallocation do not have
+      --  any body, so elaboration checking is not needed, and would be wrong.
+
+      if Is_Intrinsic_Subprogram (E) then
+         return;
+      end if;
+
+      --  Proceed with check
 
       Ent := E;
-      loop
-         if (Suppress_Elaboration_Warnings (Ent)
-              or else Elaboration_Checks_Suppressed (Ent))
-           and then (Inst_Case or else No (Alias (Ent)))
-         then
-            return;
-         end if;
 
-         --  Nothing to do for imported entities
+      --  For a variable reference, just set Body_Acts_As_Spec to False
 
-         if Is_Imported (Ent) then
-            return;
-         end if;
-
-         exit when Inst_Case or else No (Alias (Ent));
-         Ent := Alias (Ent);
-      end loop;
-
-      Decl := Unit_Declaration_Node (Ent);
-
-      if Nkind (Decl) = N_Subprogram_Body then
-         Body_Acts_As_Spec := True;
-
-      elsif Nkind (Decl) = N_Subprogram_Declaration
-        or else Nkind (Decl) = N_Subprogram_Body_Stub
-        or else Inst_Case
-      then
+      if Variable_Case then
          Body_Acts_As_Spec := False;
 
-      --  If we have none of an instantiation, subprogram body or
-      --  subprogram declaration, then it is not a case that we want
-      --  to check. (One case is a call to a generic formal subprogram,
-      --  where we do not want the check in the template).
+      --  Additional checks for all other cases
 
       else
-         return;
+         --  Go to parent for derived subprogram, or to original subprogram in
+         --  the case of a renaming (Alias covers both these cases).
+
+         loop
+            if (Suppress_Elaboration_Warnings (Ent)
+                or else Elaboration_Checks_Suppressed (Ent))
+              and then (Inst_Case or else No (Alias (Ent)))
+            then
+               return;
+            end if;
+
+            --  Nothing to do for imported entities
+
+            if Is_Imported (Ent) then
+               return;
+            end if;
+
+            exit when Inst_Case or else No (Alias (Ent));
+            Ent := Alias (Ent);
+         end loop;
+
+         Decl := Unit_Declaration_Node (Ent);
+
+         if Nkind (Decl) = N_Subprogram_Body then
+            Body_Acts_As_Spec := True;
+
+         elsif Nkind_In (Decl, N_Subprogram_Declaration,
+                               N_Subprogram_Body_Stub)
+           or else Inst_Case
+         then
+            Body_Acts_As_Spec := False;
+
+         --  If we have none of an instantiation, subprogram body or subprogram
+         --  declaration, or in the SPARK case, a variable reference, then
+         --  it is not a case that we want to check. (One case is a call to a
+         --  generic formal subprogram, where we do not want the check in the
+         --  template).
+
+         else
+            return;
+         end if;
       end if;
 
       E_Scope := Ent;
@@ -590,19 +785,13 @@ package body Sem_Elab is
 
          exit when Is_Compilation_Unit (E_Scope)
            and then (Is_Child_Unit (E_Scope)
-                       or else Scope (E_Scope) = Standard_Standard);
+                      or else Scope (E_Scope) = Standard_Standard);
 
-         --  If we did not find a compilation unit, other than standard,
-         --  then nothing to check (happens in some instantiation cases)
+         pragma Assert (E_Scope /= Standard_Standard);
 
-         if E_Scope = Standard_Standard then
-            return;
+         --  Move up a scope looking for compilation unit
 
-         --  Otherwise move up a scope looking for compilation unit
-
-         else
-            E_Scope := Scope (E_Scope);
-         end if;
+         E_Scope := Scope (E_Scope);
       end loop;
 
       --  No checks needed for pure or preelaborated compilation units
@@ -618,394 +807,418 @@ package body Sem_Elab is
       --  However, this assumption is only valid if we are in static mode.
 
       if not Dynamic_Elaboration_Checks
-        and then Instantiation_Depth (Sloc (Ent)) >
-                 Instantiation_Depth (Sloc (N))
+        and then
+          Instantiation_Depth (Sloc (Ent)) > Instantiation_Depth (Sloc (N))
       then
          return;
       end if;
 
       --  Do not give a warning for a package with no body
 
-      if Ekind (Ent) = E_Generic_Package
-        and then not Has_Generic_Body (N)
-      then
+      if Ekind (Ent) = E_Generic_Package and then not Has_Generic_Body (N) then
+         return;
+      end if;
+
+      --  Case of entity is in same unit as call or instantiation. In the
+      --  instantiation case, W_Scope may be different from E_Scope; we want
+      --  the unit in which the instantiation occurs, since we're analyzing
+      --  based on the expansion.
+
+      if W_Scope = C_Scope then
+         if not Inter_Unit_Only then
+            Check_Internal_Call (N, Ent, Outer_Scope, E);
+         end if;
+
          return;
       end if;
 
       --  Case of entity is not in current unit (i.e. with'ed unit case)
 
-      if E_Scope /= C_Scope then
+      --  We are only interested in such calls if the outer call was from
+      --  elaboration code, or if we are in Dynamic_Elaboration_Checks mode.
 
-         --  We are only interested in such calls if the outer call was from
-         --  elaboration code, or if we are in Dynamic_Elaboration_Checks mode.
+      if not From_Elab_Code and then not Dynamic_Elaboration_Checks then
+         return;
+      end if;
 
-         if not From_Elab_Code and then not Dynamic_Elaboration_Checks then
-            return;
-         end if;
+      --  Nothing to do if some scope said that no checks were required
 
-         --  Nothing to do if some scope said that no checks were required
+      if Cunit_SC then
+         return;
+      end if;
 
-         if Cunit_SC then
-            return;
-         end if;
+      --  Nothing to do for a generic instance, because a call to an instance
+      --  cannot fail the elaboration check, because the body of the instance
+      --  is always elaborated immediately after the spec.
 
-         --  Nothing to do for a generic instance, because in this case the
-         --  checking was at the point of instantiation of the generic However,
-         --  this shortcut is only applicable in static mode.
+      if Call_To_Instance_From_Outside (Ent) then
+         return;
+      end if;
 
-         if Is_Generic_Instance (Ent) and not Dynamic_Elaboration_Checks then
-            return;
-         end if;
+      --  Nothing to do if subprogram with no separate spec. However, a call
+      --  to Deep_Initialize may result in a call to a user-defined Initialize
+      --  procedure, which imposes a body dependency. This happens only if the
+      --  type is controlled and the Initialize procedure is not inherited.
 
-         --  Nothing to do if subprogram with no separate spec. However, a
-         --  call to Deep_Initialize may result in a call to a user-defined
-         --  Initialize procedure, which imposes a body dependency. This
-         --  happens only if the type is controlled and the Initialize
-         --  procedure is not inherited.
+      if Body_Acts_As_Spec then
+         if Is_TSS (Ent, TSS_Deep_Initialize) then
+            declare
+               Typ  : constant Entity_Id := Etype (First_Formal (Ent));
+               Init : Entity_Id;
 
-         if Body_Acts_As_Spec then
-            if Is_TSS (Ent, TSS_Deep_Initialize) then
-               declare
-                  Typ  : constant Entity_Id := Etype (First_Formal (Ent));
-                  Init : Entity_Id;
+            begin
+               if not Is_Controlled (Typ) then
+                  return;
+               else
+                  Init := Find_Prim_Op (Typ, Name_Initialize);
 
-               begin
-                  if not Is_Controlled (Typ) then
-                     return;
+                  if Comes_From_Source (Init) then
+                     Ent := Init;
                   else
-                     Init := Find_Prim_Op (Typ, Name_Initialize);
-
-                     if Comes_From_Source (Init) then
-                        Ent := Init;
-                     else
-                        return;
-                     end if;
+                     return;
                   end if;
-               end;
+               end if;
+            end;
 
-            else
-               return;
-            end if;
-         end if;
-
-         --  Check cases of internal units
-
-         Callee_Unit_Internal :=
-           Is_Internal_File_Name
-             (Unit_File_Name (Get_Source_Unit (E_Scope)));
-
-         --  Do not give a warning if the with'ed unit is internal
-         --  and this is the generic instantiation case (this saves a
-         --  lot of hassle dealing with the Text_IO special child units)
-
-         if Callee_Unit_Internal and Inst_Case then
-            return;
-         end if;
-
-         if C_Scope = Standard_Standard then
-            Caller_Unit_Internal := False;
          else
-            Caller_Unit_Internal :=
-              Is_Internal_File_Name
-                (Unit_File_Name (Get_Source_Unit (C_Scope)));
+            return;
          end if;
+      end if;
 
-         --  Do not give a warning if the with'ed unit is internal
-         --  and the caller is not internal (since the binder always
-         --  elaborates internal units first).
+      --  Check cases of internal units
 
-         if Callee_Unit_Internal and (not Caller_Unit_Internal) then
+      Callee_Unit_Internal :=
+        Is_Internal_File_Name (Unit_File_Name (Get_Source_Unit (E_Scope)));
+
+      --  Do not give a warning if the with'ed unit is internal and this is
+      --  the generic instantiation case (this saves a lot of hassle dealing
+      --  with the Text_IO special child units)
+
+      if Callee_Unit_Internal and Inst_Case then
+         return;
+      end if;
+
+      if C_Scope = Standard_Standard then
+         Caller_Unit_Internal := False;
+      else
+         Caller_Unit_Internal :=
+           Is_Internal_File_Name (Unit_File_Name (Get_Source_Unit (C_Scope)));
+      end if;
+
+      --  Do not give a warning if the with'ed unit is internal and the
+      --  caller is not internal (since the binder always elaborates
+      --  internal units first).
+
+      if Callee_Unit_Internal and (not Caller_Unit_Internal) then
+         return;
+      end if;
+
+      --  For now, if debug flag -gnatdE is not set, do no checking for
+      --  one internal unit withing another. This fixes the problem with
+      --  the sgi build and storage errors. To be resolved later ???
+
+      if (Callee_Unit_Internal and Caller_Unit_Internal)
+        and not Debug_Flag_EE
+      then
+         return;
+      end if;
+
+      if Is_TSS (E, TSS_Deep_Initialize) then
+         Ent := E;
+      end if;
+
+      --  If the call is in an instance, and the called entity is not
+      --  defined in the same instance, then the elaboration issue focuses
+      --  around the unit containing the template, it is this unit that
+      --  requires an Elaborate_All.
+
+      --  However, if we are doing dynamic elaboration, we need to chase the
+      --  call in the usual manner.
+
+      --  We also need to chase the call in the usual manner if it is a call
+      --  to a generic formal parameter, since that case was not handled as
+      --  part of the processing of the template.
+
+      Inst_Caller := Instantiation (Get_Source_File_Index (Sloc (N)));
+      Inst_Callee := Instantiation (Get_Source_File_Index (Sloc (Ent)));
+
+      if Inst_Caller = No_Location then
+         Unit_Caller := No_Unit;
+      else
+         Unit_Caller := Get_Source_Unit (N);
+      end if;
+
+      if Inst_Callee = No_Location then
+         Unit_Callee := No_Unit;
+      else
+         Unit_Callee := Get_Source_Unit (Ent);
+      end if;
+
+      if Unit_Caller /= No_Unit
+        and then Unit_Callee /= Unit_Caller
+        and then not Dynamic_Elaboration_Checks
+        and then not Is_Call_Of_Generic_Formal (N)
+      then
+         E_Scope := Spec_Entity (Cunit_Entity (Unit_Caller));
+
+         --  If we don't get a spec entity, just ignore call. Not quite
+         --  clear why this check is necessary. ???
+
+         if No (E_Scope) then
             return;
          end if;
 
-         --  For now, if debug flag -gnatdE is not set, do no checking for
-         --  one internal unit withing another. This fixes the problem with
-         --  the sgi build and storage errors. To be resolved later ???
+         --  Otherwise step to enclosing compilation unit
 
-         if (Callee_Unit_Internal and Caller_Unit_Internal)
-            and then not Debug_Flag_EE
+         while not Is_Compilation_Unit (E_Scope) loop
+            E_Scope := Scope (E_Scope);
+         end loop;
+
+      --  For the case where N is not an instance, and is not a call within
+      --  instance to other than a generic formal, we recompute E_Scope
+      --  for the error message, since we do NOT want to go to the unit
+      --  that has the ultimate declaration in the case of renaming and
+      --  derivation and we also want to go to the generic unit in the
+      --  case of an instance, and no further.
+
+      else
+         --  Loop to carefully follow renamings and derivations one step
+         --  outside the current unit, but not further.
+
+         if not (Inst_Case or Variable_Case)
+           and then Present (Alias (Ent))
          then
-            return;
-         end if;
-
-         if Is_TSS (E, TSS_Deep_Initialize) then
-            Ent := E;
-         end if;
-
-         --  If the call is in an instance, and the called entity is not
-         --  defined in the same instance, then the elaboration issue
-         --  focuses around the unit containing the template, it is
-         --  this unit which requires an Elaborate_All.
-
-         --  However, if we are doing dynamic elaboration, we need to
-         --  chase the call in the usual manner.
-
-         --  We do not handle the case of calling a generic formal correctly
-         --  in the static case. See test 4703-004 to explore this gap ???
-
-         Inst_Caller := Instantiation (Get_Source_File_Index (Sloc (N)));
-         Inst_Callee := Instantiation (Get_Source_File_Index (Sloc (Ent)));
-
-         if Inst_Caller = No_Location then
-            Unit_Caller := No_Unit;
+            E_Scope := Alias (Ent);
          else
-            Unit_Caller := Get_Source_Unit (N);
+            E_Scope := Ent;
          end if;
 
-         if Inst_Callee = No_Location then
-            Unit_Callee := No_Unit;
-         else
-            Unit_Callee := Get_Source_Unit (Ent);
-         end if;
-
-         if Unit_Caller /= No_Unit
-           and then Unit_Callee /= Unit_Caller
-           and then not Dynamic_Elaboration_Checks
-         then
-            E_Scope := Spec_Entity (Cunit_Entity (Unit_Caller));
-
-            --  If we don't get a spec entity, just ignore call. Not quite
-            --  clear why this check is necessary. ???
-
-            if No (E_Scope) then
-               return;
-            end if;
-
-            --  Otherwise step to enclosing compilation unit
-
+         loop
             while not Is_Compilation_Unit (E_Scope) loop
                E_Scope := Scope (E_Scope);
             end loop;
 
-         --  For the case N is not an instance, or a call within instance, we
-         --  recompute E_Scope for the error message, since we do NOT want to
-         --  go to the unit which has the ultimate declaration in the case of
-         --  renaming and derivation and we also want to go to the generic unit
-         --  in the case of an instance, and no further.
+            --  If E_Scope is the same as C_Scope, it means that there
+            --  definitely was a local renaming or derivation, and we
+            --  are not yet out of the current unit.
 
-         else
-            --  Loop to carefully follow renamings and derivations one step
-            --  outside the current unit, but not further.
+            exit when E_Scope /= C_Scope;
+            Ent := Alias (Ent);
+            E_Scope := Ent;
 
-            if not Inst_Case
-              and then Present (Alias (Ent))
-            then
-               E_Scope := Alias (Ent);
-            else
-               E_Scope := Ent;
+            --  If no alias, there could be a previous error, but not if we've
+            --  already reached the outermost level (Standard).
+
+            if No (Ent) then
+               return;
             end if;
-
-            loop
-               while not Is_Compilation_Unit (E_Scope) loop
-                  E_Scope := Scope (E_Scope);
-               end loop;
-
-               --  If E_Scope is the same as C_Scope, it means that there
-               --  definitely was a local renaming or derivation, and we
-               --  are not yet out of the current unit.
-
-               exit when E_Scope /= C_Scope;
-               Ent := Alias (Ent);
-               E_Scope := Ent;
-
-               --  If no alias, there is a previous error
-
-               if No (Ent) then
-                  return;
-               end if;
-            end loop;
-         end if;
-
-         if Within_Elaborate_All (E_Scope) then
-            return;
-         end if;
-
-         --  Find top level scope for called entity (not following renamings
-         --  or derivations). This is where the Elaborate_All will go if it
-         --  is needed. We start with the called entity, except in the case
-         --  of an initialization procedure outside the current package, where
-         --  the init proc is in the root package, and we start from the entity
-         --  of the name in the call.
-
-         if Is_Entity_Name (Name (N))
-           and then Is_Init_Proc (Entity (Name (N)))
-           and then not In_Same_Extended_Unit (N, Entity (Name (N)))
-         then
-            W_Scope := Scope (Entity (Name (N)));
-         else
-            W_Scope := E;
-         end if;
-
-         while not Is_Compilation_Unit (W_Scope) loop
-            W_Scope := Scope (W_Scope);
          end loop;
+      end if;
 
-         --  Now check if an elaborate_all (or dynamic check) is needed
+      if Within_Elaborate_All (Current_Sem_Unit, E_Scope) then
+         return;
+      end if;
 
-         if not Suppress_Elaboration_Warnings (Ent)
-           and then not Elaboration_Checks_Suppressed (Ent)
-           and then not Suppress_Elaboration_Warnings (E_Scope)
-           and then not Elaboration_Checks_Suppressed (E_Scope)
-           and then Elab_Warnings
-           and then Generate_Warnings
-         then
-            Generate_Elab_Warnings : declare
-               procedure Elab_Warning
-                 (Msg_D : String;
-                  Msg_S : String;
-                  Ent   : Node_Or_Entity_Id);
-               --  Generate a call to Error_Msg_NE with parameters Msg_D or
-               --  Msg_S (for dynamic or static elaboration model), N and Ent.
+      Is_DIC_Proc := Is_Nontrivial_DIC_Procedure (Ent);
 
-               ------------------
-               -- Elab_Warning --
-               ------------------
+      --  Elaboration issues in SPARK are reported only for source constructs
+      --  and for nontrivial Default_Initial_Condition procedures. The latter
+      --  must be checked because the default initialization of an object of a
+      --  private type triggers the evaluation of the Default_Initial_Condition
+      --  expression, which in turn may have side effects.
 
-               procedure Elab_Warning
-                 (Msg_D : String;
-                  Msg_S : String;
-                  Ent   : Node_Or_Entity_Id)
-               is
-               begin
-                  if Dynamic_Elaboration_Checks then
-                     Error_Msg_NE (Msg_D, N, Ent);
-                  else
-                     Error_Msg_NE (Msg_S, N, Ent);
-                  end if;
-               end Elab_Warning;
+      Issue_In_SPARK :=
+        SPARK_Mode = On
+          and then Dynamic_Elaboration_Checks
+          and then (Comes_From_Source (Ent) or Is_DIC_Proc);
 
-            --  Start of processing for Generate_Elab_Warnings
+      --  Now check if an Elaborate_All (or dynamic check) is needed
 
-            begin
-               if Inst_Case then
-                  Elab_Warning
-                    ("instantiation of& may raise Program_Error?",
-                     "info: instantiation of& during elaboration?", Ent);
+      if not Suppress_Elaboration_Warnings (Ent)
+        and then not Elaboration_Checks_Suppressed (Ent)
+        and then not Suppress_Elaboration_Warnings (E_Scope)
+        and then not Elaboration_Checks_Suppressed (E_Scope)
+        and then ((Elab_Warnings or Elab_Info_Messages)
+                    or else SPARK_Mode = On)
+        and then Generate_Warnings
+      then
+         --  Instantiation case
 
-               else
-                  if Nkind (Name (N)) in N_Has_Entity
-                    and then Is_Init_Proc (Entity (Name (N)))
-                    and then Comes_From_Source (Ent)
-                  then
-                     Elab_Warning
-                       ("implicit call to & may raise Program_Error?",
-                        "info: implicit call to & during elaboration?",
-                        Ent);
-
-                  else
-                     Elab_Warning
-                       ("call to & may raise Program_Error?",
-                        "info: call to & during elaboration?",
-                        Ent);
-                  end if;
-               end if;
-
-               Error_Msg_Qual_Level := Nat'Last;
-
-               if Nkind (N) in N_Subprogram_Instantiation then
-                  Elab_Warning
-                    ("\missing pragma Elaborate for&?",
-                     "\info: implicit pragma Elaborate for& generated?",
-                     W_Scope);
-               else
-                  Elab_Warning
-                    ("\missing pragma Elaborate_All for&?",
-                     "\info: implicit pragma Elaborate_All for & generated?",
-                     W_Scope);
-               end if;
-            end Generate_Elab_Warnings;
-
-            Error_Msg_Qual_Level := 0;
-            Output_Calls (N);
-
-            --  Set flag to prevent further warnings for same unit unless in
-            --  All_Errors_Mode.
-
-            if not All_Errors_Mode and not Dynamic_Elaboration_Checks then
-               Set_Suppress_Elaboration_Warnings (W_Scope, True);
-            end if;
-         end if;
-
-         --  Check for runtime elaboration check required
-
-         if Dynamic_Elaboration_Checks then
-            if not Elaboration_Checks_Suppressed (Ent)
-              and then not Elaboration_Checks_Suppressed (W_Scope)
-              and then not Elaboration_Checks_Suppressed (E_Scope)
-              and then not Cunit_SC
-            then
-               --  Runtime elaboration check required. Generate check of the
-               --  elaboration Boolean for the unit containing the entity.
-
-               --  Note that for this case, we do check the real unit (the one
-               --  from following renamings, since that is the issue!)
-
-               --  Could this possibly miss a useless but required PE???
-
-               Insert_Elab_Check (N,
-                 Make_Attribute_Reference (Loc,
-                   Attribute_Name => Name_Elaborated,
-                   Prefix => New_Occurrence_Of (Spec_Entity (E_Scope), Loc)));
-
-               --  Prevent duplicate elaboration checks on the same call,
-               --  which can happen if the body enclosing the call appears
-               --  itself in a call whose elaboration check is delayed.
-
-               if Nkind_In (N, N_Function_Call,
-                               N_Procedure_Call_Statement)
-               then
-                  Set_No_Elaboration_Check (N);
-               end if;
+         if Inst_Case then
+            if Issue_In_SPARK then
+               Error_Msg_NE
+                 ("instantiation of & during elaboration in SPARK", N, Ent);
+            else
+               Elab_Warning
+                 ("instantiation of & may raise Program_Error?l?",
+                  "info: instantiation of & during elaboration?$?", Ent);
             end if;
 
-         --  Case of static elaboration model
+         --  Indirect call case, info message only in static elaboration
+         --  case, because the attribute reference itself cannot raise an
+         --  exception. Note that SPARK does not  permit indirect calls.
+
+         elsif Access_Case then
+            Elab_Warning ("", "info: access to & during elaboration?$?", Ent);
+
+         --  Variable reference in SPARK mode
+
+         elsif Variable_Case and Issue_In_SPARK then
+            Error_Msg_NE
+              ("reference to & during elaboration in SPARK", N, Ent);
+
+         --  Subprogram call case
 
          else
-            --  Do not do anything if elaboration checks suppressed. Note that
-            --  we check Ent here, not E, since we want the real entity for the
-            --  body to see if checks are suppressed for it, not the dummy
-            --  entry for renamings or derivations.
-
-            if Elaboration_Checks_Suppressed (Ent)
-              or else Elaboration_Checks_Suppressed (E_Scope)
-              or else Elaboration_Checks_Suppressed (W_Scope)
+            if Nkind (Name (N)) in N_Has_Entity
+              and then Is_Init_Proc (Entity (Name (N)))
+              and then Comes_From_Source (Ent)
             then
-               null;
+               Elab_Warning
+                 ("implicit call to & may raise Program_Error?l?",
+                  "info: implicit call to & during elaboration?$?",
+                  Ent);
 
-            --  Do not generate an Elaborate_All for finalization routines
-            --  which perform partial clean up as part of initialization.
+            elsif Issue_In_SPARK then
 
-            elsif In_Init_Proc
-              and then Is_Finalization_Procedure (Ent)
-            then
-               null;
+               --  Emit a specialized error message when the elaboration of an
+               --  object of a private type evaluates the expression of pragma
+               --  Default_Initial_Condition. This prevents the internal name
+               --  of the procedure from appearing in the error message.
 
-            --  Here we need to generate an implicit elaborate all
-
-            else
-               --  Generate elaborate_all warning unless suppressed
-
-               if (Elab_Warnings and Generate_Warnings and not Inst_Case)
-                 and then not Suppress_Elaboration_Warnings (Ent)
-                 and then not Suppress_Elaboration_Warnings (E_Scope)
-                 and then not Suppress_Elaboration_Warnings (W_Scope)
-               then
-                  Error_Msg_Node_2 := W_Scope;
+               if Is_DIC_Proc then
+                  Error_Msg_N
+                    ("call to Default_Initial_Condition during elaboration in "
+                     & "SPARK", N);
+               else
                   Error_Msg_NE
-                    ("call to& in elaboration code " &
-                     "requires pragma Elaborate_All on&?", N, E);
+                    ("call to & during elaboration in SPARK", N, Ent);
                end if;
 
-               --  Set indication for binder to generate Elaborate_All
-
-               Set_Elaboration_Constraint (N, E, W_Scope);
+            else
+               Elab_Warning
+                 ("call to & may raise Program_Error?l?",
+                  "info: call to & during elaboration?$?",
+                  Ent);
             end if;
          end if;
 
-      --  Case of entity is in same unit as call or instantiation
+         Error_Msg_Qual_Level := Nat'Last;
 
-      elsif not Inter_Unit_Only then
-         Check_Internal_Call (N, Ent, Outer_Scope, E);
+         --  Case of Elaborate_All not present and required, for SPARK this
+         --  is an error, so give an error message.
+
+         if Issue_In_SPARK then
+            Error_Msg_NE -- CODEFIX
+              ("\Elaborate_All pragma required for&", N, W_Scope);
+
+         --  Otherwise we generate an implicit pragma. For a subprogram
+         --  instantiation, Elaborate is good enough, since no transitive
+         --  call is possible at elaboration time in this case.
+
+         elsif Nkind (N) in N_Subprogram_Instantiation then
+            Elab_Warning
+              ("\missing pragma Elaborate for&?l?",
+               "\implicit pragma Elaborate for& generated?$?",
+               W_Scope);
+
+         --  For all other cases, we need an implicit Elaborate_All
+
+         else
+            Elab_Warning
+              ("\missing pragma Elaborate_All for&?l?",
+               "\implicit pragma Elaborate_All for & generated?$?",
+               W_Scope);
+         end if;
+
+         Error_Msg_Qual_Level := 0;
+
+         --  Take into account the flags related to elaboration warning
+         --  messages when enumerating the various calls involved. This
+         --  ensures the proper pairing of the main warning and the
+         --  clarification messages generated by Output_Calls.
+
+         Output_Calls (N, Check_Elab_Flag => True);
+
+         --  Set flag to prevent further warnings for same unit unless in
+         --  All_Errors_Mode.
+
+         if not All_Errors_Mode and not Dynamic_Elaboration_Checks then
+            Set_Suppress_Elaboration_Warnings (W_Scope, True);
+         end if;
+      end if;
+
+      --  Check for runtime elaboration check required
+
+      if Dynamic_Elaboration_Checks then
+         if not Elaboration_Checks_Suppressed (Ent)
+           and then not Elaboration_Checks_Suppressed (W_Scope)
+           and then not Elaboration_Checks_Suppressed (E_Scope)
+           and then not Cunit_SC
+         then
+            --  Runtime elaboration check required. Generate check of the
+            --  elaboration Boolean for the unit containing the entity.
+
+            --  Note that for this case, we do check the real unit (the one
+            --  from following renamings, since that is the issue).
+
+            --  Could this possibly miss a useless but required PE???
+
+            Insert_Elab_Check (N,
+              Make_Attribute_Reference (Loc,
+                Attribute_Name => Name_Elaborated,
+                Prefix         =>
+                  New_Occurrence_Of (Spec_Entity (E_Scope), Loc)));
+
+            --  Prevent duplicate elaboration checks on the same call,
+            --  which can happen if the body enclosing the call appears
+            --  itself in a call whose elaboration check is delayed.
+
+            if Nkind (N) in N_Subprogram_Call then
+               Set_No_Elaboration_Check (N);
+            end if;
+         end if;
+
+      --  Case of static elaboration model
+
+      else
+         --  Do not do anything if elaboration checks suppressed. Note that
+         --  we check Ent here, not E, since we want the real entity for the
+         --  body to see if checks are suppressed for it, not the dummy
+         --  entry for renamings or derivations.
+
+         if Elaboration_Checks_Suppressed (Ent)
+           or else Elaboration_Checks_Suppressed (E_Scope)
+           or else Elaboration_Checks_Suppressed (W_Scope)
+         then
+            null;
+
+         --  Do not generate an Elaborate_All for finalization routines
+         --  that perform partial clean up as part of initialization.
+
+         elsif In_Init_Proc and then Is_Finalization_Procedure (Ent) then
+            null;
+
+         --  Here we need to generate an implicit elaborate all
+
+         else
+            --  Generate Elaborate_All warning unless suppressed
+
+            if (Elab_Info_Messages and Generate_Warnings and not Inst_Case)
+              and then not Suppress_Elaboration_Warnings (Ent)
+              and then not Suppress_Elaboration_Warnings (E_Scope)
+              and then not Suppress_Elaboration_Warnings (W_Scope)
+            then
+               Error_Msg_Node_2 := W_Scope;
+               Error_Msg_NE
+                 ("info: call to& in elaboration code " &
+                  "requires pragma Elaborate_All on&?$?", N, E);
+            end if;
+
+            --  Set indication for binder to generate Elaborate_All
+
+            Set_Elaboration_Constraint (N, E, W_Scope);
+         end if;
       end if;
    end Check_A_Call;
 
@@ -1071,8 +1284,8 @@ package body Sem_Elab is
       --  then the body of the generic will be in the earlier instance.
 
       declare
-         D1 : constant Int := Instantiation_Depth (Sloc (Ent));
-         D2 : constant Int := Instantiation_Depth (Sloc (N));
+         D1 : constant Nat := Instantiation_Depth (Sloc (Ent));
+         D2 : constant Nat := Instantiation_Depth (Sloc (N));
 
       begin
          if D1 > D2 then
@@ -1101,15 +1314,14 @@ package body Sem_Elab is
 
       --  Here we definitely have a bad instantiation
 
-      Error_Msg_NE
-        ("?cannot instantiate& before body seen", N, Ent);
+      Error_Msg_Warn := SPARK_Mode /= On;
+      Error_Msg_NE ("cannot instantiate& before body seen<<", N, Ent);
 
       if Present (Instance_Spec (N)) then
          Supply_Bodies (Instance_Spec (N));
       end if;
 
-      Error_Msg_N
-        ("\?Program_Error will be raised at run time", N);
+      Error_Msg_N ("\Program_Error [<<", N);
       Insert_Elab_Check (N);
       Set_ABE_Is_Certain (N);
    end Check_Bad_Instantiation;
@@ -1126,42 +1338,10 @@ package body Sem_Elab is
       Ent : Entity_Id;
       P   : Node_Id;
 
-      function Get_Called_Ent return Entity_Id;
-      --  Retrieve called entity. If this is a call to a protected subprogram,
-      --  entity is a selected component. The callable entity may be absent,
-      --  in which case there is no check to perform. This happens with
-      --  non-analyzed calls in nested generics.
-
-      --------------------
-      -- Get_Called_Ent --
-      --------------------
-
-      function Get_Called_Ent return Entity_Id is
-         Nam : Node_Id;
-
-      begin
-         Nam := Name (N);
-
-         if No (Nam) then
-            return Empty;
-
-         elsif Nkind (Nam) = N_Selected_Component then
-            return Entity (Selector_Name (Nam));
-
-         elsif not Is_Entity_Name (Nam) then
-            return Empty;
-
-         else
-            return Entity (Nam);
-         end if;
-      end Get_Called_Ent;
-
-   --  Start of processing for Check_Elab_Call
-
    begin
-      --  If the call does not come from the main unit, there is nothing to
-      --  check. Elaboration call from units in the context of the main unit
-      --  will lead to semantic dependencies when those units are compiled.
+      --  If the reference is not in the main unit, there is nothing to check.
+      --  Elaboration call from units in the context of the main unit will lead
+      --  to semantic dependencies when those units are compiled.
 
       if not In_Extended_Main_Code_Unit (N) then
          return;
@@ -1170,21 +1350,28 @@ package body Sem_Elab is
       --  For an entry call, check relevant restriction
 
       if Nkind (N) = N_Entry_Call_Statement
-         and then not In_Subprogram_Or_Concurrent_Unit
+        and then not In_Subprogram_Or_Concurrent_Unit
       then
          Check_Restriction (No_Entry_Calls_In_Elaboration_Code, N);
 
-      --  Nothing to do if this is not a call (happens in some error
-      --  conditions, and in some cases where rewriting occurs).
+      --  Nothing to do if this is not an expected type of reference (happens
+      --  in some error conditions, and in some cases where rewriting occurs).
 
-      elsif Nkind (N) /= N_Function_Call
-        and then Nkind (N) /= N_Procedure_Call_Statement
+      elsif Nkind (N) not in N_Subprogram_Call
+        and then Nkind (N) /= N_Attribute_Reference
+        and then (SPARK_Mode /= On
+                   or else Nkind (N) not in N_Has_Entity
+                   or else No (Entity (N))
+                   or else Ekind (Entity (N)) /= E_Variable)
       then
          return;
 
-      --  Nothing to do if this is a call already rewritten for elab checking
+      --  Nothing to do if this is a call already rewritten for elab checking.
+      --  Such calls appear as the targets of If_Expressions.
 
-      elsif Nkind (Parent (N)) = N_Conditional_Expression then
+      --  This check MUST be wrong, it catches far too much
+
+      elsif Nkind (Parent (N)) = N_If_Expression then
          return;
 
       --  Nothing to do if inside a generic template
@@ -1193,45 +1380,70 @@ package body Sem_Elab is
         and then No (Enclosing_Generic_Body (N))
       then
          return;
+
+      --  Nothing to do if call is being pre-analyzed, as when within a
+      --  pre/postcondition, a predicate, or an invariant.
+
+      elsif In_Spec_Expression then
+         return;
       end if;
 
-      --  Here we have a call at elaboration time which must be checked
+      --  Nothing to do if this is a call to a postcondition, which is always
+      --  within a subprogram body, even though the current scope may be the
+      --  enclosing scope of the subprogram.
+
+      if Nkind (N) = N_Procedure_Call_Statement
+        and then Is_Entity_Name (Name (N))
+        and then Chars (Entity (Name (N))) = Name_uPostconditions
+      then
+         return;
+      end if;
+
+      --  Here we have a reference at elaboration time that must be checked
 
       if Debug_Flag_LL then
-         Write_Str ("  Check_Elab_Call: ");
+         Write_Str ("  Check_Elab_Ref: ");
 
-         if No (Name (N))
-           or else not Is_Entity_Name (Name (N))
-         then
+         if Nkind (N) = N_Attribute_Reference then
+            if not Is_Entity_Name (Prefix (N)) then
+               Write_Str ("<<not entity name>>");
+            else
+               Write_Name (Chars (Entity (Prefix (N))));
+            end if;
+
+            Write_Str ("'Access");
+
+         elsif No (Name (N)) or else not Is_Entity_Name (Name (N)) then
             Write_Str ("<<not entity name>> ");
+
          else
             Write_Name (Chars (Entity (Name (N))));
          end if;
 
-         Write_Str ("  call at ");
+         Write_Str ("  reference at ");
          Write_Location (Sloc (N));
          Write_Eol;
       end if;
 
       --  Climb up the tree to make sure we are not inside default expression
       --  of a parameter specification or a record component, since in both
-      --  these cases, we will be doing the actual call later, not now, and it
-      --  is at the time of the actual call (statically speaking) that we must
-      --  do our static check, not at the time of its initial analysis).
+      --  these cases, we will be doing the actual reference later, not now,
+      --  and it is at the time of the actual reference (statically speaking)
+      --  that we must do our static check, not at the time of its initial
+      --  analysis).
 
-      --  However, we have to check calls within component definitions (e.g.
-      --  a function call that determines an array component bound), so we
-      --  terminate the loop in that case.
+      --  However, we have to check references within component definitions
+      --  (e.g. a function call that determines an array component bound),
+      --  so we terminate the loop in that case.
 
       P := Parent (N);
       while Present (P) loop
-         if Nkind (P) = N_Parameter_Specification
-              or else
-            Nkind (P) = N_Component_Declaration
+         if Nkind_In (P, N_Parameter_Specification,
+                         N_Component_Declaration)
          then
             return;
 
-         --  The call occurs within the constraint of a component,
+         --  The reference occurs within the constraint of a component,
          --  so it must be checked.
 
          elsif Nkind (P) = N_Component_Definition then
@@ -1259,21 +1471,23 @@ package body Sem_Elab is
          --  First case, we are in elaboration code
 
          From_Elab_Code := not In_Subprogram_Or_Concurrent_Unit;
+
          if From_Elab_Code then
 
-            --  Complain if call that comes from source in preelaborated unit
+            --  Complain if ref that comes from source in preelaborated unit
             --  and we are not inside a subprogram (i.e. we are in elab code).
 
             if Comes_From_Source (N)
               and then In_Preelaborated_Unit
               and then not In_Inlined_Body
+              and then Nkind (N) /= N_Attribute_Reference
             then
                --  This is a warning in GNAT mode allowing such calls to be
                --  used in the predefined library with appropriate care.
 
                Error_Msg_Warn := GNAT_Mode;
                Error_Msg_N
-                 ("<non-static call not allowed in preelaborated unit", N);
+                 ("<<non-static call not allowed in preelaborated unit", N);
                return;
             end if;
 
@@ -1320,9 +1534,8 @@ package body Sem_Elab is
                   --  Filter out case of default expressions, where we do not
                   --  do the check at this stage.
 
-                  if Nkind (P) = N_Parameter_Specification
-                       or else
-                     Nkind (P) = N_Component_Declaration
+                  if Nkind_In (P, N_Parameter_Specification,
+                                  N_Component_Declaration)
                   then
                      return;
                   end if;
@@ -1333,31 +1546,26 @@ package body Sem_Elab is
                   if Nkind (P) = N_Protected_Body then
                      return;
 
-                  elsif Nkind (P) = N_Subprogram_Body
-                       or else
-                     Nkind (P) = N_Task_Body
-                       or else
-                     Nkind (P) = N_Block_Statement
-                       or else
-                     Nkind (P) = N_Entry_Body
+                  elsif Nkind_In (P, N_Subprogram_Body,
+                                     N_Task_Body,
+                                     N_Block_Statement,
+                                     N_Entry_Body)
                   then
                      if L = Declarations (P) then
                         exit;
 
                      --  We are not in elaboration code, but we are doing
                      --  dynamic elaboration checks, in this case, we still
-                     --  need to do the call, since the subprogram we are in
-                     --  could be called from another unit, also in dynamic
+                     --  need to do the reference, since the subprogram we are
+                     --  in could be called from another unit, also in dynamic
                      --  elaboration check mode, at elaboration time.
 
                      elsif Dynamic_Elaboration_Checks then
 
-                        --  This is a rather new check, going into version
-                        --  3.14a1 for the first time (V1.80 of this unit), so
-                        --  we provide a debug flag to enable it. That way we
-                        --  have an easy work around for regressions that are
-                        --  caused by this new check. This debug flag can be
-                        --  removed later.
+                        --  We provide a debug flag to disable this check. That
+                        --  way we have an easy work around for regressions
+                        --  that are caused by this new check. This debug flag
+                        --  can be removed later.
 
                         if Debug_Flag_DD then
                            return;
@@ -1373,7 +1581,7 @@ package body Sem_Elab is
                         --  but we need to capture local suppress pragmas
                         --  that may inhibit checks on this call.
 
-                        Ent := Get_Called_Ent;
+                        Ent := Get_Referenced_Ent (N);
 
                         if No (Ent) then
                            return;
@@ -1382,14 +1590,16 @@ package body Sem_Elab is
                           or else Elaboration_Checks_Suppressed (Ent)
                           or else Elaboration_Checks_Suppressed (Scope (Ent))
                         then
-                           Set_No_Elaboration_Check (N);
+                           if Nkind (N) in N_Subprogram_Call then
+                              Set_No_Elaboration_Check (N);
+                           end if;
                         end if;
 
                         return;
 
                      --  Static model, call is not in elaboration code, we
                      --  never need to worry, because in the static model the
-                     --  top level caller always takes care of things.
+                     --  top-level caller always takes care of things.
 
                      else
                         return;
@@ -1400,7 +1610,7 @@ package body Sem_Elab is
          end if;
       end if;
 
-      Ent := Get_Called_Ent;
+      Ent := Get_Referenced_Ent (N);
 
       if No (Ent) then
          return;
@@ -1415,23 +1625,23 @@ package body Sem_Elab is
          end if;
       end loop;
 
-      --  See if we need to analyze this call. We analyze it if either of
+      --  See if we need to analyze this reference. We analyze it if either of
       --  the following conditions is met:
 
       --    It is an inner level call (since in this case it was triggered
       --    by an outer level call from elaboration code), but only if the
       --    call is within the scope of the original outer level call.
 
-      --    It is an outer level call from elaboration code, or the called
-      --    entity is in the same elaboration scope.
+      --    It is an outer level reference from elaboration code, or a call to
+      --    an entity is in the same elaboration scope.
 
       --  And in these cases, we will check both inter-unit calls and
       --  intra-unit (within a single unit) calls.
 
       C_Scope := Current_Scope;
 
-      --  If not outer level call, then we follow it if it is within the
-      --  original scope of the outer call.
+      --  If not outer level reference, then we follow it if it is within the
+      --  original scope of the outer reference.
 
       if Present (Outer_Scope)
         and then Within (Scope (Ent), Outer_Scope)
@@ -1444,7 +1654,15 @@ package body Sem_Elab is
             Inter_Unit_Only => False,
             In_Init_Proc    => In_Init_Proc);
 
-      elsif Elaboration_Checks_Suppressed (Current_Scope) then
+      --  Nothing to do if elaboration checks suppressed for this scope.
+      --  However, an interesting exception, the fact that elaboration checks
+      --  are suppressed within an instance (because we can trace the body when
+      --  we process the template) does not extend to calls to generic formal
+      --  subprograms.
+
+      elsif Elaboration_Checks_Suppressed (Current_Scope)
+        and then not Is_Call_Of_Generic_Formal (N)
+      then
          null;
 
       elsif From_Elab_Code then
@@ -1482,9 +1700,7 @@ package body Sem_Elab is
       --  treat the current node as a call to each of these functions, to check
       --  their elaboration impact.
 
-      if Is_Init_Proc (Ent)
-        and then From_Elab_Code
-      then
+      if Is_Init_Proc (Ent) and then From_Elab_Code then
          Process_Init_Proc : declare
             Unit_Decl : constant Node_Id := Unit_Declaration_Node (Ent);
 
@@ -1503,8 +1719,7 @@ package body Sem_Elab is
                Func : Entity_Id;
 
             begin
-               if (Nkind (Nod) = N_Function_Call
-                    or else Nkind (Nod) = N_Procedure_Call_Statement)
+               if Nkind (Nod) in N_Subprogram_Call
                  and then Is_Entity_Name (Name (Nod))
                then
                   Func := Entity (Name (Nod));
@@ -1547,11 +1762,9 @@ package body Sem_Elab is
       --  then there is nothing to do (we do not know what is being assigned),
       --  but otherwise this is an assignment to the prefix.
 
-      if Nkind (N) = N_Indexed_Component
-           or else
-         Nkind (N) = N_Selected_Component
-           or else
-         Nkind (N) = N_Slice
+      if Nkind_In (N, N_Indexed_Component,
+                      N_Selected_Component,
+                      N_Slice)
       then
          if not Is_Access_Type (Etype (Prefix (N))) then
             Check_Elab_Assign (Prefix (N));
@@ -1699,7 +1912,7 @@ package body Sem_Elab is
          begin
             if Nkind (Decl) = N_Object_Declaration
               and then (Present (Expression (Decl))
-                          or else No_Initialization (Decl))
+                         or else No_Initialization (Decl))
             then
                return;
             end if;
@@ -1713,13 +1926,11 @@ package body Sem_Elab is
             Error_Msg_Sloc := Sloc (Ent);
 
             Error_Msg_NE
-              ("?elaboration code may access& before it is initialized",
+              ("??& can be accessed by clients before this initialization",
                N, Ent);
             Error_Msg_NE
-              ("\?suggest adding pragma Elaborate_Body to spec of &",
-               N, Scop);
-            Error_Msg_N
-              ("\?or an explicit initialization could be added #", N);
+              ("\??add Elaborate_Body to spec to ensure & is initialized",
+               N, Ent);
          end if;
 
          if not All_Errors_Mode then
@@ -1733,13 +1944,17 @@ package body Sem_Elab is
    ----------------------
 
    procedure Check_Elab_Calls is
+      Save_SPARK_Mode : SPARK_Mode_Type;
+
    begin
-      --  If expansion is disabled, do not generate any checks. Also skip
+      --  If expansion is disabled, do not generate any checks, unless we
+      --  are in GNATprove mode, so that errors are issued in GNATprove for
+      --  violations of static elaboration rules in SPARK code. Also skip
       --  checks if any subunits are missing because in either case we lack the
       --  full information that we need, and no object file will be created in
       --  any case.
 
-      if not Expander_Active
+      if (not Expander_Active and not GNATprove_Mode)
         or else Is_Generic_Unit (Cunit_Entity (Main_Unit))
         or else Subunits_Missing
       then
@@ -1756,12 +1971,21 @@ package body Sem_Elab is
             Push_Scope (Delay_Check.Table (J).Curscop);
             From_Elab_Code := Delay_Check.Table (J).From_Elab_Code;
 
+            --  Set appropriate value of SPARK_Mode
+
+            Save_SPARK_Mode := SPARK_Mode;
+
+            if Delay_Check.Table (J).From_SPARK_Code then
+               SPARK_Mode := On;
+            end if;
+
             Check_Internal_Call_Continue (
               N           => Delay_Check.Table (J).N,
               E           => Delay_Check.Table (J).E,
               Outer_Scope => Delay_Check.Table (J).Outer_Scope,
               Orig_Ent    => Delay_Check.Table (J).Orig_Ent);
 
+            SPARK_Mode := Save_SPARK_Mode;
             Pop_Scope;
          end loop;
 
@@ -1830,9 +2054,7 @@ package body Sem_Elab is
 
       C_Scope := Current_Scope;
 
-      if Present (Outer_Scope)
-        and then Within (Scope (Ent), Outer_Scope)
-      then
+      if Present (Outer_Scope) and then Within (Scope (Ent), Outer_Scope) then
          Set_C_Scope;
          Check_A_Call (N, Ent, Outer_Scope, Inter_Unit_Only => False);
 
@@ -1874,24 +2096,102 @@ package body Sem_Elab is
       Outer_Scope : Entity_Id;
       Orig_Ent    : Entity_Id)
    is
+      function Within_Initial_Condition (Call : Node_Id) return Boolean;
+      --  Determine whether call Call occurs within pragma Initial_Condition or
+      --  pragma Check with check_kind set to Initial_Condition.
+
+      ------------------------------
+      -- Within_Initial_Condition --
+      ------------------------------
+
+      function Within_Initial_Condition (Call : Node_Id) return Boolean is
+         Args : List_Id;
+         Nam  : Name_Id;
+         Par  : Node_Id;
+
+      begin
+         --  Traverse the parent chain looking for an enclosing pragma
+
+         Par := Call;
+         while Present (Par) loop
+            if Nkind (Par) = N_Pragma then
+               Nam := Pragma_Name (Par);
+
+               --  Pragma Initial_Condition appears in its alternative from as
+               --  Check (Initial_Condition, ...).
+
+               if Nam = Name_Check then
+                  Args := Pragma_Argument_Associations (Par);
+
+                  --  Pragma Check should have at least two arguments
+
+                  pragma Assert (Present (Args));
+
+                  return
+                    Chars (Expression (First (Args))) = Name_Initial_Condition;
+
+               --  Direct match
+
+               elsif Nam = Name_Initial_Condition then
+                  return True;
+
+               --  Since pragmas are never nested within other pragmas, stop
+               --  the traversal.
+
+               else
+                  return False;
+               end if;
+
+            --  Prevent the search from going too far
+
+            elsif Is_Body_Or_Package_Declaration (Par) then
+               exit;
+            end if;
+
+            Par := Parent (Par);
+
+            --  If assertions are not enabled, the check pragma is rewritten
+            --  as an if_statement in sem_prag, to generate various warnings
+            --  on boolean expressions. Retrieve the original pragma.
+
+            if Nkind (Original_Node (Par)) = N_Pragma then
+               Par := Original_Node (Par);
+            end if;
+         end loop;
+
+         return False;
+      end Within_Initial_Condition;
+
+      --  Local variables
+
       Inst_Case : constant Boolean := Nkind (N) in N_Generic_Instantiation;
 
-   begin
-      --  If not function or procedure call or instantiation, then ignore
-      --  call (this happens in some error case and rewriting cases)
+   --  Start of processing for Check_Internal_Call
 
-      if Nkind (N) /= N_Function_Call
-           and then
-         Nkind (N) /= N_Procedure_Call_Statement
-           and then
-         not Inst_Case
+   begin
+      --  For P'Access, we want to warn if the -gnatw.f switch is set, and the
+      --  node comes from source.
+
+      if Nkind (N) = N_Attribute_Reference
+        and then ((not Warn_On_Elab_Access and then not Debug_Flag_Dot_O)
+                    or else not Comes_From_Source (N))
       then
          return;
 
-      --  Nothing to do if this is a call or instantiation that has
-      --  already been found to be a sure ABE
+      --  If not function or procedure call, instantiation, or 'Access, then
+      --  ignore call (this happens in some error cases and rewriting cases).
 
-      elsif ABE_Is_Certain (N) then
+      elsif not Nkind_In (N, N_Attribute_Reference,
+                             N_Function_Call,
+                             N_Procedure_Call_Statement)
+        and then not Inst_Case
+      then
+         return;
+
+      --  Nothing to do if this is a call or instantiation that has already
+      --  been found to be a sure ABE.
+
+      elsif Nkind (N) /= N_Attribute_Reference and then ABE_Is_Certain (N) then
          return;
 
       --  Nothing to do if errors already detected (avoid cascaded errors)
@@ -1925,18 +2225,27 @@ package body Sem_Elab is
 
       elsif Inside_A_Generic then
          return;
+
+      --  Nothing to do when the call appears within pragma Initial_Condition.
+      --  The pragma is part of the elaboration statements of a package body
+      --  and may only call external subprograms or subprograms whose body is
+      --  already available.
+
+      elsif Within_Initial_Condition (N) then
+         return;
       end if;
 
       --  Delay this call if we are still delaying calls
 
       if Delaying_Elab_Checks then
          Delay_Check.Append (
-           (N              => N,
-            E              => E,
-            Orig_Ent       => Orig_Ent,
-            Curscop        => Current_Scope,
-            Outer_Scope    => Outer_Scope,
-            From_Elab_Code => From_Elab_Code));
+           (N               => N,
+            E               => E,
+            Orig_Ent        => Orig_Ent,
+            Curscop         => Current_Scope,
+            Outer_Scope     => Outer_Scope,
+            From_Elab_Code  => From_Elab_Code,
+            From_SPARK_Code => SPARK_Mode = On));
          return;
 
       --  Otherwise, call phase 2 continuation right now
@@ -1956,12 +2265,6 @@ package body Sem_Elab is
       Outer_Scope : Entity_Id;
       Orig_Ent    : Entity_Id)
    is
-      Loc       : constant Source_Ptr := Sloc (N);
-      Inst_Case : constant Boolean := Is_Generic_Unit (E);
-
-      Sbody : Node_Id;
-      Ebody : Entity_Id;
-
       function Find_Elab_Reference (N : Node_Id) return Traverse_Result;
       --  Function applied to each node as we traverse the body. Checks for
       --  call or entity reference that needs checking, and if so checks it.
@@ -1983,13 +2286,13 @@ package body Sem_Elab is
          --  code, do not trace past an accept statement, because the rendez-
          --  vous will happen after elaboration.
 
-         if (Nkind (Original_Node (N)) = N_Accept_Statement
-              or else Nkind (Original_Node (N)) = N_Selective_Accept)
+         if Nkind_In (Original_Node (N), N_Accept_Statement,
+                                         N_Selective_Accept)
            and then Restriction_Active (No_Entry_Calls_In_Elaboration_Code)
          then
             return Abandon;
 
-            --  If we have a function call, check it
+         --  If we have a function call, check it
 
          elsif Nkind (N) = N_Function_Call then
             Check_Elab_Call (N, Outer_Scope);
@@ -2012,6 +2315,30 @@ package body Sem_Elab is
 
             return OK;
 
+         --  If we have an access attribute for a subprogram, check it.
+         --  Suppress this behavior under debug flag.
+
+         elsif not Debug_Flag_Dot_UU
+           and then Nkind (N) = N_Attribute_Reference
+           and then Nam_In (Attribute_Name (N), Name_Access,
+                                                Name_Unrestricted_Access)
+           and then Is_Entity_Name (Prefix (N))
+           and then Is_Subprogram (Entity (Prefix (N)))
+         then
+            Check_Elab_Call (N, Outer_Scope);
+            return OK;
+
+         --  In SPARK mode, if we have an entity reference to a variable, then
+         --  check it. For now we consider any reference.
+
+         elsif SPARK_Mode = On
+           and then Nkind (N) in N_Has_Entity
+           and then Present (Entity (N))
+           and then Ekind (Entity (N)) = E_Variable
+         then
+            Check_Elab_Call (N, Outer_Scope);
+            return OK;
+
          --  If we have a generic instantiation, check it
 
          elsif Nkind (N) in N_Generic_Instantiation then
@@ -2027,7 +2354,7 @@ package body Sem_Elab is
          --  we go in unconditionally. This is not so terrible, it means the
          --  error backtrace is not quite complete, and we are too eager to
          --  scan bodies of tasks that are unused, but this is hardly very
-         --  significant!
+         --  significant.
 
          elsif Nkind (N) = N_Subprogram_Body
            and then Comes_From_Source (N)
@@ -2045,6 +2372,12 @@ package body Sem_Elab is
          end if;
       end Find_Elab_Reference;
 
+      Inst_Case : constant Boolean    := Is_Generic_Unit (E);
+      Loc       : constant Source_Ptr := Sloc (N);
+
+      Ebody : Entity_Id;
+      Sbody : Node_Id;
+
    --  Start of processing for Check_Internal_Call_Continue
 
    begin
@@ -2056,8 +2389,7 @@ package body Sem_Elab is
 
       Elab_Visited.Append (E);
 
-      --  If the call is to a function that renames a literal, no check
-      --  is needed.
+      --  If the call is to a function that renames a literal, no check needed
 
       if Ekind (E) = E_Enumeration_Literal then
          return;
@@ -2065,10 +2397,7 @@ package body Sem_Elab is
 
       Sbody := Unit_Declaration_Node (E);
 
-      if Nkind (Sbody) /= N_Subprogram_Body
-           and then
-         Nkind (Sbody) /= N_Package_Body
-      then
+      if not Nkind_In (Sbody, N_Subprogram_Body, N_Package_Body) then
          Ebody := Corresponding_Body (Sbody);
 
          if No (Ebody) then
@@ -2140,18 +2469,52 @@ package body Sem_Elab is
 
       declare
          P : Node_Id;
+         O : Node_Id;
+
       begin
          P := Parent (N);
          loop
+            --  Keep looking at parents if we are still in the subexpression
+
             if Nkind (P) in N_Subexpr then
                P := Parent (P);
-            elsif Nkind (P) = N_If_Statement
-              and then Nkind (Original_Node (P)) = N_Pragma
-              and then Present (Corresponding_Aspect (Original_Node (P)))
-            then
-               return;
+
+            --  Here P is the parent of the expression, check for special case
+
             else
-               exit;
+               O := Original_Node (P);
+
+               --  Definitely not the special case if orig node is not a pragma
+
+               exit when Nkind (O) /= N_Pragma;
+
+               --  Check we have an If statement or a null statement (happens
+               --  when the If has been expanded to be True).
+
+               exit when not Nkind_In (P, N_If_Statement, N_Null_Statement);
+
+               --  Our special case will be indicated either by the pragma
+               --  coming from an aspect ...
+
+               if Present (Corresponding_Aspect (O)) then
+                  return;
+
+               --  Or, in the case of an initial condition, specifically by a
+               --  Check pragma specifying an Initial_Condition check.
+
+               elsif Pragma_Name (O) = Name_Check
+                 and then
+                   Chars
+                     (Expression (First (Pragma_Argument_Associations (O)))) =
+                                                       Name_Initial_Condition
+               then
+                  return;
+
+               --  For anything else, we have an error
+
+               else
+                  exit;
+               end if;
             end if;
          end loop;
       end;
@@ -2159,20 +2522,43 @@ package body Sem_Elab is
       --  Not that special case, warning and dynamic check is required
 
       --  If we have nothing in the call stack, then this is at the outer
-      --  level, and the ABE is bound to occur.
+      --  level, and the ABE is bound to occur, unless it's a 'Access, or
+      --  it's a renaming.
 
       if Elab_Call.Last = 0 then
-         if Inst_Case then
-            Error_Msg_NE
-              ("?cannot instantiate& before body seen", N, Orig_Ent);
-         else
-            Error_Msg_NE
-              ("?cannot call& before body seen", N, Orig_Ent);
-         end if;
+         Error_Msg_Warn := SPARK_Mode /= On;
 
-         Error_Msg_N
-           ("\?Program_Error will be raised at run time", N);
-         Insert_Elab_Check (N);
+         declare
+            Insert_Check : Boolean := True;
+            --  This flag is set to True if an elaboration check should be
+            --  inserted.
+
+         begin
+            if Inst_Case then
+               Error_Msg_NE
+                 ("cannot instantiate& before body seen<<", N, Orig_Ent);
+
+            elsif Nkind (N) = N_Attribute_Reference then
+               Error_Msg_NE
+                 ("Access attribute of & before body seen<<", N, Orig_Ent);
+               Error_Msg_N ("\possible Program_Error on later references<", N);
+               Insert_Check := False;
+
+            elsif Nkind (Unit_Declaration_Node (Orig_Ent)) /=
+                    N_Subprogram_Renaming_Declaration
+            then
+               Error_Msg_NE
+                 ("cannot call& before body seen<<", N, Orig_Ent);
+
+            elsif not Is_Generic_Actual_Subprogram (Orig_Ent) then
+               Insert_Check := False;
+            end if;
+
+            if Insert_Check then
+               Error_Msg_N ("\Program_Error [<<", N);
+               Insert_Elab_Check (N);
+            end if;
+         end;
 
       --  Call is not at outer level
 
@@ -2188,13 +2574,15 @@ package body Sem_Elab is
 
                --  Create object declaration for elaboration entity, and put it
                --  just in front of the spec of the subprogram or generic unit,
-               --  in the same scope as this unit.
+               --  in the same scope as this unit. The subprogram may be over-
+               --  loaded, so make the name of elaboration entity unique by
+               --  means of a numeric suffix.
 
                declare
                   Loce : constant Source_Ptr := Sloc (E);
                   Ent  : constant Entity_Id  :=
                            Make_Defining_Identifier (Loc,
-                             Chars => New_External_Name (Chars (E), 'E'));
+                             Chars => New_External_Name (Chars (E), 'E', -1));
 
                begin
                   Set_Elaboration_Entity (E, Ent);
@@ -2237,20 +2625,60 @@ package body Sem_Elab is
 
          if not Suppress_Elaboration_Warnings (E)
            and then not Elaboration_Checks_Suppressed (E)
+
+           --  Suppress this warning if we have a function call that occurred
+           --  within an assertion expression, since we can get false warnings
+           --  in this case, due to the out of order handling in this case.
+
+           and then
+             (Nkind (Original_Node (N)) /= N_Function_Call
+               or else not In_Assertion_Expression_Pragma (Original_Node (N)))
          then
+            Error_Msg_Warn := SPARK_Mode /= On;
+
             if Inst_Case then
                Error_Msg_NE
-                 ("instantiation of& may occur before body is seen?",
+                 ("instantiation of& may occur before body is seen<l<",
                   N, Orig_Ent);
             else
+               --  A rather specific check. For Finalize/Adjust/Initialize,
+               --  if the type has Warnings_Off set, suppress the warning.
+
+               if Nam_In (Chars (E), Name_Adjust,
+                                     Name_Finalize,
+                                     Name_Initialize)
+                 and then Present (First_Formal (E))
+               then
+                  declare
+                     T : constant Entity_Id := Etype (First_Formal (E));
+                  begin
+                     if Is_Controlled (T) then
+                        if Warnings_Off (T)
+                          or else (Ekind (T) = E_Private_Type
+                                    and then Warnings_Off (Full_View (T)))
+                        then
+                           goto Output;
+                        end if;
+                     end if;
+                  end;
+               end if;
+
+               --  Go ahead and give warning if not this special case
+
                Error_Msg_NE
-                 ("call to& may occur before body is seen?", N, Orig_Ent);
+                 ("call to& may occur before body is seen<l<", N, Orig_Ent);
             end if;
 
-            Error_Msg_N
-              ("\Program_Error may be raised at run time?", N);
+            Error_Msg_N ("\Program_Error ]<l<", N);
 
-            Output_Calls (N);
+            --  There is no need to query the elaboration warning message flags
+            --  because the main message is an error, not a warning, therefore
+            --  all the clarification messages produces by Output_Calls must be
+            --  emitted unconditionally.
+
+            <<Output>>
+
+            Output_Calls (N, Check_Elab_Flag => False);
          end if;
       end if;
 
@@ -2285,7 +2713,7 @@ package body Sem_Elab is
       procedure Collect_Tasks (Decls : List_Id);
       --  Collect the types of the tasks that are to be activated in the given
       --  list of declarations, in order to perform elaboration checks on the
-      --  corresponding task procedures which are called implicitly here.
+      --  corresponding task procedures that are called implicitly here.
 
       function Outer_Unit (E : Entity_Id) return Entity_Id;
       --  find enclosing compilation unit of Entity, ignoring subunits, or
@@ -2340,17 +2768,16 @@ package body Sem_Elab is
                if No (Corresponding_Body (Unit_Declaration_Node (Proc)))
                  and then
                    (not Is_Generic_Instance (Scope (Proc))
-                      or else
-                    Scope (Proc) = Scope (Defining_Identifier (Decl)))
+                     or else Scope (Proc) = Scope (Defining_Identifier (Decl)))
                then
+                  Error_Msg_Warn := SPARK_Mode /= On;
                   Error_Msg_N
-                    ("task will be activated before elaboration of its body?",
+                    ("task will be activated before elaboration of its body<<",
                       Decl);
-                  Error_Msg_N
-                    ("\Program_Error will be raised at run time?", Decl);
+                  Error_Msg_N ("\Program_Error [<<", Decl);
 
-               elsif
-                 Present (Corresponding_Body (Unit_Declaration_Node (Proc)))
+               elsif Present
+                       (Corresponding_Body (Unit_Declaration_Node (Proc)))
                then
                   Append_Elmt (Proc, Intra_Procs);
                end if;
@@ -2437,7 +2864,7 @@ package body Sem_Elab is
          Collect_Tasks (Declarations (N));
       end if;
 
-      --  We only perform detailed checks in all tasks are library level
+      --  We only perform detailed checks in all tasks that are library level
       --  entities. If the master is a subprogram or task, activation will
       --  depend on the activation of the master itself.
 
@@ -2484,14 +2911,14 @@ package body Sem_Elab is
 
             if not Suppress_Elaboration_Warnings (Ent)
               and then not Elaboration_Checks_Suppressed (Ent)
-              and then Elab_Warnings
+              and then Elab_Info_Messages
               and then not Suppress_Elaboration_Warnings (Task_Scope)
               and then not Elaboration_Checks_Suppressed (Task_Scope)
             then
                Error_Msg_Node_2 := Task_Scope;
                Error_Msg_NE
-                 ("activation of an instance of task type&" &
-                  " requires pragma Elaborate_All on &?", N, Ent);
+                 ("info: activation of an instance of task type&" &
+                  " requires pragma Elaborate_All on &?$?", N, Ent);
             end if;
 
             Activate_Elaborate_All_Desirable (N, Task_Scope);
@@ -2516,6 +2943,26 @@ package body Sem_Elab is
       In_Task_Activation := False;
    end Check_Task_Activation;
 
+   -------------------------------
+   -- Is_Call_Of_Generic_Formal --
+   -------------------------------
+
+   function Is_Call_Of_Generic_Formal (N : Node_Id) return Boolean is
+   begin
+      return Nkind_In (N, N_Function_Call, N_Procedure_Call_Statement)
+
+        --  Always return False if debug flag -gnatd.G is set
+
+        and then not Debug_Flag_Dot_GG
+
+      --  For now, we detect this by looking for the strange identifier
+      --  node, whose Chars reflect the name of the generic formal, but
+      --  the Chars of the Entity references the generic actual.
+
+        and then Nkind (Name (N)) = N_Identifier
+        and then Chars (Name (N)) /= Chars (Entity (Name (N)));
+   end Is_Call_Of_Generic_Formal;
+
    --------------------------------
    -- Set_Elaboration_Constraint --
    --------------------------------
@@ -2526,8 +2973,14 @@ package body Sem_Elab is
      Scop : Entity_Id)
    is
       Elab_Unit  : Entity_Id;
+
+      --  Check whether this is a call to an Initialize subprogram for a
+      --  controlled type. Note that Call can also be a 'Access attribute
+      --  reference, which now generates an elaboration check.
+
       Init_Call  : constant Boolean :=
-                     Chars (Subp) = Name_Initialize
+                     Nkind (Call) = N_Procedure_Call_Statement
+                       and then Chars (Subp) = Name_Initialize
                        and then Comes_From_Source (Subp)
                        and then Present (Parameter_Associations (Call))
                        and then Is_Controlled (Etype (First_Actual (Call)));
@@ -2536,7 +2989,7 @@ package body Sem_Elab is
       --  visible, and we can set the elaboration flag.
 
       if Is_Immediately_Visible (Scop)
-        or else (Is_Child_Unit (Scop) and then Is_Visible_Child_Unit (Scop))
+        or else (Is_Child_Unit (Scop) and then Is_Visible_Lib_Unit (Scop))
       then
          Activate_Elaborate_All_Desirable (Call, Scop);
          Set_Suppress_Elaboration_Warnings (Scop, True);
@@ -2564,9 +3017,8 @@ package body Sem_Elab is
       --  that is, on which we need to place to elaboration flag. This happens
       --  with init proc calls.
 
-      if Is_Init_Proc (Subp)
-        or else Init_Call
-      then
+      if Is_Init_Proc (Subp) or else Init_Call then
+
          --  The initialization call is on an object whose type is not declared
          --  in the same scope as the subprogram. The type of the object must
          --  be a subtype of the type of operation. This object is the first
@@ -2604,6 +3056,38 @@ package body Sem_Elab is
       Activate_Elaborate_All_Desirable (Call, Elab_Unit);
       Set_Suppress_Elaboration_Warnings (Elab_Unit, True);
    end Set_Elaboration_Constraint;
+
+   ------------------------
+   -- Get_Referenced_Ent --
+   ------------------------
+
+   function Get_Referenced_Ent (N : Node_Id) return Entity_Id is
+      Nam : Node_Id;
+
+   begin
+      if Nkind (N) in N_Has_Entity
+        and then Present (Entity (N))
+        and then Ekind (Entity (N)) = E_Variable
+      then
+         return Entity (N);
+      end if;
+
+      if Nkind (N) = N_Attribute_Reference then
+         Nam := Prefix (N);
+      else
+         Nam := Name (N);
+      end if;
+
+      if No (Nam) then
+         return Empty;
+      elsif Nkind (Nam) = N_Selected_Component then
+         return Entity (Selector_Name (Nam));
+      elsif not Is_Entity_Name (Nam) then
+         return Empty;
+      else
+         return Entity (Nam);
+      end if;
+   end Get_Referenced_Ent;
 
    ----------------------
    -- Has_Generic_Body --
@@ -2833,6 +3317,9 @@ package body Sem_Elab is
       Nod : Node_Id;
       Loc : constant Source_Ptr := Sloc (N);
 
+      Chk : Node_Id;
+      --  The check (N_Raise_Program_Error) node to be inserted
+
    begin
       --  If expansion is disabled, do not generate any checks. Also
       --  skip checks if any subunits are missing because in either
@@ -2856,105 +3343,35 @@ package body Sem_Elab is
          Nod := N;
       end if;
 
+      --  Build check node, possibly with condition
+
+      Chk :=
+        Make_Raise_Program_Error (Loc, Reason => PE_Access_Before_Elaboration);
+
+      if Present (C) then
+         Set_Condition (Chk, Make_Op_Not (Loc, Right_Opnd => C));
+      end if;
+
       --  If we are inserting at the top level, insert in Aux_Decls
 
       if Nkind (Parent (Nod)) = N_Compilation_Unit then
          declare
             ADN : constant Node_Id := Aux_Decls_Node (Parent (Nod));
-            R   : Node_Id;
 
          begin
-            if No (C) then
-               R :=
-                 Make_Raise_Program_Error (Loc,
-                   Reason => PE_Access_Before_Elaboration);
-            else
-               R :=
-                 Make_Raise_Program_Error (Loc,
-                   Condition => Make_Op_Not (Loc, C),
-                   Reason    => PE_Access_Before_Elaboration);
-            end if;
-
             if No (Declarations (ADN)) then
-               Set_Declarations (ADN, New_List (R));
+               Set_Declarations (ADN, New_List (Chk));
             else
-               Append_To (Declarations (ADN), R);
+               Append_To (Declarations (ADN), Chk);
             end if;
 
-            Analyze (R);
+            Analyze (Chk);
          end;
 
-      --  Otherwise just insert before the node in question. However, if
-      --  the context of the call has already been analyzed, an insertion
-      --  will not work if it depends on subsequent expansion (e.g. a call in
-      --  a branch of a short-circuit). In that case we replace the call with
-      --  a conditional expression, or with a Raise if it is unconditional.
-      --  Unfortunately this does not work if the call has a dynamic size,
-      --  because gigi regards it as a dynamic-sized temporary. If such a call
-      --  appears in a short-circuit expression, the elaboration check will be
-      --  missed (rare enough ???). Otherwise, the code below inserts the check
-      --  at the appropriate place before the call. Same applies in the even
-      --  rarer case the return type has a known size but is unconstrained.
+      --  Otherwise just insert as an action on the node in question
 
       else
-         if Nkind (N) = N_Function_Call
-           and then Analyzed (Parent (N))
-           and then Size_Known_At_Compile_Time (Etype (N))
-           and then
-            (not Has_Discriminants (Etype (N))
-              or else Is_Constrained (Etype (N)))
-
-         then
-            declare
-               Typ : constant Entity_Id := Etype (N);
-               Chk : constant Boolean   := Do_Range_Check (N);
-
-               R  : constant Node_Id :=
-                      Make_Raise_Program_Error (Loc,
-                         Reason => PE_Access_Before_Elaboration);
-
-               Reloc_N : Node_Id;
-
-            begin
-               Set_Etype (R, Typ);
-
-               if No (C) then
-                  Rewrite (N, R);
-
-               else
-                  Reloc_N := Relocate_Node (N);
-                  Save_Interps (N, Reloc_N);
-                  Rewrite (N,
-                    Make_Conditional_Expression (Loc,
-                      Expressions => New_List (C, Reloc_N, R)));
-               end if;
-
-               Analyze_And_Resolve (N, Typ);
-
-               --  If the original call requires a range check, so does the
-               --  conditional expression.
-
-               if Chk then
-                  Enable_Range_Check (N);
-               else
-                  Set_Do_Range_Check (N, False);
-               end if;
-            end;
-
-         else
-            if No (C) then
-               Insert_Action (Nod,
-                  Make_Raise_Program_Error (Loc,
-                    Reason => PE_Access_Before_Elaboration));
-            else
-               Insert_Action (Nod,
-                  Make_Raise_Program_Error (Loc,
-                    Condition =>
-                      Make_Op_Not (Loc,
-                        Right_Opnd => C),
-                    Reason => PE_Access_Before_Elaboration));
-            end if;
-         end if;
+         Insert_Action (Nod, Chk);
       end if;
    end Insert_Elab_Check;
 
@@ -2966,9 +3383,7 @@ package body Sem_Elab is
    begin
       --  Check whether Id is a procedure with at least one parameter
 
-      if Ekind (Id) = E_Procedure
-        and then Present (First_Formal (Id))
-      then
+      if Ekind (Id) = E_Procedure and then Present (First_Formal (Id)) then
          declare
             Typ      : constant Entity_Id := Etype (First_Formal (Id));
             Deep_Fin : Entity_Id := Empty;
@@ -2995,10 +3410,8 @@ package body Sem_Elab is
                Fin := Find_Prim_Op (Typ, Name_Finalize);
             end if;
 
-            return
-                (Present (Deep_Fin) and then Id = Deep_Fin)
-              or else
-                (Present (Fin) and then Id = Fin);
+            return    (Present (Deep_Fin) and then Id = Deep_Fin)
+              or else (Present (Fin)      and then Id = Fin);
          end;
       end if;
 
@@ -3009,18 +3422,40 @@ package body Sem_Elab is
    -- Output_Calls --
    ------------------
 
-   procedure Output_Calls (N : Node_Id) is
-      Ent : Entity_Id;
+   procedure Output_Calls
+     (N               : Node_Id;
+      Check_Elab_Flag : Boolean)
+   is
+      function Emit (Flag : Boolean) return Boolean;
+      --  Determine whether to emit an error message based on the combination
+      --  of flags Check_Elab_Flag and Flag.
 
-      function Is_Printable_Error_Name (Nm : Name_Id) return Boolean;
-      --  An internal function, used to determine if a name, Nm, is either
-      --  a non-internal name, or is an internal name that is printable
-      --  by the error message circuits (i.e. it has a single upper
-      --  case letter at the end).
+      function Is_Printable_Error_Name return Boolean;
+      --  An internal function, used to determine if a name, stored in the
+      --  Name_Buffer, is either a non-internal name, or is an internal name
+      --  that is printable by the error message circuits (i.e. it has a single
+      --  upper case letter at the end).
 
-      function Is_Printable_Error_Name (Nm : Name_Id) return Boolean is
+      ----------
+      -- Emit --
+      ----------
+
+      function Emit (Flag : Boolean) return Boolean is
       begin
-         if not Is_Internal_Name (Nm) then
+         if Check_Elab_Flag then
+            return Flag;
+         else
+            return True;
+         end if;
+      end Emit;
+
+      -----------------------------
+      -- Is_Printable_Error_Name --
+      -----------------------------
+
+      function Is_Printable_Error_Name return Boolean is
+      begin
+         if not Is_Internal_Name then
             return True;
 
          elsif Name_Len = 1 then
@@ -3032,6 +3467,10 @@ package body Sem_Elab is
          end if;
       end Is_Printable_Error_Name;
 
+      --  Local variables
+
+      Ent : Entity_Id;
+
    --  Start of processing for Output_Calls
 
    begin
@@ -3039,18 +3478,37 @@ package body Sem_Elab is
          Error_Msg_Sloc := Elab_Call.Table (J).Cloc;
 
          Ent := Elab_Call.Table (J).Ent;
+         Get_Name_String (Chars (Ent));
 
-         if Is_Generic_Unit (Ent) then
-            Error_Msg_NE ("\?& instantiated #", N, Ent);
+         --  Dynamic elaboration model, warnings controlled by -gnatwl
 
-         elsif Is_Init_Proc (Ent) then
-            Error_Msg_N ("\?initialization procedure called #", N);
+         if Dynamic_Elaboration_Checks then
+            if Emit (Elab_Warnings) then
+               if Is_Generic_Unit (Ent) then
+                  Error_Msg_NE ("\\?l?& instantiated #", N, Ent);
+               elsif Is_Init_Proc (Ent) then
+                  Error_Msg_N ("\\?l?initialization procedure called #", N);
+               elsif Is_Printable_Error_Name then
+                  Error_Msg_NE ("\\?l?& called #", N, Ent);
+               else
+                  Error_Msg_N ("\\?l?called #", N);
+               end if;
+            end if;
 
-         elsif Is_Printable_Error_Name (Chars (Ent)) then
-            Error_Msg_NE ("\?& called #", N, Ent);
+         --  Static elaboration model, info messages controlled by -gnatel
 
          else
-            Error_Msg_N ("\? called #", N);
+            if Emit (Elab_Info_Messages) then
+               if Is_Generic_Unit (Ent) then
+                  Error_Msg_NE ("\\?$?& instantiated #", N, Ent);
+               elsif Is_Init_Proc (Ent) then
+                  Error_Msg_N ("\\?$?initialization procedure called #", N);
+               elsif Is_Printable_Error_Name then
+                  Error_Msg_NE ("\\?$?& called #", N, Ent);
+               else
+                  Error_Msg_N ("\\?$?called #", N);
+               end if;
+            end if;
          end if;
       end loop;
    end Output_Calls;
@@ -3070,11 +3528,7 @@ package body Sem_Elab is
       S1 := Scop1;
       while S1 /= Standard_Standard
         and then not Is_Compilation_Unit (S1)
-        and then (Ekind (S1) = E_Package
-                    or else
-                  Ekind (S1) = E_Protected_Type
-                    or else
-                  Ekind (S1) = E_Block)
+        and then Ekind_In (S1, E_Package, E_Protected_Type, E_Block)
       loop
          S1 := Scope (S1);
       end loop;
@@ -3084,11 +3538,7 @@ package body Sem_Elab is
       S2 := Scop2;
       while S2 /= Standard_Standard
         and then not Is_Compilation_Unit (S2)
-        and then (Ekind (S2) = E_Package
-                    or else
-                  Ekind (S2) = E_Protected_Type
-                    or else
-                  Ekind (S2) = E_Block)
+        and then Ekind_In (S2, E_Package, E_Protected_Type, E_Block)
       loop
          S2 := Scope (S2);
       end loop;
@@ -3142,8 +3592,8 @@ package body Sem_Elab is
       if Nkind (N) = N_Subprogram_Declaration then
          declare
             Ent : constant Entity_Id := Defining_Unit_Name (Specification (N));
-         begin
 
+         begin
             --  Internal subprograms will already have a generated body, so
             --  there is no need to provide a stub for them.
 
@@ -3241,46 +3691,123 @@ package body Sem_Elab is
    -- Within_Elaborate_All --
    --------------------------
 
-   function Within_Elaborate_All (E : Entity_Id) return Boolean is
-      Item    : Node_Id;
-      Item2   : Node_Id;
-      Elab_Id : Entity_Id;
-      Par     : Node_Id;
+   function Within_Elaborate_All
+     (Unit : Unit_Number_Type;
+      E    : Entity_Id) return Boolean
+   is
+      type Unit_Number_Set is array (Main_Unit .. Last_Unit) of Boolean;
+      pragma Pack (Unit_Number_Set);
 
-   begin
-      Item := First (Context_Items (Cunit (Current_Sem_Unit)));
-      while Present (Item) loop
-         if Nkind (Item) = N_Pragma
-           and then Pragma_Name (Item) = Name_Elaborate_All
-         then
-            --  Return if some previous error on the pragma itself
+      Seen : Unit_Number_Set := (others => False);
+      --  Seen (X) is True after we have seen unit X in the walk. This is used
+      --  to prevent processing the same unit more than once.
 
-            if Error_Posted (Item) then
-               return False;
-            end if;
+      Result : Boolean := False;
 
-            Elab_Id :=
-              Entity
-                (Expression (First (Pragma_Argument_Associations (Item))));
+      procedure Helper (Unit : Unit_Number_Type);
+      --  This helper procedure does all the work for Within_Elaborate_All. It
+      --  walks the dependency graph, and sets Result to True if it finds an
+      --  appropriate Elaborate_All.
 
-            Par := Parent (Unit_Declaration_Node (Elab_Id));
+      ------------
+      -- Helper --
+      ------------
 
-            Item2 := First (Context_Items (Par));
-            while Present (Item2) loop
-               if Nkind (Item2) = N_With_Clause
-                 and then Entity (Name (Item2)) = E
-               then
-                  return True;
-               end if;
+      procedure Helper (Unit : Unit_Number_Type) is
+         CU : constant Node_Id := Cunit (Unit);
 
-               Next (Item2);
-            end loop;
+         Item    : Node_Id;
+         Item2   : Node_Id;
+         Elab_Id : Entity_Id;
+         Par     : Node_Id;
+
+      begin
+         if Seen (Unit) then
+            return;
+         else
+            Seen (Unit) := True;
          end if;
 
-         Next (Item);
-      end loop;
+         --  First, check for Elaborate_Alls on this unit
 
-      return False;
+         Item := First (Context_Items (CU));
+         while Present (Item) loop
+            if Nkind (Item) = N_Pragma
+              and then Pragma_Name (Item) = Name_Elaborate_All
+            then
+               --  Return if some previous error on the pragma itself. The
+               --  pragma may be unanalyzed, because of a previous error, or
+               --  if it is the context of a subunit, inherited by its parent.
+
+               if Error_Posted (Item) or else not Analyzed (Item) then
+                  return;
+               end if;
+
+               Elab_Id :=
+                 Entity
+                   (Expression (First (Pragma_Argument_Associations (Item))));
+
+               if E = Elab_Id then
+                  Result := True;
+                  return;
+               end if;
+
+               Par := Parent (Unit_Declaration_Node (Elab_Id));
+
+               Item2 := First (Context_Items (Par));
+               while Present (Item2) loop
+                  if Nkind (Item2) = N_With_Clause
+                    and then Entity (Name (Item2)) = E
+                    and then not Limited_Present (Item2)
+                  then
+                     Result := True;
+                     return;
+                  end if;
+
+                  Next (Item2);
+               end loop;
+            end if;
+
+            Next (Item);
+         end loop;
+
+         --  Second, recurse on with's. We could do this as part of the above
+         --  loop, but it's probably more efficient to have two loops, because
+         --  the relevant Elaborate_All is likely to be on the initial unit. In
+         --  other words, we're walking the with's breadth-first. This part is
+         --  only necessary in the dynamic elaboration model.
+
+         if Dynamic_Elaboration_Checks then
+            Item := First (Context_Items (CU));
+            while Present (Item) loop
+               if Nkind (Item) = N_With_Clause
+                 and then not Limited_Present (Item)
+               then
+                  --  Note: the following call to Get_Cunit_Unit_Number does a
+                  --  linear search, which could be slow, but it's OK because
+                  --  we're about to give a warning anyway. Also, there might
+                  --  be hundreds of units, but not millions. If it turns out
+                  --  to be a problem, we could store the Get_Cunit_Unit_Number
+                  --  in each N_Compilation_Unit node, but that would involve
+                  --  rearranging N_Compilation_Unit_Aux to make room.
+
+                  Helper (Get_Cunit_Unit_Number (Library_Unit (Item)));
+
+                  if Result then
+                     return;
+                  end if;
+               end if;
+
+               Next (Item);
+            end loop;
+         end if;
+      end Helper;
+
+   --  Start of processing for Within_Elaborate_All
+
+   begin
+      Helper (Unit);
+      return Result;
    end Within_Elaborate_All;
 
 end Sem_Elab;

@@ -4,6 +4,8 @@ with Interfaces; use Interfaces;
 
 package Alignment2 is
 
+  pragma Warnings (Off, "*size*");
+
   -- warning
   type R1 is record
     A, B, C, D : Integer_8;
@@ -41,7 +43,7 @@ package Alignment2 is
 
   -- OK, big size
   type I3 is new Integer_32;
-  for I3'Size use 32 * 8;
+  for I3'Size use 32 * 8; -- { dg-warning "unused" }
   for I3'Alignment use 32;
 
 end Alignment2;

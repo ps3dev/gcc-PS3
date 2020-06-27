@@ -18,7 +18,7 @@ type ftoaTest struct {
 	s    string
 }
 
-func fdiv(a, b float64) float64 { return a / b } // keep compiler in the dark
+func fdiv(a, b float64) float64 { return a / b }
 
 const (
 	below1e23 = 99999999999999974834176
@@ -94,8 +94,8 @@ var ftoatests = []ftoaTest{
 	{above1e23, 'f', -1, "100000000000000010000000"},
 	{above1e23, 'g', -1, "1.0000000000000001e+23"},
 
-	{fdiv(5e-304, 1e20), 'g', -1, "5e-324"},
-	{fdiv(-5e-304, 1e20), 'g', -1, "-5e-324"},
+	{fdiv(5e-304, 1e20), 'g', -1, "5e-324"},   // avoid constant arithmetic
+	{fdiv(-5e-304, 1e20), 'g', -1, "-5e-324"}, // avoid constant arithmetic
 
 	{32, 'g', -1, "32"},
 	{32, 'g', 0, "3e+01"},
@@ -163,6 +163,7 @@ func TestFtoaRandom(t *testing.T) {
 	for i := 0; i < N; i++ {
 		bits := uint64(rand.Uint32())<<32 | uint64(rand.Uint32())
 		x := math.Float64frombits(bits)
+
 		shortFast := FormatFloat(x, 'g', -1, 64)
 		SetOptimize(false)
 		shortSlow := FormatFloat(x, 'g', -1, 64)
@@ -170,91 +171,65 @@ func TestFtoaRandom(t *testing.T) {
 		if shortSlow != shortFast {
 			t.Errorf("%b printed as %s, want %s", x, shortFast, shortSlow)
 		}
+
+		prec := rand.Intn(12) + 5
+		shortFast = FormatFloat(x, 'e', prec, 64)
+		SetOptimize(false)
+		shortSlow = FormatFloat(x, 'e', prec, 64)
+		SetOptimize(true)
+		if shortSlow != shortFast {
+			t.Errorf("%b printed as %s, want %s", x, shortFast, shortSlow)
+		}
 	}
 }
 
-/* This test relies on escape analysis which gccgo does not yet do.
+var ftoaBenches = []struct {
+	name    string
+	float   float64
+	fmt     byte
+	prec    int
+	bitSize int
+}{
+	{"Decimal", 33909, 'g', -1, 64},
+	{"Float", 339.7784, 'g', -1, 64},
+	{"Exp", -5.09e75, 'g', -1, 64},
+	{"NegExp", -5.11e-95, 'g', -1, 64},
 
-func TestAppendFloatDoesntAllocate(t *testing.T) {
-	n := numAllocations(func() {
-		var buf [64]byte
-		AppendFloat(buf[:0], 1.23, 'g', 5, 64)
-	})
-	want := 1 // TODO(bradfitz): this might be 0, once escape analysis is better
-	if n != want {
-		t.Errorf("with local buffer, did %d allocations, want %d", n, want)
-	}
-	n = numAllocations(func() {
-		AppendFloat(globalBuf[:0], 1.23, 'g', 5, 64)
-	})
-	if n != 0 {
-		t.Errorf("with reused buffer, did %d allocations, want 0", n)
-	}
-}
+	{"Big", 123456789123456789123456789, 'g', -1, 64},
+	{"BinaryExp", -1, 'b', -1, 64},
 
-*/
+	{"32Integer", 33909, 'g', -1, 32},
+	{"32ExactFraction", 3.375, 'g', -1, 32},
+	{"32Point", 339.7784, 'g', -1, 32},
+	{"32Exp", -5.09e25, 'g', -1, 32},
+	{"32NegExp", -5.11e-25, 'g', -1, 32},
 
-func BenchmarkFormatFloatDecimal(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		FormatFloat(33909, 'g', -1, 64)
-	}
+	{"64Fixed1", 123456, 'e', 3, 64},
+	{"64Fixed2", 123.456, 'e', 3, 64},
+	{"64Fixed3", 1.23456e+78, 'e', 3, 64},
+	{"64Fixed4", 1.23456e-78, 'e', 3, 64},
+
+	// Trigger slow path (see issue #15672).
+	{"Slowpath64", 622666234635.3213e-320, 'e', -1, 64},
 }
 
 func BenchmarkFormatFloat(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		FormatFloat(339.7784, 'g', -1, 64)
-	}
-}
-
-func BenchmarkFormatFloatExp(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		FormatFloat(-5.09e75, 'g', -1, 64)
-	}
-}
-
-func BenchmarkFormatFloatNegExp(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		FormatFloat(-5.11e-95, 'g', -1, 64)
-	}
-}
-
-func BenchmarkFormatFloatBig(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		FormatFloat(123456789123456789123456789, 'g', -1, 64)
-	}
-}
-
-func BenchmarkAppendFloatDecimal(b *testing.B) {
-	dst := make([]byte, 0, 30)
-	for i := 0; i < b.N; i++ {
-		AppendFloat(dst, 33909, 'g', -1, 64)
+	for _, c := range ftoaBenches {
+		b.Run(c.name, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				FormatFloat(c.float, c.fmt, c.prec, c.bitSize)
+			}
+		})
 	}
 }
 
 func BenchmarkAppendFloat(b *testing.B) {
-	dst := make([]byte, 0, 30)
-	for i := 0; i < b.N; i++ {
-		AppendFloat(dst, 339.7784, 'g', -1, 64)
-	}
-}
-
-func BenchmarkAppendFloatExp(b *testing.B) {
-	dst := make([]byte, 0, 30)
-	for i := 0; i < b.N; i++ {
-		AppendFloat(dst, -5.09e75, 'g', -1, 64)
-	}
-}
-
-func BenchmarkAppendFloatNegExp(b *testing.B) {
-	dst := make([]byte, 0, 30)
-	for i := 0; i < b.N; i++ {
-		AppendFloat(dst, -5.11e-95, 'g', -1, 64)
-	}
-}
-
-func BenchmarkAppendFloatBig(b *testing.B) {
-	dst := make([]byte, 0, 30)
-	for i := 0; i < b.N; i++ {
-		AppendFloat(dst, 123456789123456789123456789, 'g', -1, 64)
+	dst := make([]byte, 30)
+	for _, c := range ftoaBenches {
+		b.Run(c.name, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				AppendFloat(dst[:0], c.float, c.fmt, c.prec, c.bitSize)
+			}
+		})
 	}
 }

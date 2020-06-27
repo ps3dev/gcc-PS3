@@ -1,7 +1,8 @@
-/* Copyright (C) 2008, 2009, 2011 Free Software Foundation, Inc.
+/* Copyright (C) 2008-2017 Free Software Foundation, Inc.
    Contributed by Jakub Jelinek <jakub@redhat.com>.
 
-   This file is part of the GNU OpenMP Library (libgomp).
+   This file is part of the GNU Offloading and Multi Processing Library
+   (libgomp).
 
    Libgomp is free software; you can redistribute it and/or modify it
    under the terms of the GNU General Public License as published by
@@ -50,9 +51,9 @@ gomp_ptrlock_get_slow (gomp_ptrlock_t *ptrlock)
 #endif
   do
     do_wait (intptr, 2);
-  while (*intptr == 2);
+  while (__atomic_load_n (intptr, MEMMODEL_RELAXED) == 2);
   __asm volatile ("" : : : "memory");
-  return *ptrlock;
+  return (void *) __atomic_load_n (ptrlock, MEMMODEL_ACQUIRE);
 }
 
 void

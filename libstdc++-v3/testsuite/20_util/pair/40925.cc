@@ -1,7 +1,6 @@
-// { dg-options "-std=gnu++0x" }
-// { dg-do compile }
+// { dg-do compile { target c++11 } }
 
-// Copyright (C) 2009 Free Software Foundation, Inc.
+// Copyright (C) 2009-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -63,5 +62,5 @@ void test01()
   std::pair<move_only, int*> p15(move_only(), ip);
   std::pair<move_only, int X::*> p16(move_only(), mp);
 
-  std::pair<move_only, move_only> p17(move_only(), move_only());
+  std::pair<move_only, move_only> p17{move_only(), move_only()};
 }

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -36,36 +36,6 @@ package Exp_Ch6 is
    procedure Expand_N_Subprogram_Body           (N : Node_Id);
    procedure Expand_N_Subprogram_Body_Stub      (N : Node_Id);
    procedure Expand_N_Subprogram_Declaration    (N : Node_Id);
-
-   procedure Expand_Actuals (N : Node_Id; Subp : Entity_Id);
-   --  For each actual of an in-out or out parameter which is a numeric
-   --  (view) conversion of the form T (A), where A denotes a variable,
-   --  we insert the declaration:
-   --
-   --    Temp : T[ := T (A)];
-   --
-   --  prior to the call. Then we replace the actual with a reference to Temp,
-   --  and append the assignment:
-   --
-   --    A := TypeA (Temp);
-   --
-   --  after the call. Here TypeA is the actual type of variable A. For out
-   --  parameters, the initial declaration has no expression. If A is not an
-   --  entity name, we generate instead:
-   --
-   --    Var  : TypeA renames A;
-   --    Temp : T := Var;       --  omitting expression for out parameter.
-   --    ...
-   --    Var := TypeA (Temp);
-   --
-   --  For other in-out parameters, we emit the required constraint checks
-   --  before and/or after the call.
-   --
-   --  For all parameter modes, actuals that denote components and slices of
-   --  packed arrays are expanded into suitable temporaries.
-   --
-   --  For non-scalar objects that are possibly unaligned, add call by copy
-   --  code (copy in for IN and IN OUT, copy out for OUT and IN OUT).
 
    procedure Expand_Call (N : Node_Id);
    --  This procedure contains common processing for Expand_N_Function_Call,
@@ -121,6 +91,13 @@ package Exp_Ch6 is
       --
       --  ??? We might also need to be able to pass in a constrained flag.
 
+   procedure Add_Extra_Actual_To_Call
+     (Subprogram_Call : Node_Id;
+      Extra_Formal    : Entity_Id;
+      Extra_Actual    : Node_Id);
+   --  Adds Extra_Actual as a named parameter association for the formal
+   --  Extra_Formal in Subprogram_Call.
+
    function BIP_Formal_Suffix (Kind : BIP_Formal_Kind) return String;
    --  Ada 2005 (AI-318-02): Returns a string to be used as the suffix of names
    --  for build-in-place formal parameters of the given kind.
@@ -132,6 +109,13 @@ package Exp_Ch6 is
    --  build-in-place formal parameter of the given kind associated with the
    --  function Func, and returns its Entity_Id. It is a bug if not found; the
    --  caller should ensure this is called only when the extra formal exists.
+
+   function Build_Procedure_Body_Form
+     (Func_Id : Entity_Id; Func_Body : Node_Id) return Node_Id;
+   --  Create a procedure body which emulates the behavior of function Func_Id.
+   --  Func_Body is the root of the body of the function before its analysis.
+   --  The returned node is the root of the procedure body which will replace
+   --  the original function body, which is not needed for the C program.
 
    function Is_Build_In_Place_Function (E : Entity_Id) return Boolean;
    --  Ada 2005 (AI-318-02): Returns True if E denotes a function, generic
@@ -192,7 +176,7 @@ package Exp_Ch6 is
    --  call.
 
    procedure Make_Build_In_Place_Call_In_Object_Declaration
-     (Object_Decl   : Node_Id;
+     (Obj_Decl      : Node_Id;
       Function_Call : Node_Id);
    --  Ada 2005 (AI-318-02): Handle a call to a build-in-place function that
    --  occurs as the expression initializing an object declaration by
@@ -201,25 +185,30 @@ package Exp_Ch6 is
    --  for which Is_Build_In_Place_Call is True, or an N_Qualified_Expression
    --  node applied to such a function call.
 
+   procedure Make_CPP_Constructor_Call_In_Allocator
+     (Allocator     : Node_Id;
+      Function_Call : Node_Id);
+   --  Handle a call to a CPP constructor that occurs as the expression that
+   --  initializes an allocator, by passing access to the allocated object as
+   --  an additional parameter of the constructor call. A new access object is
+   --  declared that is initialized to the result of the allocator, passed to
+   --  the constructor, and the allocator is rewritten to refer to that access
+   --  object. Function_Call must denote a call to a CPP_Constructor function.
+
    function Needs_BIP_Alloc_Form (Func_Id : Entity_Id) return Boolean;
    --  Ada 2005 (AI-318-02): Return True if the function needs an implicit
    --  BIP_Alloc_Form parameter (see type BIP_Formal_Kind).
 
    function Needs_BIP_Finalization_Master (Func_Id : Entity_Id) return Boolean;
    --  Ada 2005 (AI-318-02): Return True if the result subtype of function
-   --  Func_Id needs finalization actions.
+   --  Func_Id might need finalization actions. This includes build-in-place
+   --  functions with tagged result types, since they can be invoked via
+   --  dispatching calls, and descendant types may require finalization.
 
    function Needs_Result_Accessibility_Level
      (Func_Id : Entity_Id) return Boolean;
    --  Ada 2012 (AI05-0234): Return True if the function needs an implicit
    --  parameter to identify the accessibility level of the function result
    --  "determined by the point of call".
-
-   procedure Add_Extra_Actual_To_Call
-     (Subprogram_Call : Node_Id;
-      Extra_Formal    : Entity_Id;
-      Extra_Actual    : Node_Id);
-   --  Adds Extra_Actual as a named parameter association for the formal
-   --  Extra_Formal in Subprogram_Call.
 
 end Exp_Ch6;

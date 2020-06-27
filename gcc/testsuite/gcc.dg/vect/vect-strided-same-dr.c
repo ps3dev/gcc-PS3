@@ -12,6 +12,8 @@ typedef struct {
 
 s buffer1[N], buffer2[N];
 
+volatile int y = 0;
+
 __attribute__ ((noinline)) int
 main1 (s * __restrict__  pIn, s* __restrict__ pOut)
 {
@@ -61,8 +63,8 @@ int main (void)
       buffer1[i].b = i + 8;
       buffer2[i].a = i * 3;
       buffer2[i].b = i * 2;
-      if (buffer1[i].a == 500)
-         abort();
+      if (y) /* Avoid vectorization.  */
+        abort ();
     }
 
   check_vect ();
@@ -73,4 +75,3 @@ int main (void)
 }
 
 /* { dg-final { scan-tree-dump-times "vectorized 1 loops" 1 "vect"  { target vect_strided2 } } } */
-/* { dg-final { cleanup-tree-dump "vect" } } */

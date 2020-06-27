@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2001-2007, Free Software Foundation, Inc.         --
+--          Copyright (C) 2001-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -23,7 +23,8 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-with Opt; use Opt;
+with Opt;    use Opt;
+with Output; use Output;
 
 package body Validsw is
 
@@ -131,7 +132,6 @@ package body Validsw is
          Validity_Checks_On := True;
 
          case C is
-
             when 'c' =>
                Validity_Check_Copies         := True;
 
@@ -174,11 +174,11 @@ package body Validsw is
             when 'E' =>
                Validity_Check_Components     := False;
 
-            when 'I' =>
-               Validity_Check_In_Params      := False;
-
             when 'F' =>
                Validity_Check_Floating_Point := False;
+
+            when 'I' =>
+               Validity_Check_In_Params      := False;
 
             when 'M' =>
                Validity_Check_In_Out_Params  := False;
@@ -229,9 +229,13 @@ package body Validsw is
                null;
 
             when others =>
-               OK      := False;
-               Err_Col := J - 1;
-               return;
+               if Ignore_Unrecognized_VWY_Switches then
+                  Write_Line ("unrecognized switch -gnatV" & C & " ignored");
+               else
+                  OK      := False;
+                  Err_Col := J - 1;
+                  return;
+               end if;
          end case;
       end loop;
 

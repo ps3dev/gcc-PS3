@@ -1,6 +1,6 @@
 // Explicit instantiation file.
 
-// Copyright (C) 2001, 2002, 2004, 2006, 2009 Free Software Foundation, Inc.
+// Copyright (C) 2001-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -27,7 +27,6 @@
 //
 
 #include <ext/rope>
-#include <ext/stdio_filebuf.h>
 
 namespace __gnu_cxx _GLIBCXX_VISIBILITY(default)
 {
@@ -39,7 +38,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   }
 
   template
-    const unsigned long 
+    const unsigned long
     rope<char, std::allocator<char> >::_S_min_len[min_len];
 
   template
@@ -47,19 +46,15 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     rope<char, std::allocator<char> >::
     _S_fetch(_Rope_RopeRep<char, std::allocator<char> >*, size_type);
 
-  template class stdio_filebuf<char>;
-
 #ifdef _GLIBCXX_USE_WCHAR_T
   template
-    const unsigned long 
+    const unsigned long
     rope<wchar_t, std::allocator<wchar_t> >::_S_min_len[min_len];
 
   template
     wchar_t
     rope<wchar_t, std::allocator<wchar_t> >::
     _S_fetch(_Rope_RopeRep<wchar_t, std::allocator<wchar_t> >*, size_type);
-
-  template class stdio_filebuf<wchar_t>;
 #endif
 
 _GLIBCXX_END_NAMESPACE_VERSION

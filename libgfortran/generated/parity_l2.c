@@ -1,5 +1,5 @@
-/* Implementation of the NORM2 intrinsic
-   Copyright 2010 Free Software Foundation, Inc.
+/* Implementation of the PARITY intrinsic
+   Copyright (C) 2010-2017 Free Software Foundation, Inc.
    Contributed by Tobias Burnus  <burnus@net-b.de>
 
 This file is part of the GNU Fortran runtime library (libgfortran).
@@ -24,9 +24,6 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 <http://www.gnu.org/licenses/>.  */
 
 #include "libgfortran.h"
-#include <stdlib.h>
-#include <math.h>
-#include <assert.h>
 
 
 #if defined (HAVE_GFC_LOGICAL_2) && defined (HAVE_GFC_LOGICAL_2)
@@ -80,7 +77,7 @@ parity_l2 (gfc_array_l2 * const restrict retarray,
 	extent[n] = 0;
     }
 
-  if (retarray->data == NULL)
+  if (retarray->base_addr == NULL)
     {
       size_t alloc_size, str;
 
@@ -98,9 +95,9 @@ parity_l2 (gfc_array_l2 * const restrict retarray,
       retarray->offset = 0;
       retarray->dtype = (array->dtype & ~GFC_DTYPE_RANK_MASK) | rank;
 
-      alloc_size = sizeof (GFC_LOGICAL_2) * GFC_DESCRIPTOR_STRIDE(retarray,rank-1)
-    		   * extent[rank-1];
+      alloc_size = GFC_DESCRIPTOR_STRIDE(retarray,rank-1) * extent[rank-1];
 
+      retarray->base_addr = xmallocarray (alloc_size, sizeof (GFC_LOGICAL_2));
       if (alloc_size == 0)
 	{
 	  /* Make sure we have a zero-sized array.  */
@@ -108,8 +105,6 @@ parity_l2 (gfc_array_l2 * const restrict retarray,
 	  return;
 
 	}
-      else
-	retarray->data = internal_malloc_size (alloc_size);
     }
   else
     {
@@ -132,8 +127,8 @@ parity_l2 (gfc_array_l2 * const restrict retarray,
 	return;
     }
 
-  base = array->data;
-  dest = retarray->data;
+  base = array->base_addr;
+  dest = retarray->base_addr;
 
   continue_loop = 1;
   while (continue_loop)
@@ -172,9 +167,9 @@ parity_l2 (gfc_array_l2 * const restrict retarray,
 	  base -= sstride[n] * extent[n];
 	  dest -= dstride[n] * extent[n];
 	  n++;
-	  if (n == rank)
+	  if (n >= rank)
 	    {
-	      /* Break out of the look.  */
+	      /* Break out of the loop.  */
 	      continue_loop = 0;
 	      break;
 	    }

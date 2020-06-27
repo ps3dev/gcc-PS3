@@ -1,7 +1,5 @@
 /* Compilation switch flag type definitions for GCC.
-   Copyright (C) 1987, 1988, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2002,
-   2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 1987-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -93,18 +91,45 @@ enum debug_struct_file
   DINFO_STRUCT_FILE_ANY     /* Debug structs defined in all files. */
 };
 
-/* Enumerate visibility settings.  This is deliberately ordered from most
-   to least visibility.  */
-#ifndef SYMBOL_VISIBILITY_DEFINED
-#define SYMBOL_VISIBILITY_DEFINED
-enum symbol_visibility
+/* Balance between GNAT encodings and standard DWARF to emit.  */
+
+enum dwarf_gnat_encodings
 {
-  VISIBILITY_DEFAULT,
-  VISIBILITY_PROTECTED,
-  VISIBILITY_HIDDEN,
-  VISIBILITY_INTERNAL
+  DWARF_GNAT_ENCODINGS_ALL = 0,	    /* Emit all GNAT encodings, then emit as
+				       much standard DWARF as possible so it
+				       does not conflict with GNAT
+				       encodings.  */
+  DWARF_GNAT_ENCODINGS_GDB = 1,	    /* Emit as much standard DWARF as possible
+				       as long as GDB handles them.  Emit GNAT
+				       encodings for the rest.  */
+  DWARF_GNAT_ENCODINGS_MINIMAL = 2  /* Emit all the standard DWARF we can.
+				       Emit GNAT encodings for the rest.  */
 };
-#endif
+
+/* Enumerate Objective-c instance variable visibility settings. */
+
+enum ivar_visibility
+{
+  IVAR_VISIBILITY_PRIVATE,
+  IVAR_VISIBILITY_PROTECTED,
+  IVAR_VISIBILITY_PUBLIC,
+  IVAR_VISIBILITY_PACKAGE
+};
+
+/* The stack reuse level.  */
+enum stack_reuse_level
+{
+  SR_NONE,
+  SR_NAMED_VARS,
+  SR_ALL
+};
+
+/* The algorithm used for basic block reordering.  */
+enum reorder_blocks_algorithm
+{
+  REORDER_BLOCKS_ALGORITHM_SIMPLE,
+  REORDER_BLOCKS_ALGORITHM_STC
+};
 
 /* The algorithm used for the integrated register allocator (IRA).  */
 enum ira_algorithm
@@ -133,11 +158,12 @@ enum excess_precision
   EXCESS_PRECISION_STANDARD
 };
 
-/* Selection of the graph form.  */
-enum graph_dump_types
+/* The options for which values of FLT_EVAL_METHOD are permissible.  */
+enum permitted_flt_eval_methods
 {
-  no_graph = 0,
-  vcg
+  PERMITTED_FLT_EVAL_METHODS_DEFAULT,
+  PERMITTED_FLT_EVAL_METHODS_TS_18661,
+  PERMITTED_FLT_EVAL_METHODS_C11
 };
 
 /* Type of stack check.  */
@@ -160,31 +186,6 @@ enum stack_check_type
   FULL_BUILTIN_STACK_CHECK
 };
 
-/* Names for the different levels of -Wstrict-overflow=N.  The numeric
-   values here correspond to N.  */
-
-enum warn_strict_overflow_code
-{
-  /* Overflow warning that should be issued with -Wall: a questionable
-     construct that is easy to avoid even when using macros.  Example:
-     folding (x + CONSTANT > x) to 1.  */
-  WARN_STRICT_OVERFLOW_ALL = 1,
-  /* Overflow warning about folding a comparison to a constant because
-     of undefined signed overflow, other than cases covered by
-     WARN_STRICT_OVERFLOW_ALL.  Example: folding (abs (x) >= 0) to 1
-     (this is false when x == INT_MIN).  */
-  WARN_STRICT_OVERFLOW_CONDITIONAL = 2,
-  /* Overflow warning about changes to comparisons other than folding
-     them to a constant.  Example: folding (x + 1 > 1) to (x > 0).  */
-  WARN_STRICT_OVERFLOW_COMPARISON = 3,
-  /* Overflow warnings not covered by the above cases.  Example:
-     folding ((x * 10) / 5) to (x * 2).  */
-  WARN_STRICT_OVERFLOW_MISC = 4,
-  /* Overflow warnings about reducing magnitude of constants in
-     comparison.  Example: folding (x + 2 > y) to (x + 1 >= y).  */
-  WARN_STRICT_OVERFLOW_MAGNITUDE = 5
-};
-
 /* Floating-point contraction mode.  */
 enum fp_contract_mode {
   FP_CONTRACT_OFF = 0,
@@ -192,20 +193,119 @@ enum fp_contract_mode {
   FP_CONTRACT_FAST = 2
 };
 
-/* Vectorizer verbosity levels.  */
-enum vect_verbosity_levels {
-  REPORT_NONE,
-  REPORT_VECTORIZED_LOCATIONS,
-  REPORT_UNVECTORIZED_LOCATIONS,
-  REPORT_COST,
-  REPORT_ALIGNMENT,
-  REPORT_DR_DETAILS,
-  REPORT_BAD_FORM_LOOPS,
-  REPORT_OUTER_LOOPS,
-  REPORT_SLP,
-  REPORT_DETAILS,
-  /* New verbosity levels should be added before this one.  */
-  MAX_VERBOSITY_LEVEL
+/* Scalar storage order kind.  */
+enum scalar_storage_order_kind {
+  SSO_NATIVE = 0,
+  SSO_BIG_ENDIAN,
+  SSO_LITTLE_ENDIAN
 };
+
+/* Vectorizer cost-model.  */
+enum vect_cost_model {
+  VECT_COST_MODEL_UNLIMITED = 0,
+  VECT_COST_MODEL_CHEAP = 1,
+  VECT_COST_MODEL_DYNAMIC = 2,
+  VECT_COST_MODEL_DEFAULT = 3
+};
+
+/* Different instrumentation modes.  */
+enum sanitize_code {
+  /* AddressSanitizer.  */
+  SANITIZE_ADDRESS = 1UL << 0,
+  SANITIZE_USER_ADDRESS = 1UL << 1,
+  SANITIZE_KERNEL_ADDRESS = 1UL << 2,
+  /* ThreadSanitizer.  */
+  SANITIZE_THREAD = 1UL << 3,
+  /* LeakSanitizer.  */
+  SANITIZE_LEAK = 1UL << 4,
+  /* UndefinedBehaviorSanitizer.  */
+  SANITIZE_SHIFT_BASE = 1UL << 5,
+  SANITIZE_SHIFT_EXPONENT = 1UL << 6,
+  SANITIZE_DIVIDE = 1UL << 7,
+  SANITIZE_UNREACHABLE = 1UL << 8,
+  SANITIZE_VLA = 1UL << 9,
+  SANITIZE_NULL = 1UL << 10,
+  SANITIZE_RETURN = 1UL << 11,
+  SANITIZE_SI_OVERFLOW = 1UL << 12,
+  SANITIZE_BOOL = 1UL << 13,
+  SANITIZE_ENUM = 1UL << 14,
+  SANITIZE_FLOAT_DIVIDE = 1UL << 15,
+  SANITIZE_FLOAT_CAST = 1UL << 16,
+  SANITIZE_BOUNDS = 1UL << 17,
+  SANITIZE_ALIGNMENT = 1UL << 18,
+  SANITIZE_NONNULL_ATTRIBUTE = 1UL << 19,
+  SANITIZE_RETURNS_NONNULL_ATTRIBUTE = 1UL << 20,
+  SANITIZE_OBJECT_SIZE = 1UL << 21,
+  SANITIZE_VPTR = 1UL << 22,
+  SANITIZE_BOUNDS_STRICT = 1UL << 23,
+  SANITIZE_SHIFT = SANITIZE_SHIFT_BASE | SANITIZE_SHIFT_EXPONENT,
+  SANITIZE_UNDEFINED = SANITIZE_SHIFT | SANITIZE_DIVIDE | SANITIZE_UNREACHABLE
+		       | SANITIZE_VLA | SANITIZE_NULL | SANITIZE_RETURN
+		       | SANITIZE_SI_OVERFLOW | SANITIZE_BOOL | SANITIZE_ENUM
+		       | SANITIZE_BOUNDS | SANITIZE_ALIGNMENT
+		       | SANITIZE_NONNULL_ATTRIBUTE
+		       | SANITIZE_RETURNS_NONNULL_ATTRIBUTE
+		       | SANITIZE_OBJECT_SIZE | SANITIZE_VPTR,
+  SANITIZE_NONDEFAULT = SANITIZE_FLOAT_DIVIDE | SANITIZE_FLOAT_CAST
+			| SANITIZE_BOUNDS_STRICT
+};
+
+/* flag_vtable_verify initialization levels. */
+enum vtv_priority {
+  VTV_NO_PRIORITY       = 0,  /* i.E. Do NOT do vtable verification. */
+  VTV_STANDARD_PRIORITY = 1,
+  VTV_PREINIT_PRIORITY  = 2
+};
+
+/* flag_lto_partition initialization values.  */
+enum lto_partition_model {
+  LTO_PARTITION_NONE = 0,
+  LTO_PARTITION_ONE = 1,
+  LTO_PARTITION_BALANCED = 2,
+  LTO_PARTITION_1TO1 = 3,
+  LTO_PARTITION_MAX = 4
+};
+
+/* flag_lto_linker_output initialization values.  */
+enum lto_linker_output {
+  LTO_LINKER_OUTPUT_UNKNOWN,
+  LTO_LINKER_OUTPUT_REL,
+  LTO_LINKER_OUTPUT_DYN,
+  LTO_LINKER_OUTPUT_PIE,
+  LTO_LINKER_OUTPUT_EXEC
+};
+
+/* gfortran -finit-real= values.  */
+
+enum gfc_init_local_real
+{
+  GFC_INIT_REAL_OFF = 0,
+  GFC_INIT_REAL_ZERO,
+  GFC_INIT_REAL_NAN,
+  GFC_INIT_REAL_SNAN,
+  GFC_INIT_REAL_INF,
+  GFC_INIT_REAL_NEG_INF
+};
+
+/* gfortran -fcoarray= values.  */
+
+enum gfc_fcoarray
+{
+  GFC_FCOARRAY_NONE = 0,
+  GFC_FCOARRAY_SINGLE,
+  GFC_FCOARRAY_LIB
+};
+
+
+/* gfortran -fconvert= values; used for unformatted I/O.
+   Keep in sync with GFC_CONVERT_* in gcc/fortran/libgfortran.h.   */
+enum gfc_convert
+{
+  GFC_FLAG_CONVERT_NATIVE = 0,
+  GFC_FLAG_CONVERT_SWAP,
+  GFC_FLAG_CONVERT_BIG,
+  GFC_FLAG_CONVERT_LITTLE
+};
+
 
 #endif /* ! GCC_FLAG_TYPES_H */

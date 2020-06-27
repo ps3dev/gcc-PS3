@@ -1,8 +1,8 @@
 // { dg-do assemble  }
 struct A
 {
-  A();				// { dg-message "A::A|candidate expects" } candidate
-  A(A&);			// { dg-message "A::A|no known conversion" } referenced below
+  A();
+  A(A&);			// { dg-message "A::A|no known conversion" "" { target c++14_down } } referenced below
 };
 
 int
@@ -10,9 +10,8 @@ main ()
 {
   try
     {
-      throw A();		// { dg-error "no matching" "match" } can't copy
-      // { dg-message "candidate" "candidate note" { target *-*-* } 13 }
-// { dg-error "thrown expression" "expr" { target *-*-* } 13 }
+      throw A();		// { dg-error "rvalue" "" { target c++14_down } } can't copy
+      // { dg-error "thrown expression" "expr" { target c++14_down } .-1 }
     }
   catch (...) { }
 }

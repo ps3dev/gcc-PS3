@@ -6,7 +6,10 @@
 
 package doc
 
-import "go/ast"
+import (
+	"go/ast"
+	"go/token"
+)
 
 // filterIdentList removes unexported names from list in place
 // and returns the resulting list.
@@ -20,6 +23,17 @@ func filterIdentList(list []*ast.Ident) []*ast.Ident {
 		}
 	}
 	return list[0:j]
+}
+
+// hasExportedName reports whether list contains any exported names.
+//
+func hasExportedName(list []*ast.Ident) bool {
+	for _, x := range list {
+		if x.IsExported() {
+			return true
+		}
+	}
+	return false
 }
 
 // removeErrorField removes anonymous fields named "error" from an interface.
@@ -49,7 +63,7 @@ func removeErrorField(ityp *ast.InterfaceType) {
 }
 
 // filterFieldList removes unexported fields (field names) from the field list
-// in place and returns true if fields were removed. Anonymous fields are
+// in place and reports whether fields were removed. Anonymous fields are
 // recorded with the parent type. filterType is called with the types of
 // all remaining fields.
 //
@@ -107,7 +121,7 @@ func (r *reader) filterParamList(fields *ast.FieldList) {
 
 // filterType strips any unexported struct fields or method types from typ
 // in place. If fields (or methods) have been removed, the corresponding
-// struct or interface type has the Incomplete field set to true. 
+// struct or interface type has the Incomplete field set to true.
 //
 func (r *reader) filterType(parent *namedType, typ ast.Expr) {
 	switch t := typ.(type) {
@@ -136,7 +150,7 @@ func (r *reader) filterType(parent *namedType, typ ast.Expr) {
 	}
 }
 
-func (r *reader) filterSpec(spec ast.Spec) bool {
+func (r *reader) filterSpec(spec ast.Spec, tok token.Token) bool {
 	switch s := spec.(type) {
 	case *ast.ImportSpec:
 		// always keep imports so we can collect them
@@ -159,10 +173,49 @@ func (r *reader) filterSpec(spec ast.Spec) bool {
 	return false
 }
 
-func (r *reader) filterSpecList(list []ast.Spec) []ast.Spec {
+// copyConstType returns a copy of typ with position pos.
+// typ must be a valid constant type.
+// In practice, only (possibly qualified) identifiers are possible.
+//
+func copyConstType(typ ast.Expr, pos token.Pos) ast.Expr {
+	switch typ := typ.(type) {
+	case *ast.Ident:
+		return &ast.Ident{Name: typ.Name, NamePos: pos}
+	case *ast.SelectorExpr:
+		if id, ok := typ.X.(*ast.Ident); ok {
+			// presumably a qualified identifier
+			return &ast.SelectorExpr{
+				Sel: ast.NewIdent(typ.Sel.Name),
+				X:   &ast.Ident{Name: id.Name, NamePos: pos},
+			}
+		}
+	}
+	return nil // shouldn't happen, but be conservative and don't panic
+}
+
+func (r *reader) filterSpecList(list []ast.Spec, tok token.Token) []ast.Spec {
+	if tok == token.CONST {
+		// Propagate any type information that would get lost otherwise
+		// when unexported constants are filtered.
+		var prevType ast.Expr
+		for _, spec := range list {
+			spec := spec.(*ast.ValueSpec)
+			if spec.Type == nil && prevType != nil {
+				// provide current spec with an explicit type
+				spec.Type = copyConstType(prevType, spec.Pos())
+			}
+			if hasExportedName(spec.Names) {
+				// exported names are preserved so there's no need to propagate the type
+				prevType = nil
+			} else {
+				prevType = spec.Type
+			}
+		}
+	}
+
 	j := 0
 	for _, s := range list {
-		if r.filterSpec(s) {
+		if r.filterSpec(s, tok) {
 			list[j] = s
 			j++
 		}
@@ -173,7 +226,7 @@ func (r *reader) filterSpecList(list []ast.Spec) []ast.Spec {
 func (r *reader) filterDecl(decl ast.Decl) bool {
 	switch d := decl.(type) {
 	case *ast.GenDecl:
-		d.Specs = r.filterSpecList(d.Specs)
+		d.Specs = r.filterSpecList(d.Specs, d.Tok)
 		return len(d.Specs) > 0
 	case *ast.FuncDecl:
 		// ok to filter these methods early because any

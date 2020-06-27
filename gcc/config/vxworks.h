@@ -1,6 +1,5 @@
 /* Common VxWorks target definitions for GNU compiler.
-   Copyright (C) 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2007, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 1999-2017 Free Software Foundation, Inc.
    Contributed by Wind River Systems.
    Rewritten by CodeSourcery, LLC.
 
@@ -20,7 +19,7 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
-/* Assert that we are targetting VxWorks.  */
+/* Assert that we are targeting VxWorks.  */
 #undef TARGET_VXWORKS
 #define TARGET_VXWORKS 1
 
@@ -72,13 +71,13 @@ along with GCC; see the file COPYING3.  If not see
  %{mrtp:%{!shared:%{!non-static:-static}		\
  		  %{non-static:--force-dynamic --export-dynamic}}}"
 
-/* For VxWorks, the system provides libc_internal.a.  This is a superset
-   of libgcc.a; we want to use it.  Make sure not to dynamically export
-   any of its symbols, though.  Always look for libgcc.a first so that
-   we get the latest versions of the GNU intrinsics during our builds.  */
+/* For VxWorks static rtps, the system provides libc_internal.a, a superset
+   of libgcc.a that we want to use.  Make sure not to dynamically export any
+   of its symbols, though, and always look for libgcc.a first so that we get
+   the latest versions of the GNU intrinsics during our builds.  */
 #undef VXWORKS_LIBGCC_SPEC
 #define VXWORKS_LIBGCC_SPEC \
-  "-lgcc %{mrtp:--exclude-libs=libc_internal,libgcc -lc_internal}"
+  "-lgcc %{mrtp:%{!shared:--exclude-libs=libc_internal,libgcc -lc_internal}}"
 
 #undef VXWORKS_STARTFILE_SPEC
 #define	VXWORKS_STARTFILE_SPEC "%{mrtp:%{!shared:-l:crt0.o}}"
@@ -114,6 +113,9 @@ extern void vxworks_asm_out_destructor (rtx symbol, int priority);
 
 #undef SIZE_TYPE
 #define SIZE_TYPE "unsigned int"
+
+#undef TARGET_LIBC_HAS_FUNCTION
+#define TARGET_LIBC_HAS_FUNCTION no_c99_libc_has_function
 
 /* Both kernels and RTPs have the facilities required by this macro.  */
 #define TARGET_POSIX_IO

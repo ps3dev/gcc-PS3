@@ -14,6 +14,10 @@
 #include <sys/select.h>
 #endif
 
+#if defined (__i386__) || defined (__x86_64__)
+#include <xmmintrin.h>
+#endif
+
 #include "runtime.h"
 
 /* Spin wait.  */
@@ -26,12 +30,15 @@ runtime_procyield (uint32 cnt)
   for (i = 0; i < cnt; ++i)
     {
 #if defined (__i386__) || defined (__x86_64__)
-      __builtin_ia32_pause ();
+      _mm_pause ();
 #endif
     }
 }
 
 /* Ask the OS to reschedule this thread.  */
+
+void runtime_osyield(void)
+  __attribute__ ((no_split_stack));
 
 void
 runtime_osyield (void)

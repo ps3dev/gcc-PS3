@@ -1,5 +1,5 @@
 /* Memory management routines.
-   Copyright 2002, 2005, 2006, 2007, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2002-2017 Free Software Foundation, Inc.
    Contributed by Paul Brook <paul@nowt.org>
 
 This file is part of the GNU Fortran runtime library (libgfortran).
@@ -24,24 +24,23 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 <http://www.gnu.org/licenses/>.  */
 
 #include "libgfortran.h"
-#include <stdlib.h>
+#include <errno.h>
 
-/* If GFC_CLEAR_MEMORY is defined, the memory allocation routines will
-   return memory that is guaranteed to be set to zero.  This can have
-   a severe efficiency penalty, so it should never be set if good
-   performance is desired, but it can help when you're debugging code.  */
-/* #define GFC_CLEAR_MEMORY */
+#ifndef SIZE_MAX
+#define SIZE_MAX ((size_t)-1)
+#endif
+
 
 void *
-get_mem (size_t n)
+xmalloc (size_t n)
 {
   void *p;
 
-#ifdef GFC_CLEAR_MEMORY
-  p = (void *) calloc (1, n);
-#else
-  p = (void *) malloc (n);
-#endif
+  if (n == 0)
+    n = 1;
+
+  p = malloc (n);
+
   if (p == NULL)
     os_error ("Memory allocation failed");
 
@@ -49,13 +48,55 @@ get_mem (size_t n)
 }
 
 
-/* Allocate memory for internal (compiler generated) use.  */
+void *
+xmallocarray (size_t nmemb, size_t size)
+{
+  void *p;
+
+  if (!nmemb || !size)
+    size = nmemb = 1;
+#define HALF_SIZE_T (((size_t) 1) << (__CHAR_BIT__ * sizeof (size_t) / 2))
+  else if (__builtin_expect ((nmemb | size) >= HALF_SIZE_T, 0)
+	   && nmemb > SIZE_MAX / size)
+    {
+      errno = ENOMEM;
+      os_error ("Integer overflow in xmallocarray");
+    }
+
+  p = malloc (nmemb * size);
+
+  if (!p)
+    os_error ("Memory allocation failed in xmallocarray");
+
+  return p;
+}
+
+
+/* calloc wrapper that aborts on error.  */
 
 void *
-internal_malloc_size (size_t size)
+xcalloc (size_t nmemb, size_t size)
 {
-  if (unlikely (size == 0))
+  if (!nmemb || !size)
+    nmemb = size = 1;
+
+  void *p = calloc (nmemb, size);
+  if (!p)
+    os_error ("Allocating cleared memory failed");
+
+  return p;
+}
+
+
+void *
+xrealloc (void *ptr, size_t size)
+{
+  if (size == 0)
     size = 1;
 
-  return get_mem (size);
+  void *newp = realloc (ptr, size);
+  if (!newp)
+    os_error ("Memory allocation failure in xrealloc");
+
+  return newp;
 }

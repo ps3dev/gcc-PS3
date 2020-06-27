@@ -1,6 +1,5 @@
 /* Generic SSA value propagation engine.
-   Copyright (C) 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012
-   Free Software Foundation, Inc.
+   Copyright (C) 2004-2017 Free Software Foundation, Inc.
    Contributed by Diego Novillo <dnovillo@redhat.com>
 
    This file is part of GCC.
@@ -22,23 +21,23 @@
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
+#include "backend.h"
 #include "tree.h"
-#include "flags.h"
-#include "tm_p.h"
-#include "basic-block.h"
-#include "output.h"
-#include "function.h"
-#include "gimple-pretty-print.h"
-#include "timevar.h"
-#include "tree-dump.h"
-#include "tree-flow.h"
-#include "tree-pass.h"
-#include "tree-ssa-propagate.h"
-#include "langhooks.h"
-#include "vec.h"
-#include "value-prof.h"
 #include "gimple.h"
+#include "ssa.h"
+#include "gimple-pretty-print.h"
+#include "dumpfile.h"
+#include "gimple-fold.h"
+#include "tree-eh.h"
+#include "gimplify.h"
+#include "gimple-iterator.h"
+#include "tree-cfg.h"
+#include "tree-ssa.h"
+#include "tree-ssa-propagate.h"
+#include "domwalk.h"
+#include "cfgloop.h"
+#include "tree-cfgcleanup.h"
+#include "cfganal.h"
 
 /* This file implements a generic value propagation engine based on
    the same propagation used by the SSA-CCP algorithm [1].
@@ -57,6 +56,8 @@
 
       	SSA_PROP_NOT_INTERESTING: Statement S produces nothing of
 	    interest and does not affect any of the work lists.
+	    The statement may be simulated again if any of its input
+	    operands change in future iterations of the simulator.
 
 	SSA_PROP_VARYING: The value produced by S cannot be determined
 	    at compile time.  Further simulation of S is not required.
@@ -83,13 +84,8 @@
 	    Blocks are added to this list if their incoming edges are
 	    found executable.
 
-	VARYING_SSA_EDGES contains the list of statements that feed
-	    from statements that produce an SSA_PROP_VARYING result.
-	    These are simulated first to speed up processing.
-
-	INTERESTING_SSA_EDGES contains the list of statements that
-	    feed from statements that produce an SSA_PROP_INTERESTING
-	    result.
+	SSA_EDGE_WORKLIST contains the list of statements that we 
+	    need to revisit.
 
    5- Simulation terminates when all three work lists are drained.
 
@@ -116,112 +112,38 @@
 static ssa_prop_visit_stmt_fn ssa_prop_visit_stmt;
 static ssa_prop_visit_phi_fn ssa_prop_visit_phi;
 
-/* Keep track of statements that have been added to one of the SSA
-   edges worklists.  This flag is used to avoid visiting statements
-   unnecessarily when draining an SSA edge worklist.  If while
-   simulating a basic block, we find a statement with
-   STMT_IN_SSA_EDGE_WORKLIST set, we clear it to prevent SSA edge
-   processing from visiting it again.
-
-   NOTE: users of the propagation engine are not allowed to use
-   the GF_PLF_1 flag.  */
-#define STMT_IN_SSA_EDGE_WORKLIST	GF_PLF_1
-
-/* A bitmap to keep track of executable blocks in the CFG.  */
-static sbitmap executable_blocks;
-
-/* Array of control flow edges on the worklist.  */
-static VEC(basic_block,heap) *cfg_blocks;
-
-static unsigned int cfg_blocks_num = 0;
-static int cfg_blocks_tail;
-static int cfg_blocks_head;
-
-static sbitmap bb_in_list;
+/* Worklist of control flow edge destinations.  This contains
+   the CFG order number of the blocks so we can iterate in CFG
+   order by visiting in bit-order.  */
+static bitmap cfg_blocks;
+static int *bb_to_cfg_order;
+static int *cfg_order_to_bb;
 
 /* Worklist of SSA edges which will need reexamination as their
    definition has changed.  SSA edges are def-use edges in the SSA
    web.  For each D-U edge, we store the target statement or PHI node
-   U.  */
-static GTY(()) VEC(gimple,gc) *interesting_ssa_edges;
-
-/* Identical to INTERESTING_SSA_EDGES.  For performance reasons, the
-   list of SSA edges is split into two.  One contains all SSA edges
-   who need to be reexamined because their lattice value changed to
-   varying (this worklist), and the other contains all other SSA edges
-   to be reexamined (INTERESTING_SSA_EDGES).
-
-   Since most values in the program are VARYING, the ideal situation
-   is to move them to that lattice value as quickly as possible.
-   Thus, it doesn't make sense to process any other type of lattice
-   value until all VARYING values are propagated fully, which is one
-   thing using the VARYING worklist achieves.  In addition, if we
-   don't use a separate worklist for VARYING edges, we end up with
-   situations where lattice values move from
-   UNDEFINED->INTERESTING->VARYING instead of UNDEFINED->VARYING.  */
-static GTY(()) VEC(gimple,gc) *varying_ssa_edges;
-
+   UID in a bitmap.  UIDs order stmts in execution order.   */
+static bitmap ssa_edge_worklist;
+static vec<gimple *> uid_to_stmt;
 
 /* Return true if the block worklist empty.  */
 
 static inline bool
 cfg_blocks_empty_p (void)
 {
-  return (cfg_blocks_num == 0);
+  return bitmap_empty_p (cfg_blocks);
 }
 
 
-/* Add a basic block to the worklist.  The block must not be already
-   in the worklist, and it must not be the ENTRY or EXIT block.  */
+/* Add a basic block to the worklist.  The block must not be the ENTRY
+   or EXIT block.  */
 
 static void
 cfg_blocks_add (basic_block bb)
 {
-  bool head = false;
-
-  gcc_assert (bb != ENTRY_BLOCK_PTR && bb != EXIT_BLOCK_PTR);
-  gcc_assert (!TEST_BIT (bb_in_list, bb->index));
-
-  if (cfg_blocks_empty_p ())
-    {
-      cfg_blocks_tail = cfg_blocks_head = 0;
-      cfg_blocks_num = 1;
-    }
-  else
-    {
-      cfg_blocks_num++;
-      if (cfg_blocks_num > VEC_length (basic_block, cfg_blocks))
-	{
-	  /* We have to grow the array now.  Adjust to queue to occupy
-	     the full space of the original array.  We do not need to
-	     initialize the newly allocated portion of the array
-	     because we keep track of CFG_BLOCKS_HEAD and
-	     CFG_BLOCKS_HEAD.  */
-	  cfg_blocks_tail = VEC_length (basic_block, cfg_blocks);
-	  cfg_blocks_head = 0;
-	  VEC_safe_grow (basic_block, heap, cfg_blocks, 2 * cfg_blocks_tail);
-	}
-      /* Minor optimization: we prefer to see blocks with more
-	 predecessors later, because there is more of a chance that
-	 the incoming edges will be executable.  */
-      else if (EDGE_COUNT (bb->preds)
-	       >= EDGE_COUNT (VEC_index (basic_block, cfg_blocks,
-					 cfg_blocks_head)->preds))
-	cfg_blocks_tail = ((cfg_blocks_tail + 1)
-			   % VEC_length (basic_block, cfg_blocks));
-      else
-	{
-	  if (cfg_blocks_head == 0)
-	    cfg_blocks_head = VEC_length (basic_block, cfg_blocks);
-	  --cfg_blocks_head;
-	  head = true;
-	}
-    }
-
-  VEC_replace (basic_block, cfg_blocks,
-	       head ? cfg_blocks_head : cfg_blocks_tail,
-	       bb);
-  SET_BIT (bb_in_list, bb->index);
+  gcc_assert (bb != ENTRY_BLOCK_PTR_FOR_FN (cfun)
+	      && bb != EXIT_BLOCK_PTR_FOR_FN (cfun));
+  bitmap_set_bit (cfg_blocks, bb_to_cfg_order[bb->index]);
 }
 
 
@@ -230,19 +152,10 @@ cfg_blocks_add (basic_block bb)
 static basic_block
 cfg_blocks_get (void)
 {
-  basic_block bb;
-
-  bb = VEC_index (basic_block, cfg_blocks, cfg_blocks_head);
-
   gcc_assert (!cfg_blocks_empty_p ());
-  gcc_assert (bb);
-
-  cfg_blocks_head = ((cfg_blocks_head + 1)
-		     % VEC_length (basic_block, cfg_blocks));
-  --cfg_blocks_num;
-  RESET_BIT (bb_in_list, bb->index);
-
-  return bb;
+  int order_index = bitmap_first_set_bit (cfg_blocks);
+  bitmap_clear_bit (cfg_blocks, order_index);
+  return BASIC_BLOCK_FOR_FN (cfun, cfg_order_to_bb [order_index]);
 }
 
 
@@ -251,23 +164,29 @@ cfg_blocks_get (void)
    them to INTERESTING_SSA_EDGES.  */
 
 static void
-add_ssa_edge (tree var, bool is_varying)
+add_ssa_edge (tree var)
 {
   imm_use_iterator iter;
   use_operand_p use_p;
 
   FOR_EACH_IMM_USE_FAST (use_p, iter, var)
     {
-      gimple use_stmt = USE_STMT (use_p);
+      gimple *use_stmt = USE_STMT (use_p);
+
+      /* If we did not yet simulate the block wait for this to happen
+         and do not add the stmt to the SSA edge worklist.  */
+      if (! (gimple_bb (use_stmt)->flags & BB_VISITED))
+	continue;
 
       if (prop_simulate_again_p (use_stmt)
-	  && !gimple_plf (use_stmt, STMT_IN_SSA_EDGE_WORKLIST))
+	  && bitmap_set_bit (ssa_edge_worklist, gimple_uid (use_stmt)))
 	{
-	  gimple_set_plf (use_stmt, STMT_IN_SSA_EDGE_WORKLIST, true);
-	  if (is_varying)
-	    VEC_safe_push (gimple, gc, varying_ssa_edges, use_stmt);
-	  else
-	    VEC_safe_push (gimple, gc, interesting_ssa_edges, use_stmt);
+	  uid_to_stmt[gimple_uid (use_stmt)] = use_stmt;
+	  if (dump_file && (dump_flags & TDF_DETAILS))
+	    {
+	      fprintf (dump_file, "ssa_edge_worklist: adding SSA use in ");
+	      print_gimple_stmt (dump_file, use_stmt, 0, TDF_SLIM);
+	    }
 	}
     }
 }
@@ -279,7 +198,7 @@ static void
 add_control_edge (edge e)
 {
   basic_block bb = e->dest;
-  if (bb == EXIT_BLOCK_PTR)
+  if (bb == EXIT_BLOCK_PTR_FOR_FN (cfun))
     return;
 
   /* If the edge had already been executed, skip it.  */
@@ -288,14 +207,10 @@ add_control_edge (edge e)
 
   e->flags |= EDGE_EXECUTABLE;
 
-  /* If the block is already in the list, we're done.  */
-  if (TEST_BIT (bb_in_list, bb->index))
-    return;
-
   cfg_blocks_add (bb);
 
   if (dump_file && (dump_flags & TDF_DETAILS))
-    fprintf (dump_file, "Adding Destination of edge (%d -> %d) to worklist\n\n",
+    fprintf (dump_file, "Adding destination of edge (%d -> %d) to worklist\n",
 	e->src->index, e->dest->index);
 }
 
@@ -303,11 +218,14 @@ add_control_edge (edge e)
 /* Simulate the execution of STMT and update the work lists accordingly.  */
 
 static void
-simulate_stmt (gimple stmt)
+simulate_stmt (gimple *stmt)
 {
   enum ssa_prop_result val = SSA_PROP_NOT_INTERESTING;
   edge taken_edge = NULL;
   tree output_name = NULL_TREE;
+
+  /* Pull the stmt off the SSA edge worklist.  */
+  bitmap_clear_bit (ssa_edge_worklist, gimple_uid (stmt));
 
   /* Don't bother visiting statements that are already
      considered varying by the propagator.  */
@@ -316,7 +234,7 @@ simulate_stmt (gimple stmt)
 
   if (gimple_code (stmt) == GIMPLE_PHI)
     {
-      val = ssa_prop_visit_phi (stmt);
+      val = ssa_prop_visit_phi (as_a <gphi *> (stmt));
       output_name = gimple_phi_result (stmt);
     }
   else
@@ -329,7 +247,7 @@ simulate_stmt (gimple stmt)
       /* If the statement produced a new varying value, add the SSA
 	 edges coming out of OUTPUT_NAME.  */
       if (output_name)
-	add_ssa_edge (output_name, true);
+	add_ssa_edge (output_name);
 
       /* If STMT transfers control out of its basic block, add
 	 all outgoing edges to the work list.  */
@@ -341,61 +259,86 @@ simulate_stmt (gimple stmt)
 	  FOR_EACH_EDGE (e, ei, bb->succs)
 	    add_control_edge (e);
 	}
+      return;
     }
   else if (val == SSA_PROP_INTERESTING)
     {
       /* If the statement produced new value, add the SSA edges coming
 	 out of OUTPUT_NAME.  */
       if (output_name)
-	add_ssa_edge (output_name, false);
+	add_ssa_edge (output_name);
 
       /* If we know which edge is going to be taken out of this block,
 	 add it to the CFG work list.  */
       if (taken_edge)
 	add_control_edge (taken_edge);
     }
+
+  /* If there are no SSA uses on the stmt whose defs are simulated
+     again then this stmt will be never visited again.  */
+  bool has_simulate_again_uses = false;
+  use_operand_p use_p;
+  ssa_op_iter iter;
+  if (gimple_code  (stmt) == GIMPLE_PHI)
+    {
+      edge_iterator ei;
+      edge e;
+      tree arg;
+      FOR_EACH_EDGE (e, ei, gimple_bb (stmt)->preds)
+	if (!(e->flags & EDGE_EXECUTABLE)
+	    || ((arg = PHI_ARG_DEF_FROM_EDGE (stmt, e))
+		&& TREE_CODE (arg) == SSA_NAME
+		&& !SSA_NAME_IS_DEFAULT_DEF (arg)
+		&& prop_simulate_again_p (SSA_NAME_DEF_STMT (arg))))
+	  {
+	    has_simulate_again_uses = true;
+	    break;
+	  }
+    }
+  else
+    FOR_EACH_SSA_USE_OPERAND (use_p, stmt, iter, SSA_OP_USE)
+      {
+	gimple *def_stmt = SSA_NAME_DEF_STMT (USE_FROM_PTR (use_p));
+	if (!gimple_nop_p (def_stmt)
+	    && prop_simulate_again_p (def_stmt))
+	  {
+	    has_simulate_again_uses = true;
+	    break;
+	  }
+      }
+  if (!has_simulate_again_uses)
+    {
+      if (dump_file && (dump_flags & TDF_DETAILS))
+	fprintf (dump_file, "marking stmt to be not simulated again\n");
+      prop_set_simulate_again (stmt, false);
+    }
 }
 
 /* Process an SSA edge worklist.  WORKLIST is the SSA edge worklist to
    drain.  This pops statements off the given WORKLIST and processes
-   them until there are no more statements on WORKLIST.
-   We take a pointer to WORKLIST because it may be reallocated when an
-   SSA edge is added to it in simulate_stmt.  */
+   them until one statement was simulated or there are no more statements
+   on WORKLIST.  We take a pointer to WORKLIST because it may be reallocated
+   when an SSA edge is added to it in simulate_stmt.  Return true if a stmt
+   was simulated.  */
 
 static void
-process_ssa_edge_worklist (VEC(gimple,gc) **worklist)
+process_ssa_edge_worklist ()
 {
-  /* Drain the entire worklist.  */
-  while (VEC_length (gimple, *worklist) > 0)
+  /* Process the next entry from the worklist.  */
+  unsigned stmt_uid = bitmap_first_set_bit (ssa_edge_worklist);
+  bitmap_clear_bit (ssa_edge_worklist, stmt_uid);
+  gimple *stmt = uid_to_stmt[stmt_uid];
+
+  /* We should not have stmts in not yet simulated BBs on the worklist.  */
+  gcc_assert (gimple_bb (stmt)->flags & BB_VISITED);
+
+  if (dump_file && (dump_flags & TDF_DETAILS))
     {
-      basic_block bb;
-
-      /* Pull the statement to simulate off the worklist.  */
-      gimple stmt = VEC_pop (gimple, *worklist);
-
-      /* If this statement was already visited by simulate_block, then
-	 we don't need to visit it again here.  */
-      if (!gimple_plf (stmt, STMT_IN_SSA_EDGE_WORKLIST))
-	continue;
-
-      /* STMT is no longer in a worklist.  */
-      gimple_set_plf (stmt, STMT_IN_SSA_EDGE_WORKLIST, false);
-
-      if (dump_file && (dump_flags & TDF_DETAILS))
-	{
-	  fprintf (dump_file, "\nSimulating statement (from ssa_edges): ");
-	  print_gimple_stmt (dump_file, stmt, 0, dump_flags);
-	}
-
-      bb = gimple_bb (stmt);
-
-      /* PHI nodes are always visited, regardless of whether or not
-	 the destination block is executable.  Otherwise, visit the
-	 statement only if its block is marked executable.  */
-      if (gimple_code (stmt) == GIMPLE_PHI
-	  || TEST_BIT (executable_blocks, bb->index))
-	simulate_stmt (stmt);
+      fprintf (dump_file, "\nSimulating statement: ");
+      print_gimple_stmt (dump_file, stmt, 0, dump_flags);
     }
+
+  simulate_stmt (stmt);
 }
 
 
@@ -408,7 +351,7 @@ simulate_block (basic_block block)
   gimple_stmt_iterator gsi;
 
   /* There is nothing to do for the exit block.  */
-  if (block == EXIT_BLOCK_PTR)
+  if (block == EXIT_BLOCK_PTR_FOR_FN (cfun))
     return;
 
   if (dump_file && (dump_flags & TDF_DETAILS))
@@ -421,30 +364,18 @@ simulate_block (basic_block block)
 
   /* If this is the first time we've simulated this block, then we
      must simulate each of its statements.  */
-  if (!TEST_BIT (executable_blocks, block->index))
+  if (! (block->flags & BB_VISITED))
     {
       gimple_stmt_iterator j;
       unsigned int normal_edge_count;
       edge e, normal_edge;
       edge_iterator ei;
 
-      /* Note that we have simulated this block.  */
-      SET_BIT (executable_blocks, block->index);
-
       for (j = gsi_start_bb (block); !gsi_end_p (j); gsi_next (&j))
-	{
-	  gimple stmt = gsi_stmt (j);
+	simulate_stmt (gsi_stmt (j));
 
-	  /* If this statement is already in the worklist then
-	     "cancel" it.  The reevaluation implied by the worklist
-	     entry will produce the same value we generate here and
-	     thus reevaluating it again from the worklist is
-	     pointless.  */
-	  if (gimple_plf (stmt, STMT_IN_SSA_EDGE_WORKLIST))
-	    gimple_set_plf (stmt, STMT_IN_SSA_EDGE_WORKLIST, false);
-
-	  simulate_stmt (stmt);
-	}
+      /* Note that we have simulated this block.  */
+      block->flags |= BB_VISITED;
 
       /* We can not predict when abnormal and EH edges will be executed, so
 	 once a block is considered executable, we consider any
@@ -486,41 +417,55 @@ ssa_prop_init (void)
   basic_block bb;
 
   /* Worklists of SSA edges.  */
-  interesting_ssa_edges = VEC_alloc (gimple, gc, 20);
-  varying_ssa_edges = VEC_alloc (gimple, gc, 20);
+  ssa_edge_worklist = BITMAP_ALLOC (NULL);
 
-  executable_blocks = sbitmap_alloc (last_basic_block);
-  sbitmap_zero (executable_blocks);
-
-  bb_in_list = sbitmap_alloc (last_basic_block);
-  sbitmap_zero (bb_in_list);
+  /* Worklist of basic-blocks.  */
+  bb_to_cfg_order = XNEWVEC (int, last_basic_block_for_fn (cfun) + 1);
+  cfg_order_to_bb = XNEWVEC (int, n_basic_blocks_for_fn (cfun));
+  int n = pre_and_rev_post_order_compute_fn (cfun, NULL,
+					     cfg_order_to_bb, false);
+  for (int i = 0; i < n; ++i)
+    bb_to_cfg_order[cfg_order_to_bb[i]] = i;
+  cfg_blocks = BITMAP_ALLOC (NULL);
 
   if (dump_file && (dump_flags & TDF_DETAILS))
     dump_immediate_uses (dump_file);
 
-  cfg_blocks = VEC_alloc (basic_block, heap, 20);
-  VEC_safe_grow (basic_block, heap, cfg_blocks, 20);
-
   /* Initially assume that every edge in the CFG is not executable.
-     (including the edges coming out of ENTRY_BLOCK_PTR).  */
-  FOR_ALL_BB (bb)
+     (including the edges coming out of the entry block).  Mark blocks
+     as not visited, blocks not yet visited will have all their statements
+     simulated once an incoming edge gets executable.  */
+  set_gimple_stmt_max_uid (cfun, 0);
+  for (int i = 0; i < n; ++i)
     {
       gimple_stmt_iterator si;
-
-      for (si = gsi_start_bb (bb); !gsi_end_p (si); gsi_next (&si))
-	gimple_set_plf (gsi_stmt (si), STMT_IN_SSA_EDGE_WORKLIST, false);
+      bb = BASIC_BLOCK_FOR_FN (cfun, cfg_order_to_bb[i]);
 
       for (si = gsi_start_phis (bb); !gsi_end_p (si); gsi_next (&si))
-	gimple_set_plf (gsi_stmt (si), STMT_IN_SSA_EDGE_WORKLIST, false);
+	{
+	  gimple *stmt = gsi_stmt (si);
+	  gimple_set_uid (stmt, inc_gimple_stmt_max_uid (cfun));
+	}
 
+      for (si = gsi_start_bb (bb); !gsi_end_p (si); gsi_next (&si))
+	{
+	  gimple *stmt = gsi_stmt (si);
+	  gimple_set_uid (stmt, inc_gimple_stmt_max_uid (cfun));
+	}
+
+      bb->flags &= ~BB_VISITED;
       FOR_EACH_EDGE (e, ei, bb->succs)
 	e->flags &= ~EDGE_EXECUTABLE;
     }
+  uid_to_stmt.safe_grow (gimple_stmt_max_uid (cfun));
 
   /* Seed the algorithm by adding the successors of the entry block to the
      edge worklist.  */
-  FOR_EACH_EDGE (e, ei, ENTRY_BLOCK_PTR->succs)
-    add_control_edge (e);
+  FOR_EACH_EDGE (e, ei, ENTRY_BLOCK_PTR_FOR_FN (cfun)->succs)
+    {
+      e->flags &= ~EDGE_EXECUTABLE;
+      add_control_edge (e);
+    }
 }
 
 
@@ -529,12 +474,11 @@ ssa_prop_init (void)
 static void
 ssa_prop_fini (void)
 {
-  VEC_free (gimple, gc, interesting_ssa_edges);
-  VEC_free (gimple, gc, varying_ssa_edges);
-  VEC_free (basic_block, heap, cfg_blocks);
-  cfg_blocks = NULL;
-  sbitmap_free (bb_in_list);
-  sbitmap_free (executable_blocks);
+  BITMAP_FREE (cfg_blocks);
+  free (bb_to_cfg_order);
+  free (cfg_order_to_bb);
+  BITMAP_FREE (ssa_edge_worklist);
+  uid_to_stmt.release ();
 }
 
 
@@ -566,8 +510,18 @@ valid_gimple_rhs_p (tree expr)
       /* All constants are ok.  */
       break;
 
-    case tcc_binary:
     case tcc_comparison:
+      /* GENERIC allows comparisons with non-boolean types, reject
+         those for GIMPLE.  Let vector-typed comparisons pass - rules
+	 for GENERIC and GIMPLE are the same here.  */
+      if (!(INTEGRAL_TYPE_P (TREE_TYPE (expr))
+	    && (TREE_CODE (TREE_TYPE (expr)) == BOOLEAN_TYPE
+		|| TYPE_PRECISION (TREE_TYPE (expr)) == 1))
+	  && ! VECTOR_TYPE_P (TREE_TYPE (expr)))
+	return false;
+
+      /* Fallthru.  */
+    case tcc_binary:
       if (!is_gimple_val (TREE_OPERAND (expr, 0))
 	  || !is_gimple_val (TREE_OPERAND (expr, 1)))
 	return false;
@@ -620,9 +574,23 @@ valid_gimple_rhs_p (tree expr)
       return false;
 
     case tcc_exceptional:
+      if (code == CONSTRUCTOR)
+	{
+	  unsigned i;
+	  tree elt;
+	  FOR_EACH_CONSTRUCTOR_VALUE (CONSTRUCTOR_ELTS (expr), i, elt)
+	    if (!is_gimple_val (elt))
+	      return false;
+	  return true;
+	}
       if (code != SSA_NAME)
         return false;
       break;
+
+    case tcc_reference:
+      if (code == BIT_FIELD_REF)
+	return is_gimple_val (TREE_OPERAND (expr, 0));
+      return false;
 
     default:
       return false;
@@ -648,7 +616,7 @@ valid_gimple_call_p (tree expr)
   for (i = 0; i < nargs; i++)
     {
       tree arg = CALL_EXPR_ARG (expr, i);
-      if (is_gimple_reg_type (arg))
+      if (is_gimple_reg_type (TREE_TYPE (arg)))
 	{
 	  if (!is_gimple_val (arg))
 	    return false;
@@ -666,7 +634,7 @@ valid_gimple_call_p (tree expr)
    as their defining statement.  */
 
 void
-move_ssa_defining_stmt_for_defs (gimple new_stmt, gimple old_stmt)
+move_ssa_defining_stmt_for_defs (gimple *new_stmt, gimple *old_stmt)
 {
   tree var;
   ssa_op_iter iter;
@@ -687,8 +655,8 @@ move_ssa_defining_stmt_for_defs (gimple new_stmt, gimple old_stmt)
    A GIMPLE_CALL STMT is being replaced with GIMPLE_CALL NEW_STMT.  */
 
 static void
-finish_update_gimple_call (gimple_stmt_iterator *si_p, gimple new_stmt,
-			   gimple stmt)
+finish_update_gimple_call (gimple_stmt_iterator *si_p, gimple *new_stmt,
+			   gimple *stmt)
 {
   gimple_call_set_lhs (new_stmt, gimple_call_lhs (stmt));
   move_ssa_defining_stmt_for_defs (new_stmt, stmt);
@@ -708,7 +676,7 @@ bool
 update_gimple_call (gimple_stmt_iterator *si_p, tree fn, int nargs, ...)
 {
   va_list ap;
-  gimple new_stmt, stmt = gsi_stmt (*si_p);
+  gcall *new_stmt, *stmt = as_a <gcall *> (gsi_stmt (*si_p));
 
   gcc_assert (is_gimple_call (stmt));
   va_start (ap, nargs);
@@ -723,7 +691,7 @@ update_gimple_call (gimple_stmt_iterator *si_p, tree fn, int nargs, ...)
    call.  This can only be done if EXPR is a CALL_EXPR with valid
    GIMPLE operands as arguments, or if it is a suitable RHS expression
    for a GIMPLE_ASSIGN.  More complex expressions will require
-   gimplification, which will introduce addtional statements.  In this
+   gimplification, which will introduce additional statements.  In this
    event, no update is performed, and the function returns false.
    Note that we cannot mutate a GIMPLE_CALL in-place, so we always
    replace the statement at *SI_P with an entirely new statement.
@@ -733,7 +701,7 @@ update_gimple_call (gimple_stmt_iterator *si_p, tree fn, int nargs, ...)
 bool
 update_call_from_tree (gimple_stmt_iterator *si_p, tree expr)
 {
-  gimple stmt = gsi_stmt (*si_p);
+  gimple *stmt = gsi_stmt (*si_p);
 
   if (valid_gimple_call_p (expr))
     {
@@ -741,28 +709,28 @@ update_call_from_tree (gimple_stmt_iterator *si_p, tree expr)
       tree fn = CALL_EXPR_FN (expr);
       unsigned i;
       unsigned nargs = call_expr_nargs (expr);
-      VEC(tree, heap) *args = NULL;
-      gimple new_stmt;
+      vec<tree> args = vNULL;
+      gcall *new_stmt;
 
       if (nargs > 0)
         {
-          args = VEC_alloc (tree, heap, nargs);
-          VEC_safe_grow (tree, heap, args, nargs);
+          args.create (nargs);
+          args.safe_grow_cleared (nargs);
 
           for (i = 0; i < nargs; i++)
-            VEC_replace (tree, args, i, CALL_EXPR_ARG (expr, i));
+            args[i] = CALL_EXPR_ARG (expr, i);
         }
 
       new_stmt = gimple_build_call_vec (fn, args);
       finish_update_gimple_call (si_p, new_stmt, stmt);
-      VEC_free (tree, heap, args);
+      args.release ();
 
       return true;
     }
   else if (valid_gimple_rhs_p (expr))
     {
       tree lhs = gimple_call_lhs (stmt);
-      gimple new_stmt;
+      gimple *new_stmt;
 
       /* The call has simplified to an expression
          that cannot be represented as a GIMPLE_CALL. */
@@ -794,12 +762,11 @@ update_call_from_tree (gimple_stmt_iterator *si_p, tree expr)
              variable.  Create an assignment statement
              with a dummy (unused) lhs variable.  */
           STRIP_USELESS_TYPE_CONVERSION (expr);
-          lhs = create_tmp_var (TREE_TYPE (expr), NULL);
-          new_stmt = gimple_build_assign (lhs, expr);
-          add_referenced_var (lhs);
 	  if (gimple_in_ssa_p (cfun))
-	    lhs = make_ssa_name (lhs, new_stmt);
-          gimple_assign_set_lhs (new_stmt, lhs);
+	    lhs = make_ssa_name (TREE_TYPE (expr));
+	  else
+	    lhs = create_tmp_var (TREE_TYPE (expr));
+          new_stmt = gimple_build_assign (lhs, expr);
 	  gimple_set_vuse (new_stmt, gimple_vuse (stmt));
 	  gimple_set_vdef (new_stmt, gimple_vdef (stmt));
           move_ssa_defining_stmt_for_defs (new_stmt, stmt);
@@ -830,23 +797,20 @@ ssa_propagate (ssa_prop_visit_stmt_fn visit_stmt,
   ssa_prop_init ();
 
   /* Iterate until the worklists are empty.  */
-  while (!cfg_blocks_empty_p ()
-	 || VEC_length (gimple, interesting_ssa_edges) > 0
-	 || VEC_length (gimple, varying_ssa_edges) > 0)
+  while (! cfg_blocks_empty_p ()
+	 || ! bitmap_empty_p (ssa_edge_worklist))
     {
-      if (!cfg_blocks_empty_p ())
+      /* First simulate whole blocks.  */
+      if (! cfg_blocks_empty_p ())
 	{
 	  /* Pull the next block to simulate off the worklist.  */
 	  basic_block dest_block = cfg_blocks_get ();
 	  simulate_block (dest_block);
+	  continue;
 	}
 
-      /* In order to move things to varying as quickly as
-	 possible,process the VARYING_SSA_EDGES worklist first.  */
-      process_ssa_edge_worklist (&varying_ssa_edges);
-
-      /* Now process the INTERESTING_SSA_EDGES worklist.  */
-      process_ssa_edge_worklist (&interesting_ssa_edges);
+      /* Then simulate from the SSA edge worklist.  */
+      process_ssa_edge_worklist ();
     }
 
   ssa_prop_fini ();
@@ -859,7 +823,7 @@ ssa_propagate (ssa_prop_visit_stmt_fn visit_stmt,
    because they are not interesting for the optimizers.  */
 
 bool
-stmt_makes_single_store (gimple stmt)
+stmt_makes_single_store (gimple *stmt)
 {
   tree lhs;
 
@@ -896,8 +860,8 @@ static struct prop_stats_d prop_stats;
 /* Replace USE references in statement STMT with the values stored in
    PROP_VALUE. Return true if at least one reference was replaced.  */
 
-static bool
-replace_uses_in (gimple stmt, ssa_prop_get_value_fn get_value)
+bool
+replace_uses_in (gimple *stmt, ssa_prop_get_value_fn get_value)
 {
   bool replaced = false;
   use_operand_p use;
@@ -935,8 +899,8 @@ replace_uses_in (gimple stmt, ssa_prop_get_value_fn get_value)
 /* Replace propagated values into all the arguments for PHI using the
    values from PROP_VALUE.  */
 
-static void
-replace_phi_args_in (gimple phi, ssa_prop_get_value_fn get_value)
+static bool
+replace_phi_args_in (gphi *phi, ssa_prop_get_value_fn get_value)
 {
   size_t i;
   bool replaced = false;
@@ -957,6 +921,8 @@ replace_phi_args_in (gimple phi, ssa_prop_get_value_fn get_value)
 
 	  if (val && val != arg && may_propagate_copy (arg, val))
 	    {
+	      edge e = gimple_phi_arg_edge (phi, i);
+
 	      if (TREE_CODE (val) != SSA_NAME)
 		prop_stats.num_const_prop++;
 	      else
@@ -969,8 +935,15 @@ replace_phi_args_in (gimple phi, ssa_prop_get_value_fn get_value)
 		 through an abnormal edge, update the replacement
 		 accordingly.  */
 	      if (TREE_CODE (val) == SSA_NAME
-		  && gimple_phi_arg_edge (phi, i)->flags & EDGE_ABNORMAL)
-		SSA_NAME_OCCURS_IN_ABNORMAL_PHI (val) = 1;
+		  && e->flags & EDGE_ABNORMAL
+		  && !SSA_NAME_OCCURS_IN_ABNORMAL_PHI (val))
+		{
+		  /* This can only occur for virtual operands, since
+		     for the real ones SSA_NAME_OCCURS_IN_ABNORMAL_PHI (val))
+		     would prevent replacement.  */
+		  gcc_checking_assert (virtual_operand_p (val));
+		  SSA_NAME_OCCURS_IN_ABNORMAL_PHI (val) = 1;
+		}
 	    }
 	}
     }
@@ -986,7 +959,200 @@ replace_phi_args_in (gimple phi, ssa_prop_get_value_fn get_value)
 	  fprintf (dump_file, "\n");
 	}
     }
+
+  return replaced;
 }
+
+
+class substitute_and_fold_dom_walker : public dom_walker
+{
+public:
+    substitute_and_fold_dom_walker (cdi_direction direction,
+				    ssa_prop_get_value_fn get_value_fn_,
+				    ssa_prop_fold_stmt_fn fold_fn_)
+	: dom_walker (direction), get_value_fn (get_value_fn_),
+      fold_fn (fold_fn_), something_changed (false)
+    {
+      stmts_to_remove.create (0);
+      stmts_to_fixup.create (0);
+      need_eh_cleanup = BITMAP_ALLOC (NULL);
+    }
+    ~substitute_and_fold_dom_walker ()
+    {
+      stmts_to_remove.release ();
+      stmts_to_fixup.release ();
+      BITMAP_FREE (need_eh_cleanup);
+    }
+
+    virtual edge before_dom_children (basic_block);
+    virtual void after_dom_children (basic_block) {}
+
+    ssa_prop_get_value_fn get_value_fn;
+    ssa_prop_fold_stmt_fn fold_fn;
+    bool something_changed;
+    vec<gimple *> stmts_to_remove;
+    vec<gimple *> stmts_to_fixup;
+    bitmap need_eh_cleanup;
+};
+
+edge
+substitute_and_fold_dom_walker::before_dom_children (basic_block bb)
+{
+  /* Propagate known values into PHI nodes.  */
+  for (gphi_iterator i = gsi_start_phis (bb);
+       !gsi_end_p (i);
+       gsi_next (&i))
+    {
+      gphi *phi = i.phi ();
+      tree res = gimple_phi_result (phi);
+      if (virtual_operand_p (res))
+	continue;
+      if (res && TREE_CODE (res) == SSA_NAME)
+	{
+	  tree sprime = get_value_fn (res);
+	  if (sprime
+	      && sprime != res
+	      && may_propagate_copy (res, sprime))
+	    {
+	      stmts_to_remove.safe_push (phi);
+	      continue;
+	    }
+	}
+      something_changed |= replace_phi_args_in (phi, get_value_fn);
+    }
+
+  /* Propagate known values into stmts.  In some case it exposes
+     more trivially deletable stmts to walk backward.  */
+  for (gimple_stmt_iterator i = gsi_start_bb (bb);
+       !gsi_end_p (i);
+       gsi_next (&i))
+    {
+      bool did_replace;
+      gimple *stmt = gsi_stmt (i);
+
+      /* No point propagating into a stmt we have a value for we
+         can propagate into all uses.  Mark it for removal instead.  */
+      tree lhs = gimple_get_lhs (stmt);
+      if (lhs && TREE_CODE (lhs) == SSA_NAME)
+	{
+	  tree sprime = get_value_fn (lhs);
+	  if (sprime
+	      && sprime != lhs
+	      && may_propagate_copy (lhs, sprime)
+	      && !stmt_could_throw_p (stmt)
+	      && !gimple_has_side_effects (stmt)
+	      /* We have to leave ASSERT_EXPRs around for jump-threading.  */
+	      && (!is_gimple_assign (stmt)
+		  || gimple_assign_rhs_code (stmt) != ASSERT_EXPR))
+	    {
+	      stmts_to_remove.safe_push (stmt);
+	      continue;
+	    }
+	}
+
+      /* Replace the statement with its folded version and mark it
+	 folded.  */
+      did_replace = false;
+      if (dump_file && (dump_flags & TDF_DETAILS))
+	{
+	  fprintf (dump_file, "Folding statement: ");
+	  print_gimple_stmt (dump_file, stmt, 0, TDF_SLIM);
+	}
+
+      gimple *old_stmt = stmt;
+      bool was_noreturn = (is_gimple_call (stmt)
+			   && gimple_call_noreturn_p (stmt));
+
+      /* Replace real uses in the statement.  */
+      did_replace |= replace_uses_in (stmt, get_value_fn);
+
+      /* If we made a replacement, fold the statement.  */
+      if (did_replace)
+	{
+	  fold_stmt (&i, follow_single_use_edges);
+	  stmt = gsi_stmt (i);
+	  gimple_set_modified (stmt, true);
+	}
+
+      /* Some statements may be simplified using propagator
+	 specific information.  Do this before propagating
+	 into the stmt to not disturb pass specific information.  */
+      if (fold_fn)
+	{
+	  update_stmt_if_modified (stmt);
+	  if ((*fold_fn)(&i))
+	    {
+	      did_replace = true;
+	      prop_stats.num_stmts_folded++;
+	      stmt = gsi_stmt (i);
+	      gimple_set_modified (stmt, true);
+	    }
+	}
+
+      /* If this is a control statement the propagator left edges
+         unexecuted on force the condition in a way consistent with
+	 that.  See PR66945 for cases where the propagator can end
+	 up with a different idea of a taken edge than folding
+	 (once undefined behavior is involved).  */
+      if (gimple_code (stmt) == GIMPLE_COND)
+	{
+	  if ((EDGE_SUCC (bb, 0)->flags & EDGE_EXECUTABLE)
+	      ^ (EDGE_SUCC (bb, 1)->flags & EDGE_EXECUTABLE))
+	    {
+	      if (((EDGE_SUCC (bb, 0)->flags & EDGE_TRUE_VALUE) != 0)
+		  == ((EDGE_SUCC (bb, 0)->flags & EDGE_EXECUTABLE) != 0))
+		gimple_cond_make_true (as_a <gcond *> (stmt));
+	      else
+		gimple_cond_make_false (as_a <gcond *> (stmt));
+	      gimple_set_modified (stmt, true);
+	      did_replace = true;
+	    }
+	}
+
+      /* Now cleanup.  */
+      if (did_replace)
+	{
+	  /* If we cleaned up EH information from the statement,
+	     remove EH edges.  */
+	  if (maybe_clean_or_replace_eh_stmt (old_stmt, stmt))
+	    bitmap_set_bit (need_eh_cleanup, bb->index);
+
+	  /* If we turned a not noreturn call into a noreturn one
+	     schedule it for fixup.  */
+	  if (!was_noreturn
+	      && is_gimple_call (stmt)
+	      && gimple_call_noreturn_p (stmt))
+	    stmts_to_fixup.safe_push (stmt);
+
+	  if (gimple_assign_single_p (stmt))
+	    {
+	      tree rhs = gimple_assign_rhs1 (stmt);
+
+	      if (TREE_CODE (rhs) == ADDR_EXPR)
+		recompute_tree_invariant_for_addr_expr (rhs);
+	    }
+
+	  /* Determine what needs to be done to update the SSA form.  */
+	  update_stmt_if_modified (stmt);
+	  if (!is_gimple_debug (stmt))
+	    something_changed = true;
+	}
+
+      if (dump_file && (dump_flags & TDF_DETAILS))
+	{
+	  if (did_replace)
+	    {
+	      fprintf (dump_file, "Folded into: ");
+	      print_gimple_stmt (dump_file, stmt, 0, TDF_SLIM);
+	      fprintf (dump_file, "\n");
+	    }
+	  else
+	    fprintf (dump_file, "Not folded\n");
+	}
+    }
+  return NULL;
+}
+
 
 
 /* Perform final substitution and folding of propagated values.
@@ -1007,209 +1173,61 @@ replace_phi_args_in (gimple phi, ssa_prop_get_value_fn get_value)
 
 bool
 substitute_and_fold (ssa_prop_get_value_fn get_value_fn,
-		     ssa_prop_fold_stmt_fn fold_fn,
-		     bool do_dce)
+		     ssa_prop_fold_stmt_fn fold_fn)
 {
-  basic_block bb;
-  bool something_changed = false;
-  unsigned i;
-
-  if (!get_value_fn && !fold_fn)
-    return false;
+  gcc_assert (get_value_fn);
 
   if (dump_file && (dump_flags & TDF_DETAILS))
     fprintf (dump_file, "\nSubstituting values and folding statements\n\n");
 
   memset (&prop_stats, 0, sizeof (prop_stats));
 
-  /* Substitute lattice values at definition sites.  */
-  if (get_value_fn)
-    for (i = 1; i < num_ssa_names; ++i)
-      {
-	tree name = ssa_name (i);
-	tree val;
-	gimple def_stmt;
-	gimple_stmt_iterator gsi;
+  calculate_dominance_info (CDI_DOMINATORS);
+  substitute_and_fold_dom_walker walker(CDI_DOMINATORS,
+					get_value_fn, fold_fn);
+  walker.walk (ENTRY_BLOCK_PTR_FOR_FN (cfun));
 
-	if (!name
-	    || !is_gimple_reg (name))
-	  continue;
-
-	def_stmt = SSA_NAME_DEF_STMT (name);
-	if (gimple_nop_p (def_stmt)
-	    /* Do not substitute ASSERT_EXPR rhs, this will confuse VRP.  */
-	    || (gimple_assign_single_p (def_stmt)
-		&& gimple_assign_rhs_code (def_stmt) == ASSERT_EXPR)
-	    || !(val = (*get_value_fn) (name))
-	    || !may_propagate_copy (name, val))
-	  continue;
-
-	gsi = gsi_for_stmt (def_stmt);
-	if (is_gimple_assign (def_stmt))
-	  {
-	    gimple_assign_set_rhs_with_ops (&gsi, TREE_CODE (val),
-					    val, NULL_TREE);
-	    gcc_assert (gsi_stmt (gsi) == def_stmt);
-	    if (maybe_clean_eh_stmt (def_stmt))
-	      gimple_purge_dead_eh_edges (gimple_bb (def_stmt));
-	    update_stmt (def_stmt);
-	  }
-	else if (is_gimple_call (def_stmt))
-	  {
-	    int flags = gimple_call_flags (def_stmt);
-
-	    /* Don't optimize away calls that have side-effects.  */
-	    if ((flags & (ECF_CONST|ECF_PURE)) == 0
-		|| (flags & ECF_LOOPING_CONST_OR_PURE))
-	      continue;
-	    if (update_call_from_tree (&gsi, val)
-		&& maybe_clean_or_replace_eh_stmt (def_stmt, gsi_stmt (gsi)))
-	      gimple_purge_dead_eh_edges (gimple_bb (gsi_stmt (gsi)));
-	  }
-	else if (gimple_code (def_stmt) == GIMPLE_PHI)
-	  {
-	    gimple new_stmt = gimple_build_assign (name, val);
-	    gimple_stmt_iterator gsi2;
-	    SSA_NAME_DEF_STMT (name) = new_stmt;
-	    gsi2 = gsi_after_labels (gimple_bb (def_stmt));
-	    gsi_insert_before (&gsi2, new_stmt, GSI_SAME_STMT);
-	    remove_phi_node (&gsi, false);
-	  }
-
-	something_changed = true;
-      }
-
-  /* Propagate into all uses and fold.  */
-  FOR_EACH_BB (bb)
+  /* We cannot remove stmts during the BB walk, especially not release
+     SSA names there as that destroys the lattice of our callers.
+     Remove stmts in reverse order to make debug stmt creation possible.  */
+  while (!walker.stmts_to_remove.is_empty ())
     {
-      gimple_stmt_iterator i;
-
-      /* Propagate known values into PHI nodes.  */
-      if (get_value_fn)
-	for (i = gsi_start_phis (bb); !gsi_end_p (i); gsi_next (&i))
-	  replace_phi_args_in (gsi_stmt (i), get_value_fn);
-
-      /* Propagate known values into stmts.  Do a backward walk if
-         do_dce is true. In some case it exposes
-	 more trivially deletable stmts to walk backward.  */
-      for (i = (do_dce ? gsi_last_bb (bb) : gsi_start_bb (bb)); !gsi_end_p (i);)
+      gimple *stmt = walker.stmts_to_remove.pop ();
+      if (dump_file && dump_flags & TDF_DETAILS)
 	{
-          bool did_replace;
-	  gimple stmt = gsi_stmt (i);
-	  gimple old_stmt;
-	  enum gimple_code code = gimple_code (stmt);
-	  gimple_stmt_iterator oldi;
-
-	  oldi = i;
-	  if (do_dce)
-	    gsi_prev (&i);
-	  else
-	    gsi_next (&i);
-
-	  /* Ignore ASSERT_EXPRs.  They are used by VRP to generate
-	     range information for names and they are discarded
-	     afterwards.  */
-
-	  if (code == GIMPLE_ASSIGN
-	      && TREE_CODE (gimple_assign_rhs1 (stmt)) == ASSERT_EXPR)
-	    continue;
-
-	  /* No point propagating into a stmt whose result is not used,
-	     but instead we might be able to remove a trivially dead stmt.
-	     Don't do this when called from VRP, since the SSA_NAME which
-	     is going to be released could be still referenced in VRP
-	     ranges.  */
-	  if (do_dce
-	      && gimple_get_lhs (stmt)
-	      && TREE_CODE (gimple_get_lhs (stmt)) == SSA_NAME
-	      && has_zero_uses (gimple_get_lhs (stmt))
-	      && !stmt_could_throw_p (stmt)
-	      && !gimple_has_side_effects (stmt))
-	    {
-	      gimple_stmt_iterator i2;
-
-	      if (dump_file && dump_flags & TDF_DETAILS)
-		{
-		  fprintf (dump_file, "Removing dead stmt ");
-		  print_gimple_stmt (dump_file, stmt, 0, 0);
-		  fprintf (dump_file, "\n");
-		}
-	      prop_stats.num_dce++;
-	      i2 = gsi_for_stmt (stmt);
-	      gsi_remove (&i2, true);
-	      release_defs (stmt);
-	      continue;
-	    }
-
-	  /* Replace the statement with its folded version and mark it
-	     folded.  */
-	  did_replace = false;
-	  if (dump_file && (dump_flags & TDF_DETAILS))
-	    {
-	      fprintf (dump_file, "Folding statement: ");
-	      print_gimple_stmt (dump_file, stmt, 0, TDF_SLIM);
-	    }
-
-	  old_stmt = stmt;
-
-	  /* Some statements may be simplified using propagator
-	     specific information.  Do this before propagating
-	     into the stmt to not disturb pass specific information.  */
-	  if (fold_fn
-	      && (*fold_fn)(&oldi))
-	    {
-	      did_replace = true;
-	      prop_stats.num_stmts_folded++;
-	      stmt = gsi_stmt (oldi);
-	      update_stmt (stmt);
-	    }
-
-	  /* Replace real uses in the statement.  */
-	  if (get_value_fn)
-	    did_replace |= replace_uses_in (stmt, get_value_fn);
-
-	  /* If we made a replacement, fold the statement.  */
-	  if (did_replace)
-	    fold_stmt (&oldi);
-
-	  /* Now cleanup.  */
-	  if (did_replace)
-	    {
-	      stmt = gsi_stmt (oldi);
-
-              /* If we cleaned up EH information from the statement,
-                 remove EH edges.  */
-	      if (maybe_clean_or_replace_eh_stmt (old_stmt, stmt))
-		gimple_purge_dead_eh_edges (bb);
-
-              if (is_gimple_assign (stmt)
-                  && (get_gimple_rhs_class (gimple_assign_rhs_code (stmt))
-                      == GIMPLE_SINGLE_RHS))
-              {
-                tree rhs = gimple_assign_rhs1 (stmt);
-
-                if (TREE_CODE (rhs) == ADDR_EXPR)
-                  recompute_tree_invariant_for_addr_expr (rhs);
-              }
-
-	      /* Determine what needs to be done to update the SSA form.  */
-	      update_stmt (stmt);
-	      if (!is_gimple_debug (stmt))
-		something_changed = true;
-	    }
-
-	  if (dump_file && (dump_flags & TDF_DETAILS))
-	    {
-	      if (did_replace)
-		{
-		  fprintf (dump_file, "Folded into: ");
-		  print_gimple_stmt (dump_file, stmt, 0, TDF_SLIM);
-		  fprintf (dump_file, "\n");
-		}
-	      else
-		fprintf (dump_file, "Not folded\n");
-	    }
+	  fprintf (dump_file, "Removing dead stmt ");
+	  print_gimple_stmt (dump_file, stmt, 0, 0);
+	  fprintf (dump_file, "\n");
 	}
+      prop_stats.num_dce++;
+      gimple_stmt_iterator gsi = gsi_for_stmt (stmt);
+      if (gimple_code (stmt) == GIMPLE_PHI)
+	remove_phi_node (&gsi, true);
+      else
+	{
+	  unlink_stmt_vdef (stmt);
+	  gsi_remove (&gsi, true);
+	  release_defs (stmt);
+	}
+    }
+
+  if (!bitmap_empty_p (walker.need_eh_cleanup))
+    gimple_purge_all_dead_eh_edges (walker.need_eh_cleanup);
+
+  /* Fixup stmts that became noreturn calls.  This may require splitting
+     blocks and thus isn't possible during the dominator walk.  Do this
+     in reverse order so we don't inadvertedly remove a stmt we want to
+     fixup by visiting a dominating now noreturn call first.  */
+  while (!walker.stmts_to_fixup.is_empty ())
+    {
+      gimple *stmt = walker.stmts_to_fixup.pop ();
+      if (dump_file && dump_flags & TDF_DETAILS)
+	{
+	  fprintf (dump_file, "Fixing up noreturn call ");
+	  print_gimple_stmt (dump_file, stmt, 0, 0);
+	  fprintf (dump_file, "\n");
+	}
+      fixup_noreturn_call (stmt);
     }
 
   statistics_counter_event (cfun, "Constants propagated",
@@ -1220,7 +1238,219 @@ substitute_and_fold (ssa_prop_get_value_fn get_value_fn,
 			    prop_stats.num_stmts_folded);
   statistics_counter_event (cfun, "Statements deleted",
 			    prop_stats.num_dce);
-  return something_changed;
+
+  return walker.something_changed;
 }
 
-#include "gt-tree-ssa-propagate.h"
+
+/* Return true if we may propagate ORIG into DEST, false otherwise.  */
+
+bool
+may_propagate_copy (tree dest, tree orig)
+{
+  tree type_d = TREE_TYPE (dest);
+  tree type_o = TREE_TYPE (orig);
+
+  /* If ORIG is a default definition which flows in from an abnormal edge
+     then the copy can be propagated.  It is important that we do so to avoid
+     uninitialized copies.  */
+  if (TREE_CODE (orig) == SSA_NAME
+      && SSA_NAME_OCCURS_IN_ABNORMAL_PHI (orig)
+      && SSA_NAME_IS_DEFAULT_DEF (orig)
+      && (SSA_NAME_VAR (orig) == NULL_TREE
+	  || TREE_CODE (SSA_NAME_VAR (orig)) == VAR_DECL))
+    ;
+  /* Otherwise if ORIG just flows in from an abnormal edge then the copy cannot
+     be propagated.  */
+  else if (TREE_CODE (orig) == SSA_NAME
+	   && SSA_NAME_OCCURS_IN_ABNORMAL_PHI (orig))
+    return false;
+  /* Similarly if DEST flows in from an abnormal edge then the copy cannot be
+     propagated.  */
+  else if (TREE_CODE (dest) == SSA_NAME
+	   && SSA_NAME_OCCURS_IN_ABNORMAL_PHI (dest))
+    return false;
+
+  /* Do not copy between types for which we *do* need a conversion.  */
+  if (!useless_type_conversion_p (type_d, type_o))
+    return false;
+
+  /* Generally propagating virtual operands is not ok as that may
+     create overlapping life-ranges.  */
+  if (TREE_CODE (dest) == SSA_NAME && virtual_operand_p (dest))
+    return false;
+
+  /* Anything else is OK.  */
+  return true;
+}
+
+/* Like may_propagate_copy, but use as the destination expression
+   the principal expression (typically, the RHS) contained in
+   statement DEST.  This is more efficient when working with the
+   gimple tuples representation.  */
+
+bool
+may_propagate_copy_into_stmt (gimple *dest, tree orig)
+{
+  tree type_d;
+  tree type_o;
+
+  /* If the statement is a switch or a single-rhs assignment,
+     then the expression to be replaced by the propagation may
+     be an SSA_NAME.  Fortunately, there is an explicit tree
+     for the expression, so we delegate to may_propagate_copy.  */
+
+  if (gimple_assign_single_p (dest))
+    return may_propagate_copy (gimple_assign_rhs1 (dest), orig);
+  else if (gswitch *dest_swtch = dyn_cast <gswitch *> (dest))
+    return may_propagate_copy (gimple_switch_index (dest_swtch), orig);
+
+  /* In other cases, the expression is not materialized, so there
+     is no destination to pass to may_propagate_copy.  On the other
+     hand, the expression cannot be an SSA_NAME, so the analysis
+     is much simpler.  */
+
+  if (TREE_CODE (orig) == SSA_NAME
+      && SSA_NAME_OCCURS_IN_ABNORMAL_PHI (orig))
+    return false;
+
+  if (is_gimple_assign (dest))
+    type_d = TREE_TYPE (gimple_assign_lhs (dest));
+  else if (gimple_code (dest) == GIMPLE_COND)
+    type_d = boolean_type_node;
+  else if (is_gimple_call (dest)
+           && gimple_call_lhs (dest) != NULL_TREE)
+    type_d = TREE_TYPE (gimple_call_lhs (dest));
+  else
+    gcc_unreachable ();
+
+  type_o = TREE_TYPE (orig);
+
+  if (!useless_type_conversion_p (type_d, type_o))
+    return false;
+
+  return true;
+}
+
+/* Similarly, but we know that we're propagating into an ASM_EXPR.  */
+
+bool
+may_propagate_copy_into_asm (tree dest ATTRIBUTE_UNUSED)
+{
+  return true;
+}
+
+
+/* Common code for propagate_value and replace_exp.
+
+   Replace use operand OP_P with VAL.  FOR_PROPAGATION indicates if the
+   replacement is done to propagate a value or not.  */
+
+static void
+replace_exp_1 (use_operand_p op_p, tree val,
+    	       bool for_propagation ATTRIBUTE_UNUSED)
+{
+  if (flag_checking)
+    {
+      tree op = USE_FROM_PTR (op_p);
+      gcc_assert (!(for_propagation
+		  && TREE_CODE (op) == SSA_NAME
+		  && TREE_CODE (val) == SSA_NAME
+		  && !may_propagate_copy (op, val)));
+    }
+
+  if (TREE_CODE (val) == SSA_NAME)
+    SET_USE (op_p, val);
+  else
+    SET_USE (op_p, unshare_expr (val));
+}
+
+
+/* Propagate the value VAL (assumed to be a constant or another SSA_NAME)
+   into the operand pointed to by OP_P.
+
+   Use this version for const/copy propagation as it will perform additional
+   checks to ensure validity of the const/copy propagation.  */
+
+void
+propagate_value (use_operand_p op_p, tree val)
+{
+  replace_exp_1 (op_p, val, true);
+}
+
+/* Replace *OP_P with value VAL (assumed to be a constant or another SSA_NAME).
+
+   Use this version when not const/copy propagating values.  For example,
+   PRE uses this version when building expressions as they would appear
+   in specific blocks taking into account actions of PHI nodes.
+
+   The statement in which an expression has been replaced should be
+   folded using fold_stmt_inplace.  */
+
+void
+replace_exp (use_operand_p op_p, tree val)
+{
+  replace_exp_1 (op_p, val, false);
+}
+
+
+/* Propagate the value VAL (assumed to be a constant or another SSA_NAME)
+   into the tree pointed to by OP_P.
+
+   Use this version for const/copy propagation when SSA operands are not
+   available.  It will perform the additional checks to ensure validity of
+   the const/copy propagation, but will not update any operand information.
+   Be sure to mark the stmt as modified.  */
+
+void
+propagate_tree_value (tree *op_p, tree val)
+{
+  if (TREE_CODE (val) == SSA_NAME)
+    *op_p = val;
+  else
+    *op_p = unshare_expr (val);
+}
+
+
+/* Like propagate_tree_value, but use as the operand to replace
+   the principal expression (typically, the RHS) contained in the
+   statement referenced by iterator GSI.  Note that it is not
+   always possible to update the statement in-place, so a new
+   statement may be created to replace the original.  */
+
+void
+propagate_tree_value_into_stmt (gimple_stmt_iterator *gsi, tree val)
+{
+  gimple *stmt = gsi_stmt (*gsi);
+
+  if (is_gimple_assign (stmt))
+    {
+      tree expr = NULL_TREE;
+      if (gimple_assign_single_p (stmt))
+        expr = gimple_assign_rhs1 (stmt);
+      propagate_tree_value (&expr, val);
+      gimple_assign_set_rhs_from_tree (gsi, expr);
+    }
+  else if (gcond *cond_stmt = dyn_cast <gcond *> (stmt))
+    {
+      tree lhs = NULL_TREE;
+      tree rhs = build_zero_cst (TREE_TYPE (val));
+      propagate_tree_value (&lhs, val);
+      gimple_cond_set_code (cond_stmt, NE_EXPR);
+      gimple_cond_set_lhs (cond_stmt, lhs);
+      gimple_cond_set_rhs (cond_stmt, rhs);
+    }
+  else if (is_gimple_call (stmt)
+           && gimple_call_lhs (stmt) != NULL_TREE)
+    {
+      tree expr = NULL_TREE;
+      bool res;
+      propagate_tree_value (&expr, val);
+      res = update_call_from_tree (gsi, expr);
+      gcc_assert (res);
+    }
+  else if (gswitch *swtch_stmt = dyn_cast <gswitch *> (stmt))
+    propagate_tree_value (gimple_switch_index_ptr (swtch_stmt), val);
+  else
+    gcc_unreachable ();
+}

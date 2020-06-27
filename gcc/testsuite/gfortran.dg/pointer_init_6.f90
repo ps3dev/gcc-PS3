@@ -16,6 +16,7 @@ module m1
  integer, pointer :: p2 => p1   ! { dg-error "must have the TARGET attribute" }
  integer, pointer :: p3 => x%p  ! { dg-error "must have the TARGET attribute" }
  integer, pointer :: p4 => x%i
+ integer, pointer :: p5 => u    ! { dg-error "has no IMPLICIT type" }
 end module m1
 
 
@@ -27,7 +28,7 @@ module m2
  type(t) :: x
  procedure(s), pointer :: pp1 => s
  procedure(s), pointer :: pp2 => pp1    ! { dg-error "may not be a procedure pointer" }
- procedure(s), pointer :: pp3 => t%ppc  ! { dg-error "Syntax error" }
+ procedure(s), pointer :: pp3 => t%ppc  ! { dg-error "Symbol 't' at .1. has no IMPLICIT type" }
 
 contains
 
@@ -35,5 +36,3 @@ contains
   end subroutine
 
 end module m2
-
-! { dg-final { cleanup-modules "m1 m2" } }

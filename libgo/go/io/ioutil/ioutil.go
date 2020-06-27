@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"sync"
 )
 
 // readAll reads from r until an error or EOF and returns the data it read
@@ -53,14 +54,17 @@ func ReadFile(filename string) ([]byte, error) {
 	defer f.Close()
 	// It's a good but not certain bet that FileInfo will tell us exactly how much to
 	// read, so let's try it but be prepared for the answer to be wrong.
-	fi, err := f.Stat()
 	var n int64
-	if size := fi.Size(); err == nil && size < 2e9 { // Don't preallocate a huge buffer, just in case.
-		n = size
+
+	if fi, err := f.Stat(); err == nil {
+		// Don't preallocate a huge buffer, just in case.
+		if size := fi.Size(); size < 1e9 {
+			n = size
+		}
 	}
 	// As initial capacity for readAll, use n + a little extra in case Size is zero,
-	// and to avoid another allocation after Read has filled the buffer.  The readAll
-	// call will read into its allocated internal buffer cheaply.  If the size was
+	// and to avoid another allocation after Read has filled the buffer. The readAll
+	// call will read into its allocated internal buffer cheaply. If the size was
 	// wrong, we'll either waste some space off the end or reallocate as needed, but
 	// in the overwhelmingly common case we'll get it just right.
 	return readAll(f, n+bytes.MinRead)
@@ -75,22 +79,17 @@ func WriteFile(filename string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	n, err := f.Write(data)
-	f.Close()
 	if err == nil && n < len(data) {
 		err = io.ErrShortWrite
+	}
+	if err1 := f.Close(); err == nil {
+		err = err1
 	}
 	return err
 }
 
-// byName implements sort.Interface.
-type byName []os.FileInfo
-
-func (f byName) Len() int           { return len(f) }
-func (f byName) Less(i, j int) bool { return f[i].Name() < f[j].Name() }
-func (f byName) Swap(i, j int)      { f[i], f[j] = f[j], f[i] }
-
 // ReadDir reads the directory named by dirname and returns
-// a list of sorted directory entries.
+// a list of directory entries sorted by filename.
 func ReadDir(dirname string) ([]os.FileInfo, error) {
 	f, err := os.Open(dirname)
 	if err != nil {
@@ -101,7 +100,7 @@ func ReadDir(dirname string) ([]os.FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	sort.Sort(byName(list))
+	sort.Slice(list, func(i, j int) bool { return list[i].Name() < list[j].Name() })
 	return list, nil
 }
 
@@ -127,21 +126,31 @@ func (devNull) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-var blackHole = make([]byte, 8192)
+func (devNull) WriteString(s string) (int, error) {
+	return len(s), nil
+}
+
+var blackHolePool = sync.Pool{
+	New: func() interface{} {
+		b := make([]byte, 8192)
+		return &b
+	},
+}
 
 func (devNull) ReadFrom(r io.Reader) (n int64, err error) {
+	bufp := blackHolePool.Get().(*[]byte)
 	readSize := 0
 	for {
-		readSize, err = r.Read(blackHole)
+		readSize, err = r.Read(*bufp)
 		n += int64(readSize)
 		if err != nil {
+			blackHolePool.Put(bufp)
 			if err == io.EOF {
 				return n, nil
 			}
 			return
 		}
 	}
-	panic("unreachable")
 }
 
 // Discard is an io.Writer on which all Write calls succeed

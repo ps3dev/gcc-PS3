@@ -38,7 +38,7 @@ func (s *Scope) Lookup(name string) *Object {
 // Insert attempts to insert a named object obj into the scope s.
 // If the scope already contains an object alt with the same name,
 // Insert leaves the scope unchanged and returns alt. Otherwise
-// it inserts obj and returns nil."
+// it inserts obj and returns nil.
 //
 func (s *Scope) Insert(obj *Object) (alt *Object) {
 	if alt = s.Objects[obj.Name]; alt == nil {
@@ -64,25 +64,21 @@ func (s *Scope) String() string {
 // ----------------------------------------------------------------------------
 // Objects
 
-// TODO(gri) Consider replacing the Object struct with an interface
-//           and a corresponding set of object implementations.
-
 // An Object describes a named language entity such as a package,
 // constant, type, variable, function (incl. methods), or label.
 //
 // The Data fields contains object-specific data:
 //
-//	Kind    Data type    Data value
-//	Pkg	*Scope       package scope
-//	Con     int          iota for the respective declaration
-//	Con     != nil       constant value
+//	Kind    Data type         Data value
+//	Pkg     *Scope            package scope
+//	Con     int               iota for the respective declaration
 //
 type Object struct {
 	Kind ObjKind
 	Name string      // declared name
 	Decl interface{} // corresponding Field, XxxSpec, FuncDecl, LabeledStmt, AssignStmt, Scope; or nil
 	Data interface{} // object-specific data; or nil
-	Type interface{} // place holder for type information; may be nil
+	Type interface{} // placeholder for type information; may be nil
 }
 
 // NewObj creates a new object of a given kind and name.
@@ -137,7 +133,7 @@ func (obj *Object) Pos() token.Pos {
 	return token.NoPos
 }
 
-// ObKind describes what an object represents.
+// ObjKind describes what an object represents.
 type ObjKind int
 
 // The list of possible Object kinds.

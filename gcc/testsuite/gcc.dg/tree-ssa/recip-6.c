@@ -3,7 +3,7 @@
 
 /* Test inserting in a block that does not contain a division.  */
 
-extern int f2();
+extern int g();
 
 double m, n, o;
 
@@ -26,5 +26,4 @@ void f1(double y, double z, double w)
 }
 
 /* { dg-final { scan-tree-dump-times " / " 1 "recip" } } */
-/* { dg-final { cleanup-tree-dump "recip" } } */
 

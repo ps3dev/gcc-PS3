@@ -2,7 +2,7 @@
 char a[1000];
 char b[1000];
 int size=1000;
-__attribute__ ((noinline))
+__attribute__ ((noinline)) void
 t(int size)
 {
   __builtin_memcpy(a,b,size);
@@ -15,6 +15,6 @@ main()
     t(i);
   return 0;
 }
-/* { dg-final-use { scan-tree-dump "Average value sum:499500" "optimized"} } */
-/* { dg-final-use { scan-tree-dump "IOR value" "optimized"} } */
-/* { dg-final-use { cleanup-tree-dump "optimized" } } */
+/* autofdo does not do value profiling so far */
+/* { dg-final-use-not-autofdo { scan-tree-dump "Average value sum:499500" "optimized"} } */
+/* { dg-final-use-not-autofdo { scan-tree-dump "IOR value" "optimized"} } */

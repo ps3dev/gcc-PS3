@@ -1,5 +1,5 @@
 /* Generic unsigned 32 bit division implementation.
-   Copyright (C) 2009, 2011 Free Software Foundation, Inc.
+   Copyright (C) 2009-2017 Free Software Foundation, Inc.
    Contributed by Embecosm on behalf of Adapteva, Inc.
 
 This file is part of GCC.
@@ -40,7 +40,7 @@ __udivsi3 (unsigned int a, unsigned int b)
 
   /* Assuming B is nonzero, compute S0 such that 0 <= S0,
      (B << S0+1) does not overflow,
-     A < 4.01 * (B << S0), with S0 choosen as small as possible
+     A < 4.01 * (B << S0), with S0 chosen as small as possible
      without taking to much time calculating.  */
 #ifdef CONVERT_UNSIGNED
   u0.f = a;
@@ -49,9 +49,9 @@ __udivsi3 (unsigned int a, unsigned int b)
   u0.f = (int) a;
   u1.f = (int) b;
 #ifdef CONCISE
-  if (a < 0)
+  if ((int) a < 0)
     u0.i = (a >> 8) - 0x00800000 + 0x3f800000 + (31 << 23);
-#else /* To use flag seting / cmove, this can be written as:  */
+#else /* To use flag setting / cmove, this can be written as:  */
  {
   unsigned c = 0xff800000 - 0x4f000000;
   t = (int)a >> 8;

@@ -1,6 +1,6 @@
 // { dg-require-swprintf "" }
 
-// Copyright (C) 2005, 2006, 2007, 2009 Free Software Foundation, Inc.
+// Copyright (C) 2005-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -28,7 +28,6 @@ void
 test02()
 {
   using namespace std;
-  bool test __attribute__((unused)) = true;
 
   // make sure we can output a very long float
   long double val = numeric_limits<long double>::max();
@@ -42,8 +41,8 @@ test02()
   wchar_t largebuf[512];
   swprintf(largebuf, 512, L"%.*Le", prec, val);
 #ifdef TEST_NUMPUT_VERBOSE
-  cout << "expect: " << largebuf << endl;
-  cout << "result: " << os.str() << endl;
+  wcout << "expect: " << largebuf << endl;
+  wcout << "result: " << os.str() << endl;
 #endif
   VERIFY( os && os.str() == largebuf );
 
@@ -58,8 +57,8 @@ test02()
 
   swprintf(largebuf, 512, L"%.*f", 3, val2);
 #ifdef TEST_NUMPUT_VERBOSE
-  cout << "expect: " << largebuf << endl;
-  cout << "result: " << os2.str() << endl;
+  wcout << "expect: " << largebuf << endl;
+  wcout << "result: " << os2.str() << endl;
 #endif
   VERIFY( os2 && os2.str() == largebuf );
 }

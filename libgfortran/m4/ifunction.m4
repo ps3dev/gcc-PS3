@@ -67,7 +67,7 @@ name`'rtype_qual`_'atype_code (rtype * const restrict retarray,
 	extent[n] = 0;
     }
 
-  if (retarray->data == NULL)
+  if (retarray->base_addr == NULL)
     {
       size_t alloc_size, str;
 
@@ -85,10 +85,9 @@ name`'rtype_qual`_'atype_code (rtype * const restrict retarray,
       retarray->offset = 0;
       retarray->dtype = (array->dtype & ~GFC_DTYPE_RANK_MASK) | rank;
 
-      alloc_size = sizeof (rtype_name) * GFC_DESCRIPTOR_STRIDE(retarray,rank-1)
-    		   * extent[rank-1];
+      alloc_size = GFC_DESCRIPTOR_STRIDE(retarray,rank-1) * extent[rank-1];
 
-      retarray->data = internal_malloc_size (alloc_size);
+      retarray->base_addr = xmallocarray (alloc_size, sizeof (rtype_name));
       if (alloc_size == 0)
 	{
 	  /* Make sure we have a zero-sized array.  */
@@ -118,8 +117,8 @@ name`'rtype_qual`_'atype_code (rtype * const restrict retarray,
 	return;
     }
 
-  base = array->data;
-  dest = retarray->data;
+  base = array->base_addr;
+  dest = retarray->base_addr;
 
   continue_loop = 1;
   while (continue_loop)
@@ -158,9 +157,9 @@ define(FINISH_ARRAY_FUNCTION,
 	  base -= sstride[n] * extent[n];
 	  dest -= dstride[n] * extent[n];
 	  n++;
-	  if (n == rank)
+	  if (n >= rank)
 	    {
-	      /* Break out of the look.  */
+	      /* Break out of the loop.  */
 	      continue_loop = 0;
 	      break;
 	    }
@@ -209,7 +208,7 @@ void
   if (len <= 0)
     return;
 
-  mbase = mask->data;
+  mbase = mask->base_addr;
 
   mask_kind = GFC_DESCRIPTOR_SIZE (mask);
 
@@ -245,7 +244,7 @@ void
 	extent[n] = 0;
     }
 
-  if (retarray->data == NULL)
+  if (retarray->base_addr == NULL)
     {
       size_t alloc_size, str;
 
@@ -260,8 +259,7 @@ void
 
 	}
 
-      alloc_size = sizeof (rtype_name) * GFC_DESCRIPTOR_STRIDE(retarray,rank-1)
-    		   * extent[rank-1];
+      alloc_size = GFC_DESCRIPTOR_STRIDE(retarray,rank-1) * extent[rank-1];
 
       retarray->offset = 0;
       retarray->dtype = (array->dtype & ~GFC_DTYPE_RANK_MASK) | rank;
@@ -273,7 +271,7 @@ void
 	  return;
 	}
       else
-	retarray->data = internal_malloc_size (alloc_size);
+	retarray->base_addr = xmallocarray (alloc_size, sizeof (rtype_name));
 
     }
   else
@@ -298,8 +296,8 @@ void
 	return;
     }
 
-  dest = retarray->data;
-  base = array->data;
+  dest = retarray->base_addr;
+  base = array->base_addr;
 
   while (base)
     {
@@ -311,17 +309,12 @@ void
       {
 ')dnl
 define(START_MASKED_ARRAY_BLOCK,
-`	if (len <= 0)
-	  *dest = '$1`;
-	else
+`	for (n = 0; n < len; n++, src += delta, msrc += mdelta)
 	  {
-	    for (n = 0; n < len; n++, src += delta, msrc += mdelta)
-	      {
 ')dnl
 define(FINISH_MASKED_ARRAY_FUNCTION,
-`	      }
-	    *dest = result;
-	  }
+`	  }
+	*dest = result;
       }
       /* Advance to the next element.  */
       count[0]++;
@@ -340,9 +333,9 @@ define(FINISH_MASKED_ARRAY_FUNCTION,
 	  mbase -= mstride[n] * extent[n];
 	  dest -= dstride[n] * extent[n];
 	  n++;
-	  if (n == rank)
+	  if (n >= rank)
 	    {
-	      /* Break out of the look.  */
+	      /* Break out of the loop.  */
 	      base = NULL;
 	      break;
 	    }
@@ -404,7 +397,7 @@ void
 	extent[n] = 0;
     }
 
-  if (retarray->data == NULL)
+  if (retarray->base_addr == NULL)
     {
       size_t alloc_size, str;
 
@@ -422,8 +415,7 @@ void
       retarray->offset = 0;
       retarray->dtype = (array->dtype & ~GFC_DTYPE_RANK_MASK) | rank;
 
-      alloc_size = sizeof (rtype_name) * GFC_DESCRIPTOR_STRIDE(retarray,rank-1)
-    		   * extent[rank-1];
+      alloc_size = GFC_DESCRIPTOR_STRIDE(retarray,rank-1) * extent[rank-1];
 
       if (alloc_size == 0)
 	{
@@ -432,7 +424,7 @@ void
 	  return;
 	}
       else
-	retarray->data = internal_malloc_size (alloc_size);
+	retarray->base_addr = xmallocarray (alloc_size, sizeof (rtype_name));
     }
   else
     {
@@ -464,7 +456,7 @@ void
       dstride[n] = GFC_DESCRIPTOR_STRIDE(retarray,n);
     }
 
-  dest = retarray->data;
+  dest = retarray->base_addr;
 
   while(1)
     {
@@ -481,7 +473,7 @@ void
 	     frequently used path so probably not worth it.  */
 	  dest -= dstride[n] * extent[n];
 	  n++;
-	  if (n == rank)
+	  if (n >= rank)
 	    return;
 	  else
 	    {
@@ -500,6 +492,6 @@ FINISH_ARRAY_FUNCTION($4)')dnl
 define(MASKED_ARRAY_FUNCTION,
 `START_MASKED_ARRAY_FUNCTION
 $2
-START_MASKED_ARRAY_BLOCK($1)
+START_MASKED_ARRAY_BLOCK
 $3
 FINISH_MASKED_ARRAY_FUNCTION')dnl

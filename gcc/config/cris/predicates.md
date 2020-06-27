@@ -1,5 +1,5 @@
 ;; Operand and operator predicates for the GCC CRIS port.
-;; Copyright (C) 2005, 2007 Free Software Foundation, Inc.
+;; Copyright (C) 2005-2017 Free Software Foundation, Inc.
 
 ;; This file is part of GCC.
 ;;
@@ -76,6 +76,10 @@
 	    (match_test "cris_simple_address_operand (XEXP (op, 0),
 						      Pmode)"))))
 
+(define_predicate "cris_nonsp_register_operand"
+  (and (match_operand 0 "register_operand")
+       (match_test "op != stack_pointer_rtx")))
+
 ;; The caller needs to use :SI.
 (define_predicate "cris_bdap_sign_extend_operand"
 ; Disabled until <URL:http://gcc.gnu.org/ml/gcc-patches/2005-10/msg01376.html>
@@ -138,7 +142,7 @@
   (ior (match_operand 0 "general_operand")
        (and (match_code "const, symbol_ref, label_ref")
        	    ; The following test is actually just an assertion.
-	    (match_test "cris_pic_symbol_type_of (op) != cris_no_symbol"))))
+	    (match_test "cris_symbol_type_of (op) != cris_no_symbol"))))
 
 ;; A predicate for the anon movsi expansion, one that fits a PCREL
 ;; operand as well as general_operand.
@@ -172,3 +176,15 @@
        (ior (match_operand 0 "memory_operand")
 	    (match_test "cris_general_operand_or_symbol (XEXP (op, 0),
 							 Pmode)"))))
+
+;; A marker for the call-insn: (const_int 0) for a call to a
+;; hidden or static function and non-pic and
+;; pic_offset_table_rtx for a call that *might* go through the
+;; PLT.
+
+(define_predicate "cris_call_type_marker"
+  (ior (and (match_operand 0 "const_int_operand")
+	    (match_test "op == const0_rtx"))
+       (and (and (match_operand 0 "register_operand")
+		 (match_test "op == pic_offset_table_rtx"))
+	    (match_test "flag_pic != 0"))))

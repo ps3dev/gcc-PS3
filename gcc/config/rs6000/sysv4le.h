@@ -1,6 +1,6 @@
 /* Target definitions for GCC for a little endian PowerPC
    running System V.4
-   Copyright (C) 1995, 2000, 2003, 2007 Free Software Foundation, Inc.
+   Copyright (C) 1995-2017 Free Software Foundation, Inc.
    Contributed by Cygnus Support.
 
    This file is part of GCC.
@@ -20,17 +20,16 @@
    <http://www.gnu.org/licenses/>.  */
 
 #undef  TARGET_DEFAULT
-#define TARGET_DEFAULT (MASK_POWERPC | MASK_NEW_MNEMONICS | MASK_LITTLE_ENDIAN)
+#define TARGET_DEFAULT MASK_LITTLE_ENDIAN
 
-#undef	CC1_ENDIAN_DEFAULT_SPEC
-#define	CC1_ENDIAN_DEFAULT_SPEC "%(cc1_endian_little)"
-
-#undef	LINK_TARGET_SPEC
-#define	LINK_TARGET_SPEC "\
-%{mbig: --oformat elf32-powerpc } %{mbig-endian: --oformat elf32-powerpc } \
-%{!mlittle: %{!mlittle-endian: %{!mbig: %{!mbig-endian: \
-    %{mcall-linux: --oformat elf32-powerpc} \
-  }}}}"
+#undef	DEFAULT_ASM_ENDIAN
+#define	DEFAULT_ASM_ENDIAN " -mlittle"
 
 #undef	MULTILIB_DEFAULTS
 #define	MULTILIB_DEFAULTS { "mlittle", "mcall-sysv" }
+
+/* Little-endian PowerPC64 Linux uses the ELF v2 ABI by default.  */
+#define LINUX64_DEFAULT_ABI_ELFv2
+
+#undef MUSL_DYNAMIC_LINKER_E
+#define MUSL_DYNAMIC_LINKER_E ENDIAN_SELECT("","le","le")

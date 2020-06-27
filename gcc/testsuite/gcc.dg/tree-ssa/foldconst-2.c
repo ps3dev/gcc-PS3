@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-options "-O2 -fdump-tree-ch" } */
+/* { dg-options "-O2 -fdump-tree-ch2" } */
 typedef union tree_node *tree;
 enum tree_code
 {
@@ -25,6 +25,8 @@ enum tree_index
     TI_CURRENT_TARGET_PRAGMA, TI_CURRENT_OPTIMIZE_PRAGMA, TI_MAX
 };
 extern tree global_trees[TI_MAX];
+void fancy_abort (const char *file, int line, const char *function);
+void
 emit_support_tinfos (void)
 {
   static tree *const fundamentals[] = {
@@ -54,5 +56,4 @@ emit_support_tinfos (void)
 }
 /* We should copy loop header to fundamentals[0] and then fold it way into
    known value.  */
-/* { dg-final { scan-tree-dump-not "fundamentals.0" "ch"} } */
-/* { dg-final { cleanup-tree-dump "ch" } } */
+/* { dg-final { scan-tree-dump-not "fundamentals.0" "ch2"} } */

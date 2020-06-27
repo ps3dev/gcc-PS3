@@ -1,5 +1,5 @@
 /* Subroutines for log output for Atmel AVR back end.
-   Copyright (C) 2011 Free Software Foundation, Inc.
+   Copyright (C) 2011-2017 Free Software Foundation, Inc.
    Contributed by Georg-Johann Lay (avr@gjlay.de)
 
    This file is part of GCC.
@@ -22,40 +22,36 @@
 #include "system.h"
 #include "coretypes.h"
 #include "tm.h"
+#include "function.h"
 #include "rtl.h"
 #include "tree.h"
-#include "output.h"
-#include "input.h"
-#include "function.h"
+#include "tree-pass.h"	/* for current_pass */
+#include "memmodel.h"
 #include "tm_p.h"
-#include "tree-pass.h"
+#include "print-tree.h"
 
 /* This file supplies some functions for AVR back-end developers
    with a printf-like interface.  The functions are called through
-   macros avr_edump or avr_fdump from avr-protos.h:
+   macros `avr_dump', `avr_edump' or `avr_fdump' from avr-protos.h:
 
-      avr_edump (const char * fmt, ...);
-
-      avr_fdump (FILE * stream, const char * fmt, ...);
-
+   avr_fdump (FILE *stream, const char *fmt, ...);
    avr_edump (fmt, ...) is a shortcut for avr_fdump (stderr, fmt, ...)
+   avr_dump (fmt, ...)  is a shortcut for avr_fdump (dump_file, fmt, ...)
 
   == known %-codes ==
-  
-  b: bool  
+
+  b: bool
   r: rtx
   t: tree
   T: tree (brief)
   C: enum rtx_code
-  m: enum machine_mode
+  m: machine_mode
   R: enum reg_class
-  D: double_int (signed decimal)
-  X: double_int (unsigned hex)
   L: insn list
   H: location_t
 
   == no arguments ==
-  
+
   A: call abort()
   f: current_function_name()
   F: caller (via __FUNCTION__)
@@ -65,7 +61,7 @@
      else return.
 
   == same as printf ==
-  
+
   %: %
   c: char
   s: string
@@ -76,107 +72,27 @@
 /* Set according to -mlog= option.  */
 avr_log_t avr_log;
 
-/* The caller as of __FUNCTION__ */
-static const char *avr_log_caller = "?";
-
 /* The worker function implementing the %-codes */
 static void avr_log_vadump (FILE*, const char*, va_list);
 
-/* As we have no variadic macros, avr_edump maps to a call to
-   avr_log_set_caller_e which saves __FUNCTION__ to avr_log_caller and
-   returns a function pointer to avr_log_fdump_e.  avr_log_fdump_e
-   gets the printf-like arguments and calls avr_log_vadump, the
-   worker function.  avr_fdump works the same way.  */
+/* Wrapper for avr_log_vadump.  If STREAM is NULL we are called by avr_dump,
+   i.e. output to dump_file if available.  The 2nd argument is __FUNCTION__.
+   The 3rd argument is the format string. */
 
-/* Provide avr_log_fdump_e/f so that avr_log_set_caller_e/_f can return
-   their address.  */
-
-static int
-avr_log_fdump_e (const char *fmt, ...)
+int
+avr_vdump (FILE *stream, const char *caller, ...)
 {
   va_list ap;
         
-  va_start (ap, fmt);
-  avr_log_vadump (stderr, fmt, ap);
-  va_end (ap);
-    
-  return 1;
-}
+  if (NULL == stream && dump_file)
+    stream = dump_file;
 
-static int
-avr_log_fdump_f (FILE *stream, const char *fmt, ...)
-{
-  va_list ap;
-        
-  va_start (ap, fmt);
+  va_start (ap, caller);
   if (stream)
-    avr_log_vadump (stream, fmt, ap);
+    avr_log_vadump (stream, caller, ap);
   va_end (ap);
-    
+
   return 1;
-}
-
-/* Macros avr_edump/avr_fdump map to calls of the following two functions,
-   respectively.  You don't need to call them directly.  */
-
-int (*
-avr_log_set_caller_e (const char *caller)
-     )(const char*, ...)
-{
-  avr_log_caller = caller;
-  
-  return avr_log_fdump_e;
-}
-
-int (*
-avr_log_set_caller_f (const char *caller)
-     )(FILE*, const char*, ...)
-{
-  avr_log_caller = caller;
-
-  return avr_log_fdump_f;
-}
-
-
-/* Copy-paste from double-int.c:double_int_split_digit (it's static there).
-   Splits last digit of *CST (taken as unsigned) in BASE and returns it.  */
-
-static unsigned
-avr_double_int_pop_digit (double_int *cst, unsigned base)
-{
-  unsigned HOST_WIDE_INT resl, reml;
-  HOST_WIDE_INT resh, remh;
-
-  div_and_round_double (FLOOR_DIV_EXPR, true, cst->low, cst->high, base, 0,
-			&resl, &resh, &reml, &remh);
-  cst->high = resh;
-  cst->low = resl;
-
-  return reml;
-}
-
-
-/* Dump VAL as hex value to FILE.  */
-
-static void
-avr_dump_double_int_hex (FILE *file, double_int val)
-{
-  unsigned digit[4];
-
-  digit[0] = avr_double_int_pop_digit (&val, 1 << 16);
-  digit[1] = avr_double_int_pop_digit (&val, 1 << 16);
-  digit[2] = avr_double_int_pop_digit (&val, 1 << 16);
-  digit[3] = avr_double_int_pop_digit (&val, 1 << 16);
-
-  fprintf (file, "0x");
-
-  if (digit[3] | digit[2])
-    fprintf (file, "%04x%04x", digit[3], digit[2]);
-
-  if (digit[3] | digit[2] | digit[1] | digit[0])
-    fprintf (file, "%04x%04x", digit[1], digit[0]);
-  else
-    fprintf (file, "0");
 }
 
 
@@ -184,9 +100,12 @@ avr_dump_double_int_hex (FILE *file, double_int val)
    respective print/dump function.  */
 
 static void
-avr_log_vadump (FILE *file, const char *fmt, va_list ap)
+avr_log_vadump (FILE *file, const char *caller, va_list ap)
 {
   char bs[3] = {'\\', '?', '\0'};
+
+  /* 3rd proper argument is always the format string.  */
+  const char *fmt = va_arg (ap, const char*);
 
   while (*fmt)
     {
@@ -195,19 +114,19 @@ avr_log_vadump (FILE *file, const char *fmt, va_list ap)
         default:
           fputc (*(fmt-1), file);
           break;
-          
+
         case '\\':
           bs[1] = *fmt++;
           fputs (bs, file);
           break;
-          
+
         case '%':
           switch (*fmt++)
             {
             case '%':
               fputc ('%', file);
               break;
-              
+
             case 't':
               {
                 tree t = va_arg (ap, tree);
@@ -225,42 +144,34 @@ avr_log_vadump (FILE *file, const char *fmt, va_list ap)
                   }
                 break;
               }
-              
+
             case 'T':
               print_node_brief (file, "", va_arg (ap, tree), 3);
               break;
-              
+
             case 'd':
               fprintf (file, "%d", va_arg (ap, int));
               break;
-              
-            case 'D':
-              dump_double_int (file, va_arg (ap, double_int), false);
-              break;
 
-            case 'X':
-              avr_dump_double_int_hex (file, va_arg (ap, double_int));
-              break;
-              
             case 'x':
               fprintf (file, "%x", va_arg (ap, int));
               break;
-                        
+
             case 'b':
               fprintf (file, "%s", va_arg (ap, int) ? "true" : "false");
               break;
-                        
+
             case 'c':
               fputc (va_arg (ap, int), file);
               break;
-                        
+
             case 'r':
               print_inline_rtx (file, va_arg (ap, rtx), 0);
               break;
-                        
+
             case 'L':
               {
-                rtx insn = va_arg (ap, rtx);
+                rtx_insn *insn = safe_as_a <rtx_insn *> (va_arg (ap, rtx));
 
                 while (insn)
                   {
@@ -270,39 +181,40 @@ avr_log_vadump (FILE *file, const char *fmt, va_list ap)
                   }
                 break;
               }
-                        
+
             case 'f':
               if (cfun && cfun->decl)
                 fputs (current_function_name(), file);
               break;
-                        
+
             case 's':
               {
                 const char *str = va_arg (ap, char*);
                 fputs (str ? str : "(null)", file);
               }
               break;
-                        
+
             case 'm':
-              fputs (GET_MODE_NAME (va_arg (ap, enum machine_mode)), file);
+              fputs (GET_MODE_NAME ((machine_mode) va_arg (ap, int)),
+                     file);
               break;
-              
+
             case 'C':
-              fputs (rtx_name[va_arg (ap, enum rtx_code)], file);
+              fputs (rtx_name[va_arg (ap, int)], file);
               break;
-              
+
             case 'R':
-              fputs (reg_class_names[va_arg (ap, enum reg_class)], file);
+              fputs (reg_class_names[va_arg (ap, int)], file);
               break;
-              
+
             case 'F':
-              fputs (avr_log_caller, file);
+              fputs (caller, file);
               break;
-              
+
             case 'H':
               {
                 location_t loc = va_arg (ap, location_t);
-                
+
                 if (BUILTINS_LOCATION == loc)
                   fprintf (file, "<BUILTIN-LOCATION>");
                 else if (UNKNOWN_LOCATION == loc)
@@ -310,45 +222,45 @@ avr_log_vadump (FILE *file, const char *fmt, va_list ap)
                 else
                   fprintf (file, "%s:%d",
                            LOCATION_FILE (loc), LOCATION_LINE (loc));
-                
+
                 break;
               }
-              
+
             case '!':
               if (!current_pass)
                 return;
               /* FALLTHRU */
-              
+
             case '?':
-              avr_log_fdump_f (file, "%F[%f:%P]");
+              avr_vdump (file, caller, "%F[%f:%P]");
               break;
-                        
+
             case 'P':
               if (current_pass)
-                fprintf (file, "%s(%d)", 
+                fprintf (file, "%s(%d)",
                          current_pass->name,
                          current_pass->static_pass_number);
               else
                 fprintf (file, "pass=?");
-                        
+
               break;
-                        
+
             case 'A':
               fflush (file);
               abort();
-              
+
             default:
               /* Unknown %-code: Stop printing */
-              
+
               fprintf (file, "??? %%%c ???%s\n", *(fmt-1), fmt);
               fmt = "";
-              
+
               break;
             }
           break; /* % */
         }
     }
-    
+
   fflush (file);
 }
 
@@ -360,14 +272,17 @@ void
 avr_log_set_avr_log (void)
 {
   bool all = TARGET_ALL_DEBUG != 0;
-  
+
+  if (all)
+    avr_log_details = "all";
+	
   if (all || avr_log_details)
     {
       /* Adding , at beginning and end of string makes searching easier.  */
-      
+
       char *str = (char*) alloca (3 + strlen (avr_log_details));
       bool info;
-      
+
       str[0] = ',';
       strcat (stpcpy (str+1, avr_log_details), ",");
 

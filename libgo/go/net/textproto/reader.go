@@ -1,4 +1,4 @@
-// Copyright 2010 The Go Authors.  All rights reserved.
+// Copyright 2010 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -13,10 +13,6 @@ import (
 	"strings"
 )
 
-// BUG(rsc): To let callers manage exposure to denial of service
-// attacks, Reader should allow them to set and reset a limit on
-// the number of bytes read from the connection.
-
 // A Reader implements convenience methods for reading requests
 // or responses from a text protocol network connection.
 type Reader struct {
@@ -26,6 +22,10 @@ type Reader struct {
 }
 
 // NewReader returns a new Reader reading from r.
+//
+// To avoid denial of service attacks, the provided bufio.Reader
+// should be reading from an io.LimitReader or similar Reader to bound
+// the size of responses.
 func NewReader(r *bufio.Reader) *Reader {
 	return &Reader{R: r}
 }
@@ -71,7 +71,7 @@ func (r *Reader) readLineSlice() ([]byte, error) {
 // ReadContinuedLine reads a possibly continued line from r,
 // eliding the final trailing ASCII white space.
 // Lines after the first are considered continuations if they
-// begin with a space or tab character.  In the returned data,
+// begin with a space or tab character. In the returned data,
 // continuation lines are separated from the previous line
 // only by a single space: the newline and leading white space
 // are removed.
@@ -128,6 +128,17 @@ func (r *Reader) readContinuedLineSlice() ([]byte, error) {
 		return line, nil
 	}
 
+	// Optimistically assume that we have started to buffer the next line
+	// and it starts with an ASCII letter (the next header key), so we can
+	// avoid copying that buffered data around in memory and skipping over
+	// non-existent whitespace.
+	if r.R.Buffered() > 1 {
+		peek, err := r.R.Peek(1)
+		if err == nil && isASCIILetter(peek[0]) {
+			return trim(line), nil
+		}
+	}
+
 	// ReadByte or the next readLineSlice will flush the read buffer;
 	// copy the slice into buf.
 	r.buf = append(r.buf[:0], trim(line)...)
@@ -139,7 +150,7 @@ func (r *Reader) readContinuedLineSlice() ([]byte, error) {
 			break
 		}
 		r.buf = append(r.buf, ' ')
-		r.buf = append(r.buf, line...)
+		r.buf = append(r.buf, trim(line)...)
 	}
 	return r.buf, nil
 }
@@ -192,8 +203,8 @@ func parseCodeLine(line string, expectCode int) (code int, continued bool, messa
 
 // ReadCodeLine reads a response code line of the form
 //	code message
-// where code is a 3-digit status code and the message
-// extends to the rest of the line.  An example of such a line is:
+// where code is a three-digit status code and the message
+// extends to the rest of the line. An example of such a line is:
 //	220 plan9.bell-labs.com ESMTP
 //
 // If the prefix of the status does not match the digits in expectCode,
@@ -220,13 +231,18 @@ func (r *Reader) ReadCodeLine(expectCode int) (code int, message string, err err
 //	...
 //	code message line n
 //
-// where code is a 3-digit status code. The first line starts with the
+// where code is a three-digit status code. The first line starts with the
 // code and a hyphen. The response is terminated by a line that starts
 // with the same code followed by a space. Each line in message is
 // separated by a newline (\n).
 //
 // See page 36 of RFC 959 (http://www.ietf.org/rfc/rfc959.txt) for
-// details.
+// details of another form of response accepted:
+//
+//  code-message line 1
+//  message line 2
+//  ...
+//  code message line n
 //
 // If the prefix of the status does not match the digits in expectCode,
 // ReadResponse returns with err set to &Error{code, message}.
@@ -237,7 +253,8 @@ func (r *Reader) ReadCodeLine(expectCode int) (code int, message string, err err
 //
 func (r *Reader) ReadResponse(expectCode int) (code int, message string, err error) {
 	code, continued, message, err := r.readCodeLine(expectCode)
-	for err == nil && continued {
+	multi := continued
+	for continued {
 		line, err := r.ReadLine()
 		if err != nil {
 			return 0, "", err
@@ -245,13 +262,17 @@ func (r *Reader) ReadResponse(expectCode int) (code int, message string, err err
 
 		var code2 int
 		var moreMessage string
-		code2, continued, moreMessage, err = parseCodeLine(line, expectCode)
+		code2, continued, moreMessage, err = parseCodeLine(line, 0)
 		if err != nil || code2 != code {
 			message += "\n" + strings.TrimRight(line, "\r\n")
 			continued = true
 			continue
 		}
 		message += "\n" + moreMessage
+	}
+	if err != nil && multi && message != "" {
+		// replace one line error message with all lines (full message)
+		err = &Error{code, message}
 	}
 	return
 }
@@ -345,7 +366,7 @@ func (d *dotReader) Read(b []byte) (n int, err error) {
 				d.state = stateBeginLine
 				break
 			}
-			// Not part of \r\n.  Emit saved \r
+			// Not part of \r\n. Emit saved \r
 			br.UnreadByte()
 			c = '\r'
 			d.state = stateData
@@ -445,23 +466,41 @@ func (r *Reader) ReadDotLines() ([]string, error) {
 //	}
 //
 func (r *Reader) ReadMIMEHeader() (MIMEHeader, error) {
-	m := make(MIMEHeader)
+	// Avoid lots of small slice allocations later by allocating one
+	// large one ahead of time which we'll cut up into smaller
+	// slices. If this isn't big enough later, we allocate small ones.
+	var strs []string
+	hint := r.upcomingHeaderNewlines()
+	if hint > 0 {
+		strs = make([]string, hint)
+	}
+
+	m := make(MIMEHeader, hint)
 	for {
 		kv, err := r.readContinuedLineSlice()
 		if len(kv) == 0 {
 			return m, err
 		}
 
-		// Key ends at first colon; must not have spaces.
+		// Key ends at first colon; should not have spaces but
+		// they appear in the wild, violating specs, so we
+		// remove them if present.
 		i := bytes.IndexByte(kv, ':')
 		if i < 0 {
 			return m, ProtocolError("malformed MIME header line: " + string(kv))
 		}
-		key := string(kv[0:i])
-		if strings.Index(key, " ") >= 0 {
-			key = strings.TrimRight(key, " ")
+		endKey := i
+		for endKey > 0 && kv[endKey-1] == ' ' {
+			endKey--
 		}
-		key = CanonicalMIMEHeaderKey(key)
+		key := canonicalMIMEHeaderKey(kv[:endKey])
+
+		// As per RFC 7230 field-name is a token, tokens consist of one or more chars.
+		// We could return a ProtocolError here, but better to be liberal in what we
+		// accept, so if we get an empty key, skip it.
+		if key == "" {
+			continue
+		}
 
 		// Skip initial spaces in value.
 		i++ // skip colon
@@ -470,55 +509,254 @@ func (r *Reader) ReadMIMEHeader() (MIMEHeader, error) {
 		}
 		value := string(kv[i:])
 
-		m[key] = append(m[key], value)
+		vv := m[key]
+		if vv == nil && len(strs) > 0 {
+			// More than likely this will be a single-element key.
+			// Most headers aren't multi-valued.
+			// Set the capacity on strs[0] to 1, so any future append
+			// won't extend the slice into the other strings.
+			vv, strs = strs[:1:1], strs[1:]
+			vv[0] = value
+			m[key] = vv
+		} else {
+			m[key] = append(vv, value)
+		}
 
 		if err != nil {
 			return m, err
 		}
 	}
-	panic("unreachable")
+}
+
+// upcomingHeaderNewlines returns an approximation of the number of newlines
+// that will be in this header. If it gets confused, it returns 0.
+func (r *Reader) upcomingHeaderNewlines() (n int) {
+	// Try to determine the 'hint' size.
+	r.R.Peek(1) // force a buffer load if empty
+	s := r.R.Buffered()
+	if s == 0 {
+		return
+	}
+	peek, _ := r.R.Peek(s)
+	for len(peek) > 0 {
+		i := bytes.IndexByte(peek, '\n')
+		if i < 3 {
+			// Not present (-1) or found within the next few bytes,
+			// implying we're at the end ("\r\n\r\n" or "\n\n")
+			return
+		}
+		n++
+		peek = peek[i+1:]
+	}
+	return
 }
 
 // CanonicalMIMEHeaderKey returns the canonical format of the
-// MIME header key s.  The canonicalization converts the first
+// MIME header key s. The canonicalization converts the first
 // letter and any letter following a hyphen to upper case;
-// the rest are converted to lowercase.  For example, the
+// the rest are converted to lowercase. For example, the
 // canonical key for "accept-encoding" is "Accept-Encoding".
+// MIME header keys are assumed to be ASCII only.
+// If s contains a space or invalid header field bytes, it is
+// returned without modifications.
 func CanonicalMIMEHeaderKey(s string) string {
 	// Quick check for canonical encoding.
-	needUpper := true
+	upper := true
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		if needUpper && 'a' <= c && c <= 'z' {
-			goto MustRewrite
+		if !validHeaderFieldByte(c) {
+			return s
 		}
-		if !needUpper && 'A' <= c && c <= 'Z' {
-			goto MustRewrite
+		if upper && 'a' <= c && c <= 'z' {
+			return canonicalMIMEHeaderKey([]byte(s))
 		}
-		needUpper = c == '-'
+		if !upper && 'A' <= c && c <= 'Z' {
+			return canonicalMIMEHeaderKey([]byte(s))
+		}
+		upper = c == '-'
 	}
 	return s
+}
 
-MustRewrite:
-	// Canonicalize: first letter upper case
-	// and upper case after each dash.
-	// (Host, User-Agent, If-Modified-Since).
-	// MIME headers are ASCII only, so no Unicode issues.
-	a := []byte(s)
-	upper := true
-	for i, v := range a {
-		if v == ' ' {
-			a[i] = '-'
-			upper = true
+const toLower = 'a' - 'A'
+
+// validHeaderFieldByte reports whether b is a valid byte in a header
+// field name. RFC 7230 says:
+//   header-field   = field-name ":" OWS field-value OWS
+//   field-name     = token
+//   tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" / "." /
+//           "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
+//   token = 1*tchar
+func validHeaderFieldByte(b byte) bool {
+	return int(b) < len(isTokenTable) && isTokenTable[b]
+}
+
+// canonicalMIMEHeaderKey is like CanonicalMIMEHeaderKey but is
+// allowed to mutate the provided byte slice before returning the
+// string.
+//
+// For invalid inputs (if a contains spaces or non-token bytes), a
+// is unchanged and a string copy is returned.
+func canonicalMIMEHeaderKey(a []byte) string {
+	// See if a looks like a header key. If not, return it unchanged.
+	for _, c := range a {
+		if validHeaderFieldByte(c) {
 			continue
 		}
-		if upper && 'a' <= v && v <= 'z' {
-			a[i] = v + 'A' - 'a'
+		// Don't canonicalize.
+		return string(a)
+	}
+
+	upper := true
+	for i, c := range a {
+		// Canonicalize: first letter upper case
+		// and upper case after each dash.
+		// (Host, User-Agent, If-Modified-Since).
+		// MIME headers are ASCII only, so no Unicode issues.
+		if upper && 'a' <= c && c <= 'z' {
+			c -= toLower
+		} else if !upper && 'A' <= c && c <= 'Z' {
+			c += toLower
 		}
-		if !upper && 'A' <= v && v <= 'Z' {
-			a[i] = v + 'a' - 'A'
-		}
-		upper = v == '-'
+		a[i] = c
+		upper = c == '-' // for next time
+	}
+	// The compiler recognizes m[string(byteSlice)] as a special
+	// case, so a copy of a's bytes into a new string does not
+	// happen in this map lookup:
+	if v := commonHeader[string(a)]; v != "" {
+		return v
 	}
 	return string(a)
+}
+
+// commonHeader interns common header strings.
+var commonHeader = make(map[string]string)
+
+func init() {
+	for _, v := range []string{
+		"Accept",
+		"Accept-Charset",
+		"Accept-Encoding",
+		"Accept-Language",
+		"Accept-Ranges",
+		"Cache-Control",
+		"Cc",
+		"Connection",
+		"Content-Id",
+		"Content-Language",
+		"Content-Length",
+		"Content-Transfer-Encoding",
+		"Content-Type",
+		"Cookie",
+		"Date",
+		"Dkim-Signature",
+		"Etag",
+		"Expires",
+		"From",
+		"Host",
+		"If-Modified-Since",
+		"If-None-Match",
+		"In-Reply-To",
+		"Last-Modified",
+		"Location",
+		"Message-Id",
+		"Mime-Version",
+		"Pragma",
+		"Received",
+		"Return-Path",
+		"Server",
+		"Set-Cookie",
+		"Subject",
+		"To",
+		"User-Agent",
+		"Via",
+		"X-Forwarded-For",
+		"X-Imforwards",
+		"X-Powered-By",
+	} {
+		commonHeader[v] = v
+	}
+}
+
+// isTokenTable is a copy of net/http/lex.go's isTokenTable.
+// See https://httpwg.github.io/specs/rfc7230.html#rule.token.separators
+var isTokenTable = [127]bool{
+	'!':  true,
+	'#':  true,
+	'$':  true,
+	'%':  true,
+	'&':  true,
+	'\'': true,
+	'*':  true,
+	'+':  true,
+	'-':  true,
+	'.':  true,
+	'0':  true,
+	'1':  true,
+	'2':  true,
+	'3':  true,
+	'4':  true,
+	'5':  true,
+	'6':  true,
+	'7':  true,
+	'8':  true,
+	'9':  true,
+	'A':  true,
+	'B':  true,
+	'C':  true,
+	'D':  true,
+	'E':  true,
+	'F':  true,
+	'G':  true,
+	'H':  true,
+	'I':  true,
+	'J':  true,
+	'K':  true,
+	'L':  true,
+	'M':  true,
+	'N':  true,
+	'O':  true,
+	'P':  true,
+	'Q':  true,
+	'R':  true,
+	'S':  true,
+	'T':  true,
+	'U':  true,
+	'W':  true,
+	'V':  true,
+	'X':  true,
+	'Y':  true,
+	'Z':  true,
+	'^':  true,
+	'_':  true,
+	'`':  true,
+	'a':  true,
+	'b':  true,
+	'c':  true,
+	'd':  true,
+	'e':  true,
+	'f':  true,
+	'g':  true,
+	'h':  true,
+	'i':  true,
+	'j':  true,
+	'k':  true,
+	'l':  true,
+	'm':  true,
+	'n':  true,
+	'o':  true,
+	'p':  true,
+	'q':  true,
+	'r':  true,
+	's':  true,
+	't':  true,
+	'u':  true,
+	'v':  true,
+	'w':  true,
+	'x':  true,
+	'y':  true,
+	'z':  true,
+	'|':  true,
+	'~':  true,
 }

@@ -6,10 +6,13 @@ package printer
 
 import (
 	"bytes"
+	"errors"
 	"flag"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"io/ioutil"
 	"path/filepath"
 	"testing"
@@ -25,33 +28,28 @@ var update = flag.Bool("update", false, "update golden files")
 
 var fset = token.NewFileSet()
 
-func lineString(text []byte, i int) string {
-	i0 := i
-	for i < len(text) && text[i] != '\n' {
-		i++
-	}
-	return string(text[i0:i])
-}
-
 type checkMode uint
 
 const (
 	export checkMode = 1 << iota
 	rawFormat
+	idempotent
 )
 
-func runcheck(t *testing.T, source, golden string, mode checkMode) {
-	// parse source
-	prog, err := parser.ParseFile(fset, source, nil, parser.ParseComments)
+// format parses src, prints the corresponding AST, verifies the resulting
+// src is syntactically correct, and returns the resulting src or an error
+// if any.
+func format(src []byte, mode checkMode) ([]byte, error) {
+	// parse src
+	f, err := parser.ParseFile(fset, "", src, parser.ParseComments)
 	if err != nil {
-		t.Error(err)
-		return
+		return nil, fmt.Errorf("parse: %s\n%s", err, src)
 	}
 
 	// filter exports if necessary
 	if mode&export != 0 {
-		ast.FileExports(prog) // ignore result
-		prog.Comments = nil   // don't print comments that are not in AST
+		ast.FileExports(f) // ignore result
+		f.Comments = nil   // don't print comments that are not in AST
 	}
 
 	// determine printer configuration
@@ -60,17 +58,72 @@ func runcheck(t *testing.T, source, golden string, mode checkMode) {
 		cfg.Mode |= RawFormat
 	}
 
-	// format source
+	// print AST
 	var buf bytes.Buffer
-	if err := cfg.Fprint(&buf, fset, prog); err != nil {
-		t.Error(err)
+	if err := cfg.Fprint(&buf, fset, f); err != nil {
+		return nil, fmt.Errorf("print: %s", err)
 	}
-	res := buf.Bytes()
 
-	// formatted source must be valid
+	// make sure formatted output is syntactically correct
+	res := buf.Bytes()
 	if _, err := parser.ParseFile(fset, "", res, 0); err != nil {
+		return nil, fmt.Errorf("re-parse: %s\n%s", err, buf.Bytes())
+	}
+
+	return res, nil
+}
+
+// lineAt returns the line in text starting at offset offs.
+func lineAt(text []byte, offs int) []byte {
+	i := offs
+	for i < len(text) && text[i] != '\n' {
+		i++
+	}
+	return text[offs:i]
+}
+
+// diff compares a and b.
+func diff(aname, bname string, a, b []byte) error {
+	var buf bytes.Buffer // holding long error message
+
+	// compare lengths
+	if len(a) != len(b) {
+		fmt.Fprintf(&buf, "\nlength changed: len(%s) = %d, len(%s) = %d", aname, len(a), bname, len(b))
+	}
+
+	// compare contents
+	line := 1
+	offs := 1
+	for i := 0; i < len(a) && i < len(b); i++ {
+		ch := a[i]
+		if ch != b[i] {
+			fmt.Fprintf(&buf, "\n%s:%d:%d: %s", aname, line, i-offs+1, lineAt(a, offs))
+			fmt.Fprintf(&buf, "\n%s:%d:%d: %s", bname, line, i-offs+1, lineAt(b, offs))
+			fmt.Fprintf(&buf, "\n\n")
+			break
+		}
+		if ch == '\n' {
+			line++
+			offs = i + 1
+		}
+	}
+
+	if buf.Len() > 0 {
+		return errors.New(buf.String())
+	}
+	return nil
+}
+
+func runcheck(t *testing.T, source, golden string, mode checkMode) {
+	src, err := ioutil.ReadFile(source)
+	if err != nil {
 		t.Error(err)
-		t.Logf("\n%s", res)
+		return
+	}
+
+	res, err := format(src, mode)
+	if err != nil {
+		t.Error(err)
 		return
 	}
 
@@ -89,35 +142,24 @@ func runcheck(t *testing.T, source, golden string, mode checkMode) {
 		return
 	}
 
-	// compare lengths
-	if len(res) != len(gld) {
-		t.Errorf("len = %d, expected %d (= len(%s))", len(res), len(gld), golden)
+	// formatted source and golden must be the same
+	if err := diff(source, golden, res, gld); err != nil {
+		t.Error(err)
+		return
 	}
 
-	// compare contents
-	for i, line, offs := 0, 1, 0; i < len(res) && i < len(gld); i++ {
-		ch := res[i]
-		if ch != gld[i] {
-			t.Errorf("%s:%d:%d: %s", source, line, i-offs+1, lineString(res, offs))
-			t.Errorf("%s:%d:%d: %s", golden, line, i-offs+1, lineString(gld, offs))
-			t.Error()
-			return
-		}
-		if ch == '\n' {
-			line++
-			offs = i + 1
+	if mode&idempotent != 0 {
+		// formatting golden must be idempotent
+		// (This is very difficult to achieve in general and for now
+		// it is only checked for files explicitly marked as such.)
+		res, err = format(gld, mode)
+		if err := diff(golden, fmt.Sprintf("format(%s)", golden), gld, res); err != nil {
+			t.Errorf("golden is not idempotent: %s", err)
 		}
 	}
 }
 
 func check(t *testing.T, source, golden string, mode checkMode) {
-	// start a timer to produce a time-out signal
-	tc := make(chan int)
-	go func() {
-		time.Sleep(10 * time.Second) // plenty of a safety margin, even for very slow machines
-		tc <- 0
-	}()
-
 	// run the test
 	cc := make(chan int)
 	go func() {
@@ -125,13 +167,13 @@ func check(t *testing.T, source, golden string, mode checkMode) {
 		cc <- 0
 	}()
 
-	// wait for the first finisher
+	// wait with timeout
 	select {
-	case <-tc:
+	case <-time.After(10 * time.Second): // plenty of a safety margin, even for very slow machines
 		// test running past time out
 		t.Errorf("%s: running too slowly", source)
 	case <-cc:
-		// test finished within alloted time margin
+		// test finished within allotted time margin
 	}
 }
 
@@ -142,28 +184,34 @@ type entry struct {
 
 // Use go test -update to create/update the respective golden files.
 var data = []entry{
-	{"empty.input", "empty.golden", 0},
+	{"empty.input", "empty.golden", idempotent},
 	{"comments.input", "comments.golden", 0},
 	{"comments.input", "comments.x", export},
-	{"linebreaks.input", "linebreaks.golden", 0},
-	{"expressions.input", "expressions.golden", 0},
-	{"expressions.input", "expressions.raw", rawFormat},
+	{"comments2.input", "comments2.golden", idempotent},
+	{"linebreaks.input", "linebreaks.golden", idempotent},
+	{"expressions.input", "expressions.golden", idempotent},
+	{"expressions.input", "expressions.raw", rawFormat | idempotent},
 	{"declarations.input", "declarations.golden", 0},
 	{"statements.input", "statements.golden", 0},
-	{"slow.input", "slow.golden", 0},
+	{"slow.input", "slow.golden", idempotent},
 }
 
 func TestFiles(t *testing.T) {
+	t.Parallel()
 	for _, e := range data {
 		source := filepath.Join(dataDir, e.source)
 		golden := filepath.Join(dataDir, e.golden)
-		check(t, source, golden, e.mode)
-		// TODO(gri) check that golden is idempotent
-		//check(t, golden, golden, e.mode)
+		mode := e.mode
+		t.Run(e.source, func(t *testing.T) {
+			t.Parallel()
+			check(t, source, golden, mode)
+			// TODO(gri) check that golden is idempotent
+			//check(t, golden, golden, e.mode)
+		})
 	}
 }
 
-// TestLineComments, using a simple test case, checks that consequtive line
+// TestLineComments, using a simple test case, checks that consecutive line
 // comments are properly terminated with a newline even if the AST position
 // information is incorrect.
 //
@@ -248,10 +296,11 @@ func testComment(t *testing.T, f *ast.File, srclen int, comment *ast.Comment) {
 	}
 }
 
-// Verify that the printer produces always produces a correct program
+// Verify that the printer produces a correct program
 // even if the position information of comments introducing newlines
 // is incorrect.
 func TestBadComments(t *testing.T) {
+	t.Parallel()
 	const src = `
 // first comment - text and position changed by test
 package p
@@ -308,7 +357,7 @@ func idents(f *ast.File) <-chan *ast.Ident {
 // identCount returns the number of identifiers found in f.
 func identCount(f *ast.File) int {
 	n := 0
-	for _ = range idents(f) {
+	for range idents(f) {
 		n++
 	}
 	return n
@@ -385,6 +434,172 @@ func (t *t) foo(a, b, c int) int {
 	}
 }
 
+var decls = []string{
+	`import "fmt"`,
+	"const pi = 3.1415\nconst e = 2.71828\n\nvar x = pi",
+	"func sum(x, y int) int\t{ return x + y }",
+}
+
+func TestDeclLists(t *testing.T) {
+	for _, src := range decls {
+		file, err := parser.ParseFile(fset, "", "package p;"+src, parser.ParseComments)
+		if err != nil {
+			panic(err) // error in test
+		}
+
+		var buf bytes.Buffer
+		err = Fprint(&buf, fset, file.Decls) // only print declarations
+		if err != nil {
+			panic(err) // error in test
+		}
+
+		out := buf.String()
+		if out != src {
+			t.Errorf("\ngot : %q\nwant: %q\n", out, src)
+		}
+	}
+}
+
+var stmts = []string{
+	"i := 0",
+	"select {}\nvar a, b = 1, 2\nreturn a + b",
+	"go f()\ndefer func() {}()",
+}
+
+func TestStmtLists(t *testing.T) {
+	for _, src := range stmts {
+		file, err := parser.ParseFile(fset, "", "package p; func _() {"+src+"}", parser.ParseComments)
+		if err != nil {
+			panic(err) // error in test
+		}
+
+		var buf bytes.Buffer
+		err = Fprint(&buf, fset, file.Decls[0].(*ast.FuncDecl).Body.List) // only print statements
+		if err != nil {
+			panic(err) // error in test
+		}
+
+		out := buf.String()
+		if out != src {
+			t.Errorf("\ngot : %q\nwant: %q\n", out, src)
+		}
+	}
+}
+
+func TestBaseIndent(t *testing.T) {
+	t.Parallel()
+	// The testfile must not contain multi-line raw strings since those
+	// are not indented (because their values must not change) and make
+	// this test fail.
+	const filename = "printer.go"
+	src, err := ioutil.ReadFile(filename)
+	if err != nil {
+		panic(err) // error in test
+	}
+
+	file, err := parser.ParseFile(fset, filename, src, 0)
+	if err != nil {
+		panic(err) // error in test
+	}
+
+	for indent := 0; indent < 4; indent++ {
+		indent := indent
+		t.Run(fmt.Sprint(indent), func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			(&Config{Tabwidth: tabwidth, Indent: indent}).Fprint(&buf, fset, file)
+			// all code must be indented by at least 'indent' tabs
+			lines := bytes.Split(buf.Bytes(), []byte{'\n'})
+			for i, line := range lines {
+				if len(line) == 0 {
+					continue // empty lines don't have indentation
+				}
+				n := 0
+				for j, b := range line {
+					if b != '\t' {
+						// end of indentation
+						n = j
+						break
+					}
+				}
+				if n < indent {
+					t.Errorf("line %d: got only %d tabs; want at least %d: %q", i, n, indent, line)
+				}
+			}
+		})
+	}
+}
+
+// TestFuncType tests that an ast.FuncType with a nil Params field
+// can be printed (per go/ast specification). Test case for issue 3870.
+func TestFuncType(t *testing.T) {
+	src := &ast.File{
+		Name: &ast.Ident{Name: "p"},
+		Decls: []ast.Decl{
+			&ast.FuncDecl{
+				Name: &ast.Ident{Name: "f"},
+				Type: &ast.FuncType{},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := Fprint(&buf, fset, src); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+
+	const want = `package p
+
+func f()
+`
+
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s\n", got, want)
+	}
+}
+
+type limitWriter struct {
+	remaining int
+	errCount  int
+}
+
+func (l *limitWriter) Write(buf []byte) (n int, err error) {
+	n = len(buf)
+	if n >= l.remaining {
+		n = l.remaining
+		err = io.EOF
+		l.errCount++
+	}
+	l.remaining -= n
+	return n, err
+}
+
+// Test whether the printer stops writing after the first error
+func TestWriteErrors(t *testing.T) {
+	t.Parallel()
+	const filename = "printer.go"
+	src, err := ioutil.ReadFile(filename)
+	if err != nil {
+		panic(err) // error in test
+	}
+	file, err := parser.ParseFile(fset, filename, src, 0)
+	if err != nil {
+		panic(err) // error in test
+	}
+	for i := 0; i < 20; i++ {
+		lw := &limitWriter{remaining: i}
+		err := (&Config{Mode: RawFormat}).Fprint(lw, fset, file)
+		if lw.errCount > 1 {
+			t.Fatal("Writes continued after first error returned")
+		}
+		// We expect errCount be 1 iff err is set
+		if (lw.errCount != 0) != (err != nil) {
+			t.Fatal("Expected err when errCount != 0")
+		}
+	}
+}
+
 // TextX is a skeleton test that can be filled in for debugging one-off cases.
 // Do not remove.
 func TestX(t *testing.T) {
@@ -392,21 +607,8 @@ func TestX(t *testing.T) {
 package p
 func _() {}
 `
-	// parse original
-	f, err := parser.ParseFile(fset, "src", src, parser.ParseComments)
+	_, err := format([]byte(src), 0)
 	if err != nil {
-		t.Fatal(err)
+		t.Error(err)
 	}
-
-	// pretty-print original
-	var buf bytes.Buffer
-	if err = (&Config{Mode: UseSpaces, Tabwidth: 8}).Fprint(&buf, fset, f); err != nil {
-		t.Fatal(err)
-	}
-
-	// parse pretty printed original
-	if _, err := parser.ParseFile(fset, "", buf.Bytes(), 0); err != nil {
-		t.Fatalf("%s\n%s", err, buf.Bytes())
-	}
-
 }

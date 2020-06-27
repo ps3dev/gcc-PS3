@@ -3,6 +3,7 @@
 
 extern int something(void) __attribute__((transaction_safe));
 extern void *malloc (__SIZE_TYPE__) __attribute__((malloc,transaction_safe));
+extern void foo (int);
 
 int f()
 {
@@ -25,5 +26,4 @@ int f()
 
 /* { dg-final { scan-tree-dump-times "ITM_LU" 0 "tmmark" } } */
 /* { dg-final { scan-tree-dump-times "ITM_WU" 0 "tmmark" } } */
-/* { dg-final { scan-tree-dump-times "tm_save" 1 "tmmark" } } */
-/* { dg-final { cleanup-tree-dump "tmmark" } } */
+/* { dg-final { scan-tree-dump-times "int tm_save" 1 "tmmark" } } */

@@ -30,5 +30,4 @@ int bazzoo (void)
   return b.i;
 }
 
-/* { dg-final { scan-tree-dump-times "= 0;" 5 "fre1" } } */
-/* { dg-final { cleanup-tree-dump "fre1" } } */
+/* { dg-final { scan-tree-dump-times "return 0;" 4 "fre1" } } */

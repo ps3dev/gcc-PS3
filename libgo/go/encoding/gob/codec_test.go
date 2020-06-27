@@ -7,14 +7,16 @@ package gob
 import (
 	"bytes"
 	"errors"
+	"flag"
 	"math"
 	"math/rand"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
-	"unsafe"
 )
+
+var doFuzzTests = flag.Bool("gob.fuzz", false, "run the fuzz tests, which are large and very slow")
 
 // Guarantee encoding format by comparing some encodings to hand-written values
 type EncodeT struct {
@@ -48,10 +50,16 @@ func testError(t *testing.T) {
 	return
 }
 
+func newDecBuffer(data []byte) *decBuffer {
+	return &decBuffer{
+		data: data,
+	}
+}
+
 // Test basic encode/decode routines for unsigned integers
 func TestUintCodec(t *testing.T) {
 	defer testError(t)
-	b := new(bytes.Buffer)
+	b := new(encBuffer)
 	encState := newEncoderState(b)
 	for _, tt := range encodeT {
 		b.Reset()
@@ -60,10 +68,10 @@ func TestUintCodec(t *testing.T) {
 			t.Errorf("encodeUint: %#x encode: expected % x got % x", tt.x, tt.b, b.Bytes())
 		}
 	}
-	decState := newDecodeState(b)
 	for u := uint64(0); ; u = (u + 1) * 7 {
 		b.Reset()
 		encState.encodeUint(u)
+		decState := newDecodeState(newDecBuffer(b.Bytes()))
 		v := decState.decodeUint()
 		if u != v {
 			t.Errorf("Encode/Decode: sent %#x received %#x", u, v)
@@ -76,11 +84,10 @@ func TestUintCodec(t *testing.T) {
 
 func verifyInt(i int64, t *testing.T) {
 	defer testError(t)
-	var b = new(bytes.Buffer)
+	var b = new(encBuffer)
 	encState := newEncoderState(b)
 	encState.encodeInt(i)
-	decState := newDecodeState(b)
-	decState.buf = make([]byte, 8)
+	decState := newDecodeState(newDecBuffer(b.Bytes()))
 	j := decState.decodeInt()
 	if i != j {
 		t.Errorf("Encode/Decode: sent %#x received %#x", uint64(i), uint64(j))
@@ -116,14 +123,13 @@ var complexResult = []byte{0x07, 0xFE, 0x31, 0x40, 0xFE, 0x33, 0x40}
 // The result of encoding "hello" with field number 7
 var bytesResult = []byte{0x07, 0x05, 'h', 'e', 'l', 'l', 'o'}
 
-func newDecodeState(buf *bytes.Buffer) *decoderState {
+func newDecodeState(buf *decBuffer) *decoderState {
 	d := new(decoderState)
 	d.b = buf
-	d.buf = make([]byte, uint64Size)
 	return d
 }
 
-func newEncoderState(b *bytes.Buffer) *encoderState {
+func newEncoderState(b *encBuffer) *encoderState {
 	b.Reset()
 	state := &encoderState{enc: nil, b: b}
 	state.fieldnum = -1
@@ -133,14 +139,14 @@ func newEncoderState(b *bytes.Buffer) *encoderState {
 // Test instruction execution for encoding.
 // Do not run the machine yet; instead do individual instructions crafted by hand.
 func TestScalarEncInstructions(t *testing.T) {
-	var b = new(bytes.Buffer)
+	var b = new(encBuffer)
 
 	// bool
 	{
-		data := struct{ a bool }{true}
-		instr := &encInstr{encBool, 6, 0, 0}
+		var data bool = true
+		instr := &encInstr{encBool, 6, nil, 0}
 		state := newEncoderState(b)
-		instr.op(instr, state, unsafe.Pointer(&data))
+		instr.op(instr, state, reflect.ValueOf(data))
 		if !bytes.Equal(boolResult, b.Bytes()) {
 			t.Errorf("bool enc instructions: expected % x got % x", boolResult, b.Bytes())
 		}
@@ -149,10 +155,10 @@ func TestScalarEncInstructions(t *testing.T) {
 	// int
 	{
 		b.Reset()
-		data := struct{ a int }{17}
-		instr := &encInstr{encInt, 6, 0, 0}
+		var data int = 17
+		instr := &encInstr{encInt, 6, nil, 0}
 		state := newEncoderState(b)
-		instr.op(instr, state, unsafe.Pointer(&data))
+		instr.op(instr, state, reflect.ValueOf(data))
 		if !bytes.Equal(signedResult, b.Bytes()) {
 			t.Errorf("int enc instructions: expected % x got % x", signedResult, b.Bytes())
 		}
@@ -161,10 +167,10 @@ func TestScalarEncInstructions(t *testing.T) {
 	// uint
 	{
 		b.Reset()
-		data := struct{ a uint }{17}
-		instr := &encInstr{encUint, 6, 0, 0}
+		var data uint = 17
+		instr := &encInstr{encUint, 6, nil, 0}
 		state := newEncoderState(b)
-		instr.op(instr, state, unsafe.Pointer(&data))
+		instr.op(instr, state, reflect.ValueOf(data))
 		if !bytes.Equal(unsignedResult, b.Bytes()) {
 			t.Errorf("uint enc instructions: expected % x got % x", unsignedResult, b.Bytes())
 		}
@@ -173,10 +179,10 @@ func TestScalarEncInstructions(t *testing.T) {
 	// int8
 	{
 		b.Reset()
-		data := struct{ a int8 }{17}
-		instr := &encInstr{encInt8, 6, 0, 0}
+		var data int8 = 17
+		instr := &encInstr{encInt, 6, nil, 0}
 		state := newEncoderState(b)
-		instr.op(instr, state, unsafe.Pointer(&data))
+		instr.op(instr, state, reflect.ValueOf(data))
 		if !bytes.Equal(signedResult, b.Bytes()) {
 			t.Errorf("int8 enc instructions: expected % x got % x", signedResult, b.Bytes())
 		}
@@ -185,10 +191,10 @@ func TestScalarEncInstructions(t *testing.T) {
 	// uint8
 	{
 		b.Reset()
-		data := struct{ a uint8 }{17}
-		instr := &encInstr{encUint8, 6, 0, 0}
+		var data uint8 = 17
+		instr := &encInstr{encUint, 6, nil, 0}
 		state := newEncoderState(b)
-		instr.op(instr, state, unsafe.Pointer(&data))
+		instr.op(instr, state, reflect.ValueOf(data))
 		if !bytes.Equal(unsignedResult, b.Bytes()) {
 			t.Errorf("uint8 enc instructions: expected % x got % x", unsignedResult, b.Bytes())
 		}
@@ -197,10 +203,10 @@ func TestScalarEncInstructions(t *testing.T) {
 	// int16
 	{
 		b.Reset()
-		data := struct{ a int16 }{17}
-		instr := &encInstr{encInt16, 6, 0, 0}
+		var data int16 = 17
+		instr := &encInstr{encInt, 6, nil, 0}
 		state := newEncoderState(b)
-		instr.op(instr, state, unsafe.Pointer(&data))
+		instr.op(instr, state, reflect.ValueOf(data))
 		if !bytes.Equal(signedResult, b.Bytes()) {
 			t.Errorf("int16 enc instructions: expected % x got % x", signedResult, b.Bytes())
 		}
@@ -209,10 +215,10 @@ func TestScalarEncInstructions(t *testing.T) {
 	// uint16
 	{
 		b.Reset()
-		data := struct{ a uint16 }{17}
-		instr := &encInstr{encUint16, 6, 0, 0}
+		var data uint16 = 17
+		instr := &encInstr{encUint, 6, nil, 0}
 		state := newEncoderState(b)
-		instr.op(instr, state, unsafe.Pointer(&data))
+		instr.op(instr, state, reflect.ValueOf(data))
 		if !bytes.Equal(unsignedResult, b.Bytes()) {
 			t.Errorf("uint16 enc instructions: expected % x got % x", unsignedResult, b.Bytes())
 		}
@@ -221,10 +227,10 @@ func TestScalarEncInstructions(t *testing.T) {
 	// int32
 	{
 		b.Reset()
-		data := struct{ a int32 }{17}
-		instr := &encInstr{encInt32, 6, 0, 0}
+		var data int32 = 17
+		instr := &encInstr{encInt, 6, nil, 0}
 		state := newEncoderState(b)
-		instr.op(instr, state, unsafe.Pointer(&data))
+		instr.op(instr, state, reflect.ValueOf(data))
 		if !bytes.Equal(signedResult, b.Bytes()) {
 			t.Errorf("int32 enc instructions: expected % x got % x", signedResult, b.Bytes())
 		}
@@ -233,10 +239,10 @@ func TestScalarEncInstructions(t *testing.T) {
 	// uint32
 	{
 		b.Reset()
-		data := struct{ a uint32 }{17}
-		instr := &encInstr{encUint32, 6, 0, 0}
+		var data uint32 = 17
+		instr := &encInstr{encUint, 6, nil, 0}
 		state := newEncoderState(b)
-		instr.op(instr, state, unsafe.Pointer(&data))
+		instr.op(instr, state, reflect.ValueOf(data))
 		if !bytes.Equal(unsignedResult, b.Bytes()) {
 			t.Errorf("uint32 enc instructions: expected % x got % x", unsignedResult, b.Bytes())
 		}
@@ -245,10 +251,10 @@ func TestScalarEncInstructions(t *testing.T) {
 	// int64
 	{
 		b.Reset()
-		data := struct{ a int64 }{17}
-		instr := &encInstr{encInt64, 6, 0, 0}
+		var data int64 = 17
+		instr := &encInstr{encInt, 6, nil, 0}
 		state := newEncoderState(b)
-		instr.op(instr, state, unsafe.Pointer(&data))
+		instr.op(instr, state, reflect.ValueOf(data))
 		if !bytes.Equal(signedResult, b.Bytes()) {
 			t.Errorf("int64 enc instructions: expected % x got % x", signedResult, b.Bytes())
 		}
@@ -257,10 +263,10 @@ func TestScalarEncInstructions(t *testing.T) {
 	// uint64
 	{
 		b.Reset()
-		data := struct{ a uint64 }{17}
-		instr := &encInstr{encUint64, 6, 0, 0}
+		var data uint64 = 17
+		instr := &encInstr{encUint, 6, nil, 0}
 		state := newEncoderState(b)
-		instr.op(instr, state, unsafe.Pointer(&data))
+		instr.op(instr, state, reflect.ValueOf(data))
 		if !bytes.Equal(unsignedResult, b.Bytes()) {
 			t.Errorf("uint64 enc instructions: expected % x got % x", unsignedResult, b.Bytes())
 		}
@@ -269,10 +275,10 @@ func TestScalarEncInstructions(t *testing.T) {
 	// float32
 	{
 		b.Reset()
-		data := struct{ a float32 }{17}
-		instr := &encInstr{encFloat32, 6, 0, 0}
+		var data float32 = 17
+		instr := &encInstr{encFloat, 6, nil, 0}
 		state := newEncoderState(b)
-		instr.op(instr, state, unsafe.Pointer(&data))
+		instr.op(instr, state, reflect.ValueOf(data))
 		if !bytes.Equal(floatResult, b.Bytes()) {
 			t.Errorf("float32 enc instructions: expected % x got % x", floatResult, b.Bytes())
 		}
@@ -281,10 +287,10 @@ func TestScalarEncInstructions(t *testing.T) {
 	// float64
 	{
 		b.Reset()
-		data := struct{ a float64 }{17}
-		instr := &encInstr{encFloat64, 6, 0, 0}
+		var data float64 = 17
+		instr := &encInstr{encFloat, 6, nil, 0}
 		state := newEncoderState(b)
-		instr.op(instr, state, unsafe.Pointer(&data))
+		instr.op(instr, state, reflect.ValueOf(data))
 		if !bytes.Equal(floatResult, b.Bytes()) {
 			t.Errorf("float64 enc instructions: expected % x got % x", floatResult, b.Bytes())
 		}
@@ -293,10 +299,10 @@ func TestScalarEncInstructions(t *testing.T) {
 	// bytes == []uint8
 	{
 		b.Reset()
-		data := struct{ a []byte }{[]byte("hello")}
-		instr := &encInstr{encUint8Array, 6, 0, 0}
+		data := []byte("hello")
+		instr := &encInstr{encUint8Array, 6, nil, 0}
 		state := newEncoderState(b)
-		instr.op(instr, state, unsafe.Pointer(&data))
+		instr.op(instr, state, reflect.ValueOf(data))
 		if !bytes.Equal(bytesResult, b.Bytes()) {
 			t.Errorf("bytes enc instructions: expected % x got % x", bytesResult, b.Bytes())
 		}
@@ -305,28 +311,28 @@ func TestScalarEncInstructions(t *testing.T) {
 	// string
 	{
 		b.Reset()
-		data := struct{ a string }{"hello"}
-		instr := &encInstr{encString, 6, 0, 0}
+		var data string = "hello"
+		instr := &encInstr{encString, 6, nil, 0}
 		state := newEncoderState(b)
-		instr.op(instr, state, unsafe.Pointer(&data))
+		instr.op(instr, state, reflect.ValueOf(data))
 		if !bytes.Equal(bytesResult, b.Bytes()) {
 			t.Errorf("string enc instructions: expected % x got % x", bytesResult, b.Bytes())
 		}
 	}
 }
 
-func execDec(typ string, instr *decInstr, state *decoderState, t *testing.T, p unsafe.Pointer) {
+func execDec(typ string, instr *decInstr, state *decoderState, t *testing.T, value reflect.Value) {
 	defer testError(t)
 	v := int(state.decodeUint())
 	if v+state.fieldnum != 6 {
 		t.Fatalf("decoding field number %d, got %d", 6, v+state.fieldnum)
 	}
-	instr.op(instr, state, decIndirect(p, instr.indir))
+	instr.op(instr, state, value.Elem())
 	state.fieldnum = 6
 }
 
 func newDecodeStateFromData(data []byte) *decoderState {
-	b := bytes.NewBuffer(data)
+	b := newDecBuffer(data)
 	state := newDecodeState(b)
 	state.fieldnum = -1
 	return state
@@ -339,234 +345,198 @@ func TestScalarDecInstructions(t *testing.T) {
 
 	// bool
 	{
-		var data struct {
-			a bool
-		}
-		instr := &decInstr{decBool, 6, 0, 0, ovfl}
+		var data bool
+		instr := &decInstr{decBool, 6, nil, ovfl}
 		state := newDecodeStateFromData(boolResult)
-		execDec("bool", instr, state, t, unsafe.Pointer(&data))
-		if data.a != true {
-			t.Errorf("bool a = %v not true", data.a)
+		execDec("bool", instr, state, t, reflect.ValueOf(&data))
+		if data != true {
+			t.Errorf("bool a = %v not true", data)
 		}
 	}
 	// int
 	{
-		var data struct {
-			a int
-		}
-		instr := &decInstr{decOpTable[reflect.Int], 6, 0, 0, ovfl}
+		var data int
+		instr := &decInstr{decOpTable[reflect.Int], 6, nil, ovfl}
 		state := newDecodeStateFromData(signedResult)
-		execDec("int", instr, state, t, unsafe.Pointer(&data))
-		if data.a != 17 {
-			t.Errorf("int a = %v not 17", data.a)
+		execDec("int", instr, state, t, reflect.ValueOf(&data))
+		if data != 17 {
+			t.Errorf("int a = %v not 17", data)
 		}
 	}
 
 	// uint
 	{
-		var data struct {
-			a uint
-		}
-		instr := &decInstr{decOpTable[reflect.Uint], 6, 0, 0, ovfl}
+		var data uint
+		instr := &decInstr{decOpTable[reflect.Uint], 6, nil, ovfl}
 		state := newDecodeStateFromData(unsignedResult)
-		execDec("uint", instr, state, t, unsafe.Pointer(&data))
-		if data.a != 17 {
-			t.Errorf("uint a = %v not 17", data.a)
+		execDec("uint", instr, state, t, reflect.ValueOf(&data))
+		if data != 17 {
+			t.Errorf("uint a = %v not 17", data)
 		}
 	}
 
 	// int8
 	{
-		var data struct {
-			a int8
-		}
-		instr := &decInstr{decInt8, 6, 0, 0, ovfl}
+		var data int8
+		instr := &decInstr{decInt8, 6, nil, ovfl}
 		state := newDecodeStateFromData(signedResult)
-		execDec("int8", instr, state, t, unsafe.Pointer(&data))
-		if data.a != 17 {
-			t.Errorf("int8 a = %v not 17", data.a)
+		execDec("int8", instr, state, t, reflect.ValueOf(&data))
+		if data != 17 {
+			t.Errorf("int8 a = %v not 17", data)
 		}
 	}
 
 	// uint8
 	{
-		var data struct {
-			a uint8
-		}
-		instr := &decInstr{decUint8, 6, 0, 0, ovfl}
+		var data uint8
+		instr := &decInstr{decUint8, 6, nil, ovfl}
 		state := newDecodeStateFromData(unsignedResult)
-		execDec("uint8", instr, state, t, unsafe.Pointer(&data))
-		if data.a != 17 {
-			t.Errorf("uint8 a = %v not 17", data.a)
+		execDec("uint8", instr, state, t, reflect.ValueOf(&data))
+		if data != 17 {
+			t.Errorf("uint8 a = %v not 17", data)
 		}
 	}
 
 	// int16
 	{
-		var data struct {
-			a int16
-		}
-		instr := &decInstr{decInt16, 6, 0, 0, ovfl}
+		var data int16
+		instr := &decInstr{decInt16, 6, nil, ovfl}
 		state := newDecodeStateFromData(signedResult)
-		execDec("int16", instr, state, t, unsafe.Pointer(&data))
-		if data.a != 17 {
-			t.Errorf("int16 a = %v not 17", data.a)
+		execDec("int16", instr, state, t, reflect.ValueOf(&data))
+		if data != 17 {
+			t.Errorf("int16 a = %v not 17", data)
 		}
 	}
 
 	// uint16
 	{
-		var data struct {
-			a uint16
-		}
-		instr := &decInstr{decUint16, 6, 0, 0, ovfl}
+		var data uint16
+		instr := &decInstr{decUint16, 6, nil, ovfl}
 		state := newDecodeStateFromData(unsignedResult)
-		execDec("uint16", instr, state, t, unsafe.Pointer(&data))
-		if data.a != 17 {
-			t.Errorf("uint16 a = %v not 17", data.a)
+		execDec("uint16", instr, state, t, reflect.ValueOf(&data))
+		if data != 17 {
+			t.Errorf("uint16 a = %v not 17", data)
 		}
 	}
 
 	// int32
 	{
-		var data struct {
-			a int32
-		}
-		instr := &decInstr{decInt32, 6, 0, 0, ovfl}
+		var data int32
+		instr := &decInstr{decInt32, 6, nil, ovfl}
 		state := newDecodeStateFromData(signedResult)
-		execDec("int32", instr, state, t, unsafe.Pointer(&data))
-		if data.a != 17 {
-			t.Errorf("int32 a = %v not 17", data.a)
+		execDec("int32", instr, state, t, reflect.ValueOf(&data))
+		if data != 17 {
+			t.Errorf("int32 a = %v not 17", data)
 		}
 	}
 
 	// uint32
 	{
-		var data struct {
-			a uint32
-		}
-		instr := &decInstr{decUint32, 6, 0, 0, ovfl}
+		var data uint32
+		instr := &decInstr{decUint32, 6, nil, ovfl}
 		state := newDecodeStateFromData(unsignedResult)
-		execDec("uint32", instr, state, t, unsafe.Pointer(&data))
-		if data.a != 17 {
-			t.Errorf("uint32 a = %v not 17", data.a)
+		execDec("uint32", instr, state, t, reflect.ValueOf(&data))
+		if data != 17 {
+			t.Errorf("uint32 a = %v not 17", data)
 		}
 	}
 
 	// uintptr
 	{
-		var data struct {
-			a uintptr
-		}
-		instr := &decInstr{decOpTable[reflect.Uintptr], 6, 0, 0, ovfl}
+		var data uintptr
+		instr := &decInstr{decOpTable[reflect.Uintptr], 6, nil, ovfl}
 		state := newDecodeStateFromData(unsignedResult)
-		execDec("uintptr", instr, state, t, unsafe.Pointer(&data))
-		if data.a != 17 {
-			t.Errorf("uintptr a = %v not 17", data.a)
+		execDec("uintptr", instr, state, t, reflect.ValueOf(&data))
+		if data != 17 {
+			t.Errorf("uintptr a = %v not 17", data)
 		}
 	}
 
 	// int64
 	{
-		var data struct {
-			a int64
-		}
-		instr := &decInstr{decInt64, 6, 0, 0, ovfl}
+		var data int64
+		instr := &decInstr{decInt64, 6, nil, ovfl}
 		state := newDecodeStateFromData(signedResult)
-		execDec("int64", instr, state, t, unsafe.Pointer(&data))
-		if data.a != 17 {
-			t.Errorf("int64 a = %v not 17", data.a)
+		execDec("int64", instr, state, t, reflect.ValueOf(&data))
+		if data != 17 {
+			t.Errorf("int64 a = %v not 17", data)
 		}
 	}
 
 	// uint64
 	{
-		var data struct {
-			a uint64
-		}
-		instr := &decInstr{decUint64, 6, 0, 0, ovfl}
+		var data uint64
+		instr := &decInstr{decUint64, 6, nil, ovfl}
 		state := newDecodeStateFromData(unsignedResult)
-		execDec("uint64", instr, state, t, unsafe.Pointer(&data))
-		if data.a != 17 {
-			t.Errorf("uint64 a = %v not 17", data.a)
+		execDec("uint64", instr, state, t, reflect.ValueOf(&data))
+		if data != 17 {
+			t.Errorf("uint64 a = %v not 17", data)
 		}
 	}
 
 	// float32
 	{
-		var data struct {
-			a float32
-		}
-		instr := &decInstr{decFloat32, 6, 0, 0, ovfl}
+		var data float32
+		instr := &decInstr{decFloat32, 6, nil, ovfl}
 		state := newDecodeStateFromData(floatResult)
-		execDec("float32", instr, state, t, unsafe.Pointer(&data))
-		if data.a != 17 {
-			t.Errorf("float32 a = %v not 17", data.a)
+		execDec("float32", instr, state, t, reflect.ValueOf(&data))
+		if data != 17 {
+			t.Errorf("float32 a = %v not 17", data)
 		}
 	}
 
 	// float64
 	{
-		var data struct {
-			a float64
-		}
-		instr := &decInstr{decFloat64, 6, 0, 0, ovfl}
+		var data float64
+		instr := &decInstr{decFloat64, 6, nil, ovfl}
 		state := newDecodeStateFromData(floatResult)
-		execDec("float64", instr, state, t, unsafe.Pointer(&data))
-		if data.a != 17 {
-			t.Errorf("float64 a = %v not 17", data.a)
+		execDec("float64", instr, state, t, reflect.ValueOf(&data))
+		if data != 17 {
+			t.Errorf("float64 a = %v not 17", data)
 		}
 	}
 
 	// complex64
 	{
-		var data struct {
-			a complex64
-		}
-		instr := &decInstr{decOpTable[reflect.Complex64], 6, 0, 0, ovfl}
+		var data complex64
+		instr := &decInstr{decOpTable[reflect.Complex64], 6, nil, ovfl}
 		state := newDecodeStateFromData(complexResult)
-		execDec("complex", instr, state, t, unsafe.Pointer(&data))
-		if data.a != 17+19i {
-			t.Errorf("complex a = %v not 17+19i", data.a)
+		execDec("complex", instr, state, t, reflect.ValueOf(&data))
+		if data != 17+19i {
+			t.Errorf("complex a = %v not 17+19i", data)
 		}
 	}
 
 	// complex128
 	{
-		var data struct {
-			a complex128
-		}
-		instr := &decInstr{decOpTable[reflect.Complex128], 6, 0, 0, ovfl}
+		var data complex128
+		instr := &decInstr{decOpTable[reflect.Complex128], 6, nil, ovfl}
 		state := newDecodeStateFromData(complexResult)
-		execDec("complex", instr, state, t, unsafe.Pointer(&data))
-		if data.a != 17+19i {
-			t.Errorf("complex a = %v not 17+19i", data.a)
+		execDec("complex", instr, state, t, reflect.ValueOf(&data))
+		if data != 17+19i {
+			t.Errorf("complex a = %v not 17+19i", data)
 		}
 	}
 
 	// bytes == []uint8
 	{
-		var data struct {
-			a []byte
-		}
-		instr := &decInstr{decUint8Slice, 6, 0, 0, ovfl}
+		var data []byte
+		instr := &decInstr{decUint8Slice, 6, nil, ovfl}
 		state := newDecodeStateFromData(bytesResult)
-		execDec("bytes", instr, state, t, unsafe.Pointer(&data))
-		if string(data.a) != "hello" {
-			t.Errorf(`bytes a = %q not "hello"`, string(data.a))
+		execDec("bytes", instr, state, t, reflect.ValueOf(&data))
+		if string(data) != "hello" {
+			t.Errorf(`bytes a = %q not "hello"`, string(data))
 		}
 	}
 
 	// string
 	{
-		var data struct {
-			a string
-		}
-		instr := &decInstr{decString, 6, 0, 0, ovfl}
+		var data string
+		instr := &decInstr{decString, 6, nil, ovfl}
 		state := newDecodeStateFromData(bytesResult)
-		execDec("bytes", instr, state, t, unsafe.Pointer(&data))
-		if data.a != "hello" {
-			t.Errorf(`bytes a = %q not "hello"`, data.a)
+		execDec("bytes", instr, state, t, reflect.ValueOf(&data))
+		if data != "hello" {
+			t.Errorf(`bytes a = %q not "hello"`, data)
 		}
 	}
 }
@@ -1000,28 +970,10 @@ func TestBadRecursiveType(t *testing.T) {
 	err := NewEncoder(b).Encode(&rec)
 	if err == nil {
 		t.Error("expected error; got none")
-	} else if strings.Index(err.Error(), "recursive") < 0 {
+	} else if !strings.Contains(err.Error(), "recursive") {
 		t.Error("expected recursive type error; got", err)
 	}
 	// Can't test decode easily because we can't encode one, so we can't pass one to a Decoder.
-}
-
-type Bad0 struct {
-	CH chan int
-	C  float64
-}
-
-func TestInvalidField(t *testing.T) {
-	var bad0 Bad0
-	bad0.CH = make(chan int)
-	b := new(bytes.Buffer)
-	dummyEncoder := new(Encoder) // sufficient for this purpose.
-	dummyEncoder.encode(b, reflect.ValueOf(&bad0), userType(reflect.TypeOf(&bad0)))
-	if err := dummyEncoder.err; err == nil {
-		t.Error("expected error; got none")
-	} else if strings.Index(err.Error(), "type") < 0 {
-		t.Error("expected type error; got", err)
-	}
 }
 
 type Indirect struct {
@@ -1188,10 +1140,8 @@ func TestInterface(t *testing.T) {
 			if v1 != nil || v2 != nil {
 				t.Errorf("item %d inconsistent nils", i)
 			}
-			continue
-			if v1.Square() != v2.Square() {
-				t.Errorf("item %d inconsistent values: %v %v", i, v1, v2)
-			}
+		} else if v1.Square() != v2.Square() {
+			t.Errorf("item %d inconsistent values: %v %v", i, v1, v2)
 		}
 	}
 }
@@ -1303,7 +1253,7 @@ func TestIgnoreInterface(t *testing.T) {
 	if item2.I != item1.I {
 		t.Error("normal int did not decode correctly")
 	}
-	if item2.F != item2.F {
+	if item2.F != item1.F {
 		t.Error("normal float did not decode correctly")
 	}
 }
@@ -1330,7 +1280,7 @@ func TestUnexportedFields(t *testing.T) {
 	if err != nil {
 		t.Fatal("decode error:", err)
 	}
-	if u0.A != u0.A || u0.B != u1.B || u0.D != u1.D {
+	if u0.A != u1.A || u0.B != u1.B || u0.D != u1.D {
 		t.Errorf("u1->u0: expected %v; got %v", u0, u1)
 	}
 	if u1.c != 1234. {
@@ -1381,11 +1331,7 @@ type DT struct {
 	S     []string
 }
 
-func TestDebugStruct(t *testing.T) {
-	if debugFunc == nil {
-		return
-	}
-	Register(OnTheFly{})
+func newDT() DT {
 	var dt DT
 	dt.A = 17
 	dt.B = "hello"
@@ -1396,6 +1342,15 @@ func TestDebugStruct(t *testing.T) {
 	dt.M = map[string]int{"one": 1, "two": 2}
 	dt.T = [3]int{11, 22, 33}
 	dt.S = []string{"hi", "joe"}
+	return dt
+}
+
+func TestDebugStruct(t *testing.T) {
+	if debugFunc == nil {
+		return
+	}
+	Register(OnTheFly{})
+	dt := newDT()
 	b := new(bytes.Buffer)
 	err := NewEncoder(b).Encode(dt)
 	if err != nil {
@@ -1434,7 +1389,8 @@ func encFuzzDec(rng *rand.Rand, in interface{}) error {
 
 // This does some "fuzz testing" by attempting to decode a sequence of random bytes.
 func TestFuzz(t *testing.T) {
-	if testing.Short() {
+	if !*doFuzzTests {
+		t.Logf("disabled; run with -gob.fuzz to enable")
 		return
 	}
 
@@ -1453,11 +1409,16 @@ func TestFuzz(t *testing.T) {
 }
 
 func TestFuzzRegressions(t *testing.T) {
+	if !*doFuzzTests {
+		t.Logf("disabled; run with -gob.fuzz to enable")
+		return
+	}
+
 	// An instance triggering a type name of length ~102 GB.
 	testFuzz(t, 1328492090837718000, 100, new(float32))
 	// An instance triggering a type name of 1.6 GB.
-	// Commented out because it takes 5m to run.
-	//testFuzz(t, 1330522872628565000, 100, new(int))
+	// Note: can take several minutes to run.
+	testFuzz(t, 1330522872628565000, 100, new(int))
 }
 
 func testFuzz(t *testing.T, seed int64, n int, input ...interface{}) {
@@ -1466,6 +1427,66 @@ func testFuzz(t *testing.T, seed int64, n int, input ...interface{}) {
 		rng := rand.New(rand.NewSource(seed))
 		for i := 0; i < n; i++ {
 			encFuzzDec(rng, e)
+		}
+	}
+}
+
+// TestFuzzOneByte tries to decode corrupted input sequences
+// and checks that no panic occurs.
+func TestFuzzOneByte(t *testing.T) {
+	buf := new(bytes.Buffer)
+	Register(OnTheFly{})
+	dt := newDT()
+	if err := NewEncoder(buf).Encode(dt); err != nil {
+		t.Fatal(err)
+	}
+	s := buf.String()
+
+	indices := make([]int, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		switch i {
+		case 14, 167, 231, 265: // a slice length, corruptions are not handled yet.
+			continue
+		}
+		indices = append(indices, i)
+	}
+	if testing.Short() {
+		indices = []int{1, 111, 178} // known fixed panics
+	}
+	for _, i := range indices {
+		for j := 0; j < 256; j += 3 {
+			b := []byte(s)
+			b[i] ^= byte(j)
+			var e DT
+			func() {
+				defer func() {
+					if p := recover(); p != nil {
+						t.Errorf("crash for b[%d] ^= 0x%x", i, j)
+						panic(p)
+					}
+				}()
+				err := NewDecoder(bytes.NewReader(b)).Decode(&e)
+				_ = err
+			}()
+		}
+	}
+}
+
+// Don't crash, just give error with invalid type id.
+// Issue 9649.
+func TestErrorInvalidTypeId(t *testing.T) {
+	data := []byte{0x01, 0x00, 0x01, 0x00}
+	d := NewDecoder(bytes.NewReader(data))
+	// When running d.Decode(&foo) the first time the decoder stops
+	// after []byte{0x01, 0x00} and reports an errBadType. Running
+	// d.Decode(&foo) again on exactly the same input sequence should
+	// give another errBadType, but instead caused a panic because
+	// decoderMap wasn't cleaned up properly after the first error.
+	for i := 0; i < 2; i++ {
+		var foo struct{}
+		err := d.Decode(&foo)
+		if err != errBadType {
+			t.Fatalf("decode: expected %s, got %s", errBadType, err)
 		}
 	}
 }

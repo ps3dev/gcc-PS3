@@ -14,7 +14,7 @@
 void
 f (int a, int b)
 {
-  switch (a) {
+  switch (a) { /* { dg-warning "statement will never be executed" } */
     int v[b];
   case 2: /* { dg-error "switch jumps into scope of identifier with variably modified type" } */
   default: /* { dg-error "switch jumps into scope of identifier with variably modified type" } */
@@ -30,5 +30,5 @@ f (int a, int b)
 }
 
 /* Match extra informative notes.  */
-/* { dg-message "note: switch starts here" "note: expected" { target *-*-* } 0 } */
-/* { dg-message "note: '\[^\n'\]*' declared here" "note: expected" { target *-*-* } 0 } */
+/* { dg-message "note: switch starts here" "note: starts" { target *-*-* } 0 } */
+/* { dg-message "note: '\[^\n'\]*' declared here" "note: declared" { target *-*-* } 0 } */

@@ -3,6 +3,8 @@
 
 /* Test for SRA. */
 
+void link_error (void);
+
 typedef struct teststruct
 {
   double d;
@@ -23,4 +25,3 @@ copystruct11 (teststruct *param)
 
 /* There should be no reference to link_error. */
 /* { dg-final { scan-tree-dump-times "link_error" 0 "optimized" { xfail *-*-* } } } */
-/* { dg-final { cleanup-tree-dump "optimized" } } */

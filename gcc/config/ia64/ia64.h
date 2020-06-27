@@ -1,6 +1,5 @@
 /* Definitions of target machine GNU compiler.  IA-64 version.
-   Copyright (C) 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008,
-   2009, 2010, 2011 Free Software Foundation, Inc.
+   Copyright (C) 1999-2017 Free Software Foundation, Inc.
    Contributed by James E. Wilson <wilson@cygnus.com> and
    		  David Mosberger <davidm@hpl.hp.com>.
 
@@ -254,13 +253,6 @@ while (0)
    : TARGET_ABI_OPEN_VMS ? 64 \
    : 80)
 
-/* We always want the XFmode operations from libgcc2.c, except on VMS
-   where this yields references to unimplemented "insns".  */
-#define LIBGCC2_LONG_DOUBLE_TYPE_SIZE  (TARGET_ABI_OPEN_VMS ? 64 : 80)
-
-
-/* On HP-UX, we use the l suffix for TFmode in libgcc2.c.  */
-#define LIBGCC2_TF_CEXT l
 
 #define DEFAULT_SIGNED_CHAR 1
 
@@ -904,7 +896,7 @@ enum reg_class
    RTL is either a `REG', indicating that the return value is saved in `REG',
    or a `MEM' representing a location in the stack.  This enables DWARF2
    unwind info for C++ EH.  */
-#define INCOMING_RETURN_ADDR_RTX gen_rtx_REG (VOIDmode, BR_REG (0))
+#define INCOMING_RETURN_ADDR_RTX gen_rtx_REG (Pmode, BR_REG (0))
 
 /* A C expression whose value is an integer giving the offset, in bytes, from
    the value of the stack pointer register to the top of the stack frame at the
@@ -969,10 +961,8 @@ enum reg_class
   {FRAME_POINTER_REGNUM, HARD_FRAME_POINTER_REGNUM},			\
 }
 
-/* This macro is similar to `INITIAL_FRAME_POINTER_OFFSET'.  It
-   specifies the initial difference between the specified pair of
-   registers.  This macro must be defined if `ELIMINABLE_REGS' is
-   defined.  */
+/* This macro returns the initial difference between the specified pair
+   of registers.  */
 #define INITIAL_ELIMINATION_OFFSET(FROM, TO, OFFSET) \
   ((OFFSET) = ia64_initial_elimination_offset ((FROM), (TO)))
 
@@ -1186,7 +1176,7 @@ do {									\
    Indirect function calls are more expensive that direct function calls, so
    don't cse function addresses.  */
 
-#define NO_FUNCTION_CSE
+#define NO_FUNCTION_CSE 1
 
 
 /* Dividing the output into sections.  */
@@ -1484,15 +1474,15 @@ do {									\
 
 #define ASM_OUTPUT_ADDR_DIFF_ELT(STREAM, BODY, VALUE, REL)	\
   do {								\
-  if (TARGET_ILP32)						\
+  if (CASE_VECTOR_MODE == SImode)				\
     fprintf (STREAM, "\tdata4 @pcrel(.L%d)\n", VALUE);		\
   else								\
     fprintf (STREAM, "\tdata8 @pcrel(.L%d)\n", VALUE);		\
   } while (0)
 
-/* Jump tables only need 8 byte alignment.  */
+/* Jump tables only need 4 or 8 byte alignment.  */
 
-#define ADDR_VEC_ALIGN(ADDR_VEC) 3
+#define ADDR_VEC_ALIGN(ADDR_VEC) (CASE_VECTOR_MODE == SImode ? 2 : 3)
 
 
 /* Assembler Commands for Exception Regions.  */
@@ -1591,11 +1581,14 @@ do {									\
 /* Use section-relative relocations for debugging offsets.  Unlike other
    targets that fake this by putting the section VMA at 0, IA-64 has
    proper relocations for them.  */
-#define ASM_OUTPUT_DWARF_OFFSET(FILE, SIZE, LABEL, SECTION)	\
+#define ASM_OUTPUT_DWARF_OFFSET(FILE, SIZE, LABEL, OFFSET, SECTION) \
   do {								\
     fputs (integer_asm_op (SIZE, FALSE), FILE);			\
     fputs ("@secrel(", FILE);					\
     assemble_name (FILE, LABEL);				\
+    if ((OFFSET) != 0)						\
+      fprintf (FILE, "+" HOST_WIDE_INT_PRINT_DEC,		\
+	       (HOST_WIDE_INT) (OFFSET));			\
     fputc (')', FILE);						\
   } while (0)
 
@@ -1639,7 +1632,7 @@ do {									\
 /* Define this macro if operations between registers with integral mode smaller
    than a word are always performed on the entire register.  */
 
-#define WORD_REGISTER_OPERATIONS
+#define WORD_REGISTER_OPERATIONS 1
 
 /* Define this macro to be a C expression indicating when insns that read
    memory in MODE, an integral mode narrower than a word, set the bits outside

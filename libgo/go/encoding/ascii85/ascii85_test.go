@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"io"
 	"io/ioutil"
+	"strings"
 	"testing"
 )
 
@@ -16,6 +17,11 @@ type testpair struct {
 }
 
 var pairs = []testpair{
+	// Encode returns 0 when len(src) is 0
+	{
+		"",
+		"",
+	},
 	// Wikipedia example
 	{
 		"Man is distinguished, not only by his reason, but by this singular passion from " +
@@ -27,6 +33,11 @@ var pairs = []testpair{
 			"i(DIb:@FD,*)+C]U=@3BN#EcYf8ATD3s@q?d$AftVqCh[NqF<G:8+EV:.+Cf>-FD5W8ARlolDIa\n" +
 			"l(DId<j@<?3r@:F%a+D58'ATD4$Bl@l3De:,-DJs`8ARoFb/0JMK@qB4^F!,R<AKZ&-DfTqBG%G\n" +
 			">uD.RTpAKYo'+CT/5+Cei#DII?(E,9)oF*2M7/c\n",
+	},
+	// Special case when shortening !!!!! to z.
+	{
+		"\000\000\000\000",
+		"z",
 	},
 }
 
@@ -105,7 +116,7 @@ func TestDecode(t *testing.T) {
 
 func TestDecoder(t *testing.T) {
 	for _, p := range pairs {
-		decoder := NewDecoder(bytes.NewBufferString(p.encoded))
+		decoder := NewDecoder(strings.NewReader(p.encoded))
 		dbuf, err := ioutil.ReadAll(decoder)
 		if err != nil {
 			t.Fatal("Read failed", err)
@@ -120,7 +131,7 @@ func TestDecoder(t *testing.T) {
 
 func TestDecoderBuffering(t *testing.T) {
 	for bs := 1; bs <= 12; bs++ {
-		decoder := NewDecoder(bytes.NewBufferString(bigtest.encoded))
+		decoder := NewDecoder(strings.NewReader(bigtest.encoded))
 		buf := make([]byte, len(bigtest.decoded)+12)
 		var total int
 		for total = 0; total < len(bigtest.decoded); {
@@ -184,5 +195,16 @@ func TestBig(t *testing.T) {
 			}
 		}
 		t.Errorf("Decode(Encode(%d-byte string)) failed at offset %d", n, i)
+	}
+}
+
+func TestDecoderInternalWhitespace(t *testing.T) {
+	s := strings.Repeat(" ", 2048) + "z"
+	decoded, err := ioutil.ReadAll(NewDecoder(strings.NewReader(s)))
+	if err != nil {
+		t.Errorf("Decode gave error %v", err)
+	}
+	if want := []byte("\000\000\000\000"); !bytes.Equal(want, decoded) {
+		t.Errorf("Decode failed: got %v, want %v", decoded, want)
 	}
 }

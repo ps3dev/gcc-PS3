@@ -18,6 +18,7 @@ union tree_node
   struct tree_common common;
   struct tree_list list;
 };
+void c_simplify_stmt (tree *);
 void
 simplify_condition (cond_p)
      tree *cond_p;
@@ -34,4 +35,3 @@ simplify_condition (cond_p)
 
 /* There should be exactly one IF conditional.  */
 /* { dg-final { scan-tree-dump-times "if " 1 "vrp1" } } */
-/* { dg-final { cleanup-tree-dump "vrp1" } } */

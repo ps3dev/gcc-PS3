@@ -1,6 +1,5 @@
 /* Exception Handling interface routines.
-   Copyright (C) 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005,
-   2007, 2008, 2009, 2010  Free Software Foundation, Inc.
+   Copyright (C) 1996-2017 Free Software Foundation, Inc.
    Contributed by Mike Stump <mrs@cygnus.com>.
 
 This file is part of GCC.
@@ -23,16 +22,11 @@ along with GCC; see the file COPYING3.  If not see
    that the compiler can keep track of where this file is included.  This
    is e.g. used to avoid including this file in front-end specific files.  */
 #ifndef GCC_EXCEPT_H
-#  define GCC_EXCEPT_H
-#endif
+#define GCC_EXCEPT_H
 
-#include "hashtab.h"
-#include "vecprim.h"
-#include "vecir.h"
 
 struct function;
 struct eh_region_d;
-struct pointer_map_t;
 
 /* The type of an exception region.  */
 enum eh_region_type
@@ -46,7 +40,7 @@ enum eh_region_type
 
   /* TRY regions implement catching an exception.  The list of types associated
      with the attached catch handlers is examined in order by the runtime and
-     control is transfered to the appropriate handler.  Note that a NULL type
+     control is transferred to the appropriate handler.  Note that a NULL type
      list is a catch-all handler, and that it will catch *all* exceptions
      including those originating from a different language.  */
   ERT_TRY,
@@ -80,7 +74,7 @@ struct GTY(()) eh_landing_pad_d
   /* The region with which this landing pad is associated.  */
   struct eh_region_d *region;
 
-  /* At the gimple level, the location to which control will be transfered
+  /* At the gimple level, the location to which control will be transferred
      for this landing pad.  There can be both EH and normal edges into the
      block containing the post-landing-pad label.  */
   tree post_landing_pad;
@@ -90,7 +84,7 @@ struct GTY(()) eh_landing_pad_d
      EXCEPTION_RECEIVER pattern will be expanded here, as well as other
      bookkeeping specific to exceptions.  There must not be normal edges
      into the block containing the landing-pad label.  */
-  rtx landing_pad;
+  rtx_code_label *landing_pad;
 
   /* The index of this landing pad within fun->eh->lp_array.  */
   int index;
@@ -189,12 +183,7 @@ typedef struct eh_landing_pad_d *eh_landing_pad;
 typedef struct eh_catch_d *eh_catch;
 typedef struct eh_region_d *eh_region;
 
-DEF_VEC_P(eh_region);
-DEF_VEC_ALLOC_P(eh_region, gc);
-DEF_VEC_ALLOC_P(eh_region, heap);
 
-DEF_VEC_P(eh_landing_pad);
-DEF_VEC_ALLOC_P(eh_landing_pad, gc);
 
 
 /* The exception status for each function.  */
@@ -205,26 +194,26 @@ struct GTY(()) eh_status
   eh_region region_tree;
 
   /* The same information as an indexable array.  */
-  VEC(eh_region,gc) *region_array;
+  vec<eh_region, va_gc> *region_array;
 
   /* The landing pads as an indexable array.  */
-  VEC(eh_landing_pad,gc) *lp_array;
+  vec<eh_landing_pad, va_gc> *lp_array;
 
   /* At the gimple level, a mapping from gimple statement to landing pad
      or must-not-throw region.  See record_stmt_eh_region.  */
-  htab_t GTY((param_is (struct throw_stmt_node))) throw_stmt_table;
+  hash_map<gimple *, int> *GTY(()) throw_stmt_table;
 
   /* All of the runtime type data used by the function.  These objects
      are emitted to the lang-specific-data-area for the function.  */
-  VEC(tree,gc) *ttype_data;
+  vec<tree, va_gc> *ttype_data;
 
   /* The table of all action chains.  These encode the eh_region tree in
      a compact form for use by the runtime, and is also emitted to the
      lang-specific-data-area.  Note that the ARM EABI uses a different
      format for the encoding than all other ports.  */
   union eh_status_u {
-    VEC(tree,gc) * GTY((tag ("1"))) arm_eabi;
-    VEC(uchar,gc) * GTY((tag ("0"))) other;
+    vec<tree, va_gc> *GTY((tag ("1"))) arm_eabi;
+    vec<uchar, va_gc> *GTY((tag ("0"))) other;
   } GTY ((desc ("targetm.arm_eabi_unwinder"))) ehspec_data;
 };
 
@@ -237,6 +226,7 @@ extern void init_eh_for_function (void);
 
 extern void remove_eh_landing_pad (eh_landing_pad);
 extern void remove_eh_handler (eh_region);
+extern void remove_unreachable_eh_regions (sbitmap);
 
 extern bool current_function_has_exception_handlers (void);
 extern void output_function_exception_table (const char *);
@@ -256,10 +246,11 @@ extern rtx expand_builtin_extend_pointer (tree);
 extern void expand_dw2_landing_pad_for_region (eh_region);
 
 typedef tree (*duplicate_eh_regions_map) (tree, void *);
-extern struct pointer_map_t *duplicate_eh_regions
+extern hash_map<void *, void *> *duplicate_eh_regions
   (struct function *, eh_region, int, duplicate_eh_regions_map, void *);
 
-extern void sjlj_emit_function_exit_after (rtx);
+extern void sjlj_emit_function_exit_after (rtx_insn *);
+extern void update_sjlj_context (void);
 
 extern eh_region gen_eh_region_cleanup (eh_region);
 extern eh_region gen_eh_region_try (eh_region);
@@ -278,8 +269,8 @@ extern eh_region get_eh_region_from_lp_number (int);
 
 extern eh_region eh_region_outermost (struct function *, eh_region, eh_region);
 
-extern void make_reg_eh_region_note (rtx insn, int ecf_flags, int lp_nr);
-extern void make_reg_eh_region_note_nothrow_nononlocal (rtx);
+extern void make_reg_eh_region_note (rtx_insn *insn, int ecf_flags, int lp_nr);
+extern void make_reg_eh_region_note_nothrow_nononlocal (rtx_insn *);
 
 extern void verify_eh_tree (struct function *);
 extern void dump_eh_tree (FILE *, struct function *);
@@ -291,13 +282,15 @@ extern void assign_filter_values (void);
 extern eh_region get_eh_region_from_rtx (const_rtx);
 extern eh_landing_pad get_eh_landing_pad_from_rtx (const_rtx);
 
+extern void finish_eh_generation (void);
+
 struct GTY(()) throw_stmt_node {
-  gimple stmt;
+  gimple *stmt;
   int lp_nr;
 };
 
-extern struct htab *get_eh_throw_stmt_table (struct function *);
-extern void set_eh_throw_stmt_table (struct function *, struct htab *);
+extern hash_map<gimple *, int> *get_eh_throw_stmt_table (struct function *);
+extern void set_eh_throw_stmt_table (function *, hash_map<gimple *, int> *);
 
 enum eh_personality_kind {
   eh_personality_none,
@@ -338,3 +331,5 @@ ehr_next (eh_region r, eh_region start)
   for ((R) = (FN)->eh->region_tree; (R) != NULL; (R) = ehr_next (R, NULL))
 
 #define FOR_ALL_EH_REGION(R) FOR_ALL_EH_REGION_FN (R, cfun)
+
+#endif

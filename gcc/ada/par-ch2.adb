@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -33,13 +33,22 @@ package body Ch2 is
    --  Local functions, used only in this chapter
 
    procedure Scan_Pragma_Argument_Association
-     (Identifier_Seen : in out Boolean;
-      Association     : out Node_Id);
-   --  Scans out a pragma argument association. Identifier_Seen is true on
-   --  entry if a previous association had an identifier, and gets set True if
-   --  the scanned association has an identifier (this is used to check the
+     (Identifier_Seen   : in out Boolean;
+      Association       : out Node_Id;
+      Reserved_Words_OK : Boolean := False);
+   --  Scans out a pragma argument association. Identifier_Seen is True on
+   --  entry if a previous association had an identifier, and gets set True
+   --  if the scanned association has an identifier (this is used to check the
    --  rule that no associations without identifiers can follow an association
-   --  which has an identifier). The result is returned in Association.
+   --  which has an identifier). The result is returned in Association. Flag
+   --  For_Pragma_Restrictions should be set when arguments are being parsed
+   --  for pragma Restrictions.
+   --
+   --  Note: We allow attribute forms Pre'Class, Post'Class, Invariant'Class,
+   --  Type_Invariant'Class in place of a pragma argument identifier. Rather
+   --  than handle this case specially, we replace such references with
+   --  one of the special internal identifiers _Pre, _Post, _Invariant, or
+   --  _Type_Invariant, and this procedure is where this replacement occurs.
 
    ---------------------
    -- 2.3  Identifier --
@@ -221,7 +230,7 @@ package body Ch2 is
       Import_Check_Required : Boolean := False;
       --  Set True if check of pragma IMPORT is required
 
-      Arg_Count : Int := 0;
+      Arg_Count : Nat := 0;
       --  Number of argument associations processed
 
       Identifier_Seen : Boolean := False;
@@ -244,23 +253,15 @@ package body Ch2 is
 
       procedure Skip_Pragma_Semicolon is
       begin
-         if Token /= Tok_Semicolon then
+         --  If skipping the pragma, ignore a missing semicolon
 
-            --  If skipping the pragma, ignore a missing semicolon
+         if Token /= Tok_Semicolon and then Skipping then
+            null;
 
-            if Skipping then
-               null;
-
-            --  Otherwise demand a semicolon
-
-            else
-               T_Semicolon;
-            end if;
-
-         --  Scan past semicolon if present
+         --  Otherwise demand a semicolon
 
          else
-            Scan;
+            T_Semicolon;
          end if;
       end Skip_Pragma_Semicolon;
 
@@ -278,12 +279,10 @@ package body Ch2 is
       --  Ada 2005 (AI-284): INTERFACE is a new reserved word but it is
       --  allowed as a pragma name.
 
-      if Ada_Version >= Ada_2005
-        and then Token = Tok_Interface
-      then
-         Prag_Name := Name_Interface;
-         Ident_Node  := Make_Identifier (Token_Ptr, Name_Interface);
-         Scan; -- past INTERFACE
+      if Is_Reserved_Keyword (Token) then
+         Prag_Name  := Keyword_Name (Token);
+         Ident_Node := Make_Identifier (Token_Ptr, Prag_Name);
+         Scan; -- past the keyword
       else
          Ident_Node := P_Identifier;
       end if;
@@ -300,20 +299,32 @@ package body Ch2 is
          Import_Check_Required    := False;
       end if;
 
+      --  Set global to indicate if we are within a Depends pragma
+
+      if Chars (Ident_Node) = Name_Depends then
+         Inside_Depends := True;
+      end if;
+
       --  Scan arguments. We assume that arguments are present if there is
       --  a left paren, or if a semicolon is missing and there is another
       --  token on the same line as the pragma name.
 
       if Token = Tok_Left_Paren
         or else (Token /= Tok_Semicolon
-                   and then not Token_Is_At_Start_Of_Line)
+                  and then not Token_Is_At_Start_Of_Line)
       then
          Set_Pragma_Argument_Associations (Prag_Node, New_List);
          T_Left_Paren;
 
          loop
             Arg_Count := Arg_Count + 1;
-            Scan_Pragma_Argument_Association (Identifier_Seen, Assoc_Node);
+
+            Scan_Pragma_Argument_Association
+              (Identifier_Seen   => Identifier_Seen,
+               Association       => Assoc_Node,
+               Reserved_Words_OK =>
+                 Nam_In (Prag_Name, Name_Restriction_Warnings,
+                                    Name_Restrictions));
 
             if Arg_Count = 2
               and then (Interface_Check_Required or else Import_Check_Required)
@@ -350,6 +361,11 @@ package body Ch2 is
       end if;
 
       Semicolon_Loc := Token_Ptr;
+
+      --  Cancel indication of being within Depends pragm. Can be done
+      --  unconditionally, since quicker than doing a test.
+
+      Inside_Depends := False;
 
       --  Now we have two tasks left, we need to scan out the semicolon
       --  following the pragma, and we have to call Par.Prag to process
@@ -420,18 +436,16 @@ package body Ch2 is
    --  Error recovery: Cannot raise Error_Resync
 
    procedure P_Pragmas_Opt (List : List_Id) is
-      P     : Node_Id;
+      P : Node_Id;
 
    begin
       while Token = Tok_Pragma loop
          P := P_Pragma;
 
          if Nkind (P) /= N_Error
-          and then (Pragma_Name (P) = Name_Assert
-                      or else
-                    Pragma_Name (P) = Name_Debug)
+           and then Nam_In (Pragma_Name_Unmapped (P), Name_Assert, Name_Debug)
          then
-            Error_Msg_Name_1 := Pragma_Name (P);
+            Error_Msg_Name_1 := Pragma_Name_Unmapped (P);
             Error_Msg_N
               ("pragma% must be in declaration/statement context", P);
          else
@@ -448,19 +462,94 @@ package body Ch2 is
    --    [pragma_argument_IDENTIFIER =>] NAME
    --  | [pragma_argument_IDENTIFIER =>] EXPRESSION
 
+   --  In Ada 2012, there are two more possibilities:
+
+   --  PRAGMA_ARGUMENT_ASSOCIATION ::=
+   --    [pragma_argument_ASPECT_MARK =>] NAME
+   --  | [pragma_argument_ASPECT_MARK =>] EXPRESSION
+
+   --  where the interesting allowed cases (which do not fit the syntax of the
+   --  first alternative above) are
+
+   --  ASPECT_MARK ::=
+   --    Pre'Class | Post'Class | Invariant'Class | Type_Invariant'Class
+
+   --  We allow this special usage in all Ada modes, but it would be a pain to
+   --  allow these aspects to pervade the pragma syntax, and the representation
+   --  of pragma nodes internally. So what we do is to replace these
+   --  ASPECT_MARK forms with identifiers whose name is one of the special
+   --  internal names _Pre, _Post, _Invariant, or _Type_Invariant.
+
    --  Error recovery: cannot raise Error_Resync
 
    procedure Scan_Pragma_Argument_Association
-     (Identifier_Seen : in out Boolean;
-      Association     : out Node_Id)
+     (Identifier_Seen   : in out Boolean;
+      Association       : out Node_Id;
+      Reserved_Words_OK : Boolean := False)
    is
-      Scan_State      : Saved_Scan_State;
+      function P_Expression_Or_Reserved_Word return Node_Id;
+      --  Parse an expression or, if the token is one of the following reserved
+      --  words, construct an identifier with proper Chars field.
+      --    Access
+      --    Delta
+      --    Digits
+      --    Mod
+      --    Range
+
+      -----------------------------------
+      -- P_Expression_Or_Reserved_Word --
+      -----------------------------------
+
+      function P_Expression_Or_Reserved_Word return Node_Id is
+         Word    : Node_Id;
+         Word_Id : Name_Id;
+
+      begin
+         Word_Id := No_Name;
+
+         if Token = Tok_Access then
+            Word_Id := Name_Access;
+            Scan; -- past ACCESS
+
+         elsif Token = Tok_Delta then
+            Word_Id := Name_Delta;
+            Scan; -- past DELTA
+
+         elsif Token = Tok_Digits then
+            Word_Id := Name_Digits;
+            Scan; -- past DIGITS
+
+         elsif Token = Tok_Mod then
+            Word_Id := Name_Mod;
+            Scan; -- past MOD
+
+         elsif Token = Tok_Range then
+            Word_Id := Name_Range;
+            Scan; -- post RANGE
+         end if;
+
+         if Word_Id = No_Name then
+            return P_Expression;
+         else
+            Word := New_Node (N_Identifier, Token_Ptr);
+            Set_Chars (Word, Word_Id);
+            return Word;
+         end if;
+      end P_Expression_Or_Reserved_Word;
+
+      --  Local variables
+
+      Expression_Node : Node_Id;
       Identifier_Node : Node_Id;
-      Id_Present      : Boolean;
+      Identifier_OK   : Boolean;
+      Scan_State      : Saved_Scan_State;
+
+   --  Start of processing for Scan_Pragma_Argument_Association
 
    begin
       Association := New_Node (N_Pragma_Argument_Association, Token_Ptr);
       Set_Chars (Association, No_Name);
+      Identifier_OK := False;
 
       --  Argument starts with identifier
 
@@ -470,22 +559,69 @@ package body Ch2 is
          Scan; -- past Identifier
 
          if Token = Tok_Arrow then
-            Identifier_Seen := True;
             Scan; -- past arrow
-            Set_Chars (Association, Chars (Identifier_Node));
-            Id_Present := True;
+            Identifier_OK := True;
 
-         --  Case of argument with no identifier
+         --  Case of one of the special aspect forms
+
+         elsif Token = Tok_Apostrophe then
+            Scan; -- past apostrophe
+
+            --  We have apostrophe, so check for identifier'Class
+
+            if Token /= Tok_Identifier or else Token_Name /= Name_Class then
+               null;
+
+            --  We have identifier'Class, check for arrow
+
+            else
+               Scan; -- Past Class
+
+               if Token /= Tok_Arrow then
+                  null;
+
+               --  Here we have scanned identifier'Class =>
+
+               else
+                  Identifier_OK := True;
+                  Scan; -- past arrow
+
+                  case Chars (Identifier_Node) is
+                     when Name_Pre =>
+                        Set_Chars (Identifier_Node, Name_uPre);
+
+                     when Name_Post =>
+                        Set_Chars (Identifier_Node, Name_uPost);
+
+                     when Name_Type_Invariant =>
+                        Set_Chars (Identifier_Node, Name_uType_Invariant);
+
+                     when Name_Invariant =>
+                        Set_Chars (Identifier_Node, Name_uInvariant);
+
+                     --  If it is X'Class => for some invalid X, we will give
+                     --  an error, and forget that 'Class was present, which
+                     --  will give better error recovery. We could do a spell
+                     --  check here, but it seems too much work.
+
+                     when others =>
+                        Error_Msg_SC ("invalid aspect id for pragma");
+                  end case;
+               end if;
+            end if;
+         end if;
+
+         --  Identifier was present
+
+         if Identifier_OK then
+            Set_Chars (Association, Chars (Identifier_Node));
+            Identifier_Seen := True;
+
+         --  Identifier not present after all
 
          else
             Restore_Scan_State (Scan_State); -- to Identifier
-            Id_Present := False;
          end if;
-
-      --  Argument does not start with identifier
-
-      else
-         Id_Present := False;
       end if;
 
       --  Diagnose error of "positional" argument for pragma appearing after
@@ -493,18 +629,35 @@ package body Ch2 is
       --  Ada RM terminology).
 
       --  Since older GNAT versions did not generate this error, disable this
-      --  message in codepeer mode to help legacy code using codepeer.
+      --  message in Relaxed_RM_Semantics mode to help legacy code using e.g.
+      --  codepeer.
 
-      if Identifier_Seen and not Id_Present and not CodePeer_Mode then
+      if Identifier_Seen
+        and not Identifier_OK
+        and not Relaxed_RM_Semantics
+      then
          Error_Msg_SC ("|pragma argument identifier required here");
          Error_Msg_SC ("\since previous argument had identifier (RM 2.8(4))");
       end if;
 
-      if Id_Present then
-         Set_Expression (Association, P_Expression);
+      if Identifier_OK then
+
+         --  Certain pragmas such as Restriction_Warnings and Restrictions
+         --  allow reserved words to appear as expressions when checking for
+         --  prohibited uses of attributes.
+
+         if Reserved_Words_OK
+           and then Chars (Identifier_Node) = Name_No_Use_Of_Attribute
+         then
+            Expression_Node := P_Expression_Or_Reserved_Word;
+         else
+            Expression_Node := P_Expression;
+         end if;
       else
-         Set_Expression (Association, P_Expression_If_OK);
+         Expression_Node := P_Expression_If_OK;
       end if;
+
+      Set_Expression (Association, Expression_Node);
    end Scan_Pragma_Argument_Association;
 
 end Ch2;

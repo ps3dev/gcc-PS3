@@ -1,6 +1,7 @@
 /* { dg-do compile } */
-/* { dg-skip-if "" { i?86-*-* x86_64-*-* } { "-march=*" } { "-march=core2" } } */
+/* { dg-skip-if "" { *-*-* } { "-march=*" } { "-march=core2" } } */
 /* { dg-options "-O2 -ftree-vectorize -mfpmath=sse -march=core2 -fdump-tree-vect-stats" } */
+/* { dg-add-options bind_pic_locally } */
 
 extern void abort (void);
 
@@ -32,5 +33,4 @@ sse2_test (void)
     }
 }
 
-/* { dg-final { scan-tree-dump-times "vectorized 1 loops" 1 "vect" } } */
-/* { dg-final { cleanup-tree-dump "vect" } } */
+/* { dg-final { scan-tree-dump-times "Vectorized loops: 1" 1 "vect" } } */

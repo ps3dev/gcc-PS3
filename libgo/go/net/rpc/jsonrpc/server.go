@@ -1,4 +1,4 @@
-// Copyright 2010 The Go Authors.  All rights reserved.
+// Copyright 2010 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -12,14 +12,15 @@ import (
 	"sync"
 )
 
+var errMissingParams = errors.New("jsonrpc: request body missing params")
+
 type serverCodec struct {
 	dec *json.Decoder // for reading JSON values
 	enc *json.Encoder // for writing JSON values
 	c   io.Closer
 
 	// temporary work space
-	req  serverRequest
-	resp serverResponse
+	req serverRequest
 
 	// JSON-RPC clients can use arbitrary json values as request IDs.
 	// Package rpc expects uint64 request IDs.
@@ -50,12 +51,8 @@ type serverRequest struct {
 
 func (r *serverRequest) reset() {
 	r.Method = ""
-	if r.Params != nil {
-		*r.Params = (*r.Params)[0:0]
-	}
-	if r.Id != nil {
-		*r.Id = (*r.Id)[0:0]
-	}
+	r.Params = nil
+	r.Id = nil
 }
 
 type serverResponse struct {
@@ -88,6 +85,9 @@ func (c *serverCodec) ReadRequestBody(x interface{}) error {
 	if x == nil {
 		return nil
 	}
+	if c.req.Params == nil {
+		return errMissingParams
+	}
 	// JSON params is array value.
 	// RPC params is struct.
 	// Unmarshal into array containing struct for now.
@@ -100,7 +100,6 @@ func (c *serverCodec) ReadRequestBody(x interface{}) error {
 var null = json.RawMessage([]byte("null"))
 
 func (c *serverCodec) WriteResponse(r *rpc.Response, x interface{}) error {
-	var resp serverResponse
 	c.mutex.Lock()
 	b, ok := c.pending[r.Seq]
 	if !ok {
@@ -111,13 +110,12 @@ func (c *serverCodec) WriteResponse(r *rpc.Response, x interface{}) error {
 	c.mutex.Unlock()
 
 	if b == nil {
-		// Invalid request so no id.  Use JSON null.
+		// Invalid request so no id. Use JSON null.
 		b = &null
 	}
-	resp.Id = b
-	resp.Result = x
+	resp := serverResponse{Id: b}
 	if r.Error == "" {
-		resp.Error = nil
+		resp.Result = x
 	} else {
 		resp.Error = r.Error
 	}

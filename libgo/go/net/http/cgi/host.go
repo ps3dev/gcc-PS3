@@ -10,7 +10,7 @@
 //
 // Note that using CGI means starting a new process to handle each
 // request, which is typically less efficient than using a
-// long-running server.  This package is intended primarily for
+// long-running server. This package is intended primarily for
 // compatibility with existing systems.
 package cgi
 
@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -57,6 +58,7 @@ type Handler struct {
 	InheritEnv []string    // environment variables to inherit from host, as "key"
 	Logger     *log.Logger // optional log for errors or nil to use log.Print
 	Args       []string    // optional arguments to pass to child process
+	Stderr     io.Writer   // optional stderr for the child process; nil means os.Stderr
 
 	// PathLocationHandler specifies the root http Handler that
 	// should handle internal redirects when the CGI process
@@ -69,6 +71,13 @@ type Handler struct {
 	PathLocationHandler http.Handler
 }
 
+func (h *Handler) stderr() io.Writer {
+	if h.Stderr != nil {
+		return h.Stderr
+	}
+	return os.Stderr
+}
+
 // removeLeadingDuplicates remove leading duplicate in environments.
 // It's possible to override environment like following.
 //    cgi.Handler{
@@ -76,15 +85,15 @@ type Handler struct {
 //      Env: []string{"SCRIPT_FILENAME=foo.php"},
 //    }
 func removeLeadingDuplicates(env []string) (ret []string) {
-	n := len(env)
-	for i := 0; i < n; i++ {
-		e := env[i]
-		s := strings.SplitN(e, "=", 2)[0]
+	for i, e := range env {
 		found := false
-		for j := i + 1; j < n; j++ {
-			if s == strings.SplitN(env[j], "=", 2)[0] {
-				found = true
-				break
+		if eq := strings.IndexByte(e, '='); eq != -1 {
+			keq := e[:eq+1] // "key="
+			for _, e2 := range env[i+1:] {
+				if strings.HasPrefix(e2, keq) {
+					found = true
+					break
+				}
 			}
 		}
 		if !found {
@@ -128,9 +137,14 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		"PATH_INFO=" + pathInfo,
 		"SCRIPT_NAME=" + root,
 		"SCRIPT_FILENAME=" + h.Path,
-		"REMOTE_ADDR=" + req.RemoteAddr,
-		"REMOTE_HOST=" + req.RemoteAddr,
 		"SERVER_PORT=" + port,
+	}
+
+	if remoteIP, remotePort, err := net.SplitHostPort(req.RemoteAddr); err == nil {
+		env = append(env, "REMOTE_ADDR="+remoteIP, "REMOTE_HOST="+remoteIP, "REMOTE_PORT="+remotePort)
+	} else {
+		// could not parse ip:port, let's use whole RemoteAddr and leave REMOTE_PORT undefined
+		env = append(env, "REMOTE_ADDR="+req.RemoteAddr, "REMOTE_HOST="+req.RemoteAddr)
 	}
 
 	if req.TLS != nil {
@@ -139,6 +153,10 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	for k, v := range req.Header {
 		k = strings.Map(upperCaseAndUnderscore, k)
+		if k == "PROXY" {
+			// See Issue 16405
+			continue
+		}
 		joinStr := ", "
 		if k == "COOKIE" {
 			joinStr = "; "
@@ -151,10 +169,6 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 	if ctype := req.Header.Get("Content-Type"); ctype != "" {
 		env = append(env, "CONTENT_TYPE="+ctype)
-	}
-
-	if h.Env != nil {
-		env = append(env, h.Env...)
 	}
 
 	envPath := os.Getenv("PATH")
@@ -173,6 +187,10 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		if v := os.Getenv(e); v != "" {
 			env = append(env, e+"="+v)
 		}
+	}
+
+	if h.Env != nil {
+		env = append(env, h.Env...)
 	}
 
 	env = removeLeadingDuplicates(env)
@@ -198,7 +216,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		Args:   append([]string{h.Path}, h.Args...),
 		Dir:    cwd,
 		Env:    env,
-		Stderr: os.Stderr, // for now
+		Stderr: h.stderr(),
 	}
 	if req.ContentLength != 0 {
 		cmd.Stdin = req.Body
@@ -214,12 +232,17 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		internalError(err)
 		return
 	}
+	if hook := testHookStartProcess; hook != nil {
+		hook(cmd.Process)
+	}
 	defer cmd.Wait()
 	defer stdoutRead.Close()
 
 	linebody := bufio.NewReaderSize(stdoutRead, 1024)
 	headers := make(http.Header)
 	statusCode := 0
+	headerLines := 0
+	sawBlankLine := false
 	for {
 		line, isPrefix, err := linebody.ReadLine()
 		if isPrefix {
@@ -236,8 +259,10 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if len(line) == 0 {
+			sawBlankLine = true
 			break
 		}
+		headerLines++
 		parts := strings.SplitN(string(line), ":", 2)
 		if len(parts) < 2 {
 			h.printf("cgi: bogus header line: %s", string(line))
@@ -263,6 +288,11 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			headers.Add(header, val)
 		}
 	}
+	if headerLines == 0 || !sawBlankLine {
+		rw.WriteHeader(http.StatusInternalServerError)
+		h.printf("cgi: no headers")
+		return
+	}
 
 	if loc := headers.Get("Location"); loc != "" {
 		if strings.HasPrefix(loc, "/") && h.PathLocationHandler != nil {
@@ -272,6 +302,12 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		if statusCode == 0 {
 			statusCode = http.StatusFound
 		}
+	}
+
+	if statusCode == 0 && headers.Get("Content-Type") == "" {
+		rw.WriteHeader(http.StatusInternalServerError)
+		h.printf("cgi: missing required Content-Type in headers")
+		return
 	}
 
 	if statusCode == 0 {
@@ -292,6 +328,13 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	_, err = io.Copy(rw, linebody)
 	if err != nil {
 		h.printf("cgi: copy error: %v", err)
+		// And kill the child CGI process so we don't hang on
+		// the deferred cmd.Wait above if the error was just
+		// the client (rw) going away. If it was a read error
+		// (because the child died itself), then the extra
+		// kill of an already-dead process is harmless (the PID
+		// won't be reused until the Wait above).
+		cmd.Process.Kill()
 	}
 }
 
@@ -348,3 +391,5 @@ func upperCaseAndUnderscore(r rune) rune {
 	// TODO: other transformations in spec or practice?
 	return r
 }
+
+var testHookStartProcess func(*os.Process) // nil except for some tests

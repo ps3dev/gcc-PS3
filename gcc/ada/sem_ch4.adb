@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2012, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -47,7 +47,6 @@ with Sem_Aux;  use Sem_Aux;
 with Sem_Case; use Sem_Case;
 with Sem_Cat;  use Sem_Cat;
 with Sem_Ch3;  use Sem_Ch3;
-with Sem_Ch5;  use Sem_Ch5;
 with Sem_Ch6;  use Sem_Ch6;
 with Sem_Ch8;  use Sem_Ch8;
 with Sem_Dim;  use Sem_Dim;
@@ -66,6 +65,50 @@ with Uintp;    use Uintp;
 
 package body Sem_Ch4 is
 
+   --  Tables which speed up the identification of dangerous calls to Ada 2012
+   --  functions with writable actuals (AI05-0144).
+
+   --  The following table enumerates the Ada constructs which may evaluate in
+   --  arbitrary order. It does not cover all the language constructs which can
+   --  be evaluated in arbitrary order but the subset needed for AI05-0144.
+
+   Has_Arbitrary_Evaluation_Order : constant array (Node_Kind) of Boolean :=
+     (N_Aggregate                      => True,
+      N_Assignment_Statement           => True,
+      N_Entry_Call_Statement           => True,
+      N_Extension_Aggregate            => True,
+      N_Full_Type_Declaration          => True,
+      N_Indexed_Component              => True,
+      N_Object_Declaration             => True,
+      N_Pragma                         => True,
+      N_Range                          => True,
+      N_Slice                          => True,
+      N_Array_Type_Definition          => True,
+      N_Membership_Test                => True,
+      N_Binary_Op                      => True,
+      N_Subprogram_Call                => True,
+      others                           => False);
+
+   --  The following table enumerates the nodes on which we stop climbing when
+   --  locating the outermost Ada construct that can be evaluated in arbitrary
+   --  order.
+
+   Stop_Subtree_Climbing : constant array (Node_Kind) of Boolean :=
+     (N_Aggregate                    => True,
+      N_Assignment_Statement         => True,
+      N_Entry_Call_Statement         => True,
+      N_Extended_Return_Statement    => True,
+      N_Extension_Aggregate          => True,
+      N_Full_Type_Declaration        => True,
+      N_Object_Declaration           => True,
+      N_Object_Renaming_Declaration  => True,
+      N_Package_Specification        => True,
+      N_Pragma                       => True,
+      N_Procedure_Call_Statement     => True,
+      N_Simple_Return_Statement      => True,
+      N_Has_Condition                => True,
+      others                         => False);
+
    -----------------------
    -- Local Subprograms --
    -----------------------
@@ -75,17 +118,17 @@ package body Sem_Ch4 is
    --  operand has been analyzed. See Analyze_Concatenation for details.
 
    procedure Analyze_Expression (N : Node_Id);
-   --  For expressions that are not names, this is just a call to analyze.
-   --  If the expression is a name, it may be a call to a parameterless
-   --  function, and if so must be converted into an explicit call node
-   --  and analyzed as such. This deproceduring must be done during the first
-   --  pass of overload resolution, because otherwise a procedure call with
-   --  overloaded actuals may fail to resolve.
+   --  For expressions that are not names, this is just a call to analyze. If
+   --  the expression is a name, it may be a call to a parameterless function,
+   --  and if so must be converted into an explicit call node and analyzed as
+   --  such. This deproceduring must be done during the first pass of overload
+   --  resolution, because otherwise a procedure call with overloaded actuals
+   --  may fail to resolve.
 
    procedure Analyze_Operator_Call (N : Node_Id; Op_Id : Entity_Id);
-   --  Analyze a call of the form "+"(x, y), etc. The prefix of the call
-   --  is an operator name or an expanded name whose selector is an operator
-   --  name, and one possible interpretation is as a predefined operator.
+   --  Analyze a call of the form "+"(x, y), etc. The prefix of the call is an
+   --  operator name or an expanded name whose selector is an operator name,
+   --  and one possible interpretation is as a predefined operator.
 
    procedure Analyze_Overloaded_Selected_Component (N : Node_Id);
    --  If the prefix of a selected_component is overloaded, the proper
@@ -133,7 +176,7 @@ package body Sem_Ch4 is
    procedure Check_Misspelled_Selector
      (Prefix : Entity_Id;
       Sel    : Node_Id);
-   --  Give possible misspelling diagnostic if Sel is likely to be a mis-
+   --  Give possible misspelling message if Sel seems likely to be a mis-
    --  spelling of one of the selectors of the Prefix. This is called by
    --  Analyze_Selected_Component after producing an invalid selector error
    --  message.
@@ -148,16 +191,16 @@ package body Sem_Ch4 is
      (L, R  : Node_Id;
       Op_Id : Entity_Id;
       N     : Node_Id);
-   --  L and R are the operands of an arithmetic operator. Find
-   --  consistent pairs of interpretations for L and R that have a
-   --  numeric type consistent with the semantics of the operator.
+   --  L and R are the operands of an arithmetic operator. Find consistent
+   --  pairs of interpretations for L and R that have a numeric type consistent
+   --  with the semantics of the operator.
 
    procedure Find_Comparison_Types
      (L, R  : Node_Id;
       Op_Id : Entity_Id;
       N     : Node_Id);
-   --  L and R are operands of a comparison operator. Find consistent
-   --  pairs of interpretations for L and R.
+   --  L and R are operands of a comparison operator. Find consistent pairs of
+   --  interpretations for L and R.
 
    procedure Find_Concatenation_Types
      (L, R  : Node_Id;
@@ -188,16 +231,17 @@ package body Sem_Ch4 is
       R     : Node_Id;
       Op_Id : Entity_Id;
       T1    : Entity_Id);
-   --  For equality and comparison operators, the result is always boolean,
-   --  and the legality of the operation is determined from the visibility
-   --  of the operand types. If one of the operands has a universal interpre-
-   --  tation,  the legality check uses some compatible non-universal
-   --  interpretation of the other operand. N can be an operator node, or
-   --  a function call whose name is an operator designator.
+   --  For equality and comparison operators, the result is always boolean, and
+   --  the legality of the operation is determined from the visibility of the
+   --  operand types. If one of the operands has a universal interpretation,
+   --  the legality check uses some compatible non-universal interpretation of
+   --  the other operand. N can be an operator node, or a function call whose
+   --  name is an operator designator. Any_Access, which is the initial type of
+   --  the literal NULL, is a universal type for the purpose of this routine.
 
    function Find_Primitive_Operation (N : Node_Id) return Boolean;
-   --  Find candidate interpretations for the name Obj.Proc when it appears
-   --  in a subprogram renaming declaration.
+   --  Find candidate interpretations for the name Obj.Proc when it appears in
+   --  a subprogram renaming declaration.
 
    procedure Find_Unary_Types
      (R     : Node_Id;
@@ -209,12 +253,12 @@ package body Sem_Ch4 is
      (T1, T2 : Entity_Id;
       Op_Id  : Entity_Id;
       N      : Node_Id);
-   --  Subsidiary procedure to Find_Arithmetic_Types. T1 and T2 are valid
-   --  types for left and right operand. Determine whether they constitute
-   --  a valid pair for the given operator, and record the corresponding
-   --  interpretation of the operator node. The node N may be an operator
-   --  node (the usual case) or a function call whose prefix is an operator
-   --  designator. In both cases Op_Id is the operator name itself.
+   --  Subsidiary procedure to Find_Arithmetic_Types. T1 and T2 are valid types
+   --  for left and right operand. Determine whether they constitute a valid
+   --  pair for the given operator, and record the corresponding interpretation
+   --  of the operator node. The node N may be an operator node (the usual
+   --  case) or a function call whose prefix is an operator designator. In
+   --  both cases Op_Id is the operator name itself.
 
    procedure Diagnose_Call (N : Node_Id; Nam : Node_Id);
    --  Give detailed information on overloaded call where none of the
@@ -241,6 +285,7 @@ package body Sem_Ch4 is
    --  object E. The function returns the designated type of the prefix, taking
    --  into account that the designated type of an anonymous access type may be
    --  a limited view, when the non-limited view is visible.
+   --
    --  If in semantics only mode (-gnatc or generic), the function also records
    --  that the prefix is a reference to E, if any. Normally, such a reference
    --  is generated only when the implicit dereference is expanded into an
@@ -254,7 +299,7 @@ package body Sem_Ch4 is
    function Try_Container_Indexing
      (N      : Node_Id;
       Prefix : Node_Id;
-      Expr   : Node_Id) return Boolean;
+      Exprs  : List_Id) return Boolean;
    --  AI05-0139: Generalized indexing to support iterators over containers
 
    function Try_Indexed_Call
@@ -277,18 +322,6 @@ package body Sem_Ch4 is
    --  Similarly, a function F that needs no actuals can return an access to a
    --  subprogram, and the call F (X) interpreted as F.all (X). In this case
    --  the call may be overloaded with both interpretations.
-
-   function Try_Object_Operation
-     (N            : Node_Id;
-      CW_Test_Only : Boolean := False) return Boolean;
-   --  Ada 2005 (AI-252): Support the object.operation notation. If node N
-   --  is a call in this notation, it is transformed into a normal subprogram
-   --  call where the prefix is a parameter, and True is returned. If node
-   --  N is not of this form, it is unchanged, and False is returned. if
-   --  CW_Test_Only is true then N is an N_Selected_Component node which
-   --  is part of a call to an entry or procedure of a tagged concurrent
-   --  type and this routine is invoked to search for class-wide subprograms
-   --  conflicting with the target entity.
 
    procedure wpo (T : Entity_Id);
    pragma Warnings (Off, wpo);
@@ -314,8 +347,10 @@ package body Sem_Ch4 is
          if Is_Overloaded (Opnd) then
             if Nkind (Opnd) in N_Op then
                Nam := Opnd;
+
             elsif Nkind (Opnd) = N_Function_Call then
                Nam := Name (Opnd);
+
             elsif Ada_Version >= Ada_2012 then
                declare
                   It : Interp;
@@ -342,7 +377,8 @@ package body Sem_Ch4 is
          end if;
 
          if Opnd = Left_Opnd (N) then
-            Error_Msg_N ("\left operand has the following interpretations", N);
+            Error_Msg_N
+              ("\left operand has the following interpretations", N);
          else
             Error_Msg_N
               ("\right operand has the following interpretations", N);
@@ -399,51 +435,61 @@ package body Sem_Ch4 is
       Type_Id  : Entity_Id;
       P        : Node_Id;
       C        : Node_Id;
+      Onode    : Node_Id;
 
    begin
-      Check_SPARK_Restriction ("allocator is not allowed", N);
+      Check_SPARK_05_Restriction ("allocator is not allowed", N);
 
       --  Deal with allocator restrictions
 
       --  In accordance with H.4(7), the No_Allocators restriction only applies
       --  to user-written allocators. The same consideration applies to the
-      --  No_Allocators_Before_Elaboration restriction.
+      --  No_Standard_Allocators_Before_Elaboration restriction.
 
       if Comes_From_Source (N) then
          Check_Restriction (No_Allocators, N);
 
-         --  Processing for No_Allocators_After_Elaboration, loop to look at
-         --  enclosing context, checking task case and main subprogram case.
+         --  Processing for No_Standard_Allocators_After_Elaboration, loop to
+         --  look at enclosing context, checking task/main subprogram case.
 
          C := N;
          P := Parent (C);
          while Present (P) loop
 
-            --  In both cases we need a handled sequence of statements, where
-            --  the occurrence of the allocator is within the statements.
+            --  For the task case we need a handled sequence of statements,
+            --  where the occurrence of the allocator is within the statements
+            --  and the parent is a task body
 
             if Nkind (P) = N_Handled_Sequence_Of_Statements
               and then Is_List_Member (C)
               and then List_Containing (C) = Statements (P)
             then
-               --  Check for allocator within task body, this is a definite
-               --  violation of No_Allocators_After_Elaboration we can detect.
+               Onode := Original_Node (Parent (P));
 
-               if Nkind (Original_Node (Parent (P))) = N_Task_Body then
-                  Check_Restriction (No_Allocators_After_Elaboration, N);
+               --  Check for allocator within task body, this is a definite
+               --  violation of No_Allocators_After_Elaboration we can detect
+               --  at compile time.
+
+               if Nkind (Onode) = N_Task_Body then
+                  Check_Restriction
+                    (No_Standard_Allocators_After_Elaboration, N);
                   exit;
                end if;
+            end if;
 
-               --  The other case is appearance in a subprogram body. This may
-               --  be a violation if this is a library level subprogram, and it
-               --  turns out to be used as the main program, but only the
-               --  binder knows that, so just record the occurrence.
+            --  The other case is appearance in a subprogram body. This is
+            --  a violation if this is a library level subprogram with no
+            --  parameters. Note that this is now a static error even if the
+            --  subprogram is not the main program (this is a change, in an
+            --  earlier version only the main program was affected, and the
+            --  check had to be done in the binder.
 
-               if Nkind (Original_Node (Parent (P))) = N_Subprogram_Body
-                 and then Nkind (Parent (Parent (P))) = N_Compilation_Unit
-               then
-                  Set_Has_Allocator (Current_Sem_Unit);
-               end if;
+            if Nkind (P) = N_Subprogram_Body
+              and then Nkind (Parent (P)) = N_Compilation_Unit
+              and then No (Parameter_Specifications (Specification (P)))
+            then
+               Check_Restriction
+                 (No_Standard_Allocators_After_Elaboration, N);
             end if;
 
             C := P;
@@ -490,24 +536,6 @@ package body Sem_Ch4 is
          Type_Id := Etype (E);
          Set_Directly_Designated_Type (Acc_Type, Type_Id);
 
-         Resolve (Expression (E), Type_Id);
-
-         --  Allocators generated by the build-in-place expansion mechanism
-         --  are explicitly marked as coming from source but do not need to be
-         --  checked for limited initialization. To exclude this case, ensure
-         --  that the parent of the allocator is a source node.
-
-         if Is_Limited_Type (Type_Id)
-           and then Comes_From_Source (N)
-           and then Comes_From_Source (Parent (N))
-           and then not In_Instance_Body
-         then
-            if not OK_For_Limited_Init (Type_Id, Expression (E)) then
-               Error_Msg_N ("initialization not allowed for limited types", N);
-               Explain_Limited_Type (Type_Id, N);
-            end if;
-         end if;
-
          --  A qualified expression requires an exact match of the type,
          --  class-wide matching is not allowed.
 
@@ -518,10 +546,9 @@ package body Sem_Ch4 is
          --     Wrong_Type (Expression (E), Type_Id);
          --  end if;
 
-         Check_Non_Static_Context (Expression (E));
-
          --  We don't analyze the qualified expression itself because it's
-         --  part of the allocator
+         --  part of the allocator. It is fully analyzed and resolved when
+         --  the allocator is resolved with the context type.
 
          Set_Etype  (E, Type_Id);
 
@@ -543,6 +570,48 @@ package body Sem_Ch4 is
             --  so that the bounds of the subtype indication are attached to
             --  the tree in case the allocator is inside a generic unit.
 
+            --  Finally, if there is no subtype indication and the type is
+            --  a tagged unconstrained type with discriminants, the designated
+            --  object is constrained by their default values, and it is
+            --  simplest to introduce an explicit constraint now. In some cases
+            --  this is done during expansion, but freeze actions are certain
+            --  to be emitted in the proper order if constraint is explicit.
+
+            if Is_Entity_Name (E) and then Expander_Active then
+               Find_Type (E);
+               Type_Id := Entity (E);
+
+               if Is_Tagged_Type (Type_Id)
+                 and then Has_Discriminants (Type_Id)
+                 and then not Is_Constrained (Type_Id)
+                 and then
+                   Present
+                     (Discriminant_Default_Value
+                       (First_Discriminant (Type_Id)))
+               then
+                  declare
+                     Constr : constant List_Id    := New_List;
+                     Loc    : constant Source_Ptr := Sloc (E);
+                     Discr  : Entity_Id := First_Discriminant (Type_Id);
+
+                  begin
+                     if Present (Discriminant_Default_Value (Discr)) then
+                        while Present (Discr) loop
+                           Append (Discriminant_Default_Value (Discr), Constr);
+                           Next_Discriminant (Discr);
+                        end loop;
+
+                        Rewrite (E,
+                          Make_Subtype_Indication (Loc,
+                            Subtype_Mark => New_Occurrence_Of (Type_Id, Loc),
+                            Constraint   =>
+                              Make_Index_Or_Discriminant_Constraint (Loc,
+                                Constraints => Constr)));
+                     end if;
+                  end;
+               end if;
+            end if;
+
             if Nkind (E) = N_Subtype_Indication then
 
                --  A constraint is only allowed for a composite type in Ada
@@ -559,7 +628,7 @@ package body Sem_Ch4 is
                      Error_Msg_N ("constraint not allowed here", E);
 
                      if Nkind (Constraint (E)) =
-                       N_Index_Or_Discriminant_Constraint
+                          N_Index_Or_Discriminant_Constraint
                      then
                         Error_Msg_N -- CODEFIX
                           ("\if qualified expression was meant, " &
@@ -572,19 +641,6 @@ package body Sem_Ch4 is
                   Rewrite (E, New_Copy_Tree (Subtype_Mark (E)));
                   Analyze_Allocator (N);
                   return;
-
-               --  Ada 2005, AI-363: if the designated type has a constrained
-               --  partial view, it cannot receive a discriminant constraint,
-               --  and the allocated object is unconstrained.
-
-               elsif Ada_Version >= Ada_2005
-                 and then Effectively_Has_Constrained_Partial_View
-                            (Typ  => Base_Typ,
-                             Scop => Current_Scope)
-               then
-                  Error_Msg_N
-                    ("constraint not allowed when type " &
-                      "has a constrained partial view", Constraint (E));
                end if;
 
                if Expander_Active then
@@ -600,8 +656,8 @@ package body Sem_Ch4 is
                                N_Index_Or_Discriminant_Constraint
                   then
                      Error_Msg_N -- CODEFIX
-                       ("if qualified expression was meant, " &
-                           "use apostrophe!", Constraint (E));
+                       ("if qualified expression was meant, "
+                        & "use apostrophe!", Constraint (E));
                   end if;
 
                   E := New_Occurrence_Of (Def_Id, Loc);
@@ -611,7 +667,7 @@ package body Sem_Ch4 is
 
             Type_Id := Process_Subtype (E, N);
             Acc_Type := Create_Itype (E_Allocator_Type, N);
-            Set_Etype                    (Acc_Type, Acc_Type);
+            Set_Etype (Acc_Type, Acc_Type);
             Set_Directly_Designated_Type (Acc_Type, Type_Id);
             Check_Fully_Declared (Type_Id, N);
 
@@ -630,40 +686,57 @@ package body Sem_Ch4 is
                                        Reason => CE_Null_Not_Allowed);
 
                begin
-                  if Ada_Version >= Ada_2012 then
-                     Error_Msg_N
-                       ("an uninitialized allocator cannot have"
-                         & " a null exclusion", N);
-
-                  elsif Expander_Active then
+                  if Expander_Active then
                      Insert_Action (N, Not_Null_Check);
                      Analyze (Not_Null_Check);
 
-                  else
-                     Error_Msg_N ("null value not allowed here?", E);
+                  elsif Warn_On_Ada_2012_Compatibility then
+                     Error_Msg_N
+                       ("null value not allowed here in Ada 2012?y?", E);
                   end if;
                end;
-            end if;
-
-            --  Check restriction against dynamically allocated protected
-            --  objects. Note that when limited aggregates are supported,
-            --  a similar test should be applied to an allocator with a
-            --  qualified expression ???
-
-            if Is_Protected_Type (Type_Id) then
-               Check_Restriction (No_Protected_Type_Allocators, N);
             end if;
 
             --  Check for missing initialization. Skip this check if we already
             --  had errors on analyzing the allocator, since in that case these
             --  are probably cascaded errors.
 
-            if Is_Indefinite_Subtype (Type_Id)
+            if not Is_Definite_Subtype (Type_Id)
               and then Serious_Errors_Detected = Sav_Errs
             then
-               if Is_Class_Wide_Type (Type_Id) then
+               --  The build-in-place machinery may produce an allocator when
+               --  the designated type is indefinite but the underlying type is
+               --  not. In this case the unknown discriminants are meaningless
+               --  and should not trigger error messages. Check the parent node
+               --  because the allocator is marked as coming from source.
+
+               if Present (Underlying_Type (Type_Id))
+                 and then Is_Definite_Subtype (Underlying_Type (Type_Id))
+                 and then not Comes_From_Source (Parent (N))
+               then
+                  null;
+
+               --  An unusual case arises when the parent of a derived type is
+               --  a limited record extension  with unknown discriminants, and
+               --  its full view has no discriminants.
+               --
+               --  A more general fix might be to create the proper underlying
+               --  type for such a derived type, but it is a record type with
+               --  no private attributes, so this required extending the
+               --  meaning of this attribute. ???
+
+               elsif Ekind (Etype (Type_Id)) = E_Record_Type_With_Private
+                 and then Present (Underlying_Type (Etype (Type_Id)))
+                 and then
+                   not Has_Discriminants (Underlying_Type (Etype (Type_Id)))
+                 and then not Comes_From_Source (Parent (N))
+               then
+                  null;
+
+               elsif Is_Class_Wide_Type (Type_Id) then
                   Error_Msg_N
                     ("initialization required in class-wide allocation", N);
+
                else
                   if Ada_Version < Ada_2005
                     and then Is_Limited_Type (Type_Id)
@@ -686,21 +759,21 @@ package body Sem_Ch4 is
 
                   else
                      Error_Msg_N
-                       ("uninitialized unconstrained allocation not allowed",
-                        N);
+                       ("uninitialized unconstrained allocation not "
+                        & "allowed", N);
 
                      if Is_Array_Type (Type_Id) then
                         Error_Msg_N
-                          ("\qualified expression or constraint with " &
-                           "array bounds required", N);
+                          ("\qualified expression or constraint with "
+                           & "array bounds required", N);
 
                      elsif Has_Unknown_Discriminants (Type_Id) then
                         Error_Msg_N ("\qualified expression required", N);
 
                      else pragma Assert (Has_Discriminants (Type_Id));
                         Error_Msg_N
-                          ("\qualified expression or constraint with " &
-                           "discriminant values required", N);
+                          ("\qualified expression or constraint with "
+                           & "discriminant values required", N);
                      end if;
                   end if;
                end if;
@@ -718,6 +791,12 @@ package body Sem_Ch4 is
          Check_Restriction (No_Task_Allocators, N);
       end if;
 
+      --  Check restriction against dynamically allocated protected objects
+
+      if Has_Protected (Designated_Type (Acc_Type)) then
+         Check_Restriction (No_Protected_Type_Allocators, N);
+      end if;
+
       --  AI05-0013-1: No_Nested_Finalization forbids allocators if the access
       --  type is nested, and the designated type needs finalization. The rule
       --  is conservative in that class-wide types need finalization.
@@ -730,14 +809,19 @@ package body Sem_Ch4 is
 
       --  Check that an allocator of a nested access type doesn't create a
       --  protected object when restriction No_Local_Protected_Objects applies.
-      --  We don't have an equivalent to Has_Task for protected types, so only
-      --  cases where the designated type itself is a protected type are
-      --  currently checked. ???
 
-      if Is_Protected_Type (Designated_Type (Acc_Type))
+      if Has_Protected (Designated_Type (Acc_Type))
         and then not Is_Library_Level_Entity (Acc_Type)
       then
          Check_Restriction (No_Local_Protected_Objects, N);
+      end if;
+
+      --  Likewise for No_Local_Timing_Events
+
+      if Has_Timing_Event (Designated_Type (Acc_Type))
+        and then not Is_Library_Level_Entity (Acc_Type)
+      then
+         Check_Restriction (No_Local_Timing_Events, N);
       end if;
 
       --  If the No_Streams restriction is set, check that the type of the
@@ -806,9 +890,9 @@ package body Sem_Ch4 is
       --  Entity is not already set, so we do need to collect interpretations
 
       else
-         Op_Id := Get_Name_Entity_Id (Chars (N));
          Set_Etype (N, Any_Type);
 
+         Op_Id := Get_Name_Entity_Id (Chars (N));
          while Present (Op_Id) loop
             if Ekind (Op_Id) = E_Operator
               and then Present (Next_Entity (First_Entity (Op_Id)))
@@ -828,6 +912,7 @@ package body Sem_Ch4 is
       end if;
 
       Operator_Check (N);
+      Check_Function_Writable_Actuals (N);
    end Analyze_Arithmetic_Op;
 
    ------------------
@@ -845,7 +930,8 @@ package body Sem_Ch4 is
    --  the type-checking is similar to that of other calls.
 
    procedure Analyze_Call (N : Node_Id) is
-      Actuals : constant List_Id := Parameter_Associations (N);
+      Actuals : constant List_Id    := Parameter_Associations (N);
+      Loc     : constant Source_Ptr := Sloc (N);
       Nam     : Node_Id;
       X       : Interp_Index;
       It      : Interp;
@@ -859,6 +945,11 @@ package body Sem_Ch4 is
       procedure Check_Mixed_Parameter_And_Named_Associations;
       --  Check that parameter and named associations are not mixed. This is
       --  a restriction in SPARK mode.
+
+      procedure Check_Writable_Actuals (N : Node_Id);
+      --  If the call has out or in-out parameters then mark its outermost
+      --  enclosing construct as a node on which the writable actuals check
+      --  must be performed.
 
       function Name_Denotes_Function return Boolean;
       --  If the type of the name is an access to subprogram, this may be the
@@ -886,11 +977,12 @@ package body Sem_Ch4 is
             case Nkind (Actual) is
                when N_Parameter_Association =>
                   if Named_Seen then
-                     Check_SPARK_Restriction
+                     Check_SPARK_05_Restriction
                        ("named association cannot follow positional one",
                         Actual);
                      exit;
                   end if;
+
                when others =>
                   Named_Seen := True;
             end case;
@@ -898,6 +990,94 @@ package body Sem_Ch4 is
             Next (Actual);
          end loop;
       end Check_Mixed_Parameter_And_Named_Associations;
+
+      ----------------------------
+      -- Check_Writable_Actuals --
+      ----------------------------
+
+      --  The identification of conflicts in calls to functions with writable
+      --  actuals is performed in the analysis phase of the front end to ensure
+      --  that it reports exactly the same errors compiling with and without
+      --  expansion enabled. It is performed in two stages:
+
+      --    1) When a call to a function with out-mode parameters is found,
+      --       we climb to the outermost enclosing construct that can be
+      --       evaluated in arbitrary order and we mark it with the flag
+      --       Check_Actuals.
+
+      --    2) When the analysis of the marked node is complete, we traverse
+      --       its decorated subtree searching for conflicts (see function
+      --       Sem_Util.Check_Function_Writable_Actuals).
+
+      --  The unique exception to this general rule is for aggregates, since
+      --  their analysis is performed by the front end in the resolution
+      --  phase. For aggregates we do not climb to their enclosing construct:
+      --  we restrict the analysis to the subexpressions initializing the
+      --  aggregate components.
+
+      --  This implies that the analysis of expressions containing aggregates
+      --  is not complete, since there may be conflicts on writable actuals
+      --  involving subexpressions of the enclosing logical or arithmetic
+      --  expressions. However, we cannot wait and perform the analysis when
+      --  the whole subtree is resolved, since the subtrees may be transformed,
+      --  thus adding extra complexity and computation cost to identify and
+      --  report exactly the same errors compiling with and without expansion
+      --  enabled.
+
+      procedure Check_Writable_Actuals (N : Node_Id) is
+      begin
+         if Comes_From_Source (N)
+           and then Present (Get_Subprogram_Entity (N))
+           and then Has_Out_Or_In_Out_Parameter (Get_Subprogram_Entity (N))
+         then
+            --  For procedures and entries there is no need to climb since
+            --  we only need to check if the actuals of this call invoke
+            --  functions whose out-mode parameters overlap.
+
+            if Nkind (N) /= N_Function_Call then
+               Set_Check_Actuals (N);
+
+            --  For calls to functions we climb to the outermost enclosing
+            --  construct where the out-mode actuals of this function may
+            --  introduce conflicts.
+
+            else
+               declare
+                  Outermost : Node_Id;
+                  P         : Node_Id := N;
+
+               begin
+                  while Present (P) loop
+
+                     --  For object declarations we can climb to the node from
+                     --  its object definition branch or from its initializing
+                     --  expression. We prefer to mark the child node as the
+                     --  outermost construct to avoid adding further complexity
+                     --  to the routine that will later take care of
+                     --  performing the writable actuals check.
+
+                     if Has_Arbitrary_Evaluation_Order (Nkind (P))
+                       and then not Nkind_In (P, N_Assignment_Statement,
+                                                 N_Object_Declaration)
+                     then
+                        Outermost := P;
+                     end if;
+
+                     --  Avoid climbing more than needed!
+
+                     exit when Stop_Subtree_Climbing (Nkind (P))
+                       or else (Nkind (P) = N_Range
+                                 and then not
+                                   Nkind_In (Parent (P), N_In, N_Not_In));
+
+                     P := Parent (P);
+                  end loop;
+
+                  Set_Check_Actuals (Outermost);
+               end;
+            end if;
+         end if;
+      end Check_Writable_Actuals;
 
       ---------------------------
       -- Name_Denotes_Function --
@@ -907,10 +1087,8 @@ package body Sem_Ch4 is
       begin
          if Is_Entity_Name (Nam) then
             return Ekind (Entity (Nam)) = E_Function;
-
          elsif Nkind (Nam) = N_Selected_Component then
             return Ekind (Entity (Selector_Name (Nam))) = E_Function;
-
          else
             return False;
          end if;
@@ -934,8 +1112,7 @@ package body Sem_Ch4 is
                  ("must instantiate generic procedure& before call",
                   Nam, Entity (Nam));
             else
-               Error_Msg_N
-                 ("procedure or entry name expected", Nam);
+               Error_Msg_N ("procedure or entry name expected", Nam);
             end if;
 
          --  Check for tasking cases where only an entry call will do
@@ -956,7 +1133,7 @@ package body Sem_Ch4 is
    --  Start of processing for Analyze_Call
 
    begin
-      if Restriction_Check_Required (SPARK) then
+      if Restriction_Check_Required (SPARK_05) then
          Check_Mixed_Parameter_And_Named_Associations;
       end if;
 
@@ -981,17 +1158,22 @@ package body Sem_Ch4 is
          --  function that returns a pointer_to_procedure which is the entity
          --  being called. Finally, F (X) may be a call to a parameterless
          --  function that returns a pointer to a function with parameters.
+         --  Note that if F returns an access-to-subprogram whose designated
+         --  type is an array, F (X) cannot be interpreted as an indirect call
+         --  through the result of the call to F.
 
          elsif Is_Access_Type (Etype (Nam))
            and then Ekind (Designated_Type (Etype (Nam))) = E_Subprogram_Type
            and then
              (not Name_Denotes_Function
-                or else Nkind (N) = N_Procedure_Call_Statement
-                or else
-                  (Nkind (Parent (N)) /= N_Explicit_Dereference
-                     and then Is_Entity_Name (Nam)
-                     and then No (First_Formal (Entity (Nam)))
-                     and then Present (Actuals)))
+               or else Nkind (N) = N_Procedure_Call_Statement
+               or else
+                 (Nkind (Parent (N)) /= N_Explicit_Dereference
+                   and then Is_Entity_Name (Nam)
+                   and then No (First_Formal (Entity (Nam)))
+                   and then not
+                     Is_Array_Type (Etype (Designated_Type (Etype (Nam))))
+                   and then Present (Actuals)))
          then
             Nam_Ent := Designated_Type (Etype (Nam));
             Insert_Explicit_Dereference (Nam);
@@ -1034,10 +1216,30 @@ package body Sem_Ch4 is
          else
             Nam_Ent := Entity (Nam);
 
-            --  If no interpretations, give error message
+            --  If not overloadable, this may be a generalized indexing
+            --  operation with named associations. Rewrite again as an
+            --  indexed component and analyze as container indexing.
 
             if not Is_Overloadable (Nam_Ent) then
-               No_Interpretation;
+               if Present
+                    (Find_Value_Of_Aspect
+                       (Etype (Nam_Ent), Aspect_Constant_Indexing))
+               then
+                  Replace (N,
+                    Make_Indexed_Component (Sloc (N),
+                      Prefix      => Nam,
+                      Expressions => Parameter_Associations (N)));
+
+                  if Try_Container_Indexing (N, Nam, Expressions (N)) then
+                     return;
+                  else
+                     No_Interpretation;
+                  end if;
+
+               else
+                  No_Interpretation;
+               end if;
+
                return;
             end if;
          end if;
@@ -1066,6 +1268,8 @@ package body Sem_Ch4 is
             Set_Etype (Nam_Ent, Etype (N));
          end if;
 
+      --  Overloaded call
+
       else
          --  An overloaded selected component must denote overloaded operations
          --  of a concurrent type. The interpretations are attached to the
@@ -1076,7 +1280,6 @@ package body Sem_Ch4 is
          end if;
 
          Get_First_Interp (Nam, X, It);
-
          while Present (It.Nam) loop
             Nam_Ent := It.Nam;
             Deref   := False;
@@ -1125,24 +1328,41 @@ package body Sem_Ch4 is
 
             --  If the interpretation succeeds, mark the proper type of the
             --  prefix (any valid candidate will do). If not, remove the
-            --  candidate interpretation. This only needs to be done for
-            --  overloaded protected operations, for other entities disambi-
-            --  guation is done directly in Resolve.
+            --  candidate interpretation. If this is a parameterless call
+            --  on an anonymous access to subprogram, X is a variable with
+            --  an access discriminant D, the entity in the interpretation is
+            --  D, so rewrite X as X.D.all.
 
             if Success then
                if Deref
                  and then Nkind (Parent (N)) /= N_Explicit_Dereference
                then
-                  Set_Entity (Nam, It.Nam);
-                  Insert_Explicit_Dereference (Nam);
-                  Set_Etype (Nam, Nam_Ent);
+                  if Ekind (It.Nam) = E_Discriminant
+                    and then Has_Implicit_Dereference (It.Nam)
+                  then
+                     Rewrite (Name (N),
+                       Make_Explicit_Dereference (Loc,
+                         Prefix =>
+                           Make_Selected_Component (Loc,
+                             Prefix        =>
+                               New_Occurrence_Of (Entity (Nam), Loc),
+                             Selector_Name =>
+                               New_Occurrence_Of (It.Nam, Loc))));
+
+                     Analyze (N);
+                     return;
+
+                  else
+                     Set_Entity (Nam, It.Nam);
+                     Insert_Explicit_Dereference (Nam);
+                     Set_Etype (Nam, Nam_Ent);
+                  end if;
 
                else
                   Set_Etype (Nam, It.Typ);
                end if;
 
-            elsif Nkind_In (Name (N), N_Selected_Component,
-                                      N_Function_Call)
+            elsif Nkind_In (Name (N), N_Function_Call, N_Selected_Component)
             then
                Remove_Interp (X);
             end if;
@@ -1150,9 +1370,9 @@ package body Sem_Ch4 is
             Get_Next_Interp (X, It);
          end loop;
 
-         --  If the name is the result of a function call, it can only
-         --  be a call to a function returning an access to subprogram.
-         --  Insert explicit dereference.
+         --  If the name is the result of a function call, it can only be a
+         --  call to a function returning an access to subprogram. Insert
+         --  explicit dereference.
 
          if Nkind (Nam) = N_Function_Call then
             Insert_Explicit_Dereference (Nam);
@@ -1184,33 +1404,33 @@ package body Sem_Ch4 is
 
                   if Is_Signed_Integer_Type (Typ) then
                      Error_Msg_N
-                       ("possible missing instantiation of " &
-                          "'Text_'I'O.'Integer_'I'O!", Nam);
+                       ("possible missing instantiation of "
+                        & "'Text_'I'O.'Integer_'I'O!", Nam);
 
                   elsif Is_Modular_Integer_Type (Typ) then
                      Error_Msg_N
-                       ("possible missing instantiation of " &
-                          "'Text_'I'O.'Modular_'I'O!", Nam);
+                       ("possible missing instantiation of "
+                        & "'Text_'I'O.'Modular_'I'O!", Nam);
 
                   elsif Is_Floating_Point_Type (Typ) then
                      Error_Msg_N
-                       ("possible missing instantiation of " &
-                          "'Text_'I'O.'Float_'I'O!", Nam);
+                       ("possible missing instantiation of "
+                        & "'Text_'I'O.'Float_'I'O!", Nam);
 
                   elsif Is_Ordinary_Fixed_Point_Type (Typ) then
                      Error_Msg_N
-                       ("possible missing instantiation of " &
-                          "'Text_'I'O.'Fixed_'I'O!", Nam);
+                       ("possible missing instantiation of "
+                        & "'Text_'I'O.'Fixed_'I'O!", Nam);
 
                   elsif Is_Decimal_Fixed_Point_Type (Typ) then
                      Error_Msg_N
-                       ("possible missing instantiation of " &
-                          "'Text_'I'O.'Decimal_'I'O!", Nam);
+                       ("possible missing instantiation of "
+                        & "'Text_'I'O.'Decimal_'I'O!", Nam);
 
                   elsif Is_Enumeration_Type (Typ) then
                      Error_Msg_N
-                       ("possible missing instantiation of " &
-                          "'Text_'I'O.'Enumeration_'I'O!", Nam);
+                       ("possible missing instantiation of "
+                        & "'Text_'I'O.'Enumeration_'I'O!", Nam);
                   end if;
                end;
             end if;
@@ -1221,7 +1441,7 @@ package body Sem_Ch4 is
             --  Resolution yields a single interpretation. Verify that the
             --  reference has capitalization consistent with the declaration.
 
-            Set_Entity_With_Style_Check (Nam, Entity (Nam));
+            Set_Entity_With_Checks (Nam, Entity (Nam));
             Generate_Reference (Entity (Nam), Nam);
 
             Set_Etype (Nam, Etype (Entity (Nam)));
@@ -1231,6 +1451,19 @@ package body Sem_Ch4 is
 
          End_Interp_List;
       end if;
+
+      if Ada_Version >= Ada_2012 then
+
+         --  Check if the call contains a function with writable actuals
+
+         Check_Writable_Actuals (N);
+
+         --  If found and the outermost construct that can be evaluated in
+         --  an arbitrary order is precisely this call, then check all its
+         --  actuals.
+
+         Check_Function_Writable_Actuals (N);
+      end if;
    end Analyze_Call;
 
    -----------------------------
@@ -1238,27 +1471,21 @@ package body Sem_Ch4 is
    -----------------------------
 
    procedure Analyze_Case_Expression (N : Node_Id) is
-      Expr      : constant Node_Id := Expression (N);
-      FirstX    : constant Node_Id := Expression (First (Alternatives (N)));
-      Alt       : Node_Id;
-      Exp_Type  : Entity_Id;
-      Exp_Btype : Entity_Id;
-
-      Dont_Care      : Boolean;
-      Others_Present : Boolean;
-
       procedure Non_Static_Choice_Error (Choice : Node_Id);
       --  Error routine invoked by the generic instantiation below when
       --  the case expression has a non static choice.
 
-      package Case_Choices_Processing is new
-        Generic_Choices_Processing
-          (Get_Alternatives          => Alternatives,
-           Get_Choices               => Discrete_Choices,
-           Process_Empty_Choice      => No_OP,
+      package Case_Choices_Analysis is new
+        Generic_Analyze_Choices
+          (Process_Associated_Node => No_OP);
+      use Case_Choices_Analysis;
+
+      package Case_Choices_Checking is new
+        Generic_Check_Choices
+          (Process_Empty_Choice      => No_OP,
            Process_Non_Static_Choice => Non_Static_Choice_Error,
            Process_Associated_Node   => No_OP);
-      use Case_Choices_Processing;
+      use Case_Choices_Checking;
 
       -----------------------------
       -- Non_Static_Choice_Error --
@@ -1270,11 +1497,29 @@ package body Sem_Ch4 is
            ("choice given in case expression is not static!", Choice);
       end Non_Static_Choice_Error;
 
+      --  Local variables
+
+      Expr      : constant Node_Id := Expression (N);
+      Alt       : Node_Id;
+      Exp_Type  : Entity_Id;
+      Exp_Btype : Entity_Id;
+
+      FirstX : Node_Id := Empty;
+      --  First expression in the case for which there is some type information
+      --  available, i.e. it is not Any_Type, which can happen because of some
+      --  error, or from the use of e.g. raise Constraint_Error.
+
+      Others_Present : Boolean;
+      --  Indicates if Others was present
+
+      Wrong_Alt : Node_Id := Empty;
+      --  For error reporting
+
    --  Start of processing for Analyze_Case_Expression
 
    begin
       if Comes_From_Source (N) then
-         Check_Compiler_Unit (N);
+         Check_Compiler_Unit ("case expression", N);
       end if;
 
       Analyze_And_Resolve (Expr, Any_Discrete);
@@ -1285,8 +1530,16 @@ package body Sem_Ch4 is
       Alt := First (Alternatives (N));
       while Present (Alt) loop
          Analyze (Expression (Alt));
+
+         if No (FirstX) and then Etype (Expression (Alt)) /= Any_Type then
+            FirstX := Expression (Alt);
+         end if;
+
          Next (Alt);
       end loop;
+
+      --  Get our initial type from the first expression for which we got some
+      --  useful type information from the expression.
 
       if not Is_Overloaded (FirstX) then
          Set_Etype (N, Etype (FirstX));
@@ -1314,6 +1567,8 @@ package body Sem_Ch4 is
 
                if No (Alt) then
                   Add_One_Interp (N, It.Typ, It.Typ);
+               else
+                  Wrong_Alt := Alt;
                end if;
 
                Get_Next_Interp (I, It);
@@ -1331,14 +1586,21 @@ package body Sem_Ch4 is
 
       --  If error already reported by Resolve, nothing more to do
 
-      if Exp_Btype = Any_Discrete
-        or else Exp_Btype = Any_Type
-      then
+      if Exp_Btype = Any_Discrete or else Exp_Btype = Any_Type then
          return;
+
+      --  Special casee message for character literal
 
       elsif Exp_Btype = Any_Character then
          Error_Msg_N
            ("character literal as case expression is ambiguous", Expr);
+         return;
+      end if;
+
+      if Etype (N) = Any_Type and then Present (Wrong_Alt) then
+         Error_Msg_N
+           ("type incompatible with that of previous alternatives",
+            Expression (Wrong_Alt));
          return;
       end if;
 
@@ -1354,9 +1616,23 @@ package body Sem_Ch4 is
          Exp_Type := Exp_Btype;
       end if;
 
-      --  Call instantiated Analyze_Choices which does the rest of the work
+      --  The case expression alternatives cover the range of a static subtype
+      --  subject to aspect Static_Predicate. Do not check the choices when the
+      --  case expression has not been fully analyzed yet because this may lead
+      --  to bogus errors.
 
-      Analyze_Choices (N, Exp_Type, Dont_Care, Others_Present);
+      if Is_OK_Static_Subtype (Exp_Type)
+        and then Has_Static_Predicate_Aspect (Exp_Type)
+        and then In_Spec_Expression
+      then
+         null;
+
+      --  Call Analyze_Choices and Check_Choices to do the rest of the work
+
+      else
+         Analyze_Choices (Alternatives (N), Exp_Type);
+         Check_Choices (N, Alternatives (N), Exp_Type, Others_Present);
+      end if;
 
       if Exp_Type = Universal_Integer and then not Others_Present then
          Error_Msg_N
@@ -1405,6 +1681,7 @@ package body Sem_Ch4 is
       end if;
 
       Operator_Check (N);
+      Check_Function_Writable_Actuals (N);
    end Analyze_Comparison_Op;
 
    ---------------------------
@@ -1558,79 +1835,6 @@ package body Sem_Ch4 is
       Operator_Check (N);
    end Analyze_Concatenation_Rest;
 
-   ------------------------------------
-   -- Analyze_Conditional_Expression --
-   ------------------------------------
-
-   procedure Analyze_Conditional_Expression (N : Node_Id) is
-      Condition : constant Node_Id := First (Expressions (N));
-      Then_Expr : constant Node_Id := Next (Condition);
-      Else_Expr : Node_Id;
-
-   begin
-      --  Defend against error of missing expressions from previous error
-
-      if No (Then_Expr) then
-         return;
-      end if;
-
-      Check_SPARK_Restriction ("conditional expression is not allowed", N);
-
-      Else_Expr := Next (Then_Expr);
-
-      if Comes_From_Source (N) then
-         Check_Compiler_Unit (N);
-      end if;
-
-      Analyze_Expression (Condition);
-      Analyze_Expression (Then_Expr);
-
-      if Present (Else_Expr) then
-         Analyze_Expression (Else_Expr);
-      end if;
-
-      --  If then expression not overloaded, then that decides the type
-
-      if not Is_Overloaded (Then_Expr) then
-         Set_Etype (N, Etype (Then_Expr));
-
-      --  Case where then expression is overloaded
-
-      else
-         declare
-            I  : Interp_Index;
-            It : Interp;
-
-         begin
-            Set_Etype (N, Any_Type);
-
-            --  Shouldn't the following statement be down in the ELSE of the
-            --  following loop? ???
-
-            Get_First_Interp (Then_Expr, I, It);
-
-            --  if no Else_Expression the conditional must be boolean
-
-            if No (Else_Expr) then
-               Set_Etype (N, Standard_Boolean);
-
-            --  Else_Expression Present. For each possible intepretation of
-            --  the Then_Expression, add it only if the Else_Expression has
-            --  a compatible type.
-
-            else
-               while Present (It.Nam) loop
-                  if Has_Compatible_Type (Else_Expr, It.Typ) then
-                     Add_One_Interp (N, It.Typ, It.Typ);
-                  end if;
-
-                  Get_Next_Interp (I, It);
-               end loop;
-            end if;
-         end;
-      end if;
-   end Analyze_Conditional_Expression;
-
    -------------------------
    -- Analyze_Equality_Op --
    -------------------------
@@ -1654,7 +1858,7 @@ package body Sem_Ch4 is
       --  call to a user-defined equality operator.
 
       --  For the predefined case, the result is Boolean, regardless of the
-      --  type of the  operands. The operands may even be limited, if they are
+      --  type of the operands. The operands may even be limited, if they are
       --  generic actuals. If they are overloaded, label the left argument with
       --  the common type that must be present, or with the type of the formal
       --  of the user-defined function.
@@ -1689,11 +1893,11 @@ package body Sem_Ch4 is
          end loop;
       end if;
 
-      --  If there was no match, and the operator is inequality, this may
-      --  be a case where inequality has not been made explicit, as for
-      --  tagged types. Analyze the node as the negation of an equality
-      --  operation. This cannot be done earlier, because before analysis
-      --  we cannot rule out the presence of an explicit inequality.
+      --  If there was no match, and the operator is inequality, this may be
+      --  a case where inequality has not been made explicit, as for tagged
+      --  types. Analyze the node as the negation of an equality operation.
+      --  This cannot be done earlier, because before analysis we cannot rule
+      --  out the presence of an explicit inequality.
 
       if Etype (N) = Any_Type
         and then Nkind (N) = N_Op_Ne
@@ -1725,6 +1929,7 @@ package body Sem_Ch4 is
       end if;
 
       Operator_Check (N);
+      Check_Function_Writable_Actuals (N);
    end Analyze_Equality_Op;
 
    ----------------------------------
@@ -1778,14 +1983,14 @@ package body Sem_Ch4 is
       --  source node check, because ???
 
       if Comes_From_Source (N) then
-         Check_SPARK_Restriction ("explicit dereference is not allowed", N);
+         Check_SPARK_05_Restriction ("explicit dereference is not allowed", N);
       end if;
 
       --  In formal verification mode, keep track of all reads and writes
       --  through explicit dereferences.
 
-      if Alfa_Mode then
-         Alfa.Generate_Dereference (N);
+      if GNATprove_Mode then
+         SPARK_Specific.Generate_Dereference (N);
       end if;
 
       Analyze (P);
@@ -1819,16 +2024,19 @@ package body Sem_Ch4 is
                end if;
 
                --  An explicit dereference is a legal occurrence of an
-               --  incomplete type imported through a limited_with clause,
-               --  if the full view is visible.
+               --  incomplete type imported through a limited_with clause, if
+               --  the full view is visible, or if we are within an instance
+               --  body, where the enclosing body has a regular with_clause
+               --  on the unit.
 
-               if From_With_Type (DT)
-                 and then not From_With_Type (Scope (DT))
+               if From_Limited_With (DT)
+                 and then not From_Limited_With (Scope (DT))
                  and then
                    (Is_Immediately_Visible (Scope (DT))
                      or else
                        (Is_Child_Unit (Scope (DT))
-                          and then Is_Visible_Child_Unit (Scope (DT))))
+                         and then Is_Visible_Lib_Unit (Scope (DT)))
+                     or else In_Instance_Body)
                then
                   Set_Etype (N, Available_View (DT));
 
@@ -1946,8 +2154,19 @@ package body Sem_Ch4 is
 
    procedure Analyze_Expression (N : Node_Id) is
    begin
-      Analyze (N);
-      Check_Parameterless_Call (N);
+
+      --  If the expression is an indexed component that will be rewritten
+      --  as a container indexing, it has already been analyzed.
+
+      if Nkind (N) = N_Indexed_Component
+        and then Present (Generalized_Indexing (N))
+      then
+         null;
+
+      else
+         Analyze (N);
+         Check_Parameterless_Call (N);
+      end if;
    end Analyze_Expression;
 
    -------------------------------------
@@ -1959,15 +2178,105 @@ package body Sem_Ch4 is
 
    begin
       A := First (Actions (N));
-      loop
+      while Present (A) loop
          Analyze (A);
          Next (A);
-         exit when No (A);
       end loop;
 
       Analyze_Expression (Expression (N));
       Set_Etype (N, Etype (Expression (N)));
    end Analyze_Expression_With_Actions;
+
+   ---------------------------
+   -- Analyze_If_Expression --
+   ---------------------------
+
+   procedure Analyze_If_Expression (N : Node_Id) is
+      Condition : constant Node_Id := First (Expressions (N));
+      Then_Expr : constant Node_Id := Next (Condition);
+      Else_Expr : Node_Id;
+
+   begin
+      --  Defend against error of missing expressions from previous error
+
+      if No (Then_Expr) then
+         Check_Error_Detected;
+         return;
+      end if;
+
+      if Comes_From_Source (N) then
+         Check_SPARK_05_Restriction ("if expression is not allowed", N);
+      end if;
+
+      Else_Expr := Next (Then_Expr);
+
+      if Comes_From_Source (N) then
+         Check_Compiler_Unit ("if expression", N);
+      end if;
+
+      --  Analyze and resolve the condition. We need to resolve this now so
+      --  that it gets folded to True/False if possible, before we analyze
+      --  the THEN/ELSE branches, because when analyzing these branches, we
+      --  may call Is_Statically_Unevaluated, which expects the condition of
+      --  an enclosing IF to have been analyze/resolved/evaluated.
+
+      Analyze_Expression (Condition);
+      Resolve (Condition, Any_Boolean);
+
+      --  Analyze THEN expression and (if present) ELSE expression. For those
+      --  we delay resolution in the normal manner, because of overloading etc.
+
+      Analyze_Expression (Then_Expr);
+
+      if Present (Else_Expr) then
+         Analyze_Expression (Else_Expr);
+      end if;
+
+      --  If then expression not overloaded, then that decides the type
+
+      if not Is_Overloaded (Then_Expr) then
+         Set_Etype (N, Etype (Then_Expr));
+
+      --  Case where then expression is overloaded
+
+      else
+         declare
+            I  : Interp_Index;
+            It : Interp;
+
+         begin
+            Set_Etype (N, Any_Type);
+
+            --  Loop through interpretations of Then_Expr
+
+            Get_First_Interp (Then_Expr, I, It);
+            while Present (It.Nam) loop
+
+               --  Add possible interpretation of Then_Expr if no Else_Expr, or
+               --  Else_Expr is present and has a compatible type.
+
+               if No (Else_Expr)
+                 or else Has_Compatible_Type (Else_Expr, It.Typ)
+               then
+                  Add_One_Interp (N, It.Typ, It.Typ);
+               end if;
+
+               Get_Next_Interp (I, It);
+            end loop;
+
+            --  If no valid interpretation has been found, then the type of the
+            --  ELSE expression does not match any interpretation of the THEN
+            --  expression.
+
+            if Etype (N) = Any_Type then
+               Error_Msg_N
+                 ("type incompatible with that of `THEN` expression",
+                  Else_Expr);
+               return;
+            end if;
+         end;
+      end if;
+   end Analyze_If_Expression;
 
    ------------------------------------
    -- Analyze_Indexed_Component_Form --
@@ -1982,8 +2291,8 @@ package body Sem_Ch4 is
       U_N   : Entity_Id;
 
       procedure Process_Function_Call;
-      --  Prefix in indexed component form is an overloadable entity,
-      --  so the node is a function call. Reformat it as such.
+      --  Prefix in indexed component form is an overloadable entity, so the
+      --  node is a function call. Reformat it as such.
 
       procedure Process_Indexed_Component;
       --  Prefix in indexed component form is actually an indexed component.
@@ -2004,6 +2313,7 @@ package body Sem_Ch4 is
       ---------------------------
 
       procedure Process_Function_Call is
+         Loc    : constant Source_Ptr := Sloc (N);
          Actual : Node_Id;
 
       begin
@@ -2020,8 +2330,8 @@ package body Sem_Ch4 is
 
             --  Move to next actual. Note that we use Next, not Next_Actual
             --  here. The reason for this is a bit subtle. If a function call
-            --  includes named associations, the parser recognizes the node as
-            --  a call, and it is analyzed as such. If all associations are
+            --  includes named associations, the parser recognizes the node
+            --  as a call, and it is analyzed as such. If all associations are
             --  positional, the parser builds an indexed_component node, and
             --  it is only after analysis of the prefix that the construct
             --  is recognized as a call, in which case Process_Function_Call
@@ -2035,7 +2345,26 @@ package body Sem_Ch4 is
             --  subsequent crashes or loops if there is an attempt to continue
             --  analysis of the program.
 
-            Next (Actual);
+            --  IF there is a single actual and it is a type name, the node
+            --  can only be interpreted as a slice of a parameterless call.
+            --  Rebuild the node as such and analyze.
+
+            if No (Next (Actual))
+              and then Is_Entity_Name (Actual)
+              and then Is_Type (Entity (Actual))
+              and then Is_Discrete_Type (Entity (Actual))
+            then
+               Replace (N,
+                 Make_Slice (Loc,
+                   Prefix         => P,
+                   Discrete_Range =>
+                     New_Occurrence_Of (Entity (Actual), Loc)));
+               Analyze (N);
+               return;
+
+            else
+               Next (Actual);
+            end if;
          end loop;
 
          Analyze_Call (N);
@@ -2072,20 +2401,25 @@ package body Sem_Ch4 is
             --  account a possible implicit dereference.
 
             if Is_Access_Type (Array_Type) then
-               Error_Msg_NW (Warn_On_Dereference, "?implicit dereference", N);
+               Error_Msg_NW
+                 (Warn_On_Dereference, "?d?implicit dereference", N);
                Array_Type := Process_Implicit_Dereference_Prefix (Pent, P);
             end if;
 
             if Is_Array_Type (Array_Type) then
-               null;
+
+               --  In order to correctly access First_Index component later,
+               --  replace string literal subtype by its parent type.
+
+               if Ekind (Array_Type) = E_String_Literal_Subtype then
+                  Array_Type := Etype (Array_Type);
+               end if;
 
             elsif Present (Pent) and then Ekind (Pent) = E_Entry_Family then
                Analyze (Exp);
                Set_Etype (N, Any_Type);
 
-               if not Has_Compatible_Type
-                 (Exp, Entry_Index_Type (Pent))
-               then
+               if not Has_Compatible_Type (Exp, Entry_Index_Type (Pent)) then
                   Error_Msg_N ("invalid index type in entry name", N);
 
                elsif Present (Next (Exp)) then
@@ -2102,7 +2436,7 @@ package body Sem_Ch4 is
             then
                return;
 
-            elsif Try_Container_Indexing (N, P, Exp) then
+            elsif Try_Container_Indexing (N, P, Exprs) then
                return;
 
             elsif Array_Type = Any_Type then
@@ -2135,7 +2469,7 @@ package body Sem_Ch4 is
                elsif Is_Entity_Name (P)
                  and then Etype (P) = Standard_Void_Type
                then
-                  Error_Msg_NE ("incorrect use of&", P, Entity (P));
+                  Error_Msg_NE ("incorrect use of &", P, Entity (P));
 
                else
                   Error_Msg_N ("array type required in indexed component", P);
@@ -2184,10 +2518,10 @@ package body Sem_Ch4 is
 
          Exp := First (Exprs);
 
-         --  If one index is present, and it is a subtype name, then the
-         --  node denotes a slice (note that the case of an explicit range
-         --  for a slice was already built as an N_Slice node in the first
-         --  place, so that case is not handled here).
+         --  If one index is present, and it is a subtype name, then the node
+         --  denotes a slice (note that the case of an explicit range for a
+         --  slice was already built as an N_Slice node in the first place,
+         --  so that case is not handled here).
 
          --  We use a replace rather than a rewrite here because this is one
          --  of the cases in which the tree built by the parser is plain wrong.
@@ -2231,7 +2565,8 @@ package body Sem_Ch4 is
 
             if Is_Access_Type (Typ) then
                Typ := Designated_Type (Typ);
-               Error_Msg_NW (Warn_On_Dereference, "?implicit dereference", N);
+               Error_Msg_NW
+                 (Warn_On_Dereference, "?d?implicit dereference", N);
             end if;
 
             if Is_Array_Type (Typ) then
@@ -2264,7 +2599,7 @@ package body Sem_Ch4 is
                   end;
                end if;
 
-            elsif Try_Container_Indexing (N, P, First (Exprs)) then
+            elsif Try_Container_Indexing (N, P, Exprs) then
                return;
 
             end if;
@@ -2287,12 +2622,20 @@ package body Sem_Ch4 is
 
       Analyze (P);
 
-      if Nkind_In (N, N_Function_Call, N_Procedure_Call_Statement) then
+      --  If P is an explicit dereference whose prefix is of a remote access-
+      --  to-subprogram type, then N has already been rewritten as a subprogram
+      --  call and analyzed.
 
-         --  If P is an explicit dereference whose prefix is of a
-         --  remote access-to-subprogram type, then N has already
-         --  been rewritten as a subprogram call and analyzed.
+      if Nkind (N) in N_Subprogram_Call then
+         return;
 
+      --  When the prefix is attribute 'Loop_Entry and the sole expression of
+      --  the indexed component denotes a loop name, the indexed form is turned
+      --  into an attribute reference.
+
+      elsif Nkind (N) = N_Attribute_Reference
+        and then Attribute_Name (N) = Name_Loop_Entry
+      then
          return;
       end if;
 
@@ -2363,9 +2706,21 @@ package body Sem_Ch4 is
             Process_Function_Call;
 
          elsif Nkind (P) = N_Selected_Component
+           and then Present (Entity (Selector_Name (P)))
            and then Is_Overloadable (Entity (Selector_Name (P)))
          then
             Process_Function_Call;
+
+         --  In ASIS mode within a generic, a prefixed call is analyzed and
+         --  partially rewritten but the original indexed component has not
+         --  yet been rewritten as a call. Perform the replacement now.
+
+         elsif Nkind (P) = N_Selected_Component
+           and then Nkind (Parent (P)) = N_Function_Call
+           and then ASIS_Mode
+         then
+            Rewrite (N, Parent (P));
+            Analyze (N);
 
          else
             --  Indexed component, slice, or a call to a member of a family
@@ -2374,6 +2729,8 @@ package body Sem_Ch4 is
             Process_Indexed_Component_Or_Slice;
          end if;
       end if;
+
+      Analyze_Dimension (N);
    end Analyze_Indexed_Component_Form;
 
    ------------------------
@@ -2414,6 +2771,7 @@ package body Sem_Ch4 is
       end if;
 
       Operator_Check (N);
+      Check_Function_Writable_Actuals (N);
    end Analyze_Logical_Op;
 
    ---------------------------
@@ -2484,6 +2842,10 @@ package body Sem_Ch4 is
          Common_Type       : Entity_Id := Empty;
 
       begin
+         if Comes_From_Source (N) then
+            Check_Compiler_Unit ("set membership", N);
+         end if;
+
          Analyze (L);
          Candidate_Interps := L;
 
@@ -2549,7 +2911,9 @@ package body Sem_Ch4 is
 
          if Present (Common_Type) then
             Set_Etype (L, Common_Type);
-            Set_Is_Overloaded (L, False);
+
+            --  The left operand may still be overloaded, to be resolved using
+            --  the Common_Type.
 
          else
             Error_Msg_N ("cannot resolve membership operation", N);
@@ -2561,10 +2925,10 @@ package body Sem_Ch4 is
    begin
       Analyze_Expression (L);
 
-      if No (R)
-        and then Ada_Version >= Ada_2012
-      then
+      if No (R) and then Ada_Version >= Ada_2012 then
          Analyze_Set_Membership;
+         Check_Function_Writable_Actuals (N);
+
          return;
       end if;
 
@@ -2636,6 +3000,8 @@ package body Sem_Ch4 is
       then
          Error_Msg_N ("membership test not applicable to cpp-class types", N);
       end if;
+
+      Check_Function_Writable_Actuals (N);
    end Analyze_Membership_Op;
 
    -----------------
@@ -2658,7 +3024,7 @@ package body Sem_Ch4 is
         and then Intval (Right_Opnd (Parent (N))) <= Uint_64
       then
          Error_Msg_N
-           ("suspicious MOD value, was '*'* intended'??", Parent (N));
+           ("suspicious MOD value, was '*'* intended'??M?", Parent (N));
       end if;
 
       --  Remaining processing is same as for other arithmetic operators
@@ -2709,7 +3075,7 @@ package body Sem_Ch4 is
 
    procedure Analyze_Null (N : Node_Id) is
    begin
-      Check_SPARK_Restriction ("null is not allowed", N);
+      Check_SPARK_05_Restriction ("null is not allowed", N);
 
       Set_Etype (N, Any_Access);
    end Analyze_Null;
@@ -2747,6 +3113,21 @@ package body Sem_Ch4 is
       Subp_Type   : constant Entity_Id := Etype (Nam);
       Norm_OK     : Boolean;
 
+      function Compatible_Types_In_Predicate
+        (T1 : Entity_Id;
+         T2 : Entity_Id) return Boolean;
+      --  For an Ada 2012 predicate or invariant, a call may mention an
+      --  incomplete type, while resolution of the corresponding predicate
+      --  function may see the full view, as a consequence of the delayed
+      --  resolution of the corresponding expressions. This may occur in
+      --  the body of a predicate function, or in a call to such. Anomalies
+      --  involving private and full views can also happen. In each case,
+      --  rewrite node or add conversions to remove spurious type errors.
+
+      procedure Indicate_Name_And_Type;
+      --  If candidate interpretation matches, indicate name and type of result
+      --  on call node.
+
       function Operator_Hidden_By (Fun : Entity_Id) return Boolean;
       --  There may be a user-defined operator that hides the current
       --  interpretation. We must check for this independently of the
@@ -2760,9 +3141,59 @@ package body Sem_Ch4 is
       --  Finally, The abstract operations on address do not hide the
       --  predefined operator (this is the purpose of making them abstract).
 
-      procedure Indicate_Name_And_Type;
-      --  If candidate interpretation matches, indicate name and type of
-      --  result on call node.
+      -----------------------------------
+      -- Compatible_Types_In_Predicate --
+      -----------------------------------
+
+      function Compatible_Types_In_Predicate
+        (T1 : Entity_Id;
+         T2 : Entity_Id) return Boolean
+      is
+         function Common_Type (T : Entity_Id) return Entity_Id;
+         --  Find non-private full view if any, without going to ancestor type
+         --  (as opposed to Underlying_Type).
+
+         -----------------
+         -- Common_Type --
+         -----------------
+
+         function Common_Type (T : Entity_Id) return Entity_Id is
+         begin
+            if Is_Private_Type (T) and then Present (Full_View (T)) then
+               return Base_Type (Full_View (T));
+            else
+               return Base_Type (T);
+            end if;
+         end Common_Type;
+
+      --  Start of processing for Compatible_Types_In_Predicate
+
+      begin
+         if (Ekind (Current_Scope) = E_Function
+              and then Is_Predicate_Function (Current_Scope))
+           or else
+            (Ekind (Nam) = E_Function
+              and then Is_Predicate_Function (Nam))
+         then
+            if Is_Incomplete_Type (T1)
+              and then Present (Full_View (T1))
+              and then Full_View (T1) = T2
+            then
+               Set_Etype (Formal, Etype (Actual));
+               return True;
+
+            elsif Common_Type (T1) = Common_Type (T2) then
+               Rewrite (Actual, Unchecked_Convert_To (Etype (Formal), Actual));
+               return True;
+
+            else
+               return False;
+            end if;
+
+         else
+            return False;
+         end if;
+      end Compatible_Types_In_Predicate;
 
       ----------------------------
       -- Indicate_Name_And_Type --
@@ -2783,6 +3214,7 @@ package body Sem_Ch4 is
          if not Is_Type (Nam) then
             if Is_Entity_Name (Name (N)) then
                Set_Entity (Name (N), Nam);
+               Set_Etype  (Name (N), Etype (Nam));
 
             elsif Nkind (Name (N)) = N_Selected_Component then
                Set_Entity (Selector_Name (Name (N)),  Nam);
@@ -2809,17 +3241,15 @@ package body Sem_Ch4 is
          Form2 : constant Entity_Id := Next_Formal (Form1);
 
       begin
-         if Ekind (Fun) /= E_Function
-           or else Is_Abstract_Subprogram (Fun)
-         then
+         if Ekind (Fun) /= E_Function or else Is_Abstract_Subprogram (Fun) then
             return False;
 
          elsif not Has_Compatible_Type (Act1, Etype (Form1)) then
             return False;
 
          elsif Present (Form2) then
-            if
-              No (Act2) or else not Has_Compatible_Type (Act2, Etype (Form2))
+            if No (Act2)
+              or else not Has_Compatible_Type (Act2, Etype (Form2))
             then
                return False;
             end if;
@@ -2835,10 +3265,10 @@ package body Sem_Ch4 is
          --  a visible integer type.
 
          return Hides_Op (Fun, Nam)
-           or else Is_Descendent_Of_Address (Etype (Form1))
+           or else Is_Descendant_Of_Address (Etype (Form1))
            or else
              (Present (Form2)
-               and then Is_Descendent_Of_Address (Etype (Form2)));
+               and then Is_Descendant_Of_Address (Etype (Form2)));
       end Operator_Hidden_By;
 
    --  Start of processing for Analyze_One_Call
@@ -2860,16 +3290,22 @@ package body Sem_Ch4 is
          return;
       end if;
 
-      --  An indexing requires at least one actual
+      --  An indexing requires at least one actual. The name of the call cannot
+      --  be an implicit indirect call, so it cannot be a generated explicit
+      --  dereference.
 
       if not Is_Empty_List (Actuals)
         and then
           (Needs_No_Actuals (Nam)
             or else
               (Needs_One_Actual (Nam)
-                 and then Present (Next_Actual (First (Actuals)))))
+                and then Present (Next_Actual (First (Actuals)))))
       then
-         if Is_Array_Type (Subp_Type) then
+         if Is_Array_Type (Subp_Type)
+           and then
+            (Nkind (Name (N)) /= N_Explicit_Dereference
+              or else Comes_From_Source (Name (N)))
+         then
             Is_Indexed := Try_Indexed_Call (N, Nam, Subp_Type, Must_Skip);
 
          elsif Is_Access_Type (Subp_Type)
@@ -2897,7 +3333,7 @@ package body Sem_Ch4 is
       --  Try_Indexed_Call and there is nothing else to do.
 
       if Is_Indexed
-        and then  Nkind (N) = N_Slice
+        and then Nkind (N) = N_Slice
       then
          return;
       end if;
@@ -2908,9 +3344,14 @@ package body Sem_Ch4 is
       if not Norm_OK then
 
          --  If an indirect call is a possible interpretation, indicate
-         --  success to the caller.
+         --  success to the caller. This may be an indexing of an explicit
+         --  dereference of a call that returns an access type (see above).
 
-         if Is_Indirect then
+         if Is_Indirect
+           or else (Is_Indexed
+                     and then Nkind (Name (N)) = N_Explicit_Dereference
+                     and then Comes_From_Source (Name (N)))
+         then
             Success := True;
             return;
 
@@ -3015,21 +3456,110 @@ package body Sem_Ch4 is
             then
                --  The actual can be compatible with the formal, but we must
                --  also check that the context is not an address type that is
-               --  visibly an integer type, as is the case in VMS_64. In this
-               --  case the use of literals is illegal, except in the body of
-               --  descendents of system, where arithmetic operations on
-               --  address are of course used.
+               --  visibly an integer type. In this case the use of literals is
+               --  illegal, except in the body of descendants of system, where
+               --  arithmetic operations on address are of course used.
 
                if Has_Compatible_Type (Actual, Etype (Formal))
                  and then
                   (Etype (Actual) /= Universal_Integer
-                    or else not Is_Descendent_Of_Address (Etype (Formal))
+                    or else not Is_Descendant_Of_Address (Etype (Formal))
                     or else
                       Is_Predefined_File_Name
                         (Unit_File_Name (Get_Source_Unit (N))))
                then
                   Next_Actual (Actual);
                   Next_Formal (Formal);
+
+               --  In Allow_Integer_Address mode, we allow an actual integer to
+               --  match a formal address type and vice versa. We only do this
+               --  if we are certain that an error will otherwise be issued
+
+               elsif Address_Integer_Convert_OK
+                       (Etype (Actual), Etype (Formal))
+                 and then (Report and not Is_Indexed and not Is_Indirect)
+               then
+                  --  Handle this case by introducing an unchecked conversion
+
+                  Rewrite (Actual,
+                           Unchecked_Convert_To (Etype (Formal),
+                             Relocate_Node (Actual)));
+                  Analyze_And_Resolve (Actual, Etype (Formal));
+                  Next_Actual (Actual);
+                  Next_Formal (Formal);
+
+               --  Under relaxed RM semantics silently replace occurrences of
+               --  null by System.Address_Null. We only do this if we know that
+               --  an error will otherwise be issued.
+
+               elsif Null_To_Null_Address_Convert_OK (Actual, Etype (Formal))
+                 and then (Report and not Is_Indexed and not Is_Indirect)
+               then
+                  Replace_Null_By_Null_Address (Actual);
+                  Analyze_And_Resolve (Actual, Etype (Formal));
+                  Next_Actual (Actual);
+                  Next_Formal (Formal);
+
+               elsif Compatible_Types_In_Predicate
+                       (Etype (Formal), Etype (Actual))
+               then
+                  Next_Actual (Actual);
+                  Next_Formal (Formal);
+
+               --  In a complex case where an enclosing generic and a nested
+               --  generic package, both declared with partially parameterized
+               --  formal subprograms with the same names, are instantiated
+               --  with the same type, the types of the actual parameter and
+               --  that of the formal may appear incompatible at first sight.
+
+               --   generic
+               --      type Outer_T is private;
+               --      with function Func (Formal : Outer_T)
+               --                         return ... is <>;
+
+               --   package Outer_Gen is
+               --      generic
+               --         type Inner_T is private;
+               --         with function Func (Formal : Inner_T)   --  (1)
+               --           return ... is <>;
+
+               --      package Inner_Gen is
+               --         function Inner_Func (Formal : Inner_T)  --  (2)
+               --           return ... is (Func (Formal));
+               --      end Inner_Gen;
+               --   end Outer_Generic;
+
+               --   package Outer_Inst is new Outer_Gen (Actual_T);
+               --   package Inner_Inst is new Outer_Inst.Inner_Gen (Actual_T);
+
+               --  In the example above, the type of parameter
+               --  Inner_Func.Formal at (2) is incompatible with the type of
+               --  Func.Formal at (1) in the context of instantiations
+               --  Outer_Inst and Inner_Inst. In reality both types are generic
+               --  actual subtypes renaming base type Actual_T as part of the
+               --  generic prologues for the instantiations.
+
+               --  Recognize this case and add a type conversion to allow this
+               --  kind of generic actual subtype conformance. Note that this
+               --  is done only when the call is non-overloaded because the
+               --  resolution mechanism already has the means to disambiguate
+               --  similar cases.
+
+               elsif not Is_Overloaded (Name (N))
+                 and then Is_Type (Etype (Actual))
+                 and then Is_Type (Etype (Formal))
+                 and then Is_Generic_Actual_Type (Etype (Actual))
+                 and then Is_Generic_Actual_Type (Etype (Formal))
+                 and then Base_Type (Etype (Actual)) =
+                          Base_Type (Etype (Formal))
+               then
+                  Rewrite (Actual,
+                    Convert_To (Etype (Formal), Relocate_Node (Actual)));
+                  Analyze_And_Resolve (Actual, Etype (Formal));
+                  Next_Actual (Actual);
+                  Next_Formal (Formal);
+
+               --  Handle failed type check
 
                else
                   if Debug_Flag_E then
@@ -3041,6 +3571,8 @@ package body Sem_Ch4 is
                      Write_Int (Int (Nam));
                      Write_Eol;
                   end if;
+
+                  --  Comment needed on the following test???
 
                   if Report and not Is_Indexed and not Is_Indirect then
 
@@ -3098,9 +3630,9 @@ package body Sem_Ch4 is
                                   Defining_Identifier
                                     (Associated_Node_For_Itype (Nam));
                            begin
-                              Error_Msg_NE (
-                                "\\  =='> in call to dereference of &#!",
-                                Actual, Access_To_Subprogram_Typ);
+                              Error_Msg_NE
+                                ("\\  =='> in call to dereference of &#!",
+                                 Actual, Access_To_Subprogram_Typ);
                            end;
 
                         else
@@ -3151,36 +3683,40 @@ package body Sem_Ch4 is
          --  Otherwise action depends on operator
 
          case Op_Name is
-            when Name_Op_Add      |
-                 Name_Op_Subtract |
-                 Name_Op_Multiply |
-                 Name_Op_Divide   |
-                 Name_Op_Mod      |
-                 Name_Op_Rem      |
-                 Name_Op_Expon    =>
+            when Name_Op_Add
+               | Name_Op_Divide
+               | Name_Op_Expon
+               | Name_Op_Mod
+               | Name_Op_Multiply
+               | Name_Op_Rem
+               | Name_Op_Subtract
+            =>
                Find_Arithmetic_Types (Act1, Act2, Op_Id, N);
 
-            when Name_Op_And      |
-                 Name_Op_Or       |
-                 Name_Op_Xor      =>
+            when Name_Op_And
+               | Name_Op_Or
+               | Name_Op_Xor
+            =>
                Find_Boolean_Types (Act1, Act2, Op_Id, N);
 
-            when Name_Op_Lt       |
-                 Name_Op_Le       |
-                 Name_Op_Gt       |
-                 Name_Op_Ge       =>
+            when Name_Op_Ge
+               | Name_Op_Gt
+               | Name_Op_Le
+               | Name_Op_Lt
+            =>
                Find_Comparison_Types (Act1, Act2, Op_Id,  N);
 
-            when Name_Op_Eq       |
-                 Name_Op_Ne       =>
+            when Name_Op_Eq
+               | Name_Op_Ne
+            =>
                Find_Equality_Types (Act1, Act2, Op_Id,  N);
 
-            when Name_Op_Concat   =>
+            when Name_Op_Concat =>
                Find_Concatenation_Types (Act1, Act2, Op_Id, N);
 
             --  Is this when others, or should it be an abort???
 
-            when others           =>
+            when others =>
                null;
          end case;
 
@@ -3188,17 +3724,18 @@ package body Sem_Ch4 is
 
       else
          case Op_Name is
-            when Name_Op_Subtract |
-                 Name_Op_Add      |
-                 Name_Op_Abs      =>
+            when Name_Op_Abs
+               | Name_Op_Add
+               | Name_Op_Subtract
+            =>
                Find_Unary_Types (Act1, Op_Id, N);
 
-            when Name_Op_Not      =>
+            when Name_Op_Not =>
                Find_Negation_Types (Act1, Op_Id, N);
 
             --  Is this when others correct, or should it be an abort???
 
-            when others           =>
+            when others =>
                null;
          end case;
       end if;
@@ -3223,7 +3760,7 @@ package body Sem_Ch4 is
       while Present (It.Typ) loop
          if Is_Access_Type (It.Typ) then
             T := Designated_Type (It.Typ);
-            Error_Msg_NW (Warn_On_Dereference, "?implicit dereference", N);
+            Error_Msg_NW (Warn_On_Dereference, "?d?implicit dereference", N);
          else
             T := It.Typ;
          end if;
@@ -3289,7 +3826,7 @@ package body Sem_Ch4 is
                   if Is_Overloadable (Comp) then
                      Add_One_Interp (Sel, Comp, Etype (Comp));
                   else
-                     Set_Entity_With_Style_Check (Sel, Comp);
+                     Set_Entity_With_Checks (Sel, Comp);
                      Generate_Reference (Comp, Sel);
                   end if;
 
@@ -3306,7 +3843,7 @@ package body Sem_Ch4 is
                   then
                      Insert_Explicit_Dereference (Nam);
                      Error_Msg_NW
-                       (Warn_On_Dereference, "?implicit dereference", N);
+                       (Warn_On_Dereference, "?d?implicit dereference", N);
                   end if;
                end if;
 
@@ -3361,7 +3898,7 @@ package body Sem_Ch4 is
 
       if Is_Class_Wide_Type (T) then
          if not Is_Overloaded (Expr) then
-            if  Base_Type (Etype (Expr)) /= Base_Type (T) then
+            if Base_Type (Etype (Expr)) /= Base_Type (T) then
                if Nkind (Expr) = N_Aggregate then
                   Error_Msg_N ("type of aggregate cannot be class-wide", Expr);
                else
@@ -3390,59 +3927,183 @@ package body Sem_Ch4 is
    -----------------------------------
 
    procedure Analyze_Quantified_Expression (N : Node_Id) is
-      Loc : constant Source_Ptr := Sloc (N);
-      Ent : constant Entity_Id :=
-              New_Internal_Entity
-                (E_Loop, Current_Scope, Sloc (N), 'L');
+      function Is_Empty_Range (Typ : Entity_Id) return Boolean;
+      --  If the iterator is part of a quantified expression, and the range is
+      --  known to be statically empty, emit a warning and replace expression
+      --  with its static value. Returns True if the replacement occurs.
 
-      Iterator : Node_Id;
+      function No_Else_Or_Trivial_True (If_Expr : Node_Id) return Boolean;
+      --  Determine whether if expression If_Expr lacks an else part or if it
+      --  has one, it evaluates to True.
+
+      --------------------
+      -- Is_Empty_Range --
+      --------------------
+
+      function Is_Empty_Range (Typ : Entity_Id) return Boolean is
+         Loc : constant Source_Ptr := Sloc (N);
+
+      begin
+         if Is_Array_Type (Typ)
+           and then Compile_Time_Known_Bounds (Typ)
+           and then
+             (Expr_Value (Type_Low_Bound  (Etype (First_Index (Typ)))) >
+              Expr_Value (Type_High_Bound (Etype (First_Index (Typ)))))
+         then
+            Preanalyze_And_Resolve (Condition (N), Standard_Boolean);
+
+            if All_Present (N) then
+               Error_Msg_N
+                 ("??quantified expression with ALL "
+                  & "over a null range has value True", N);
+               Rewrite (N, New_Occurrence_Of (Standard_True, Loc));
+
+            else
+               Error_Msg_N
+                 ("??quantified expression with SOME "
+                  & "over a null range has value False", N);
+               Rewrite (N, New_Occurrence_Of (Standard_False, Loc));
+            end if;
+
+            Analyze (N);
+            return True;
+
+         else
+            return False;
+         end if;
+      end Is_Empty_Range;
+
+      -----------------------------
+      -- No_Else_Or_Trivial_True --
+      -----------------------------
+
+      function No_Else_Or_Trivial_True (If_Expr : Node_Id) return Boolean is
+         Else_Expr : constant Node_Id :=
+                       Next (Next (First (Expressions (If_Expr))));
+      begin
+         return
+           No (Else_Expr)
+             or else (Compile_Time_Known_Value (Else_Expr)
+                       and then Is_True (Expr_Value (Else_Expr)));
+      end No_Else_Or_Trivial_True;
+
+      --  Local variables
+
+      Cond    : constant Node_Id := Condition (N);
+      Loop_Id : Entity_Id;
+      QE_Scop : Entity_Id;
+
+   --  Start of processing for Analyze_Quantified_Expression
 
    begin
-      Set_Etype  (Ent,  Standard_Void_Type);
-      Set_Scope  (Ent, Current_Scope);
-      Set_Parent (Ent, N);
+      Check_SPARK_05_Restriction ("quantified expression is not allowed", N);
 
-      Check_SPARK_Restriction ("quantified expression is not allowed", N);
+      --  Create a scope to emulate the loop-like behavior of the quantified
+      --  expression. The scope is needed to provide proper visibility of the
+      --  loop variable.
 
-      --  If expansion is enabled (and not in Alfa mode), the condition is
-      --  analyzed after rewritten as a loop. So we only need to set the type.
+      QE_Scop := New_Internal_Entity (E_Loop, Current_Scope, Sloc (N), 'L');
+      Set_Etype  (QE_Scop, Standard_Void_Type);
+      Set_Scope  (QE_Scop, Current_Scope);
+      Set_Parent (QE_Scop, N);
 
-      if Operating_Mode /= Check_Semantics
-        and then not Alfa_Mode
-      then
-         Set_Etype (N, Standard_Boolean);
-         return;
+      Push_Scope (QE_Scop);
+
+      --  All constituents are preanalyzed and resolved to avoid untimely
+      --  generation of various temporaries and types. Full analysis and
+      --  expansion is carried out when the quantified expression is
+      --  transformed into an expression with actions.
+
+      if Present (Iterator_Specification (N)) then
+         Preanalyze (Iterator_Specification (N));
+
+         --  Do not proceed with the analysis when the range of iteration is
+         --  empty. The appropriate error is issued by Is_Empty_Range.
+
+         if Is_Entity_Name (Name (Iterator_Specification (N)))
+           and then Is_Empty_Range (Etype (Name (Iterator_Specification (N))))
+         then
+            return;
+         end if;
+
+      else pragma Assert (Present (Loop_Parameter_Specification (N)));
+         declare
+            Loop_Par : constant Node_Id := Loop_Parameter_Specification (N);
+
+         begin
+            Preanalyze (Loop_Par);
+
+            if Nkind (Discrete_Subtype_Definition (Loop_Par)) = N_Function_Call
+              and then Parent (Loop_Par) /= N
+            then
+               --  The parser cannot distinguish between a loop specification
+               --  and an iterator specification. If after pre-analysis the
+               --  proper form has been recognized, rewrite the expression to
+               --  reflect the right kind. This is needed for proper ASIS
+               --  navigation. If expansion is enabled, the transformation is
+               --  performed when the expression is rewritten as a loop.
+
+               Set_Iterator_Specification (N,
+                 New_Copy_Tree (Iterator_Specification (Parent (Loop_Par))));
+
+               Set_Defining_Identifier (Iterator_Specification (N),
+                 Relocate_Node (Defining_Identifier (Loop_Par)));
+               Set_Name (Iterator_Specification (N),
+                 Relocate_Node (Discrete_Subtype_Definition (Loop_Par)));
+               Set_Comes_From_Source (Iterator_Specification (N),
+                 Comes_From_Source (Loop_Parameter_Specification (N)));
+               Set_Loop_Parameter_Specification (N, Empty);
+            end if;
+         end;
       end if;
 
-      if Present (Loop_Parameter_Specification (N)) then
-         Iterator :=
-           Make_Iteration_Scheme (Loc,
-             Loop_Parameter_Specification =>
-               Loop_Parameter_Specification (N));
-      else
-         Iterator :=
-           Make_Iteration_Scheme (Loc,
-              Iterator_Specification =>
-                Iterator_Specification (N));
-      end if;
+      Preanalyze_And_Resolve (Cond, Standard_Boolean);
 
-      Push_Scope (Ent);
-      Set_Parent (Iterator, N);
-      Analyze_Iteration_Scheme (Iterator);
-
-      --  The loop specification may have been converted into an iterator
-      --  specification during its analysis. Update the quantified node
-      --  accordingly.
-
-      if Present (Iterator_Specification (Iterator)) then
-         Set_Iterator_Specification
-           (N, Iterator_Specification (Iterator));
-         Set_Loop_Parameter_Specification (N, Empty);
-      end if;
-
-      Analyze (Condition (N));
       End_Scope;
       Set_Etype (N, Standard_Boolean);
+
+      --  Verify that the loop variable is used within the condition of the
+      --  quantified expression.
+
+      if Present (Iterator_Specification (N)) then
+         Loop_Id := Defining_Identifier (Iterator_Specification (N));
+      else
+         Loop_Id := Defining_Identifier (Loop_Parameter_Specification (N));
+      end if;
+
+      if Warn_On_Suspicious_Contract
+        and then not Referenced (Loop_Id, Cond)
+      then
+         --  Generating C, this check causes spurious warnings on inlined
+         --  postconditions; we can safely disable it because this check
+         --  was previously performed when analyzing the internally built
+         --  postconditions procedure.
+
+         if Modify_Tree_For_C and then In_Inlined_Body then
+            null;
+         else
+            Error_Msg_N ("?T?unused variable &", Loop_Id);
+         end if;
+      end if;
+
+      --  Diagnose a possible misuse of the SOME existential quantifier. When
+      --  we have a quantified expression of the form:
+
+      --    for some X => (if P then Q [else True])
+
+      --  any value for X that makes P False results in the if expression being
+      --  trivially True, and so also results in the quantified expression
+      --  being trivially True.
+
+      if Warn_On_Suspicious_Contract
+        and then not All_Present (N)
+        and then Nkind (Cond) = N_If_Expression
+        and then No_Else_Or_Trivial_True (Cond)
+      then
+         Error_Msg_N ("?T?suspicious expression", N);
+         Error_Msg_N ("\\did you mean (for all X ='> (if P then Q))", N);
+         Error_Msg_N ("\\or (for some X ='> P and then Q) instead'?", N);
+      end if;
    end Analyze_Quantified_Expression;
 
    -------------------
@@ -3560,6 +4221,8 @@ package body Sem_Ch4 is
          Check_Universal_Expression (L);
          Check_Universal_Expression (H);
       end if;
+
+      Check_Function_Writable_Actuals (N);
    end Analyze_Range;
 
    -----------------------
@@ -3575,13 +4238,13 @@ package body Sem_Ch4 is
    begin
       Analyze (P);
 
-      --  An interesting error check, if we take the 'Reference of an object
-      --  for which a pragma Atomic or Volatile has been given, and the type
-      --  of the object is not Atomic or Volatile, then we are in trouble. The
-      --  problem is that no trace of the atomic/volatile status will remain
-      --  for the backend to respect when it deals with the resulting pointer,
-      --  since the pointer type will not be marked atomic (it is a pointer to
-      --  the base type of the object).
+      --  An interesting error check, if we take the 'Ref of an object for
+      --  which a pragma Atomic or Volatile has been given, and the type of the
+      --  object is not Atomic or Volatile, then we are in trouble. The problem
+      --  is that no trace of the atomic/volatile status will remain for the
+      --  backend to respect when it deals with the resulting pointer, since
+      --  the pointer type will not be marked atomic (it is a pointer to the
+      --  base type of the object).
 
       --  It is not clear if that can ever occur, but in case it does, we will
       --  generate an error message. Not clear if this message can ever be
@@ -3599,10 +4262,10 @@ package body Sem_Ch4 is
          T := Etype (P);
 
          if (Has_Atomic_Components   (E)
-               and then not Has_Atomic_Components   (T))
+              and then not Has_Atomic_Components   (T))
            or else
             (Has_Volatile_Components (E)
-               and then not Has_Volatile_Components (T))
+              and then not Has_Volatile_Components (T))
            or else (Is_Atomic   (E) and then not Is_Atomic   (T))
            or else (Is_Volatile (E) and then not Is_Volatile (T))
          then
@@ -3648,9 +4311,11 @@ package body Sem_Ch4 is
       --  In an instance, a component of a private extension may not be visible
       --  while it was visible in the generic. Search candidate scope for a
       --  component with the proper identifier. This is only done if all other
-      --  searches have failed. When the match is found (it always will be),
-      --  the Etype of both N and Sel are set from this component, and the
-      --  entity of Sel is set to reference this component.
+      --  searches have failed. If a match is found, the Etype of both N and
+      --  Sel are set from this component, and the entity of Sel is set to
+      --  reference this component. If no match is found, Entity (Sel) remains
+      --  unset. For a derived type that is an actual of the instance, the
+      --  desired component may be found in any ancestor.
 
       function Has_Mode_Conformant_Spec (Comp : Entity_Id) return Boolean;
       --  It is known that the parent of N denotes a subprogram call. Comp
@@ -3659,29 +4324,50 @@ package body Sem_Ch4 is
       --  conformant. If the parent node is not analyzed yet it may be an
       --  indexed component rather than a function call.
 
+      function Has_Dereference (Nod : Node_Id) return Boolean;
+      --  Check whether prefix includes a dereference at any level.
+
       --------------------------------
       -- Find_Component_In_Instance --
       --------------------------------
 
       procedure Find_Component_In_Instance (Rec : Entity_Id) is
          Comp : Entity_Id;
+         Typ  : Entity_Id;
 
       begin
-         Comp := First_Component (Rec);
-         while Present (Comp) loop
-            if Chars (Comp) = Chars (Sel) then
-               Set_Entity_With_Style_Check (Sel, Comp);
-               Set_Etype (Sel, Etype (Comp));
-               Set_Etype (N,   Etype (Comp));
+         Typ := Rec;
+         while Present (Typ) loop
+            Comp := First_Component (Typ);
+            while Present (Comp) loop
+               if Chars (Comp) = Chars (Sel) then
+                  Set_Entity_With_Checks (Sel, Comp);
+                  Set_Etype (Sel, Etype (Comp));
+                  Set_Etype (N,   Etype (Comp));
+                  return;
+               end if;
+
+               Next_Component (Comp);
+            end loop;
+
+            --  If not found, the component may be declared in the parent
+            --  type or its full view, if any.
+
+            if Is_Derived_Type (Typ) then
+               Typ := Etype (Typ);
+
+               if Is_Private_Type (Typ) then
+                  Typ := Full_View (Typ);
+               end if;
+
+            else
                return;
             end if;
-
-            Next_Component (Comp);
          end loop;
 
-         --  This must succeed because code was legal in the generic
+         --  If we fall through, no match, so no changes made
 
-         raise Program_Error;
+         return;
       end Find_Component_In_Instance;
 
       ------------------------------
@@ -3719,14 +4405,52 @@ package body Sem_Ch4 is
             Next (Param);
          end loop;
 
-         --  One of the specs has additional formals
+         --  One of the specs has additional formals; there is no match, unless
+         --  this may be an indexing of a parameterless call.
+
+         --  Note that when expansion is disabled, the corresponding record
+         --  type of synchronized types is not constructed, so that there is
+         --  no point is attempting an interpretation as a prefixed call, as
+         --  this is bound to fail because the primitive operations will not
+         --  be properly located.
 
          if Present (Comp_Param) or else Present (Param) then
-            return False;
+            if Needs_No_Actuals (Comp)
+              and then Is_Array_Type (Etype (Comp))
+              and then not Expander_Active
+            then
+               return True;
+            else
+               return False;
+            end if;
          end if;
 
          return True;
       end Has_Mode_Conformant_Spec;
+
+      ---------------------
+      -- Has_Dereference --
+      ---------------------
+
+      function Has_Dereference (Nod : Node_Id) return Boolean is
+      begin
+         if Nkind (Nod) = N_Explicit_Dereference then
+            return True;
+
+         --  When expansion is disabled an explicit dereference may not have
+         --  been inserted, but if this is an access type the indirection makes
+         --  the call safe.
+
+         elsif Is_Access_Type (Etype (Nod)) then
+            return True;
+
+         elsif Nkind_In (Nod, N_Indexed_Component, N_Selected_Component) then
+            return Has_Dereference (Prefix (Nod));
+
+         else
+            return False;
+         end if;
+      end Has_Dereference;
 
    --  Start of processing for Analyze_Selected_Component
 
@@ -3768,7 +4492,7 @@ package body Sem_Ch4 is
          --  Normal case of selected component applied to access type
 
          else
-            Error_Msg_NW (Warn_On_Dereference, "?implicit dereference", N);
+            Error_Msg_NW (Warn_On_Dereference, "?d?implicit dereference", N);
 
             if Is_Entity_Name (Name) then
                Pent := Entity (Name);
@@ -3811,22 +4535,10 @@ package body Sem_Ch4 is
       --  If the non-limited view is itself an incomplete type, get the
       --  full view if available.
 
-      if Is_Incomplete_Type (Prefix_Type)
-        and then From_With_Type (Prefix_Type)
-        and then Present (Non_Limited_View (Prefix_Type))
+      if From_Limited_With (Prefix_Type)
+        and then Has_Non_Limited_View (Prefix_Type)
       then
          Prefix_Type := Get_Full_View (Non_Limited_View (Prefix_Type));
-
-         if Nkind (N) = N_Explicit_Dereference then
-            Set_Etype (Prefix (N), Prefix_Type);
-         end if;
-
-      elsif Ekind (Prefix_Type) = E_Class_Wide_Type
-        and then From_With_Type (Prefix_Type)
-        and then Present (Non_Limited_View (Etype (Prefix_Type)))
-      then
-         Prefix_Type :=
-           Class_Wide_Type (Non_Limited_View (Etype (Prefix_Type)));
 
          if Nkind (N) = N_Explicit_Dereference then
             Set_Etype (Prefix (N), Prefix_Type);
@@ -3873,34 +4585,33 @@ package body Sem_Ch4 is
          --  subsequent semantic checks might examine the original node.
 
          Set_Entity (Sel, Comp);
-         Rewrite (Selector_Name (N),
-           New_Occurrence_Of (Comp, Sloc (N)));
+         Rewrite (Selector_Name (N), New_Occurrence_Of (Comp, Sloc (N)));
          Set_Original_Discriminant (Selector_Name (N), Comp);
          Set_Etype (N, Etype (Comp));
          Check_Implicit_Dereference (N, Etype (Comp));
 
          if Is_Access_Type (Etype (Name)) then
             Insert_Explicit_Dereference (Name);
-            Error_Msg_NW (Warn_On_Dereference, "?implicit dereference", N);
+            Error_Msg_NW (Warn_On_Dereference, "?d?implicit dereference", N);
          end if;
 
       elsif Is_Record_Type (Prefix_Type) then
 
-         --  Find component with given name
-         --  In an instance, if the node is known as a prefixed call, do
-         --  not examine components whose visibility may be accidental.
+         --  Find component with given name. In an instance, if the node is
+         --  known as a prefixed call, do not examine components whose
+         --  visibility may be accidental.
 
          while Present (Comp) and then not Is_Prefixed_Call (N) loop
             if Chars (Comp) = Chars (Sel)
-              and then Is_Visible_Component (Comp)
+              and then Is_Visible_Component (Comp, N)
             then
-               Set_Entity_With_Style_Check (Sel, Comp);
+               Set_Entity_With_Checks (Sel, Comp);
                Set_Etype (Sel, Etype (Comp));
 
                if Ekind (Comp) = E_Discriminant then
                   if Is_Unchecked_Union (Base_Type (Prefix_Type)) then
                      Error_Msg_N
-                       ("cannot reference discriminant of Unchecked_Union",
+                       ("cannot reference discriminant of unchecked union",
                         Sel);
                   end if;
 
@@ -3931,7 +4642,7 @@ package body Sem_Ch4 is
                --    end Pkg;                       --  Comp is not visible
 
                if Nkind (Name) = N_Explicit_Dereference
-                 and then From_With_Type (Etype (Prefix (Name)))
+                 and then From_Limited_With (Etype (Prefix (Name)))
                  and then not Is_Potentially_Use_Visible (Etype (Name))
                  and then Nkind (Parent (Cunit_Entity (Current_Sem_Unit))) =
                             N_Package_Specification
@@ -3964,13 +4675,11 @@ package body Sem_Ch4 is
                        and then Nkind (Name) /= N_Selected_Component)
                      or else
                       (Nkind (Parent_N) = N_Attribute_Reference
-                         and then (Attribute_Name (Parent_N) = Name_First
-                                     or else
-                                   Attribute_Name (Parent_N) = Name_Last
-                                     or else
-                                   Attribute_Name (Parent_N) = Name_Length
-                                     or else
-                                   Attribute_Name (Parent_N) = Name_Range)))
+                        and then
+                          Nam_In (Attribute_Name (Parent_N), Name_First,
+                                                             Name_Last,
+                                                             Name_Length,
+                                                             Name_Range)))
                then
                   Set_Etype (N, Etype (Comp));
 
@@ -4077,7 +4786,7 @@ package body Sem_Ch4 is
          while Present (Comp) loop
             if Chars (Comp) = Chars (Sel) then
                if Ekind (Comp) = E_Discriminant then
-                  Set_Entity_With_Style_Check (Sel, Comp);
+                  Set_Entity_With_Checks (Sel, Comp);
                   Generate_Reference (Comp, Sel);
 
                   Set_Etype (Sel, Etype (Comp));
@@ -4126,8 +4835,15 @@ package body Sem_Ch4 is
          In_Scope := In_Open_Scopes (Prefix_Type);
 
          while Present (Comp) loop
+
+            --  Do not examine private operations of the type if not within
+            --  its scope.
+
             if Chars (Comp) = Chars (Sel) then
-               if Is_Overloadable (Comp) then
+               if Is_Overloadable (Comp)
+                 and then (In_Scope
+                            or else Comp /= First_Private_Entity (Type_To_Use))
+               then
                   Add_One_Interp (Sel, Comp, Etype (Comp));
 
                   --  If the prefix is tagged, the correct interpretation may
@@ -4137,10 +4853,9 @@ package body Sem_Ch4 is
                   --  a visible entity is found.
 
                   if Is_Tagged_Type (Prefix_Type)
-                    and then
-                      Nkind_In (Parent (N), N_Procedure_Call_Statement,
-                                            N_Function_Call,
-                                            N_Indexed_Component)
+                    and then Nkind_In (Parent (N), N_Function_Call,
+                                                   N_Indexed_Component,
+                                                   N_Procedure_Call_Statement)
                     and then Has_Mode_Conformant_Spec (Comp)
                   then
                      Has_Candidate := True;
@@ -4154,7 +4869,7 @@ package body Sem_Ch4 is
                             and then not Is_Protected_Type (Prefix_Type)
                             and then Is_Entity_Name (Name))
                then
-                  Set_Entity_With_Style_Check (Sel, Comp);
+                  Set_Entity_With_Checks (Sel, Comp);
                   Generate_Reference (Comp, Sel);
 
                   --  The selector is not overloadable, so we have a candidate
@@ -4179,7 +4894,7 @@ package body Sem_Ch4 is
                if Is_Access_Type (Etype (Name)) then
                   Insert_Explicit_Dereference (Name);
                   Error_Msg_NW
-                    (Warn_On_Dereference, "?implicit dereference", N);
+                    (Warn_On_Dereference, "?d?implicit dereference", N);
                end if;
             end if;
 
@@ -4190,13 +4905,40 @@ package body Sem_Ch4 is
                    Comp = First_Private_Entity (Base_Type (Prefix_Type));
          end loop;
 
+         --  If the scope is a current instance, the prefix cannot be an
+         --  expression of the same type, unless the selector designates a
+         --  public operation (otherwise that would represent an attempt to
+         --  reach an internal entity of another synchronized object).
+         --  This is legal if prefix is an access to such type and there is
+         --  a dereference, or is a component with a dereferenced prefix.
+         --  It is also legal if the prefix is a component of a task type,
+         --  and the selector is one of the task operations.
+
+         if In_Scope
+           and then not Is_Entity_Name (Name)
+           and then not Has_Dereference (Name)
+         then
+            if Is_Task_Type (Prefix_Type)
+              and then Present (Entity (Sel))
+              and then Ekind_In (Entity (Sel), E_Entry, E_Entry_Family)
+            then
+               null;
+
+            else
+               Error_Msg_NE
+                 ("invalid reference to internal operation of some object of "
+                  & "type &", N, Type_To_Use);
+               Set_Entity (Sel, Any_Id);
+               Set_Etype  (Sel, Any_Type);
+               return;
+            end if;
+         end if;
+
          --  If there is no visible entity with the given name or none of the
          --  visible entities are plausible interpretations, check whether
          --  there is some other primitive operation with that name.
 
-         if Ada_Version >= Ada_2005
-           and then Is_Tagged_Type (Prefix_Type)
-         then
+         if Ada_Version >= Ada_2005 and then Is_Tagged_Type (Prefix_Type) then
             if (Etype (N) = Any_Type
                   or else not Has_Candidate)
               and then Try_Object_Operation (N)
@@ -4228,16 +4970,24 @@ package body Sem_Ch4 is
             if Has_Candidate
               and then Is_Concurrent_Type (Prefix_Type)
               and then Nkind (Parent (N)) = N_Procedure_Call_Statement
-
+            then
                --  Duplicate the call. This is required to avoid problems with
                --  the tree transformations performed by Try_Object_Operation.
+               --  Set properly the parent of the copied call, because it is
+               --  about to be reanalyzed.
 
-              and then
-                Try_Object_Operation
-                  (N            => Sinfo.Name (New_Copy_Tree (Parent (N))),
-                   CW_Test_Only => True)
-            then
-               return;
+               declare
+                  Par : constant Node_Id := New_Copy_Tree (Parent (N));
+
+               begin
+                  Set_Parent (Par, Parent (Parent (N)));
+
+                  if Try_Object_Operation
+                       (Sinfo.Name (Par), CW_Test_Only => True)
+                  then
+                     return;
+                  end if;
+               end;
             end if;
          end if;
 
@@ -4282,41 +5032,82 @@ package body Sem_Ch4 is
 
             Check_Misspelled_Selector (Type_To_Use, Sel);
 
+         --  If this is a derived formal type, the parent may have different
+         --  visibility at this point. Try for an inherited component before
+         --  reporting an error.
+
          elsif Is_Generic_Type (Prefix_Type)
            and then Ekind (Prefix_Type) = E_Record_Type_With_Private
            and then Prefix_Type /= Etype (Prefix_Type)
            and then Is_Record_Type (Etype (Prefix_Type))
          then
-            --  If this is a derived formal type, the parent may have
-            --  different visibility at this point. Try for an inherited
-            --  component before reporting an error.
-
             Set_Etype (Prefix (N), Etype (Prefix_Type));
             Analyze_Selected_Component (N);
             return;
 
-         --  Similarly, if this is the actual for a formal derived type, the
-         --  component inherited from the generic parent may not be visible
-         --  in the actual, but the selected component is legal.
+         --  Similarly, if this is the actual for a formal derived type, or
+         --  a derived type thereof, the component inherited from the generic
+         --  parent may not be visible in the actual, but the selected
+         --  component is legal. Climb up the derivation chain of the generic
+         --  parent type until we find the proper ancestor type.
 
-         elsif Ekind (Prefix_Type) = E_Record_Subtype_With_Private
-           and then Is_Generic_Actual_Type (Prefix_Type)
-           and then Present (Full_View (Prefix_Type))
-         then
+         elsif In_Instance and then Is_Tagged_Type (Prefix_Type) then
+            declare
+               Par : Entity_Id := Prefix_Type;
+            begin
+               --  Climb up derivation chain to generic actual subtype
 
-            Find_Component_In_Instance
-              (Generic_Parent_Type (Parent (Prefix_Type)));
-            return;
+               while not Is_Generic_Actual_Type (Par) loop
+                  if Ekind (Par) = E_Record_Type then
+                     Par := Parent_Subtype (Par);
+                     exit when No (Par);
+                  else
+                     exit when Par = Etype (Par);
+                     Par := Etype (Par);
+                  end if;
+               end loop;
 
-         --  Finally, the formal and the actual may be private extensions,
-         --  but the generic is declared in a child unit of the parent, and
-         --  an additional step is needed to retrieve the proper scope.
+               if Present (Par) and then Is_Generic_Actual_Type (Par) then
 
-         elsif In_Instance
-           and then Present (Parent_Subtype (Etype (Base_Type (Prefix_Type))))
-         then
-            Find_Component_In_Instance
-              (Parent_Subtype (Etype (Base_Type (Prefix_Type))));
+                  --  Now look for component in ancestor types
+
+                  Par := Generic_Parent_Type (Declaration_Node (Par));
+                  loop
+                     Find_Component_In_Instance (Par);
+                     exit when Present (Entity (Sel))
+                       or else Par = Etype (Par);
+                     Par := Etype (Par);
+                  end loop;
+
+               --  Another special case: the type is an extension of a private
+               --  type T, is an actual in an instance, and we are in the body
+               --  of the instance, so the generic body had a full view of the
+               --  type declaration for T or of some ancestor that defines the
+               --  component in question.
+
+               elsif Is_Derived_Type (Type_To_Use)
+                 and then Used_As_Generic_Actual (Type_To_Use)
+                 and then In_Instance_Body
+               then
+                  Find_Component_In_Instance (Parent_Subtype (Type_To_Use));
+
+               --  In ASIS mode the generic parent type may be absent. Examine
+               --  the parent type directly for a component that may have been
+               --  visible in a parent generic unit.
+
+               elsif Is_Derived_Type (Prefix_Type) then
+                  Par := Etype (Prefix_Type);
+                  Find_Component_In_Instance (Par);
+               end if;
+            end;
+
+            --  The search above must have eventually succeeded, since the
+            --  selected component was legal in the generic.
+
+            if No (Entity (Sel)) then
+               raise Program_Error;
+            end if;
+
             return;
 
          --  Component not found, specialize error message when appropriate
@@ -4335,18 +5126,24 @@ package body Sem_Ch4 is
                   if Chars (Comp) = Chars (Sel)
                     and then Is_Visible_Component (Comp)
                   then
-                     Set_Entity_With_Style_Check (Sel, Comp);
+                     Set_Entity_With_Checks (Sel, Comp);
                      Generate_Reference (Comp, Sel);
                      Set_Etype (Sel, Etype (Comp));
                      Set_Etype (N,   Etype (Comp));
 
-                     --  Emit appropriate message. Gigi will replace the
-                     --  node subsequently with the appropriate Raise.
+                     --  Emit appropriate message. The node will be replaced
+                     --  by an appropriate raise statement.
+
+                     --  Note that in SPARK mode, as with all calls to apply a
+                     --  compile time constraint error, this will be made into
+                     --  an error to simplify the processing of the formal
+                     --  verification backend.
 
                      Apply_Compile_Time_Constraint_Error
-                       (N, "component not present in }?",
+                       (N, "component not present in }??",
                         CE_Discriminant_Check_Failed,
                         Ent => Prefix_Type, Rep => False);
+
                      Set_Raises_Constraint_Error (N);
                      return;
                   end if;
@@ -4366,7 +5163,7 @@ package body Sem_Ch4 is
                   Inc : constant Entity_Id := First_Subtype (Type_To_Use);
 
                begin
-                  if From_With_Type (Scope (Type_To_Use)) then
+                  if From_Limited_With (Scope (Type_To_Use)) then
                      Error_Msg_NE
                        ("\limited view of& has no components", N, Inc);
 
@@ -4449,9 +5246,10 @@ package body Sem_Ch4 is
    -------------------
 
    procedure Analyze_Slice (N : Node_Id) is
-      P          : constant Node_Id := Prefix (N);
       D          : constant Node_Id := Discrete_Range (N);
+      P          : constant Node_Id := Prefix (N);
       Array_Type : Entity_Id;
+      Index_Type : Entity_Id;
 
       procedure Analyze_Overloaded_Slice;
       --  If the prefix is overloaded, select those interpretations that
@@ -4475,7 +5273,8 @@ package body Sem_Ch4 is
 
             if Is_Access_Type (Typ) then
                Typ := Designated_Type (Typ);
-               Error_Msg_NW (Warn_On_Dereference, "?implicit dereference", N);
+               Error_Msg_NW
+                 (Warn_On_Dereference, "?d?implicit dereference", N);
             end if;
 
             if Is_Array_Type (Typ)
@@ -4497,7 +5296,7 @@ package body Sem_Ch4 is
 
    begin
       if Comes_From_Source (N) then
-         Check_SPARK_Restriction ("slice is not allowed", N);
+         Check_SPARK_05_Restriction ("slice is not allowed", N);
       end if;
 
       Analyze (P);
@@ -4512,7 +5311,7 @@ package body Sem_Ch4 is
 
          if Is_Access_Type (Array_Type) then
             Array_Type := Designated_Type (Array_Type);
-            Error_Msg_NW (Warn_On_Dereference, "?implicit dereference", N);
+            Error_Msg_NW (Warn_On_Dereference, "?d?implicit dereference", N);
          end if;
 
          if not Is_Array_Type (Array_Type) then
@@ -4522,13 +5321,18 @@ package body Sem_Ch4 is
             Error_Msg_N
               ("type is not one-dimensional array in slice prefix", N);
 
-         elsif not
-           Has_Compatible_Type (D, Etype (First_Index (Array_Type)))
-         then
-            Wrong_Type (D, Etype (First_Index (Array_Type)));
-
          else
-            Set_Etype (N, Array_Type);
+            if Ekind (Array_Type) = E_String_Literal_Subtype then
+               Index_Type := Etype (String_Literal_Low_Bound (Array_Type));
+            else
+               Index_Type := Etype (First_Index (Array_Type));
+            end if;
+
+            if not Has_Compatible_Type (D, Index_Type) then
+               Wrong_Type (D, Index_Type);
+            else
+               Set_Etype (N, Array_Type);
+            end if;
          end if;
       end if;
    end Analyze_Slice;
@@ -4539,14 +5343,13 @@ package body Sem_Ch4 is
 
    procedure Analyze_Type_Conversion (N : Node_Id) is
       Expr : constant Node_Id := Expression (N);
-      T    : Entity_Id;
+      Typ  : Entity_Id;
 
    begin
-      --  If Conversion_OK is set, then the Etype is already set, and the
-      --  only processing required is to analyze the expression. This is
-      --  used to construct certain "illegal" conversions which are not
-      --  allowed by Ada semantics, but can be handled OK by Gigi, see
-      --  Sinfo for further details.
+      --  If Conversion_OK is set, then the Etype is already set, and the only
+      --  processing required is to analyze the expression. This is used to
+      --  construct certain "illegal" conversions which are not allowed by Ada
+      --  semantics, but can be handled by Gigi, see Sinfo for further details.
 
       if Conversion_OK (N) then
          Analyze (Expr);
@@ -4557,9 +5360,9 @@ package body Sem_Ch4 is
       --  checks to make sure the argument of the conversion is appropriate.
 
       Find_Type (Subtype_Mark (N));
-      T := Entity (Subtype_Mark (N));
-      Set_Etype (N, T);
-      Check_Fully_Declared (T, N);
+      Typ := Entity (Subtype_Mark (N));
+      Set_Etype (N, Typ);
+      Check_Fully_Declared (Typ, N);
       Analyze_Expression (Expr);
       Validate_Remote_Type_Type_Conversion (N);
 
@@ -4573,9 +5376,9 @@ package body Sem_Ch4 is
       --  error message. Conversely, constant-folding in the generic may
       --  transform the argument of a conversion into a string literal, which
       --  is legal. Therefore the following tests are not performed in an
-      --  instance.
+      --  instance. The same applies to an inlined body.
 
-      elsif In_Instance then
+      elsif In_Instance or In_Inlined_Body then
          return;
 
       elsif Nkind (Expr) = N_Null then
@@ -4597,7 +5400,7 @@ package body Sem_Ch4 is
 
       elsif Nkind (Expr) = N_Character_Literal then
          if Ada_Version = Ada_83 then
-            Resolve (Expr, T);
+            Resolve (Expr, Typ);
          else
             Error_Msg_N ("argument of conversion cannot be character literal",
               N);
@@ -4605,13 +5408,26 @@ package body Sem_Ch4 is
          end if;
 
       elsif Nkind (Expr) = N_Attribute_Reference
-        and then
-          (Attribute_Name (Expr) = Name_Access            or else
-           Attribute_Name (Expr) = Name_Unchecked_Access  or else
-           Attribute_Name (Expr) = Name_Unrestricted_Access)
+        and then Nam_In (Attribute_Name (Expr), Name_Access,
+                                                Name_Unchecked_Access,
+                                                Name_Unrestricted_Access)
       then
          Error_Msg_N ("argument of conversion cannot be access", N);
          Error_Msg_N ("\use qualified expression instead", N);
+      end if;
+
+      --  A formal parameter of a specific tagged type whose related subprogram
+      --  is subject to pragma Extensions_Visible with value "False" cannot
+      --  appear in a class-wide conversion (SPARK RM 6.1.7(3)). Do not check
+      --  internally generated expressions.
+
+      if Is_Class_Wide_Type (Typ)
+        and then Comes_From_Source (Expr)
+        and then Is_EVF_Expression (Expr)
+      then
+         Error_Msg_N
+           ("formal parameter cannot be converted to class-wide type when "
+            & "Extensions_Visible is False", Expr);
       end if;
    end Analyze_Type_Conversion;
 
@@ -4709,13 +5525,13 @@ package body Sem_Ch4 is
             then
                Add_One_Interp (N, Op_Id, Etype (Op_Id));
 
-               --  If the left operand is overloaded, indicate that the
-               --  current type is a viable candidate. This is redundant
-               --  in most cases, but for equality and comparison operators
-               --  where the context does not impose a type on the operands,
-               --  setting the proper type is necessary to avoid subsequent
-               --  ambiguities during resolution, when both user-defined and
-               --  predefined operators may be candidates.
+               --  If the left operand is overloaded, indicate that the current
+               --  type is a viable candidate. This is redundant in most cases,
+               --  but for equality and comparison operators where the context
+               --  does not impose a type on the operands, setting the proper
+               --  type is necessary to avoid subsequent ambiguities during
+               --  resolution, when both user-defined and predefined operators
+               --  may be candidates.
 
                if Is_Overloaded (Left_Opnd (N)) then
                   Set_Etype (Left_Opnd (N), Etype (F1));
@@ -4783,7 +5599,7 @@ package body Sem_Ch4 is
       --  (multiplication or division) that should hide the corresponding
       --  predefined operator. Used to implement Ada 2005 AI-264, to make
       --  such operators more visible and therefore useful.
-
+      --
       --  If the name of the operation is an expanded name with prefix
       --  Standard, the predefined universal fixed operator is available,
       --  as specified by AI-420 (RM 4.5.5 (19.1/2)).
@@ -4863,8 +5679,7 @@ package body Sem_Ch4 is
    --  Start of processing for Check_Arithmetic_Pair
 
    begin
-      if Op_Name = Name_Op_Add or else Op_Name = Name_Op_Subtract then
-
+      if Nam_In (Op_Name, Name_Op_Add, Name_Op_Subtract) then
          if Is_Numeric_Type (T1)
            and then Is_Numeric_Type (T2)
            and then (Covers (T1 => T1, T2 => T2)
@@ -4874,17 +5689,15 @@ package body Sem_Ch4 is
             Add_One_Interp (N, Op_Id, Specific_Type (T1, T2));
          end if;
 
-      elsif Op_Name = Name_Op_Multiply or else Op_Name = Name_Op_Divide then
-
+      elsif Nam_In (Op_Name, Name_Op_Multiply, Name_Op_Divide) then
          if Is_Fixed_Point_Type (T1)
-           and then (Is_Fixed_Point_Type (T2)
-                       or else T2 = Universal_Real)
+           and then (Is_Fixed_Point_Type (T2) or else T2 = Universal_Real)
          then
             --  If Treat_Fixed_As_Integer is set then the Etype is already set
             --  and no further processing is required (this is the case of an
             --  operator constructed by Exp_Fixd for a fixed point operation)
             --  Otherwise add one interpretation with universal fixed result
-            --  If the operator is given in  functional notation, it comes
+            --  If the operator is given in functional notation, it comes
             --  from source and Fixed_As_Integer cannot apply.
 
             if (Nkind (N) not in N_Op
@@ -4916,7 +5729,7 @@ package body Sem_Ch4 is
 
          elsif Is_Fixed_Point_Type (T1)
            and then (Base_Type (T2) = Base_Type (Standard_Integer)
-                       or else T2 = Universal_Integer)
+                      or else T2 = Universal_Integer)
          then
             Add_One_Interp (N, Op_Id, T1);
 
@@ -4933,7 +5746,7 @@ package body Sem_Ch4 is
 
          elsif Is_Fixed_Point_Type (T2)
            and then (Base_Type (T1) = Base_Type (Standard_Integer)
-                       or else T1 = Universal_Integer)
+                      or else T1 = Universal_Integer)
            and then Op_Name = Name_Op_Multiply
          then
             Add_One_Interp (N, Op_Id, T2);
@@ -5003,11 +5816,11 @@ package body Sem_Ch4 is
       Comp : Entity_Id;
 
    begin
-      --  All the components of the prefix of selector Sel are matched
-      --  against  Sel and a count is maintained of possible misspellings.
-      --  When at the end of the analysis there are one or two (not more!)
-      --  possible misspellings, these misspellings will be suggested as
-      --  possible correction.
+      --  All the components of the prefix of selector Sel are matched against
+      --  Sel and a count is maintained of possible misspellings. When at
+      --  the end of the analysis there are one or two (not more) possible
+      --  misspellings, these misspellings will be suggested as possible
+      --  correction.
 
       if not (Is_Private_Type (Prefix) or else Is_Record_Type (Prefix)) then
 
@@ -5025,7 +5838,7 @@ package body Sem_Ch4 is
                case Nr_Of_Suggestions is
                   when 1      => Suggestion_1 := Comp;
                   when 2      => Suggestion_2 := Comp;
-                  when others => exit;
+                  when others => null;
                end case;
             end if;
          end if;
@@ -5082,7 +5895,7 @@ package body Sem_Ch4 is
             --  usage of an entity from the limited view.
 
             if not Analyzed (Etype (Actual))
-             and then From_With_Type (Etype (Actual))
+             and then From_Limited_With (Etype (Actual))
             then
                Error_Msg_Qual_Level := 1;
                Error_Msg_NE
@@ -5095,8 +5908,41 @@ package body Sem_Ch4 is
          end loop;
       end if;
 
-      --   Analyze each candidate call again, with full error reporting
-      --   for each.
+      --  Before listing the possible candidates, check whether this is
+      --  a prefix of a selected component that has been rewritten as a
+      --  parameterless function call because there is a callable candidate
+      --  interpretation. If there is a hidden package in the list of homonyms
+      --  of the function name (bad programming style in any case) suggest that
+      --  this is the intended entity.
+
+      if No (Parameter_Associations (N))
+        and then Nkind (Parent (N)) = N_Selected_Component
+        and then Nkind (Parent (Parent (N))) in N_Declaration
+        and then Is_Overloaded (Nam)
+      then
+         declare
+            Ent : Entity_Id;
+
+         begin
+            Ent := Current_Entity (Nam);
+            while Present (Ent) loop
+               if Ekind (Ent) = E_Package then
+                  Error_Msg_N
+                    ("no legal interpretations as function call,!", Nam);
+                  Error_Msg_NE ("\package& is not visible", N, Ent);
+
+                  Rewrite (Parent (N),
+                    New_Occurrence_Of (Any_Type, Sloc (N)));
+                  return;
+               end if;
+
+               Ent := Homonym (Ent);
+            end loop;
+         end;
+      end if;
+
+      --  Analyze each candidate call again, with full error reporting for
+      --  each.
 
       Error_Msg_N
         ("no candidate interpretations match the actuals:!", Nam);
@@ -5339,21 +6185,17 @@ package body Sem_Ch4 is
          --  universal, the context will impose the correct type.
 
          if Present (Scop)
-            and then not Defined_In_Scope (T1, Scop)
-            and then T1 /= Universal_Integer
-            and then T1 /= Universal_Real
-            and then T1 /= Any_String
-            and then T1 /= Any_Composite
+           and then not Defined_In_Scope (T1, Scop)
+           and then T1 /= Universal_Integer
+           and then T1 /= Universal_Real
+           and then T1 /= Any_String
+           and then T1 /= Any_Composite
          then
             return;
          end if;
 
-         if Valid_Comparison_Arg (T1)
-           and then Has_Compatible_Type (R, T1)
-         then
-            if Found
-              and then Base_Type (T1) /= Base_Type (T_F)
-            then
+         if Valid_Comparison_Arg (T1) and then Has_Compatible_Type (R, T1) then
+            if Found and then Base_Type (T1) /= Base_Type (T_F) then
                It := Disambiguate (L, I_F, Index, Any_Type);
 
                if It = No_Interp then
@@ -5383,9 +6225,7 @@ package body Sem_Ch4 is
       --  If left operand is aggregate, the right operand has to
       --  provide a usable type for it.
 
-      if Nkind (L) = N_Aggregate
-        and then Nkind (R) /= N_Aggregate
-      then
+      if Nkind (L) = N_Aggregate and then Nkind (R) /= N_Aggregate then
          Find_Comparison_Types (L => R, R => L, Op_Id => Op_Id, N => N);
          return;
       end if;
@@ -5432,12 +6272,17 @@ package body Sem_Ch4 is
       It    : Interp;
 
    begin
-      if T1 = Universal_Integer
-        or else T1 = Universal_Real
+      if T1 = Universal_Integer or else T1 = Universal_Real
+
+        --  If the left operand of an equality operator is null, the visibility
+        --  of the operator must be determined from the interpretation of the
+        --  right operand. This processing must be done for Any_Access, which
+        --  is the internal representation of the type of the literal null.
+
+        or else T1 = Any_Access
       then
          if not Is_Overloaded (R) then
-            Add_One_Interp
-              (N, Op_Id, Standard_Boolean, Base_Type (Etype (R)));
+            Add_One_Interp (N, Op_Id, Standard_Boolean, Base_Type (Etype (R)));
          else
             Get_First_Interp (R, Index, It);
             while Present (It.Typ) loop
@@ -5517,6 +6362,7 @@ package body Sem_Ch4 is
          --  universal, the context will impose the correct type. An anonymous
          --  type for a 'Access reference is also universal in this sense, as
          --  the actual type is obtained from context.
+
          --  In Ada 2005, the equality operator for anonymous access types
          --  is declared in Standard, and preference rules apply to it.
 
@@ -5548,19 +6394,26 @@ package body Sem_Ch4 is
          --  correct. If an operand is universal it is compatible with any
          --  numeric type.
 
-         --  In Ada 2005, the equality on anonymous access types is declared
-         --  in Standard, and is always visible.
-
          elsif In_Open_Scopes (Scope (Bas))
            or else Is_Potentially_Use_Visible (Bas)
            or else In_Use (Bas)
            or else (In_Use (Scope (Bas)) and then not Is_Hidden (Bas))
+
+            --  In an instance, the type may have been immediately visible.
+            --  Either the types are compatible, or one operand is universal
+            --  (numeric or null).
+
            or else (In_Instance
                      and then
                        (First_Subtype (T1) = First_Subtype (Etype (R))
+                         or else Nkind (R) = N_Null
                          or else
                            (Is_Numeric_Type (T1)
                              and then Is_Universal_Numeric_Type (Etype (R)))))
+
+           --  In Ada 2005, the equality on anonymous access types is declared
+           --  in Standard, and is always visible.
+
            or else Ekind (T1) = E_Anonymous_Access_Type
          then
             null;
@@ -5584,8 +6437,24 @@ package body Sem_Ch4 is
             return;
          end if;
 
+         --  If the right operand has a type compatible with T1, check for an
+         --  acceptable interpretation, unless T1 is limited (no predefined
+         --  equality available), or this is use of a "/=" for a tagged type.
+         --  In the latter case, possible interpretations of equality need
+         --  to be considered, we don't want the default inequality declared
+         --  in Standard to be chosen, and the "/=" will be rewritten as a
+         --  negation of "=" (see the end of Analyze_Equality_Op). This ensures
+         --  that rewriting happens during analysis rather than being
+         --  delayed until expansion (this is needed for ASIS, which only sees
+         --  the unexpanded tree). Note that if the node is N_Op_Ne, but Op_Id
+         --  is Name_Op_Eq then we still proceed with the interpretation,
+         --  because that indicates the potential rewriting case where the
+         --  interpretation to consider is actually "=" and the node may be
+         --  about to be rewritten by Analyze_Equality_Op.
+
          if T1 /= Standard_Void_Type
            and then Has_Compatible_Type (R, T1)
+
            and then
              ((not Is_Limited_Type (T1)
                 and then not Is_Limited_Composite (T1))
@@ -5594,6 +6463,11 @@ package body Sem_Ch4 is
                  (Is_Array_Type (T1)
                    and then not Is_Limited_Type (Component_Type (T1))
                    and then Available_Full_View_Of_Component (T1)))
+
+           and then
+             (Nkind (N) /= N_Op_Ne
+               or else not Is_Tagged_Type (T1)
+               or else Chars (Op_Id) = Name_Op_Eq)
          then
             if Found
               and then Base_Type (T1) /= Base_Type (T_F)
@@ -5763,12 +6637,12 @@ package body Sem_Ch4 is
                 (Base_Type (Etype (First_Formal (Hom))) = Cls_Type
                   or else
                     (Is_Access_Type (Etype (First_Formal (Hom)))
-                       and then
-                         Ekind (Etype (First_Formal (Hom))) =
-                           E_Anonymous_Access_Type
-                       and then
-                         Base_Type
-                           (Designated_Type (Etype (First_Formal (Hom)))) =
+                      and then
+                        Ekind (Etype (First_Formal (Hom))) =
+                          E_Anonymous_Access_Type
+                      and then
+                        Base_Type
+                          (Designated_Type (Etype (First_Formal (Hom)))) =
                                                                 Cls_Type))
             then
                Add_One_Interp (Op, Hom, Etype (Hom));
@@ -5797,14 +6671,37 @@ package body Sem_Ch4 is
    begin
       if not Is_Overloaded (R) then
          if Is_Numeric_Type (Etype (R)) then
-            Add_One_Interp (N, Op_Id, Base_Type (Etype (R)));
+
+            --  In an instance a generic actual may be a numeric type even if
+            --  the formal in the generic unit was not. In that case, the
+            --  predefined operator was not a possible interpretation in the
+            --  generic, and cannot be one in the instance, unless the operator
+            --  is an actual of an instance.
+
+            if In_Instance
+              and then
+                not Is_Numeric_Type (Corresponding_Generic_Type (Etype (R)))
+            then
+               null;
+            else
+               Add_One_Interp (N, Op_Id, Base_Type (Etype (R)));
+            end if;
          end if;
 
       else
          Get_First_Interp (R, Index, It);
          while Present (It.Typ) loop
             if Is_Numeric_Type (It.Typ) then
-               Add_One_Interp (N, Op_Id, Base_Type (It.Typ));
+               if In_Instance
+                 and then
+                   not Is_Numeric_Type
+                     (Corresponding_Generic_Type (Etype (It.Typ)))
+               then
+                  null;
+
+               else
+                  Add_One_Interp (N, Op_Id, Base_Type (It.Typ));
+               end if;
             end if;
 
             Get_Next_Interp (Index, It);
@@ -5856,7 +6753,6 @@ package body Sem_Ch4 is
       --  Now test the entity we got to see if it is a bad case
 
       case Ekind (Entity (Enode)) is
-
          when E_Package =>
             Error_Msg_N
               ("package name cannot be used as operand", Enode);
@@ -5881,13 +6777,15 @@ package body Sem_Ch4 is
             Error_Msg_N
               ("exception name cannot be used as operand", Enode);
 
-         when E_Block | E_Label | E_Loop =>
+         when E_Block
+            | E_Label
+            | E_Loop
+         =>
             Error_Msg_N
               ("label name cannot be used as operand", Enode);
 
          when others =>
             return False;
-
       end case;
 
       return True;
@@ -5925,6 +6823,19 @@ package body Sem_Ch4 is
               or else Etype (R) = Any_Type
               or else (Nkind (N) in N_Binary_Op and then Etype (L) = Any_Type)
             then
+               --  For the rather unusual case where one of the operands is
+               --  a Raise_Expression, whose initial type is Any_Type, use
+               --  the type of the other operand.
+
+               if Nkind (L) = N_Raise_Expression then
+                  Set_Etype (L, Etype (R));
+                  Set_Etype (N, Etype (R));
+
+               elsif Nkind (R) = N_Raise_Expression then
+                  Set_Etype (R, Etype (L));
+                  Set_Etype (N, Etype (L));
+               end if;
+
                return;
 
             --  We explicitly check for the case of concatenation of component
@@ -5967,7 +6878,7 @@ package body Sem_Ch4 is
                   else
                      Error_Msg_NE  --  CODEFIX
                        ("add with_clause and use_clause for&!",
-                          N, Defining_Entity (Unit (U)));
+                        N, Defining_Entity (Unit (U)));
                   end if;
                end;
                return;
@@ -5980,7 +6891,8 @@ package body Sem_Ch4 is
             --  binary operator case.
 
             elsif Junk_Operand (R)
-              or (Nkind (N) in N_Binary_Op and then Junk_Operand (L))
+              or  -- really mean OR here and not OR ELSE, see above
+                (Nkind (N) in N_Binary_Op and then Junk_Operand (L))
             then
                return;
 
@@ -5988,7 +6900,7 @@ package body Sem_Ch4 is
             --  Boolean, then we know that the other operand cannot resolve to
             --  Boolean (since we got no interpretations), but in that case we
             --  pretty much know that the other operand should be Boolean, so
-            --  resolve it that way (generating an error)
+            --  resolve it that way (generating an error).
 
             elsif Nkind_In (N, N_Op_And, N_Op_Or, N_Op_Xor) then
                if Etype (L) = Standard_Boolean then
@@ -6016,16 +6928,94 @@ package body Sem_Ch4 is
                                N_Op_Rem,
                                N_Op_Subtract)
             then
+               --  If Allow_Integer_Address is active, check whether the
+               --  operation becomes legal after converting an operand.
+
                if Is_Numeric_Type (Etype (L))
                  and then not Is_Numeric_Type (Etype (R))
                then
-                  Resolve (R, Etype (L));
+                  if Address_Integer_Convert_OK (Etype (R), Etype (L)) then
+                     Rewrite (R,
+                       Unchecked_Convert_To (Etype (L), Relocate_Node (R)));
+
+                     if Nkind_In (N, N_Op_Ge, N_Op_Gt, N_Op_Le, N_Op_Lt) then
+                        Analyze_Comparison_Op (N);
+                     else
+                        Analyze_Arithmetic_Op (N);
+                     end if;
+                  else
+                     Resolve (R, Etype (L));
+                  end if;
+
                   return;
 
                elsif Is_Numeric_Type (Etype (R))
                  and then not Is_Numeric_Type (Etype (L))
                then
-                  Resolve (L, Etype (R));
+                  if Address_Integer_Convert_OK (Etype (L), Etype (R)) then
+                     Rewrite (L,
+                       Unchecked_Convert_To (Etype (R), Relocate_Node (L)));
+
+                     if Nkind_In (N, N_Op_Ge, N_Op_Gt, N_Op_Le, N_Op_Lt) then
+                        Analyze_Comparison_Op (N);
+                     else
+                        Analyze_Arithmetic_Op (N);
+                     end if;
+
+                     return;
+
+                  else
+                     Resolve (L, Etype (R));
+                  end if;
+
+                  return;
+
+               elsif Allow_Integer_Address
+                 and then Is_Descendant_Of_Address (Etype (L))
+                 and then Is_Descendant_Of_Address (Etype (R))
+                 and then not Error_Posted (N)
+               then
+                  declare
+                     Addr_Type : constant Entity_Id := Etype (L);
+
+                  begin
+                     Rewrite (L,
+                       Unchecked_Convert_To (
+                         Standard_Integer, Relocate_Node (L)));
+                     Rewrite (R,
+                       Unchecked_Convert_To (
+                         Standard_Integer, Relocate_Node (R)));
+
+                     if Nkind_In (N, N_Op_Ge, N_Op_Gt, N_Op_Le, N_Op_Lt) then
+                        Analyze_Comparison_Op (N);
+                     else
+                        Analyze_Arithmetic_Op (N);
+                     end if;
+
+                     --  If this is an operand in an enclosing arithmetic
+                     --  operation, Convert the result as an address so that
+                     --  arithmetic folding of address can continue.
+
+                     if Nkind (Parent (N)) in N_Op then
+                        Rewrite (N,
+                          Unchecked_Convert_To (Addr_Type, Relocate_Node (N)));
+                     end if;
+
+                     return;
+                  end;
+
+               --  Under relaxed RM semantics silently replace occurrences of
+               --  null by System.Address_Null.
+
+               elsif Null_To_Null_Address_Convert_OK (N) then
+                  Replace_Null_By_Null_Address (N);
+
+                  if Nkind_In (N, N_Op_Ge, N_Op_Gt, N_Op_Le, N_Op_Lt) then
+                     Analyze_Comparison_Op (N);
+                  else
+                     Analyze_Arithmetic_Op (N);
+                  end if;
+
                   return;
                end if;
 
@@ -6089,6 +7079,22 @@ package body Sem_Ch4 is
                end if;
 
                return;
+
+            elsif Nkind_In (N, N_Op_Eq, N_Op_Ne) then
+               if Address_Integer_Convert_OK (Etype (R), Etype (L)) then
+                  Rewrite (R,
+                    Unchecked_Convert_To (Etype (L), Relocate_Node (R)));
+                  Analyze_Equality_Op (N);
+                  return;
+
+               --  Under relaxed RM semantics silently replace occurrences of
+               --  null by System.Address_Null.
+
+               elsif Null_To_Null_Address_Convert_OK (N) then
+                  Replace_Null_By_Null_Address (N);
+                  Analyze_Equality_Op (N);
+                  return;
+               end if;
             end if;
 
             --  If we fall through then just give general message. Note that in
@@ -6141,7 +7147,7 @@ package body Sem_Ch4 is
                                 ("No legal interpretation for operator&", N);
                               Error_Msg_NE
                                 ("\use clause on& would make operation legal",
-                                   N, Scope (Op_Id));
+                                 N, Scope (Op_Id));
                               exit;
                            end if;
                         end if;
@@ -6155,6 +7161,17 @@ package body Sem_Ch4 is
                         if Nkind (N) /= N_Op_Concat then
                            Error_Msg_NE ("\left operand has}!",  N, Etype (L));
                            Error_Msg_NE ("\right operand has}!", N, Etype (R));
+
+                        --  For concatenation operators it is more difficult to
+                        --  determine which is the wrong operand. It is worth
+                        --  flagging explicitly an access type, for those who
+                        --  might think that a dereference happens here.
+
+                        elsif Is_Access_Type (Etype (L)) then
+                           Error_Msg_N ("\left operand is access type", N);
+
+                        elsif Is_Access_Type (Etype (R)) then
+                           Error_Msg_N ("\right operand is access type", N);
                         end if;
                      end if;
                   end if;
@@ -6179,33 +7196,31 @@ package body Sem_Ch4 is
       if Present (E)
         and then (Operating_Mode = Check_Semantics or else not Expander_Active)
       then
-         --  We create a dummy reference to E to ensure that the reference
-         --  is not considered as part of an assignment (an implicit
-         --  dereference can never assign to its prefix). The Comes_From_Source
-         --  attribute needs to be propagated for accurate warnings.
+         --  We create a dummy reference to E to ensure that the reference is
+         --  not considered as part of an assignment (an implicit dereference
+         --  can never assign to its prefix). The Comes_From_Source attribute
+         --  needs to be propagated for accurate warnings.
 
-         Ref := New_Reference_To (E, Sloc (P));
+         Ref := New_Occurrence_Of (E, Sloc (P));
          Set_Comes_From_Source (Ref, Comes_From_Source (P));
          Generate_Reference (E, Ref);
       end if;
 
-      --  An implicit dereference is a legal occurrence of an
-      --  incomplete type imported through a limited_with clause,
-      --  if the full view is visible.
+      --  An implicit dereference is a legal occurrence of an incomplete type
+      --  imported through a limited_with clause, if the full view is visible.
 
-      if From_With_Type (Typ)
-        and then not From_With_Type (Scope (Typ))
+      if From_Limited_With (Typ)
+        and then not From_Limited_With (Scope (Typ))
         and then
           (Is_Immediately_Visible (Scope (Typ))
             or else
               (Is_Child_Unit (Scope (Typ))
-                 and then Is_Visible_Child_Unit (Scope (Typ))))
+                and then Is_Visible_Lib_Unit (Scope (Typ))))
       then
          return Available_View (Typ);
       else
          return Typ;
       end if;
-
    end Process_Implicit_Dereference_Prefix;
 
    --------------------------------
@@ -6213,10 +7228,10 @@ package body Sem_Ch4 is
    --------------------------------
 
    procedure Remove_Abstract_Operations (N : Node_Id) is
-      Abstract_Op    : Entity_Id := Empty;
-      Address_Kludge : Boolean := False;
-      I              : Interp_Index;
-      It             : Interp;
+      Abstract_Op        : Entity_Id := Empty;
+      Address_Descendant : Boolean := False;
+      I                  : Interp_Index;
+      It                 : Interp;
 
       --  AI-310: If overloaded, remove abstract non-dispatching operations. We
       --  activate this if either extensions are enabled, or if the abstract
@@ -6231,8 +7246,8 @@ package body Sem_Ch4 is
       procedure Remove_Address_Interpretations (Op : Operand_Position);
       --  Ambiguities may arise when the operands are literal and the address
       --  operations in s-auxdec are visible. In that case, remove the
-      --  interpretation of a literal as Address, to retain the semantics of
-      --  Address as a private type.
+      --  interpretation of a literal as Address, to retain the semantics
+      --  of Address as a private type.
 
       ------------------------------------
       -- Remove_Address_Interpretations --
@@ -6251,8 +7266,8 @@ package body Sem_Ch4 is
                   Formal := Next_Entity (Formal);
                end if;
 
-               if Is_Descendent_Of_Address (Etype (Formal)) then
-                  Address_Kludge := True;
+               if Is_Descendant_Of_Address (Etype (Formal)) then
+                  Address_Descendant := True;
                   Remove_Interp (I);
                end if;
 
@@ -6279,8 +7294,8 @@ package body Sem_Ch4 is
             then
                Abstract_Op := It.Nam;
 
-               if Is_Descendent_Of_Address (It.Typ) then
-                  Address_Kludge := True;
+               if Is_Descendant_Of_Address (It.Typ) then
+                  Address_Descendant := True;
                   Remove_Interp (I);
                   exit;
 
@@ -6327,16 +7342,15 @@ package body Sem_Ch4 is
             --  Remove interpretations that treat literals as addresses. This
             --  is never appropriate, even when Address is defined as a visible
             --  Integer type. The reason is that we would really prefer Address
-            --  to behave as a private type, even in this case, which is there
-            --  only to accommodate oddities of VMS address sizes. If Address
-            --  is a visible integer type, we get lots of overload ambiguities.
+            --  to behave as a private type, even in this case. If Address is a
+            --  visible integer type, we get lots of overload ambiguities.
 
             if Nkind (N) in N_Binary_Op then
                declare
                   U1 : constant Boolean :=
-                     Present (Universal_Interpretation (Right_Opnd (N)));
+                         Present (Universal_Interpretation (Right_Opnd (N)));
                   U2 : constant Boolean :=
-                     Present (Universal_Interpretation (Left_Opnd (N)));
+                         Present (Universal_Interpretation (Left_Opnd (N)));
 
                begin
                   if U1 then
@@ -6374,7 +7388,7 @@ package body Sem_Ch4 is
 
                      Get_First_Interp (N, I, It);
                      while Present (It.Nam) loop
-                        if Is_Descendent_Of_Address (It.Typ) then
+                        if Is_Descendant_Of_Address (It.Typ) then
                            Remove_Interp (I);
 
                         elsif not Is_Type (It.Nam) then
@@ -6449,9 +7463,7 @@ package body Sem_Ch4 is
             --  predefined operators when addresses are involved since this
             --  case is handled separately.
 
-            elsif Ada_Version >= Ada_2005
-              and then not Address_Kludge
-            then
+            elsif Ada_Version >= Ada_2005 and then not Address_Descendant then
                while Present (It.Nam) loop
                   if Is_Numeric_Type (It.Typ)
                     and then Scope (It.Typ) = Standard_Standard
@@ -6478,121 +7490,635 @@ package body Sem_Ch4 is
    function Try_Container_Indexing
      (N      : Node_Id;
       Prefix : Node_Id;
-      Expr   : Node_Id) return Boolean
+      Exprs  : List_Id) return Boolean
    is
+      Pref_Typ : constant Entity_Id := Etype (Prefix);
+
+      function Constant_Indexing_OK return Boolean;
+      --  Constant_Indexing is legal if there is no Variable_Indexing defined
+      --  for the type, or else node not a target of assignment, or an actual
+      --  for an IN OUT or OUT formal (RM 4.1.6 (11)).
+
+      function Find_Indexing_Operations
+        (T           : Entity_Id;
+         Nam         : Name_Id;
+         Is_Constant : Boolean) return Node_Id;
+      --  Return a reference to the primitive operation of type T denoted by
+      --  name Nam. If the operation is overloaded, the reference carries all
+      --  interpretations. Flag Is_Constant should be set when the context is
+      --  constant indexing.
+
+      --------------------------
+      -- Constant_Indexing_OK --
+      --------------------------
+
+      function Constant_Indexing_OK return Boolean is
+         Par : Node_Id;
+
+      begin
+         if No (Find_Value_Of_Aspect (Pref_Typ, Aspect_Variable_Indexing)) then
+            return True;
+
+         elsif not Is_Variable (Prefix) then
+            return True;
+         end if;
+
+         Par := N;
+         while Present (Par) loop
+            if Nkind (Parent (Par)) = N_Assignment_Statement
+              and then Par = Name (Parent (Par))
+            then
+               return False;
+
+            --  The call may be overloaded, in which case we assume that its
+            --  resolution does not depend on the type of the parameter that
+            --  includes the indexing operation.
+
+            elsif Nkind_In (Parent (Par), N_Function_Call,
+                                          N_Procedure_Call_Statement)
+              and then Is_Entity_Name (Name (Parent (Par)))
+            then
+               declare
+                  Actual : Node_Id;
+                  Formal : Entity_Id;
+                  Proc   : Entity_Id;
+
+               begin
+                  --  We should look for an interpretation with the proper
+                  --  number of formals, and determine whether it is an
+                  --  In_Parameter, but for now we examine the formal that
+                  --  corresponds to the indexing, and assume that variable
+                  --  indexing is required if some interpretation has an
+                  --  assignable formal at that position.  Still does not
+                  --  cover the most complex cases ???
+
+                  if Is_Overloaded (Name (Parent (Par))) then
+                     declare
+                        Proc : constant Node_Id := Name (Parent (Par));
+                        A    : Node_Id;
+                        F    : Entity_Id;
+                        I    : Interp_Index;
+                        It   : Interp;
+
+                     begin
+                        Get_First_Interp (Proc, I, It);
+                        while Present (It.Nam) loop
+                           F := First_Formal (It.Nam);
+                           A := First (Parameter_Associations (Parent (Par)));
+
+                           while Present (F) and then Present (A) loop
+                              if A = Par then
+                                 if Ekind (F) /= E_In_Parameter then
+                                    return False;
+                                 else
+                                    exit;  --  interpretation is safe
+                                 end if;
+                              end if;
+
+                              Next_Formal (F);
+                              Next_Actual (A);
+                           end loop;
+
+                           Get_Next_Interp (I, It);
+                        end loop;
+                     end;
+
+                     return True;
+
+                  else
+                     Proc := Entity (Name (Parent (Par)));
+
+                     --  If this is an indirect call, get formals from
+                     --  designated type.
+
+                     if Is_Access_Subprogram_Type (Etype (Proc)) then
+                        Proc := Designated_Type (Etype (Proc));
+                     end if;
+                  end if;
+
+                  Formal := First_Formal (Proc);
+                  Actual := First_Actual (Parent (Par));
+
+                  --  Find corresponding actual
+
+                  while Present (Actual) loop
+                     exit when Actual = Par;
+                     Next_Actual (Actual);
+
+                     if Present (Formal) then
+                        Next_Formal (Formal);
+
+                     --  Otherwise this is a parameter mismatch, the error is
+                     --  reported elsewhere.
+
+                     else
+                        return False;
+                     end if;
+                  end loop;
+
+                  return Ekind (Formal) = E_In_Parameter;
+               end;
+
+            elsif Nkind (Parent (Par)) = N_Object_Renaming_Declaration then
+               return False;
+
+            --  If the indexed component is a prefix it may be the first actual
+            --  of a prefixed call. Retrieve the called entity, if any, and
+            --  check its first formal. Determine if the context is a procedure
+            --  or function call.
+
+            elsif Nkind (Parent (Par)) = N_Selected_Component then
+               declare
+                  Sel : constant Node_Id   := Selector_Name (Parent (Par));
+                  Nam : constant Entity_Id := Current_Entity (Sel);
+
+               begin
+                  if Present (Nam) and then Is_Overloadable (Nam) then
+                     if Nkind (Parent (Parent (Par))) =
+                          N_Procedure_Call_Statement
+                     then
+                        return False;
+
+                     elsif Ekind (Nam) = E_Function
+                       and then Present (First_Formal (Nam))
+                     then
+                        return Ekind (First_Formal (Nam)) = E_In_Parameter;
+                     end if;
+                  end if;
+               end;
+
+            elsif Nkind (Par) in N_Op then
+               return True;
+            end if;
+
+            Par := Parent (Par);
+         end loop;
+
+         --  In all other cases, constant indexing is legal
+
+         return True;
+      end Constant_Indexing_OK;
+
+      ------------------------------
+      -- Find_Indexing_Operations --
+      ------------------------------
+
+      function Find_Indexing_Operations
+        (T           : Entity_Id;
+         Nam         : Name_Id;
+         Is_Constant : Boolean) return Node_Id
+      is
+         procedure Inspect_Declarations
+           (Typ : Entity_Id;
+            Ref : in out Node_Id);
+         --  Traverse the declarative list where type Typ resides and collect
+         --  all suitable interpretations in node Ref.
+
+         procedure Inspect_Primitives
+           (Typ : Entity_Id;
+            Ref : in out Node_Id);
+         --  Traverse the list of primitive operations of type Typ and collect
+         --  all suitable interpretations in node Ref.
+
+         function Is_OK_Candidate
+           (Subp_Id : Entity_Id;
+            Typ     : Entity_Id) return Boolean;
+         --  Determine whether subprogram Subp_Id is a suitable indexing
+         --  operation for type Typ. To qualify as such, the subprogram must
+         --  be a function, have at least two parameters, and the type of the
+         --  first parameter must be either Typ, or Typ'Class, or access [to
+         --  constant] with designated type Typ or Typ'Class.
+
+         procedure Record_Interp (Subp_Id : Entity_Id; Ref : in out Node_Id);
+         --  Store subprogram Subp_Id as an interpretation in node Ref
+
+         --------------------------
+         -- Inspect_Declarations --
+         --------------------------
+
+         procedure Inspect_Declarations
+           (Typ : Entity_Id;
+            Ref : in out Node_Id)
+         is
+            Typ_Decl : constant Node_Id := Declaration_Node (Typ);
+            Decl     : Node_Id;
+            Subp_Id  : Entity_Id;
+
+         begin
+            --  Ensure that the routine is not called with itypes, which lack a
+            --  declarative node.
+
+            pragma Assert (Present (Typ_Decl));
+            pragma Assert (Is_List_Member (Typ_Decl));
+
+            Decl := First (List_Containing (Typ_Decl));
+            while Present (Decl) loop
+               if Nkind (Decl) = N_Subprogram_Declaration then
+                  Subp_Id := Defining_Entity (Decl);
+
+                  if Is_OK_Candidate (Subp_Id, Typ) then
+                     Record_Interp (Subp_Id, Ref);
+                  end if;
+               end if;
+
+               Next (Decl);
+            end loop;
+         end Inspect_Declarations;
+
+         ------------------------
+         -- Inspect_Primitives --
+         ------------------------
+
+         procedure Inspect_Primitives
+           (Typ : Entity_Id;
+            Ref : in out Node_Id)
+         is
+            Prim_Elmt : Elmt_Id;
+            Prim_Id   : Entity_Id;
+
+         begin
+            Prim_Elmt := First_Elmt (Primitive_Operations (Typ));
+            while Present (Prim_Elmt) loop
+               Prim_Id := Node (Prim_Elmt);
+
+               if Is_OK_Candidate (Prim_Id, Typ) then
+                  Record_Interp (Prim_Id, Ref);
+               end if;
+
+               Next_Elmt (Prim_Elmt);
+            end loop;
+         end Inspect_Primitives;
+
+         ---------------------
+         -- Is_OK_Candidate --
+         ---------------------
+
+         function Is_OK_Candidate
+           (Subp_Id : Entity_Id;
+            Typ     : Entity_Id) return Boolean
+         is
+            Formal     : Entity_Id;
+            Formal_Typ : Entity_Id;
+            Param_Typ  : Node_Id;
+
+         begin
+            --  To classify as a suitable candidate, the subprogram must be a
+            --  function whose name matches the argument of aspect Constant or
+            --  Variable_Indexing.
+
+            if Ekind (Subp_Id) = E_Function and then Chars (Subp_Id) = Nam then
+               Formal := First_Formal (Subp_Id);
+
+               --  The candidate requires at least two parameters
+
+               if Present (Formal) and then Present (Next_Formal (Formal)) then
+                  Formal_Typ := Empty;
+                  Param_Typ  := Parameter_Type (Parent (Formal));
+
+                  --  Use the designated type when the first parameter is of an
+                  --  access type.
+
+                  if Nkind (Param_Typ) = N_Access_Definition
+                    and then Present (Subtype_Mark (Param_Typ))
+                  then
+                     --  When the context is a constant indexing, the access
+                     --  definition must be access-to-constant. This does not
+                     --  apply to variable indexing.
+
+                     if not Is_Constant
+                       or else Constant_Present (Param_Typ)
+                     then
+                        Formal_Typ := Etype (Subtype_Mark (Param_Typ));
+                     end if;
+
+                  --  Otherwise use the parameter type
+
+                  else
+                     Formal_Typ := Etype (Param_Typ);
+                  end if;
+
+                  if Present (Formal_Typ) then
+
+                     --  Use the specific type when the parameter type is
+                     --  class-wide.
+
+                     if Is_Class_Wide_Type (Formal_Typ) then
+                        Formal_Typ := Etype (Base_Type (Formal_Typ));
+                     end if;
+
+                     --  Use the full view when the parameter type is private
+                     --  or incomplete.
+
+                     if Is_Incomplete_Or_Private_Type (Formal_Typ)
+                       and then Present (Full_View (Formal_Typ))
+                     then
+                        Formal_Typ := Full_View (Formal_Typ);
+                     end if;
+
+                     --  The type of the first parameter must denote the type
+                     --  of the container or acts as its ancestor type.
+
+                     return
+                       Formal_Typ = Typ
+                         or else Is_Ancestor (Formal_Typ, Typ);
+                  end if;
+               end if;
+            end if;
+
+            return False;
+         end Is_OK_Candidate;
+
+         -------------------
+         -- Record_Interp --
+         -------------------
+
+         procedure Record_Interp (Subp_Id : Entity_Id; Ref : in out Node_Id) is
+         begin
+            if Present (Ref) then
+               Add_One_Interp (Ref, Subp_Id, Etype (Subp_Id));
+
+            --  Otherwise this is the first interpretation. Create a reference
+            --  where all remaining interpretations will be collected.
+
+            else
+               Ref := New_Occurrence_Of (Subp_Id, Sloc (T));
+            end if;
+         end Record_Interp;
+
+         --  Local variables
+
+         Ref : Node_Id;
+         Typ : Entity_Id;
+
+      --  Start of processing for Find_Indexing_Operations
+
+      begin
+         Typ := T;
+
+         --  Use the specific type when the parameter type is class-wide
+
+         if Is_Class_Wide_Type (Typ) then
+            Typ := Root_Type (Typ);
+         end if;
+
+         Ref := Empty;
+         Typ := Underlying_Type (Base_Type (Typ));
+
+         Inspect_Primitives (Typ, Ref);
+
+         --  Now look for explicit declarations of an indexing operation.
+         --  If the type is private the operation may be declared in the
+         --  visible part that contains the partial view.
+
+         if Is_Private_Type (T) then
+            Inspect_Declarations (T, Ref);
+         end if;
+
+         Inspect_Declarations (Typ, Ref);
+
+         return Ref;
+      end Find_Indexing_Operations;
+
+      --  Local variables
+
       Loc       : constant Source_Ptr := Sloc (N);
-      Disc      : Entity_Id;
+      Assoc     : List_Id;
+      C_Type    : Entity_Id;
       Func      : Entity_Id;
       Func_Name : Node_Id;
       Indexing  : Node_Id;
 
-   begin
+      Is_Constant_Indexing : Boolean := False;
+      --  This flag reflects the nature of the container indexing. Note that
+      --  the context may be suited for constant indexing, but the type may
+      --  lack a Constant_Indexing annotation.
 
-      --  Check whether type has a specified indexing aspect
+   --  Start of processing for Try_Container_Indexing
+
+   begin
+      --  Node may have been analyzed already when testing for a prefixed
+      --  call, in which case do not redo analysis.
+
+      if Present (Generalized_Indexing (N)) then
+         return True;
+      end if;
+
+      C_Type := Pref_Typ;
+
+      --  If indexing a class-wide container, obtain indexing primitive from
+      --  specific type.
+
+      if Is_Class_Wide_Type (C_Type) then
+         C_Type := Etype (Base_Type (C_Type));
+      end if;
+
+      --  Check whether the type has a specified indexing aspect
 
       Func_Name := Empty;
 
-      if Is_Variable (Prefix) then
-         Func_Name := Find_Aspect (Etype (Prefix), Aspect_Variable_Indexing);
+      --  The context is suitable for constant indexing, so obtain the name of
+      --  the indexing function from aspect Constant_Indexing.
+
+      if Constant_Indexing_OK then
+         Func_Name :=
+           Find_Value_Of_Aspect (Pref_Typ, Aspect_Constant_Indexing);
       end if;
 
-      if No (Func_Name) then
-         Func_Name := Find_Aspect (Etype (Prefix), Aspect_Constant_Indexing);
+      if Present (Func_Name) then
+         Is_Constant_Indexing := True;
+
+      --  Otherwise attempt variable indexing
+
+      else
+         Func_Name :=
+           Find_Value_Of_Aspect (Pref_Typ, Aspect_Variable_Indexing);
       end if;
 
-      --  If aspect does not exist the expression is illegal. Error is
-      --  diagnosed in caller.
+      --  The type is not subject to either form of indexing, therefore the
+      --  indexed component does not denote container indexing. If this is a
+      --  true error, it is diagnosed by the caller.
 
       if No (Func_Name) then
 
-         --  The prefix itself may be an indexing of a container
-         --  rewrite as such and re-analyze.
+         --  The prefix itself may be an indexing of a container. Rewrite it
+         --  as such and retry.
 
-         if Has_Implicit_Dereference (Etype (Prefix)) then
-            Build_Explicit_Dereference
-              (Prefix, First_Discriminant (Etype (Prefix)));
-            return Try_Container_Indexing (N, Prefix, Expr);
+         if Has_Implicit_Dereference (Pref_Typ) then
+            Build_Explicit_Dereference (Prefix, First_Discriminant (Pref_Typ));
+            return Try_Container_Indexing (N, Prefix, Exprs);
+
+         --  Otherwise this is definitely not container indexing
 
          else
             return False;
          end if;
+
+      --  If the container type is derived from another container type, the
+      --  value of the inherited aspect is the Reference operation declared
+      --  for the parent type.
+
+      --  However, Reference is also a primitive operation of the type, and the
+      --  inherited operation has a different signature. We retrieve the right
+      --  ones (the function may be overloaded) from the list of primitive
+      --  operations of the derived type.
+
+      --  Note that predefined containers are typically all derived from one of
+      --  the Controlled types. The code below is motivated by containers that
+      --  are derived from other types with a Reference aspect.
+
+      elsif Is_Derived_Type (C_Type)
+        and then Etype (First_Formal (Entity (Func_Name))) /= Pref_Typ
+      then
+         Func_Name :=
+           Find_Indexing_Operations
+             (T           => C_Type,
+              Nam         => Chars (Func_Name),
+              Is_Constant => Is_Constant_Indexing);
       end if;
+
+      Assoc := New_List (Relocate_Node (Prefix));
+
+      --  A generalized indexing may have nore than one index expression, so
+      --  transfer all of them to the argument list to be used in the call.
+      --  Note that there may be named associations, in which case the node
+      --  was rewritten earlier as a call, and has been transformed back into
+      --  an indexed expression to share the following processing.
+
+      --  The generalized indexing node is the one on which analysis and
+      --  resolution take place. Before expansion the original node is replaced
+      --  with the generalized indexing node, which is a call, possibly with a
+      --  dereference operation.
+
+      if Comes_From_Source (N) then
+         Check_Compiler_Unit ("generalized indexing", N);
+      end if;
+
+      --  Create argument list for function call that represents generalized
+      --  indexing. Note that indices (i.e. actuals) may themselves be
+      --  overloaded.
+
+      declare
+         Arg     : Node_Id;
+         New_Arg : Node_Id;
+
+      begin
+         Arg := First (Exprs);
+         while Present (Arg) loop
+            New_Arg := Relocate_Node (Arg);
+
+            --  The arguments can be parameter associations, in which case the
+            --  explicit actual parameter carries the overloadings.
+
+            if Nkind (New_Arg) /= N_Parameter_Association then
+               Save_Interps (Arg, New_Arg);
+            end if;
+
+            Append (New_Arg, Assoc);
+            Next (Arg);
+         end loop;
+      end;
 
       if not Is_Overloaded (Func_Name) then
          Func := Entity (Func_Name);
-         Indexing := Make_Function_Call (Loc,
-           Name => New_Occurrence_Of (Func, Loc),
-           Parameter_Associations =>
-             New_List (Relocate_Node (Prefix), Relocate_Node (Expr)));
-         Rewrite (N, Indexing);
-         Analyze (N);
+
+         Indexing :=
+           Make_Function_Call (Loc,
+             Name                   => New_Occurrence_Of (Func, Loc),
+             Parameter_Associations => Assoc);
+
+         Set_Parent (Indexing, Parent (N));
+         Set_Generalized_Indexing (N, Indexing);
+         Analyze (Indexing);
+         Set_Etype (N, Etype (Indexing));
 
          --  If the return type of the indexing function is a reference type,
          --  add the dereference as a possible interpretation. Note that the
          --  indexing aspect may be a function that returns the element type
-         --  with no intervening implicit dereference.
+         --  with no intervening implicit dereference, and that the reference
+         --  discriminant is not the first discriminant.
 
          if Has_Discriminants (Etype (Func)) then
-            Disc := First_Discriminant (Etype (Func));
-            while Present (Disc) loop
-               if Has_Implicit_Dereference (Disc) then
-                  Add_One_Interp (N, Disc, Designated_Type (Etype (Disc)));
-                  exit;
-               end if;
-
-               Next_Discriminant (Disc);
-            end loop;
+            Check_Implicit_Dereference (N, Etype (Func));
          end if;
 
       else
-         Indexing := Make_Function_Call (Loc,
-           Name => Make_Identifier (Loc, Chars (Func_Name)),
-           Parameter_Associations =>
-             New_List (Relocate_Node (Prefix), Relocate_Node (Expr)));
+         --  If there are multiple indexing functions, build a function call
+         --  and analyze it for each of the possible interpretations.
 
-         Rewrite (N, Indexing);
+         Indexing :=
+           Make_Function_Call (Loc,
+             Name                   =>
+               Make_Identifier (Loc, Chars (Func_Name)),
+             Parameter_Associations => Assoc);
+         Set_Parent (Indexing, Parent (N));
+         Set_Generalized_Indexing (N, Indexing);
+         Set_Etype (N, Any_Type);
+         Set_Etype (Name (Indexing), Any_Type);
 
          declare
-            I  : Interp_Index;
-            It : Interp;
+            I       : Interp_Index;
+            It      : Interp;
             Success : Boolean;
 
          begin
             Get_First_Interp (Func_Name, I, It);
-            Set_Etype (N, Any_Type);
+            Set_Etype (Indexing, Any_Type);
+
+            --  Analyze each candidate function with the given actuals
+
             while Present (It.Nam) loop
-               Analyze_One_Call (N, It.Nam, False, Success);
-               if Success then
-                  Set_Etype (Name (N), It.Typ);
-                  Set_Entity (Name (N), It.Nam);
-
-                  --  Add implicit dereference interpretation
-
-                  if Has_Discriminants (Etype (It.Nam)) then
-                     Disc := First_Discriminant (Etype (It.Nam));
-                     while Present (Disc) loop
-                        if Has_Implicit_Dereference (Disc) then
-                           Add_One_Interp
-                             (N, Disc, Designated_Type (Etype (Disc)));
-                           exit;
-                        end if;
-
-                        Next_Discriminant (Disc);
-                     end loop;
-                  end if;
-
-                  exit;
-               end if;
+               Analyze_One_Call (Indexing, It.Nam, False, Success);
                Get_Next_Interp (I, It);
             end loop;
+
+            --  If there are several successful candidates, resolution will
+            --  be by result. Mark the interpretations of the function name
+            --  itself.
+
+            if Is_Overloaded (Indexing) then
+               Get_First_Interp (Indexing, I, It);
+
+               while Present (It.Nam) loop
+                  Add_One_Interp (Name (Indexing), It.Nam, It.Typ);
+                  Get_Next_Interp (I, It);
+               end loop;
+
+            else
+               Set_Etype (Name (Indexing), Etype (Indexing));
+            end if;
+
+            --  Now add the candidate interpretations to the indexing node
+            --  itself, to be replaced later by the function call.
+
+            if Is_Overloaded (Name (Indexing)) then
+               Get_First_Interp (Name (Indexing), I, It);
+
+               while Present (It.Nam) loop
+                  Add_One_Interp (N, It.Nam, It.Typ);
+
+                  --  Add dereference interpretation if the result type has
+                  --  implicit reference discriminants.
+
+                  if Has_Discriminants (Etype (It.Nam)) then
+                     Check_Implicit_Dereference (N, Etype (It.Nam));
+                  end if;
+
+                  Get_Next_Interp (I, It);
+               end loop;
+
+            else
+               Set_Etype (N, Etype (Name (Indexing)));
+               if Has_Discriminants (Etype (N)) then
+                  Check_Implicit_Dereference (N, Etype (N));
+               end if;
+            end if;
          end;
       end if;
 
-      if Etype (N) = Any_Type then
-         Error_Msg_NE ("container cannot be indexed with&", N, Etype (Expr));
+      if Etype (Indexing) = Any_Type then
+         Error_Msg_NE
+           ("container cannot be indexed with&", N, Etype (First (Exprs)));
          Rewrite (N, New_Occurrence_Of (Any_Id, Loc));
-      else
-         Analyze (N);
       end if;
 
       return True;
@@ -6640,6 +8166,7 @@ package body Sem_Ch4 is
          end if;
 
          return True;
+
       else
          return False;
       end if;
@@ -6739,9 +8266,7 @@ package body Sem_Ch4 is
      (N : Node_Id; CW_Test_Only : Boolean := False) return Boolean
    is
       K              : constant Node_Kind  := Nkind (Parent (N));
-      Is_Subprg_Call : constant Boolean    := Nkind_In
-                                               (K, N_Procedure_Call_Statement,
-                                                   N_Function_Call);
+      Is_Subprg_Call : constant Boolean    := K in N_Subprogram_Call;
       Loc            : constant Source_Ptr := Sloc (N);
       Obj            : constant Node_Id    := Prefix (N);
 
@@ -6751,8 +8276,8 @@ package body Sem_Ch4 is
       --  Identifier on which possible interpretations will be collected
 
       Report_Error : Boolean := False;
-      --  If no candidate interpretation matches the context, redo the
-      --  analysis with error enabled to provide additional information.
+      --  If no candidate interpretation matches the context, redo analysis
+      --  with Report_Error True to provide additional information.
 
       Actual          : Node_Id;
       Candidate       : Entity_Id := Empty;
@@ -6911,9 +8436,9 @@ package body Sem_Ch4 is
 
          First_Actual := First (Parameter_Associations (Call_Node));
 
-         --  For cross-reference purposes, treat the new node as being in
-         --  the source if the original one is. Set entity and type, even
-         --  though they may be overwritten during resolution if overloaded.
+         --  For cross-reference purposes, treat the new node as being in the
+         --  source if the original one is. Set entity and type, even though
+         --  they may be overwritten during resolution if overloaded.
 
          Set_Comes_From_Source (Subprog, Comes_From_Source (N));
          Set_Comes_From_Source (Call_Node, Comes_From_Source (N));
@@ -6925,9 +8450,9 @@ package body Sem_Ch4 is
             Set_Etype  (Selector_Name (N), Etype (Entity (Subprog)));
          end if;
 
-         --  If need be, rewrite first actual as an explicit dereference
-         --  If the call is overloaded, the rewriting can only be done
-         --  once the primitive operation is identified.
+         --  If need be, rewrite first actual as an explicit dereference. If
+         --  the call is overloaded, the rewriting can only be done once the
+         --  primitive operation is identified.
 
          if Is_Overloaded (Subprog) then
 
@@ -6973,7 +8498,7 @@ package body Sem_Ch4 is
                  or else not Is_Variable (Obj)
                then
                   Error_Msg_NE
-                    ("actual for& must be a variable", Obj, Control);
+                    ("actual for & must be a variable", Obj, Control);
                end if;
             end if;
 
@@ -6984,9 +8509,8 @@ package body Sem_Ch4 is
 
             if not Is_Aliased_View (Obj) then
                Error_Msg_NE
-                 ("object in prefixed call to& must be aliased"
-                      & " (RM-2005 4.3.1 (13))",
-                 Prefix (First_Actual), Subprog);
+                 ("object in prefixed call to & must be aliased "
+                  & "(RM 4.1.3 (13 1/2))", Prefix (First_Actual), Subprog);
             end if;
 
             Analyze (First_Actual);
@@ -6999,6 +8523,17 @@ package body Sem_Ch4 is
             Rewrite (First_Actual, Obj);
          end if;
 
+         --  The operation is obtained from the dispatch table and not by
+         --  visibility, and may be declared in a unit that is not explicitly
+         --  referenced in the source, but is nevertheless required in the
+         --  context of the current unit. Indicate that operation and its scope
+         --  are referenced, to prevent spurious and misleading warnings. If
+         --  the operation is overloaded, all primitives are in the same scope
+         --  and we can use any of them.
+
+         Set_Referenced (Entity (Subprog), True);
+         Set_Referenced (Scope (Entity (Subprog)), True);
+
          Rewrite (Node_To_Replace, Call_Node);
 
          --  Propagate the interpretations collected in subprog to the new
@@ -7008,6 +8543,18 @@ package body Sem_Ch4 is
             Save_Interps (Subprog, Node_To_Replace);
 
          else
+            --  The type of the subprogram may be a limited view obtained
+            --  transitively from another unit. If full view is available,
+            --  use it to analyze call.
+
+            declare
+               T : constant Entity_Id := Etype (Subprog);
+            begin
+               if From_Limited_With (T) then
+                  Set_Etype (Entity (Subprog), Available_View (T));
+               end if;
+            end;
+
             Analyze (Node_To_Replace);
 
             --  If the operation has been rewritten into a call, which may get
@@ -7042,8 +8589,8 @@ package body Sem_Ch4 is
          if Access_Formal and then not Access_Actual then
             if Nkind (Parent (Op)) = N_Full_Type_Declaration then
                Error_Msg_N
-                 ("\possible interpretation"
-                   & " (inherited, with implicit 'Access) #", N);
+                 ("\possible interpretation "
+                  & "(inherited, with implicit 'Access) #", N);
             else
                Error_Msg_N
                  ("\possible interpretation (with implicit 'Access) #", N);
@@ -7052,8 +8599,8 @@ package body Sem_Ch4 is
          elsif not Access_Formal and then Access_Actual then
             if Nkind (Parent (Op)) = N_Full_Type_Declaration then
                Error_Msg_N
-                 ("\possible interpretation"
-                   & " ( inherited, with implicit dereference) #", N);
+                 ("\possible interpretation "
+                  & "(inherited, with implicit dereference) #", N);
             else
                Error_Msg_N
                  ("\possible interpretation (with implicit dereference) #", N);
@@ -7090,8 +8637,7 @@ package body Sem_Ch4 is
          --  Common case covering 1) Call to a procedure and 2) Call to a
          --  function that has some additional actuals.
 
-         if Nkind_In (Parent_Node, N_Function_Call,
-                                   N_Procedure_Call_Statement)
+         if Nkind (Parent_Node) in N_Subprogram_Call
 
             --  N is a selected component node containing the name of the
             --  subprogram. If N is not the name of the parent node we must
@@ -7122,15 +8668,14 @@ package body Sem_Ch4 is
             else
                Call_Node :=
                  Make_Function_Call (Loc,
-                   Name => New_Copy (Subprog),
+                   Name                   => New_Copy (Subprog),
                    Parameter_Associations => Actuals);
-
             end if;
 
          --  Before analysis, a function call appears as an indexed component
          --  if there are no named associations.
 
-         elsif Nkind (Parent_Node) =  N_Indexed_Component
+         elsif Nkind (Parent_Node) = N_Indexed_Component
            and then N = Prefix (Parent_Node)
          then
             Node_To_Replace := Parent_Node;
@@ -7146,7 +8691,7 @@ package body Sem_Ch4 is
 
             Call_Node :=
                Make_Function_Call (Loc,
-                 Name => New_Copy (Subprog),
+                 Name                   => New_Copy (Subprog),
                  Parameter_Associations => Actuals);
 
          --  Parameterless call: Obj.F is rewritten as F (Obj)
@@ -7156,7 +8701,7 @@ package body Sem_Ch4 is
 
             Call_Node :=
                Make_Function_Call (Loc,
-                 Name => New_Copy (Subprog),
+                 Name                   => New_Copy (Subprog),
                  Parameter_Associations => New_List (Dummy));
          end if;
       end Transform_Object_Operation;
@@ -7211,8 +8756,8 @@ package body Sem_Ch4 is
             --  Find a non-hidden operation whose first parameter is of the
             --  class-wide type, a subtype thereof, or an anonymous access
             --  to same. If in an instance, the operation can be considered
-            --  even if hidden (it may be hidden because the instantiation is
-            --  expanded after the containing package has been analyzed).
+            --  even if hidden (it may be hidden because the instantiation
+            --  is expanded after the containing package has been analyzed).
 
             while Present (Hom) loop
                if Ekind_In (Hom, E_Procedure, E_Function)
@@ -7223,12 +8768,12 @@ package body Sem_Ch4 is
                    (Base_Type (Etype (First_Formal (Hom))) = Cls_Type
                      or else
                        (Is_Access_Type (Etype (First_Formal (Hom)))
-                          and then
-                            Ekind (Etype (First_Formal (Hom))) =
-                              E_Anonymous_Access_Type
-                          and then
-                            Base_Type
-                              (Designated_Type (Etype (First_Formal (Hom)))) =
+                         and then
+                           Ekind (Etype (First_Formal (Hom))) =
+                             E_Anonymous_Access_Type
+                         and then
+                           Base_Type
+                             (Designated_Type (Etype (First_Formal (Hom)))) =
                                                                    Cls_Type))
                then
                   --  If the context is a procedure call, ignore functions
@@ -7254,7 +8799,7 @@ package body Sem_Ch4 is
                   Success := False;
 
                   if No (Matching_Op) then
-                     Hom_Ref := New_Reference_To (Hom, Sloc (Subprog));
+                     Hom_Ref := New_Occurrence_Of (Hom, Sloc (Subprog));
                      Set_Etype (Call_Node, Any_Type);
                      Set_Parent (Call_Node, Parent (Node_To_Replace));
 
@@ -7387,6 +8932,12 @@ package body Sem_Ch4 is
       -----------------------------------
 
       procedure Try_One_Prefix_Interpretation (T : Entity_Id) is
+
+         --  If the interpretation does not have a valid candidate type,
+         --  preserve current value of Obj_Type for subsequent errors.
+
+         Prev_Obj_Type : constant Entity_Id := Obj_Type;
+
       begin
          Obj_Type := T;
 
@@ -7407,7 +8958,8 @@ package body Sem_Ch4 is
          --  non-limited view. If still incomplete, retrieve full view.
 
          if Ekind (Obj_Type) = E_Incomplete_Type
-           and then From_With_Type (Obj_Type)
+           and then From_Limited_With (Obj_Type)
+           and then Has_Non_Limited_View (Obj_Type)
          then
             Obj_Type := Get_Full_View (Non_Limited_View (Obj_Type));
          end if;
@@ -7418,6 +8970,10 @@ package body Sem_Ch4 is
          if not Is_Tagged_Type (Obj_Type)
            or else Is_Incomplete_Type (Obj_Type)
          then
+
+            --  Restore previous type if current one is not legal candidate
+
+            Obj_Type := Prev_Obj_Type;
             return;
          end if;
 
@@ -7471,12 +9027,12 @@ package body Sem_Ch4 is
          Matching_Op : Entity_Id := Empty;
          Prim_Op_Ref : Node_Id   := Empty;
 
-         Corr_Type   : Entity_Id := Empty;
+         Corr_Type : Entity_Id := Empty;
          --  If the prefix is a synchronized type, the controlling type of
          --  the primitive operation is the corresponding record type, else
          --  this is the object type itself.
 
-         Success     : Boolean   := False;
+         Success : Boolean   := False;
 
          function Collect_Generic_Type_Ops (T : Entity_Id) return Elist_Id;
          --  For tagged types the candidate interpretations are found in
@@ -7486,16 +9042,35 @@ package body Sem_Ch4 is
          --  part) because the type itself carries no primitive operations,
          --  except for formal derived types that inherit the operations of
          --  the parent and progenitors.
+         --
          --  If the context is a generic subprogram body, the generic formals
          --  are visible by name, but are not in the entity list of the
          --  subprogram because that list starts with the subprogram formals.
          --  We retrieve the candidate operations from the generic declaration.
+
+         function Extended_Primitive_Ops (T : Entity_Id) return Elist_Id;
+         --  Prefix notation can also be used on operations that are not
+         --  primitives of the type, but are declared in the same immediate
+         --  declarative part, which can only mean the corresponding package
+         --  body (See RM 4.1.3 (9.2/3)). If we are in that body we extend the
+         --  list of primitives with body operations with the same name that
+         --  may be candidates, so that Try_Primitive_Operations can examine
+         --  them if no real primitive is found.
 
          function Is_Private_Overriding (Op : Entity_Id) return Boolean;
          --  An operation that overrides an inherited operation in the private
          --  part of its package may be hidden, but if the inherited operation
          --  is visible a direct call to it will dispatch to the private one,
          --  which is therefore a valid candidate.
+
+         function Names_Match
+           (Obj_Type : Entity_Id;
+            Prim_Op  : Entity_Id;
+            Subprog  : Entity_Id) return Boolean;
+         --  Return True if the names of Prim_Op and Subprog match. If Obj_Type
+         --  is a protected type then compare also the original name of Prim_Op
+         --  with the name of Subprog (since the expander may have added a
+         --  prefix to its original name --see Exp_Ch9.Build_Selected_Name).
 
          function Valid_First_Argument_Of (Op : Entity_Id) return Boolean;
          --  Verify that the prefix, dereferenced if need be, is a valid
@@ -7547,8 +9122,8 @@ package body Sem_Ch4 is
                --  Scan the list of generic formals to find subprograms
                --  that may have a first controlling formal of the type.
 
-               if Nkind (Unit_Declaration_Node (Scope (T)))
-                 = N_Generic_Subprogram_Declaration
+               if Nkind (Unit_Declaration_Node (Scope (T))) =
+                                         N_Generic_Subprogram_Declaration
                then
                   declare
                      Decl : Node_Id;
@@ -7597,6 +9172,67 @@ package body Sem_Ch4 is
             end if;
          end Collect_Generic_Type_Ops;
 
+         ----------------------------
+         -- Extended_Primitive_Ops --
+         ----------------------------
+
+         function Extended_Primitive_Ops (T : Entity_Id) return Elist_Id is
+            Type_Scope : constant Entity_Id := Scope (T);
+
+            Body_Decls : List_Id;
+            Op_Found   : Boolean;
+            Op         : Entity_Id;
+            Op_List    : Elist_Id;
+
+         begin
+            Op_List := Primitive_Operations (T);
+
+            if Ekind (Type_Scope) = E_Package
+              and then In_Package_Body (Type_Scope)
+              and then In_Open_Scopes (Type_Scope)
+            then
+               --  Retrieve list of declarations of package body.
+
+               Body_Decls :=
+                 Declarations
+                   (Unit_Declaration_Node
+                     (Corresponding_Body
+                       (Unit_Declaration_Node (Type_Scope))));
+
+               Op       := Current_Entity (Subprog);
+               Op_Found := False;
+               while Present (Op) loop
+                  if Comes_From_Source (Op)
+                    and then Is_Overloadable (Op)
+
+                    --  Exclude overriding primitive operations of a type
+                    --  extension declared in the package body, to prevent
+                    --  duplicates in extended list.
+
+                    and then not Is_Primitive (Op)
+                    and then Is_List_Member (Unit_Declaration_Node (Op))
+                    and then List_Containing (Unit_Declaration_Node (Op)) =
+                                                                   Body_Decls
+                  then
+                     if not Op_Found then
+
+                        --  Copy list of primitives so it is not affected for
+                        --  other uses.
+
+                        Op_List  := New_Copy_Elist (Op_List);
+                        Op_Found := True;
+                     end if;
+
+                     Append_Elmt (Op, Op_List);
+                  end if;
+
+                  Op := Homonym (Op);
+               end loop;
+            end if;
+
+            return Op_List;
+         end Extended_Primitive_Ops;
+
          ---------------------------
          -- Is_Private_Overriding --
          ---------------------------
@@ -7612,6 +9248,35 @@ package body Sem_Ch4 is
               and then not Is_Hidden (Visible_Op);
          end Is_Private_Overriding;
 
+         -----------------
+         -- Names_Match --
+         -----------------
+
+         function Names_Match
+           (Obj_Type : Entity_Id;
+            Prim_Op  : Entity_Id;
+            Subprog  : Entity_Id) return Boolean is
+         begin
+            --  Common case: exact match
+
+            if Chars (Prim_Op) = Chars (Subprog) then
+               return True;
+
+            --  For protected type primitives the expander may have built the
+            --  name of the dispatching primitive prepending the type name to
+            --  avoid conflicts with the name of the protected subprogram (see
+            --  Exp_Ch9.Build_Selected_Name).
+
+            elsif Is_Protected_Type (Obj_Type) then
+               return
+                 Present (Original_Protected_Subprogram (Prim_Op))
+                   and then Chars (Original_Protected_Subprogram (Prim_Op)) =
+                              Chars (Subprog);
+            end if;
+
+            return False;
+         end Names_Match;
+
          -----------------------------
          -- Valid_First_Argument_Of --
          -----------------------------
@@ -7626,12 +9291,20 @@ package body Sem_Ch4 is
                Typ := Corresponding_Record_Type (Typ);
             end if;
 
-            --  Simple case. Object may be a subtype of the tagged type or
-            --  may be the corresponding record of a synchronized type.
+            --  Simple case. Object may be a subtype of the tagged type or may
+            --  be the corresponding record of a synchronized type.
 
             return Obj_Type = Typ
               or else Base_Type (Obj_Type) = Typ
               or else Corr_Type = Typ
+
+              --  Object may be of a derived type whose parent has unknown
+              --  discriminants, in which case the type matches the underlying
+              --  record view of its base.
+
+              or else
+                (Has_Unknown_Discriminants (Typ)
+                  and then Typ = Underlying_Record_View (Base_Type (Obj_Type)))
 
                --  Prefix can be dereferenced
 
@@ -7639,8 +9312,8 @@ package body Sem_Ch4 is
                 (Is_Access_Type (Corr_Type)
                   and then Designated_Type (Corr_Type) = Typ)
 
-               --  Formal is an access parameter, for which the object
-               --  can provide an access.
+               --  Formal is an access parameter, for which the object can
+               --  provide an access.
 
               or else
                 (Ekind (Typ) = E_Anonymous_Access_Type
@@ -7668,7 +9341,7 @@ package body Sem_Ch4 is
 
          elsif not Is_Generic_Type (Obj_Type) then
             Corr_Type := Obj_Type;
-            Elmt := First_Elmt (Primitive_Operations (Obj_Type));
+            Elmt := First_Elmt (Extended_Primitive_Ops (Obj_Type));
 
          else
             Corr_Type := Obj_Type;
@@ -7678,15 +9351,16 @@ package body Sem_Ch4 is
          while Present (Elmt) loop
             Prim_Op := Node (Elmt);
 
-            if Chars (Prim_Op) = Chars (Subprog)
+            if Names_Match (Obj_Type, Prim_Op, Subprog)
               and then Present (First_Formal (Prim_Op))
               and then Valid_First_Argument_Of (Prim_Op)
               and then
                 (Nkind (Call_Node) = N_Function_Call)
-                   = (Ekind (Prim_Op) = E_Function)
+                    =
+                (Ekind (Prim_Op) = E_Function)
             then
                --  Ada 2005 (AI-251): If this primitive operation corresponds
-               --  with an immediate ancestor interface there is no need to add
+               --  to an immediate ancestor interface there is no need to add
                --  it to the list of interpretations; the corresponding aliased
                --  primitive is also in this list of primitive operations and
                --  will be used instead.
@@ -7712,7 +9386,7 @@ package body Sem_Ch4 is
                Set_Is_Overloaded (Call_Node, False);
 
                if No (Matching_Op) then
-                  Prim_Op_Ref := New_Reference_To (Prim_Op, Sloc (Subprog));
+                  Prim_Op_Ref := New_Occurrence_Of (Prim_Op, Sloc (Subprog));
                   Candidate := Prim_Op;
 
                   Set_Parent (Call_Node, Parent (Node_To_Replace));
@@ -7829,8 +9503,8 @@ package body Sem_Ch4 is
          if All_Errors_Mode then
             Report_Error := True;
             if Try_Primitive_Operation
-                (Call_Node       => New_Call_Node,
-                 Node_To_Replace => Node_To_Replace)
+                 (Call_Node       => New_Call_Node,
+                  Node_To_Replace => Node_To_Replace)
 
               or else
                 Try_Class_Wide_Operation

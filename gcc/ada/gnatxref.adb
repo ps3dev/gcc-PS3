@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1998-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1998-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -30,6 +30,7 @@ with Switch;   use Switch;
 with Xr_Tabls; use Xr_Tabls;
 with Xref_Lib; use Xref_Lib;
 
+with Ada.Command_Line;  use Ada.Command_Line;
 with Ada.Strings.Fixed; use Ada.Strings.Fixed;
 with Ada.Text_IO;       use Ada.Text_IO;
 
@@ -175,16 +176,17 @@ procedure Gnatxref is
                      elsif Src_Path_Name = null
                        and then Lib_Path_Name = null
                      then
-                        Osint.Fail ("RTS path not valid: missing " &
-                                    "adainclude and adalib directories");
+                        Osint.Fail
+                          ("RTS path not valid: missing adainclude and "
+                           & "adalib directories");
 
                      elsif Src_Path_Name = null then
-                        Osint.Fail ("RTS path not valid: missing " &
-                                    "adainclude directory");
+                        Osint.Fail
+                          ("RTS path not valid: missing adainclude directory");
 
-                     elsif  Lib_Path_Name = null then
-                        Osint.Fail ("RTS path not valid: missing " &
-                                    "adalib directory");
+                     elsif Lib_Path_Name = null then
+                        Osint.Fail
+                          ("RTS path not valid: missing adalib directory");
                      end if;
                   end;
 
@@ -199,8 +201,7 @@ procedure Gnatxref is
                      Osint.Fail ("--ext cannot be specified multiple times");
                   end if;
 
-                  if EXT_Specified'Length
-                    = Osint.ALI_Default_Suffix'Length
+                  if EXT_Specified'Length = Osint.ALI_Default_Suffix'Length
                   then
                      Osint.ALI_Suffix := EXT_Specified.all'Access;
                   else
@@ -209,7 +210,8 @@ procedure Gnatxref is
                end if;
 
             when others =>
-               Write_Usage;
+               Try_Help;
+               raise Usage_Error;
          end case;
       end loop;
 
@@ -225,7 +227,8 @@ procedure Gnatxref is
             if Ada.Strings.Fixed.Index (S, ":") /= 0 then
                Ada.Text_IO.Put_Line
                  ("Only file names are allowed on the command line");
-               Write_Usage;
+               Try_Help;
+               raise Usage_Error;
             end if;
 
             Add_Xref_File (S);
@@ -237,12 +240,14 @@ procedure Gnatxref is
       when GNAT.Command_Line.Invalid_Switch =>
          Ada.Text_IO.Put_Line ("Invalid switch : "
                                & GNAT.Command_Line.Full_Switch);
-         Write_Usage;
+         Try_Help;
+         raise Usage_Error;
 
       when GNAT.Command_Line.Invalid_Parameter =>
          Ada.Text_IO.Put_Line ("Parameter missing for : "
                                & GNAT.Command_Line.Full_Switch);
-         Write_Usage;
+         Try_Help;
+         raise Usage_Error;
    end Parse_Cmd_Line;
 
    -----------
@@ -296,7 +301,12 @@ begin
    Parse_Cmd_Line;
 
    if not Have_File then
-      Write_Usage;
+      if Argument_Count = 0 then
+         Write_Usage;
+      else
+         Try_Help;
+         raise Usage_Error;
+      end if;
    end if;
 
    Xr_Tabls.Set_Default_Match (True);

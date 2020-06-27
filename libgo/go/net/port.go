@@ -1,69 +1,62 @@
-// Copyright 2009 The Go Authors. All rights reserved.
+// Copyright 2016 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build darwin freebsd linux netbsd openbsd
-
-// Read system port mappings from /etc/services
-
 package net
 
-import "sync"
-
-var services map[string]map[string]int
-var servicesError error
-var onceReadServices sync.Once
-
-func readServices() {
-	services = make(map[string]map[string]int)
-	var file *file
-	if file, servicesError = open("/etc/services"); servicesError != nil {
-		return
+// parsePort parses service as a decimal interger and returns the
+// corresponding value as port. It is the caller's responsibility to
+// parse service as a non-decimal integer when needsLookup is true.
+//
+// Some system resolvers will return a valid port number when given a number
+// over 65536 (see https://github.com/golang/go/issues/11715). Alas, the parser
+// can't bail early on numbers > 65536. Therefore reasonably large/small
+// numbers are parsed in full and rejected if invalid.
+func parsePort(service string) (port int, needsLookup bool) {
+	if service == "" {
+		// Lock in the legacy behavior that an empty string
+		// means port 0. See golang.org/issue/13610.
+		return 0, false
 	}
-	for line, ok := file.readLine(); ok; line, ok = file.readLine() {
-		// "http 80/tcp www www-http # World Wide Web HTTP"
-		if i := byteIndex(line, '#'); i >= 0 {
-			line = line[0:i]
-		}
-		f := getFields(line)
-		if len(f) < 2 {
-			continue
-		}
-		portnet := f[1] // "tcp/80"
-		port, j, ok := dtoi(portnet, 0)
-		if !ok || port <= 0 || j >= len(portnet) || portnet[j] != '/' {
-			continue
-		}
-		netw := portnet[j+1:] // "tcp"
-		m, ok1 := services[netw]
-		if !ok1 {
-			m = make(map[string]int)
-			services[netw] = m
-		}
-		for i := 0; i < len(f); i++ {
-			if i != 1 { // f[1] was port/net
-				m[f[i]] = port
-			}
-		}
+	const (
+		max    = uint32(1<<32 - 1)
+		cutoff = uint32(1 << 30)
+	)
+	neg := false
+	if service[0] == '+' {
+		service = service[1:]
+	} else if service[0] == '-' {
+		neg = true
+		service = service[1:]
 	}
-	file.close()
-}
-
-// goLookupPort is the native Go implementation of LookupPort.
-func goLookupPort(network, service string) (port int, err error) {
-	onceReadServices.Do(readServices)
-
-	switch network {
-	case "tcp4", "tcp6":
-		network = "tcp"
-	case "udp4", "udp6":
-		network = "udp"
-	}
-
-	if m, ok := services[network]; ok {
-		if port, ok = m[service]; ok {
-			return
+	var n uint32
+	for _, d := range service {
+		if '0' <= d && d <= '9' {
+			d -= '0'
+		} else {
+			return 0, true
 		}
+		if n >= cutoff {
+			n = max
+			break
+		}
+		n *= 10
+		nn := n + uint32(d)
+		if nn < n || nn > max {
+			n = max
+			break
+		}
+		n = nn
 	}
-	return 0, &AddrError{"unknown port", network + "/" + service}
+	if !neg && n >= cutoff {
+		port = int(cutoff - 1)
+	} else if neg && n > cutoff {
+		port = int(cutoff)
+	} else {
+		port = int(n)
+	}
+	if neg {
+		port = -port
+	}
+	return port, false
 }

@@ -2,10 +2,9 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package ioutil_test
+package ioutil
 
 import (
-	. "io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -50,5 +49,21 @@ func TestTempDir(t *testing.T) {
 		if !re.MatchString(name) {
 			t.Errorf("TempDir(`"+dir+"`, `ioutil_test`) created bad name %s", name)
 		}
+	}
+}
+
+// test that we return a nice error message if the dir argument to TempDir doesn't
+// exist (or that it's empty and os.TempDir doesn't exist)
+func TestTempDir_BadDir(t *testing.T) {
+	dir, err := TempDir("", "TestTempDir_BadDir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	badDir := filepath.Join(dir, "not-exist")
+	_, err = TempDir(badDir, "foo")
+	if pe, ok := err.(*os.PathError); !ok || !os.IsNotExist(err) || pe.Path != badDir {
+		t.Errorf("TempDir error = %#v; want PathError for path %q satisifying os.IsNotExist", err, badDir)
 	}
 }

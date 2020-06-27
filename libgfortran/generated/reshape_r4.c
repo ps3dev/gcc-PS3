@@ -1,8 +1,8 @@
 /* Implementation of the RESHAPE intrinsic
-   Copyright 2002, 2006, 2007, 2009 Free Software Foundation, Inc.
+   Copyright (C) 2002-2017 Free Software Foundation, Inc.
    Contributed by Paul Brook <paul@nowt.org>
 
-This file is part of the GNU Fortran 95 runtime library (libgfortran).
+This file is part of the GNU Fortran runtime library (libgfortran).
 
 Libgfortran is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public
@@ -24,8 +24,6 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 <http://www.gnu.org/licenses/>.  */
 
 #include "libgfortran.h"
-#include <stdlib.h>
-#include <assert.h>
 
 
 #if defined (HAVE_GFC_REAL_4)
@@ -80,6 +78,10 @@ reshape_r4 (gfc_array_r4 * const restrict ret,
   index_type shape_data[GFC_MAX_DIMENSIONS];
 
   rdim = GFC_DESCRIPTOR_EXTENT(shape,0);
+  /* rdim is always > 0; this lets the compiler optimize more and
+   avoids a potential warning.  */
+  GFC_ASSERT(rdim>0);
+
   if (rdim != GFC_DESCRIPTOR_RANK(ret))
     runtime_error("rank of return array incorrect in RESHAPE intrinsic");
 
@@ -87,7 +89,7 @@ reshape_r4 (gfc_array_r4 * const restrict ret,
 
   for (n = 0; n < rdim; n++)
     {
-      shape_data[n] = shape->data[n * GFC_DESCRIPTOR_STRIDE(shape,0)];
+      shape_data[n] = shape->base_addr[n * GFC_DESCRIPTOR_STRIDE(shape,0)];
       if (shape_data[n] <= 0)
       {
         shape_data[n] = 0;
@@ -95,7 +97,7 @@ reshape_r4 (gfc_array_r4 * const restrict ret,
       }
     }
 
-  if (ret->data == NULL)
+  if (ret->base_addr == NULL)
     {
       index_type alloc_size;
 
@@ -111,11 +113,11 @@ reshape_r4 (gfc_array_r4 * const restrict ret,
       ret->offset = 0;
 
       if (unlikely (rs < 1))
-        alloc_size = 1;
+        alloc_size = 0;
       else
-        alloc_size = rs * sizeof (GFC_REAL_4);
+        alloc_size = rs;
 
-      ret->data = internal_malloc_size (alloc_size);
+      ret->base_addr = xmallocarray (alloc_size, sizeof (GFC_REAL_4));
       ret->dtype = (source->dtype & ~GFC_DTYPE_RANK_MASK) | rdim;
     }
 
@@ -143,7 +145,7 @@ reshape_r4 (gfc_array_r4 * const restrict ret,
           else
             psize = 0;
         }
-      pptr = pad->data;
+      pptr = pad->base_addr;
     }
   else
     {
@@ -193,7 +195,7 @@ reshape_r4 (gfc_array_r4 * const restrict ret,
 
 	  for (n = 0; n < rdim; n++)
 	    {
-	      v = order->data[n * GFC_DESCRIPTOR_STRIDE(order,0)] - 1;
+	      v = order->base_addr[n * GFC_DESCRIPTOR_STRIDE(order,0)] - 1;
 
 	      if (v < 0 || v >= rdim)
 		runtime_error("Value %ld out of range in ORDER argument"
@@ -212,7 +214,7 @@ reshape_r4 (gfc_array_r4 * const restrict ret,
   for (n = 0; n < rdim; n++)
     {
       if (order)
-        dim = order->data[n * GFC_DESCRIPTOR_STRIDE(order,0)] - 1;
+        dim = order->base_addr[n * GFC_DESCRIPTOR_STRIDE(order,0)] - 1;
       else
         dim = n;
 
@@ -234,6 +236,11 @@ reshape_r4 (gfc_array_r4 * const restrict ret,
     }
 
   sdim = GFC_DESCRIPTOR_RANK (source);
+
+  /* sdim is always > 0; this lets the compiler optimize more and
+   avoids a warning.  */
+  GFC_ASSERT(sdim>0);
+
   ssize = 1;
   sempty = 0;
   for (n = 0; n < sdim; n++)
@@ -258,12 +265,12 @@ reshape_r4 (gfc_array_r4 * const restrict ret,
       rsize *= sizeof (GFC_REAL_4);
       ssize *= sizeof (GFC_REAL_4);
       psize *= sizeof (GFC_REAL_4);
-      reshape_packed ((char *)ret->data, rsize, (char *)source->data,
-		      ssize, pad ? (char *)pad->data : NULL, psize);
+      reshape_packed ((char *)ret->base_addr, rsize, (char *)source->base_addr,
+		      ssize, pad ? (char *)pad->base_addr : NULL, psize);
       return;
     }
-  rptr = ret->data;
-  src = sptr = source->data;
+  rptr = ret->base_addr;
+  src = sptr = source->base_addr;
   rstride0 = rstride[0];
   sstride0 = sstride[0];
 

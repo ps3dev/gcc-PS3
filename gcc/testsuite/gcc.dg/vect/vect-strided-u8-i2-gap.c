@@ -10,6 +10,8 @@ typedef struct {
    unsigned char b;
 } s;
 
+volatile int y = 0;
+
 __attribute__ ((noinline)) int
 main1 (s *arr)
 {
@@ -33,7 +35,7 @@ main1 (s *arr)
     }
 
   ptr = arr;
-  /* Not vectorizable: gap in store.  */ 
+  /* gap in store, use strided stores.  */ 
   for (i = 0; i < N; i++)
     {
       res[i].a = ptr->b;
@@ -62,8 +64,8 @@ int main (void)
     { 
       arr[i].a = i;
       arr[i].b = i * 2;
-      if (arr[i].a == 178)
-         abort(); 
+      if (y) /* Avoid vectorization.  */
+        abort ();
     } 
 
   main1 (arr);
@@ -71,6 +73,5 @@ int main (void)
   return 0;
 }
 
-/* { dg-final { scan-tree-dump-times "vectorized 1 loops" 1 "vect"  { target vect_strided2 } } } */
-/* { dg-final { cleanup-tree-dump "vect" } } */
+/* { dg-final { scan-tree-dump-times "vectorized 2 loops" 1 "vect"  { target vect_strided2 } } } */
   

@@ -9,8 +9,8 @@
 package cipher
 
 // A Block represents an implementation of block cipher
-// using a given key.  It provides the capability to encrypt
-// or decrypt individual blocks.  The mode implementations
+// using a given key. It provides the capability to encrypt
+// or decrypt individual blocks. The mode implementations
 // extend that capability to streams of blocks.
 type Block interface {
 	// BlockSize returns the cipher's block size.
@@ -29,6 +29,9 @@ type Block interface {
 type Stream interface {
 	// XORKeyStream XORs each byte in the given slice with a byte from the
 	// cipher's key stream. Dst and src may point to the same memory.
+	// If len(dst) < len(src), XORKeyStream should panic. It is acceptable
+	// to pass a dst bigger than src, and in that case, XORKeyStream will
+	// only update dst[:len(src)] and will not touch the rest of dst.
 	XORKeyStream(dst, src []byte)
 }
 
@@ -45,16 +48,6 @@ type BlockMode interface {
 }
 
 // Utility routines
-
-func shift1(dst, src []byte) byte {
-	var b byte
-	for i := len(src) - 1; i >= 0; i-- {
-		bb := src[i] >> 7
-		dst[i] = src[i]<<1 | b
-		b = bb
-	}
-	return b
-}
 
 func dup(p []byte) []byte {
 	q := make([]byte, len(p))

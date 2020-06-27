@@ -22,7 +22,7 @@ func TestTicker(t *testing.T) {
 	dt := t1.Sub(t0)
 	target := Delta * Count
 	slop := target * 2 / 10
-	if dt < target-slop || dt > target+slop {
+	if dt < target-slop || (!testing.Short() && dt > target+slop) {
 		t.Fatalf("%d %s ticks took %s, expected [%s,%s]", Count, Delta, dt, target-slop, target+slop)
 	}
 	// Now test that the ticker stopped
@@ -35,7 +35,7 @@ func TestTicker(t *testing.T) {
 	}
 }
 
-// Test that a bug tearing down a ticker has been fixed.  This routine should not deadlock.
+// Test that a bug tearing down a ticker has been fixed. This routine should not deadlock.
 func TestTeardown(t *testing.T) {
 	Delta := 100 * Millisecond
 	if testing.Short() {
@@ -46,6 +46,24 @@ func TestTeardown(t *testing.T) {
 		<-ticker.C
 		ticker.Stop()
 	}
+}
+
+// Test the Tick convenience wrapper.
+func TestTick(t *testing.T) {
+	// Test that giving a negative duration returns nil.
+	if got := Tick(-1); got != nil {
+		t.Errorf("Tick(-1) = %v; want nil", got)
+	}
+}
+
+// Test that NewTicker panics when given a duration less than zero.
+func TestNewTickerLtZeroDuration(t *testing.T) {
+	defer func() {
+		if err := recover(); err == nil {
+			t.Errorf("NewTicker(-1) should have panicked")
+		}
+	}()
+	NewTicker(-1)
 }
 
 func BenchmarkTicker(b *testing.B) {

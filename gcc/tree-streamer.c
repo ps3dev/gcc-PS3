@@ -1,7 +1,7 @@
 /* Miscellaneous utilities for tree streaming.  Things that are used
    in both input and output are here.
 
-   Copyright 2011 Free Software Foundation, Inc.
+   Copyright (C) 2011-2017 Free Software Foundation, Inc.
    Contributed by Diego Novillo <dnovillo@google.com>
 
 This file is part of GCC.
@@ -23,8 +23,19 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "streamer-hooks.h"
+#include "backend.h"
+#include "tree.h"
+#include "gimple.h"
 #include "tree-streamer.h"
+#include "cgraph.h"
+
+/* Table indexed by machine_mode, used for 2 different purposes.
+   During streaming out we record there non-zero value for all modes
+   that were streamed out.
+   During streaming in, we translate the on the disk mode using this
+   table.  For normal LTO it is set to identity, for ACCEL_COMPILER
+   depending on the mode_table content.  */
+unsigned char streamer_mode_table[1 << 8];
 
 /* Check that all the TS_* structures handled by the streamer_write_* and
    streamer_read_* routines are exactly ALL the structures defined in
@@ -92,16 +103,23 @@ streamer_check_handled_ts_structures (void)
 
 static void
 streamer_tree_cache_add_to_node_array (struct streamer_tree_cache_d *cache,
-				       unsigned ix, tree t)
+				       unsigned ix, tree t, hashval_t hash)
 {
-  /* Make sure we're either replacing an old element or
-     appending consecutively.  */
-  gcc_assert (ix <= VEC_length (tree, cache->nodes));
-
-  if (ix == VEC_length (tree, cache->nodes))
-    VEC_safe_push (tree, heap, cache->nodes, t);
-  else
-    VEC_replace (tree, cache->nodes, ix, t);
+  /* We're either replacing an old element or appending consecutively.  */
+  if (cache->nodes.exists ())
+    {
+      if (cache->nodes.length () == ix)
+	cache->nodes.safe_push (t);
+      else
+	cache->nodes[ix] = t;
+    }
+  if (cache->hashes.exists ())
+    {
+      if (cache->hashes.length () == ix)
+	cache->hashes.safe_push (hash);
+      else
+	cache->hashes[ix] = hash;
+    }
 }
 
 
@@ -117,45 +135,34 @@ streamer_tree_cache_add_to_node_array (struct streamer_tree_cache_d *cache,
 
 static bool
 streamer_tree_cache_insert_1 (struct streamer_tree_cache_d *cache,
-			      tree t, unsigned *ix_p,
+			      tree t, hashval_t hash, unsigned *ix_p,
 			      bool insert_at_next_slot_p)
 {
-  void **slot;
-  unsigned ix;
   bool existed_p;
 
   gcc_assert (t);
 
-  slot = pointer_map_insert (cache->node_map, t);
-  if (!*slot)
+  unsigned int &ix = cache->node_map->get_or_insert (t, &existed_p);
+  if (!existed_p)
     {
       /* Determine the next slot to use in the cache.  */
       if (insert_at_next_slot_p)
-	ix = VEC_length (tree, cache->nodes);
+	ix = cache->next_idx++;
       else
 	ix = *ix_p;
-       *slot = (void *)(size_t) (ix + 1);
 
-      streamer_tree_cache_add_to_node_array (cache, ix, t);
-
-      /* Indicate that the item was not present in the cache.  */
-      existed_p = false;
+      streamer_tree_cache_add_to_node_array (cache, ix, t, hash);
     }
   else
     {
-      ix = (size_t) *slot - 1;
-
       if (!insert_at_next_slot_p && ix != *ix_p)
 	{
 	  /* If the caller wants to insert T at a specific slot
 	     location, and ENTRY->TO does not match *IX_P, add T to
 	     the requested location slot.  */
 	  ix = *ix_p;
-	  streamer_tree_cache_add_to_node_array (cache, ix, t);
+	  streamer_tree_cache_add_to_node_array (cache, ix, t, hash);
 	}
-
-      /* Indicate that T was already in the cache.  */
-      existed_p = true;
     }
 
   if (ix_p)
@@ -173,30 +180,39 @@ streamer_tree_cache_insert_1 (struct streamer_tree_cache_d *cache,
 
 bool
 streamer_tree_cache_insert (struct streamer_tree_cache_d *cache, tree t,
-			    unsigned *ix_p)
+			    hashval_t hash, unsigned *ix_p)
 {
-  return streamer_tree_cache_insert_1 (cache, t, ix_p, true);
+  return streamer_tree_cache_insert_1 (cache, t, hash, ix_p, true);
 }
 
 
-/* Insert tree node T in CACHE at slot IX.  If T already
-   existed in the cache return true.  Otherwise, return false.  */
+/* Replace the tree node with T in CACHE at slot IX.  */
 
-bool
-streamer_tree_cache_insert_at (struct streamer_tree_cache_d *cache,
-			       tree t, unsigned ix)
+void
+streamer_tree_cache_replace_tree (struct streamer_tree_cache_d *cache,
+				  tree t, unsigned ix)
 {
-  return streamer_tree_cache_insert_1 (cache, t, &ix, false);
+  hashval_t hash = 0;
+  if (cache->hashes.exists ())
+    hash = streamer_tree_cache_get_hash (cache, ix);
+  if (!cache->node_map)
+    streamer_tree_cache_add_to_node_array (cache, ix, t, hash);
+  else
+    streamer_tree_cache_insert_1 (cache, t, hash, &ix, false);
 }
 
 
 /* Appends tree node T to CACHE, even if T already existed in it.  */
 
 void
-streamer_tree_cache_append (struct streamer_tree_cache_d *cache, tree t)
+streamer_tree_cache_append (struct streamer_tree_cache_d *cache,
+			    tree t, hashval_t hash)
 {
-  unsigned ix = VEC_length (tree, cache->nodes);
-  streamer_tree_cache_insert_1 (cache, t, &ix, false);
+  unsigned ix = cache->next_idx++;
+  if (!cache->node_map)
+    streamer_tree_cache_add_to_node_array (cache, ix, t, hash);
+  else
+    streamer_tree_cache_insert_1 (cache, t, hash, &ix, false);
 }
 
 /* Return true if tree node T exists in CACHE, otherwise false.  If IX_P is
@@ -207,13 +223,13 @@ bool
 streamer_tree_cache_lookup (struct streamer_tree_cache_d *cache, tree t,
 			    unsigned *ix_p)
 {
-  void **slot;
+  unsigned *slot;
   bool retval;
   unsigned ix;
 
   gcc_assert (t);
 
-  slot = pointer_map_contains  (cache->node_map, t);
+  slot = cache->node_map->get (t);
   if (slot == NULL)
     {
       retval = false;
@@ -222,7 +238,7 @@ streamer_tree_cache_lookup (struct streamer_tree_cache_d *cache, tree t,
   else
     {
       retval = true;
-      ix = (size_t) *slot - 1;
+      ix = *slot;
     }
 
   if (ix_p)
@@ -232,17 +248,29 @@ streamer_tree_cache_lookup (struct streamer_tree_cache_d *cache, tree t,
 }
 
 
-/* Return the tree node at slot IX in CACHE.  */
+/* Verify that NODE is in CACHE.  */
 
-tree
-streamer_tree_cache_get (struct streamer_tree_cache_d *cache, unsigned ix)
+static void
+verify_common_node_recorded (struct streamer_tree_cache_d *cache, tree node)
 {
-  gcc_assert (cache);
+  /* Restrict this to flag_checking only because in general violating it is
+     harmless plus we never know what happens on all targets/frontend/flag(!)
+     combinations.  */
+  if (!flag_checking)
+    return;
 
-  /* Make sure we're not requesting something we don't have.  */
-  gcc_assert (ix < VEC_length (tree, cache->nodes));
-
-  return VEC_index (tree, cache->nodes, ix);
+  if (cache->node_map)
+    gcc_assert (streamer_tree_cache_lookup (cache, node, NULL));
+  else
+    {
+      bool found = false;
+      gcc_assert (cache->nodes.exists ());
+      /* Linear search...  */
+      for (unsigned i = 0; !found && i < cache->nodes.length (); ++i)
+	if (cache->nodes[i] == node)
+	  found = true;
+      gcc_assert (found);
+    }
 }
 
 
@@ -251,6 +279,16 @@ streamer_tree_cache_get (struct streamer_tree_cache_d *cache, unsigned ix)
 static void
 record_common_node (struct streamer_tree_cache_d *cache, tree node)
 {
+  /* If we recursively end up at nodes we do not want to preload simply don't.
+     ???  We'd want to verify that this doesn't happen, or alternatively
+     do not recurse at all.  */
+  if (node == char_type_node)
+    return;
+
+  gcc_checking_assert (node != boolean_type_node
+		       && node != boolean_true_node
+		       && node != boolean_false_node);
+
   /* We have to make sure to fill exactly the same number of
      elements for all frontends.  That can include NULL trees.
      As our hash table can't deal with zero entries we'll simply stream
@@ -260,22 +298,49 @@ record_common_node (struct streamer_tree_cache_d *cache, tree node)
   if (!node)
     node = error_mark_node;
 
-  streamer_tree_cache_append (cache, node);
+  /* ???  FIXME, devise a better hash value.  But the hash needs to be equal
+     for all frontend and lto1 invocations.  So just use the position
+     in the cache as hash value.  */
+  streamer_tree_cache_append (cache, node, cache->nodes.length ());
 
-  if (POINTER_TYPE_P (node)
-      || TREE_CODE (node) == COMPLEX_TYPE
-      || TREE_CODE (node) == ARRAY_TYPE)
-    record_common_node (cache, TREE_TYPE (node));
-  else if (TREE_CODE (node) == RECORD_TYPE)
+  switch (TREE_CODE (node))
     {
+    case ERROR_MARK:
+    case FIELD_DECL:
+    case FIXED_POINT_TYPE:
+    case IDENTIFIER_NODE:
+    case INTEGER_CST:
+    case INTEGER_TYPE:
+    case POINTER_BOUNDS_TYPE:
+    case REAL_TYPE:
+    case TREE_LIST:
+    case VOID_CST:
+    case VOID_TYPE:
+      /* No recursive trees.  */
+      break;
+    case ARRAY_TYPE:
+    case POINTER_TYPE:
+    case REFERENCE_TYPE:
+      record_common_node (cache, TREE_TYPE (node));
+      break;
+    case COMPLEX_TYPE:
+      /* Verify that a complex type's component type (node_type) has been
+	 handled already (and we thus don't need to recurse here).  */
+      verify_common_node_recorded (cache, TREE_TYPE (node));
+      break;
+    case RECORD_TYPE:
       /* The FIELD_DECLs of structures should be shared, so that every
 	 COMPONENT_REF uses the same tree node when referencing a field.
 	 Pointer equality between FIELD_DECLs is used by the alias
-	 machinery to compute overlapping memory references (See
-	 nonoverlapping_component_refs_p).  */
-      tree f;
-      for (f = TYPE_FIELDS (node); f; f = TREE_CHAIN (f))
+	 machinery to compute overlapping component references (see
+	 nonoverlapping_component_refs_p and
+	 nonoverlapping_component_refs_of_decl_p).  */
+      for (tree f = TYPE_FIELDS (node); f; f = TREE_CHAIN (f))
 	record_common_node (cache, f);
+      break;
+    default:
+      /* Unexpected tree code.  */
+      gcc_unreachable ();
     }
 }
 
@@ -293,14 +358,32 @@ preload_common_nodes (struct streamer_tree_cache_d *cache)
     if (i != itk_char)
       record_common_node (cache, integer_types[i]);
 
-  for (i = 0; i < TYPE_KIND_LAST; i++)
+  for (i = 0; i < stk_type_kind_last; i++)
     record_common_node (cache, sizetype_tab[i]);
 
   for (i = 0; i < TI_MAX; i++)
     /* Skip boolean type and constants, they are frontend dependent.  */
     if (i != TI_BOOLEAN_TYPE
 	&& i != TI_BOOLEAN_FALSE
-	&& i != TI_BOOLEAN_TRUE)
+	&& i != TI_BOOLEAN_TRUE
+	/* MAIN_IDENTIFIER is not always initialized by Fortran FE.  */
+	&& i != TI_MAIN_IDENTIFIER
+	/* PID_TYPE is initialized only by C family front-ends.  */
+	&& i != TI_PID_TYPE
+	/* Skip optimization and target option nodes; they depend on flags.  */
+	&& i != TI_OPTIMIZATION_DEFAULT
+	&& i != TI_OPTIMIZATION_CURRENT
+	&& i != TI_TARGET_OPTION_DEFAULT
+	&& i != TI_TARGET_OPTION_CURRENT
+	&& i != TI_CURRENT_TARGET_PRAGMA
+	&& i != TI_CURRENT_OPTIMIZE_PRAGMA
+	/* Skip va_list* related nodes if offloading.  For native LTO
+	   we want them to be merged for the stdarg pass, for offloading
+	   they might not be identical between host and offloading target.  */
+	&& (!lto_stream_offload_p
+	    || (i != TI_VA_LIST_TYPE
+		&& i != TI_VA_LIST_GPR_COUNTER_FIELD
+		&& i != TI_VA_LIST_FPR_COUNTER_FIELD)))
       record_common_node (cache, global_trees[i]);
 }
 
@@ -308,13 +391,19 @@ preload_common_nodes (struct streamer_tree_cache_d *cache)
 /* Create a cache of pickled nodes.  */
 
 struct streamer_tree_cache_d *
-streamer_tree_cache_create (void)
+streamer_tree_cache_create (bool with_hashes, bool with_map, bool with_vec)
 {
   struct streamer_tree_cache_d *cache;
 
   cache = XCNEW (struct streamer_tree_cache_d);
 
-  cache->node_map = pointer_map_create ();
+  if (with_map)
+    cache->node_map = new hash_map<tree, unsigned> (251);
+  cache->next_idx = 0;
+  if (with_vec)
+    cache->nodes.create (165);
+  if (with_hashes)
+    cache->hashes.create (165);
 
   /* Load all the well-known tree nodes that are always created by
      the compiler on startup.  This prevents writing them out
@@ -333,7 +422,9 @@ streamer_tree_cache_delete (struct streamer_tree_cache_d *c)
   if (c == NULL)
     return;
 
-  pointer_map_destroy (c->node_map);
-  VEC_free (tree, heap, c->nodes);
+  delete c->node_map;
+  c->node_map = NULL;
+  c->nodes.release ();
+  c->hashes.release ();
   free (c);
 }

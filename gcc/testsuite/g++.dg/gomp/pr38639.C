@@ -1,17 +1,17 @@
 // PR c++/38639
-// { dg-do compile }
-// { dg-options "-fopenmp -std=c++0x" }
+// { dg-do compile { target c++11 } }
+// { dg-options "-fopenmp" }
 
 template<int> void
 foo ()
 {
 #pragma omp parallel for
-  for (auto i = i = 0; i<4; ++i)	// { dg-error "incomplete|unable|invalid" }
+  for (auto i = i = 0; i<4; ++i)	// { dg-error "initializer expression refers to iteration variable" }
     ;
 }
 
 void
 bar ()
 {
-  foo<0> ();				// { dg-message "required from here" }
+  foo<0> ();
 }

@@ -1,7 +1,6 @@
 // The  -*- C++ -*- type traits classes for internal use in libstdc++
 
-// Copyright (C) 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2009, 2010
-// Free Software Foundation, Inc.
+// Copyright (C) 2000-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -65,16 +64,7 @@
 // removed.
 //
 
-// Forward declaration hack, should really include this from somewhere.
-namespace __gnu_cxx _GLIBCXX_VISIBILITY(default)
-{
-_GLIBCXX_BEGIN_NAMESPACE_VERSION
-
-  template<typename _Iterator, typename _Container>
-    class __normal_iterator;
-
-_GLIBCXX_END_NAMESPACE_VERSION
-} // namespace
+extern "C++" {
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
@@ -142,7 +132,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   // Thirteen specializations (yes there are eleven standard integer
   // types; <em>long long</em> and <em>unsigned long long</em> are
-  // supported as extensions)
+  // supported as extensions).  Up to four target-specific __int<N>
+  // types are supported as well.
   template<>
     struct __is_integer<bool>
     {
@@ -180,7 +171,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     };
 # endif
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
   template<>
     struct __is_integer<char16_t>
     {
@@ -252,6 +243,35 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       typedef __true_type __type;
     };
 
+#define __INT_N(TYPE) 			\
+  template<>				\
+    struct __is_integer<TYPE>		\
+    {					\
+      enum { __value = 1 };		\
+      typedef __true_type __type;	\
+    };					\
+  template<>				\
+    struct __is_integer<unsigned TYPE>	\
+    {					\
+      enum { __value = 1 };		\
+      typedef __true_type __type;	\
+    };
+
+#ifdef __GLIBCXX_TYPE_INT_N_0
+__INT_N(__GLIBCXX_TYPE_INT_N_0)
+#endif
+#ifdef __GLIBCXX_TYPE_INT_N_1
+__INT_N(__GLIBCXX_TYPE_INT_N_1)
+#endif
+#ifdef __GLIBCXX_TYPE_INT_N_2
+__INT_N(__GLIBCXX_TYPE_INT_N_2)
+#endif
+#ifdef __GLIBCXX_TYPE_INT_N_3
+__INT_N(__GLIBCXX_TYPE_INT_N_3)
+#endif
+
+#undef __INT_N
+
   //
   // Floating point types
   //
@@ -302,37 +322,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     };
 
   //
-  // Normal iterator type
-  //
-  template<typename _Tp>
-    struct __is_normal_iterator
-    {
-      enum { __value = 0 };
-      typedef __false_type __type;
-    };
-
-  template<typename _Iterator, typename _Container>
-    struct __is_normal_iterator< __gnu_cxx::__normal_iterator<_Iterator,
-							      _Container> >
-    {
-      enum { __value = 1 };
-      typedef __true_type __type;
-    };
-
-  //
   // An arithmetic type is an integer type or a floating point type
   //
   template<typename _Tp>
     struct __is_arithmetic
     : public __traitor<__is_integer<_Tp>, __is_floating<_Tp> >
-    { };
-
-  //
-  // A fundamental type is `void' or and arithmetic type
-  //
-  template<typename _Tp>
-    struct __is_fundamental
-    : public __traitor<__is_void<_Tp>, __is_arithmetic<_Tp> >
     { };
 
   //
@@ -407,19 +401,15 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       typedef __false_type __type;
     };
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+  // Fallback implementation of the function in bits/stl_iterator.h used to
+  // remove the move_iterator wrapper.
   template<typename _Iterator>
-    class move_iterator;
-
-  template<typename _Iterator>
-    struct __is_move_iterator< move_iterator<_Iterator> >
-    {
-      enum { __value = 1 };
-      typedef __true_type __type;
-    };
-#endif
+    inline _Iterator
+    __miter_base(_Iterator __it)
+    { return __it; }
 
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace
+} // extern "C++"
 
 #endif //_CPP_TYPE_TRAITS_H

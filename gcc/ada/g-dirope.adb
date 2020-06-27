@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---                     Copyright (C) 1998-2010, AdaCore                     --
+--                     Copyright (C) 1998-2014, AdaCore                     --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -604,12 +604,8 @@ package body GNAT.Directory_Operations is
 
    procedure Make_Dir (Dir_Name : Dir_Name_Str) is
       C_Dir_Name : constant String := Dir_Name & ASCII.NUL;
-
-      function mkdir (Dir_Name : String) return Integer;
-      pragma Import (C, mkdir, "__gnat_mkdir");
-
    begin
-      if mkdir (C_Dir_Name) /= 0 then
+      if CRTL.mkdir (C_Dir_Name, Unspecified) /= 0 then
          raise Directory_Error;
       end if;
    end Make_Dir;
@@ -697,7 +693,7 @@ package body GNAT.Directory_Operations is
    end Read;
 
    -------------------------
-   -- Read_Is_Thread_Sage --
+   -- Read_Is_Thread_Safe --
    -------------------------
 
    function Read_Is_Thread_Safe return Boolean is

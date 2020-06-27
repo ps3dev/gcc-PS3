@@ -7,14 +7,28 @@
 #include "system.h"
 #include "coretypes.h"
 #include "tm.h"
+#include "tree.h"
+#include "stringpool.h"
 #include "toplev.h"
 #include "basic-block.h"
+#include "hash-table.h"
+#include "vec.h"
+#include "ggc.h"
+#include "basic-block.h"
+#include "tree-ssa-alias.h"
+#include "internal-fn.h"
+#include "gimple-fold.h"
+#include "tree-eh.h"
+#include "gimple-expr.h"
+#include "is-a.h"
 #include "gimple.h"
+#include "gimple-iterator.h"
 #include "tree.h"
 #include "tree-pass.h"
 #include "intl.h"
 #include "plugin-version.h"
 #include "diagnostic.h"
+#include "context.h"
 
 int plugin_is_GPL_compatible;
 
@@ -46,10 +60,10 @@ get_real_ref_rhs (tree expr)
              e.g. D.1797_14, we need to grab the rhs of its SSA def
              statement (i.e. foo.x).  */
           tree vdecl = SSA_NAME_VAR (expr);
-          if (DECL_ARTIFICIAL (vdecl)
+          if ((!vdecl || DECL_ARTIFICIAL (vdecl))
               && !gimple_nop_p (SSA_NAME_DEF_STMT (expr)))
             {
-              gimple def_stmt = SSA_NAME_DEF_STMT (expr);
+	      gimple *def_stmt = SSA_NAME_DEF_STMT (expr);
               /* We are only interested in an assignment with a single
                  rhs operand because if it is not, the original assignment
                  will not possibly be a self-assignment.  */
@@ -86,6 +100,8 @@ get_real_ref_rhs (tree expr)
 static tree
 get_non_ssa_expr (tree expr)
 {
+  if (!expr)
+    return NULL_TREE;
   switch (TREE_CODE (expr))
     {
       case VAR_DECL:
@@ -149,10 +165,10 @@ get_non_ssa_expr (tree expr)
       case SSA_NAME:
         {
           tree vdecl = SSA_NAME_VAR (expr);
-          if (DECL_ARTIFICIAL (vdecl)
+          if ((!vdecl || DECL_ARTIFICIAL (vdecl))
               && !gimple_nop_p (SSA_NAME_DEF_STMT (expr)))
             {
-              gimple def_stmt = SSA_NAME_DEF_STMT (expr);
+	      gimple *def_stmt = SSA_NAME_DEF_STMT (expr);
               if (gimple_assign_single_p (def_stmt))
                 vdecl = gimple_assign_rhs1 (def_stmt);
             }
@@ -170,7 +186,7 @@ get_non_ssa_expr (tree expr)
    they are the same. If so, print a warning message about self-assignment.  */
 
 static void
-compare_and_warn (gimple stmt, tree lhs, tree rhs)
+compare_and_warn (gimple *stmt, tree lhs, tree rhs)
 {
   if (operand_equal_p (lhs, rhs, OEP_PURE_SAME))
     {
@@ -194,7 +210,7 @@ compare_and_warn (gimple stmt, tree lhs, tree rhs)
 /* Check and warn if STMT is a self-assign statement.  */
 
 static void
-warn_self_assign (gimple stmt)
+warn_self_assign (gimple *stmt)
 {
   tree rhs, lhs;
 
@@ -209,7 +225,7 @@ warn_self_assign (gimple stmt)
       if (TREE_CODE (lhs) == SSA_NAME)
         {
           lhs = SSA_NAME_VAR (lhs);
-          if (DECL_ARTIFICIAL (lhs))
+          if (!lhs || DECL_ARTIFICIAL (lhs))
             return;
         }
 
@@ -236,15 +252,40 @@ warn_self_assign (gimple stmt)
     }
 }
 
-/* Entry point for the self-assignment detection pass.  */
+namespace {
 
-static unsigned int
-execute_warn_self_assign (void)
+const pass_data pass_data_warn_self_assign =
+{
+  GIMPLE_PASS, /* type */
+  "warn_self_assign", /* name */
+  OPTGROUP_NONE, /* optinfo_flags */
+  TV_NONE, /* tv_id */
+  PROP_ssa, /* properties_required */
+  0, /* properties_provided */
+  0, /* properties_destroyed */
+  0, /* todo_flags_start */
+  0, /* todo_flags_finish */
+};
+
+class pass_warn_self_assign : public gimple_opt_pass
+{
+public:
+  pass_warn_self_assign(gcc::context *ctxt)
+    : gimple_opt_pass(pass_data_warn_self_assign, ctxt)
+  {}
+
+  /* opt_pass methods: */
+  virtual unsigned int execute (function *);
+
+}; // class pass_warn_self_assign
+
+unsigned int
+pass_warn_self_assign::execute (function *fun)
 {
   gimple_stmt_iterator gsi;
   basic_block bb;
 
-  FOR_EACH_BB (bb)
+  FOR_EACH_BB_FN (bb, fun)
     {
       for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
         warn_self_assign (gsi_stmt (gsi));
@@ -253,32 +294,13 @@ execute_warn_self_assign (void)
   return 0;
 }
 
-/* Pass gate function. Currently always returns true.  */
+} // anon namespace
 
-static bool
-gate_warn_self_assign (void)
+static gimple_opt_pass *
+make_pass_warn_self_assign (gcc::context *ctxt)
 {
-  return true;
+  return new pass_warn_self_assign (ctxt);
 }
-
-static struct gimple_opt_pass pass_warn_self_assign =
-{
-  {
-    GIMPLE_PASS,
-    "warn_self_assign",                   /* name */
-    gate_warn_self_assign,                /* gate */
-    execute_warn_self_assign,             /* execute */
-    NULL,                                 /* sub */
-    NULL,                                 /* next */
-    0,                                    /* static_pass_number */
-    TV_NONE,                              /* tv_id */
-    PROP_ssa,                             /* properties_required */
-    0,                                    /* properties_provided */
-    0,                                    /* properties_destroyed */
-    0,                                    /* todo_flags_start */
-    TODO_dump_func                        /* todo_flags_finish */
-  }
-};
 
 /* The initialization routine exposed to and called by GCC. The spec of this
    function is defined in gcc/gcc-plugin.h.
@@ -306,7 +328,7 @@ plugin_init (struct plugin_name_args *plugin_info,
     return 1;
 
   /* Self-assign detection should happen after SSA is constructed.  */
-  pass_info.pass = &pass_warn_self_assign.pass;
+  pass_info.pass = make_pass_warn_self_assign (g);
   pass_info.reference_pass_name = "ssa";
   pass_info.ref_pass_instance_number = 1;
   pass_info.pos_op = PASS_POS_INSERT_AFTER;

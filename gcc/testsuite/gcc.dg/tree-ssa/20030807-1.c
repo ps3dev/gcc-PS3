@@ -22,6 +22,7 @@ struct rtx_def
 
 static int *uid_cuid;
 static int max_uid_cuid;
+int insn_cuid (rtx);
 
 rtx
 bar (rtx r)
@@ -42,4 +43,3 @@ bar (rtx r)
    which combines the result of those two tests into a new test
    must always be true and it is optimized appropriately.  */
 /* { dg-final { scan-tree-dump-times "if " 2 "dom2"} } */
-/* { dg-final { cleanup-tree-dump "dom2" } } */

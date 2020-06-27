@@ -1,5 +1,4 @@
-/* Copyright (C) 2002-2003, 2005, 2006, 2007, 2009, 2010
-   Free Software Foundation, Inc.
+/* Copyright (C) 2002-2017 Free Software Foundation, Inc.
    Contributed by Andy Vaught and Janne Blomqvist
 
 This file is part of the GNU Fortran runtime library (libgfortran).
@@ -37,7 +36,7 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
    record, and we have to sift backwards to find the newline before
    that or the start of the file, whichever comes first.  */
 
-static const int READ_CHUNK = 4096;
+#define READ_CHUNK 4096
 
 static void
 formatted_backspace (st_parameter_filepos *fpp, gfc_unit *u)
@@ -83,7 +82,7 @@ formatted_backspace (st_parameter_filepos *fpp, gfc_unit *u)
     goto io_error;
   u->last_record--;
   u->endfile = NO_ENDFILE;
-
+  u->last_char = EOF - 1;
   return;
 
  io_error:
@@ -140,15 +139,21 @@ unformatted_backspace (st_parameter_filepos *fpp, gfc_unit *u)
 	}
       else
 	{
+	  uint32_t u32;
+	  uint64_t u64;
 	  switch (length)
 	    {
 	    case sizeof(GFC_INTEGER_4):
-	      reverse_memcpy (&m4, p, sizeof (m4));
+	      memcpy (&u32, p, sizeof (u32));
+	      u32 = __builtin_bswap32 (u32);
+	      memcpy (&m4, &u32, sizeof (m4));
 	      m = m4;
 	      break;
 
 	    case sizeof(GFC_INTEGER_8):
-	      reverse_memcpy (&m8, p, sizeof (m8));
+	      memcpy (&u64, p, sizeof (u64));
+	      u64 = __builtin_bswap64 (u64);
+	      memcpy (&m8, &u64, sizeof (m8));
 	      m = m8;
 	      break;
 
@@ -317,6 +322,7 @@ st_endfile (st_parameter_filepos *fpp)
 
       unit_truncate (u, stell (u->s), &fpp->common);
       u->endfile = AFTER_ENDFILE;
+      u->last_char = EOF - 1;
       if (0 == stell (u->s))
         u->flags.position = POSITION_REWIND;
     }
@@ -357,6 +363,8 @@ st_endfile (st_parameter_filepos *fpp)
 	  u_flags.sign = SIGN_UNSPECIFIED;
 	  u_flags.status = STATUS_UNKNOWN;
 	  u_flags.convert = GFC_CONVERT_NATIVE;
+	  u_flags.share = SHARE_UNSPECIFIED;
+	  u_flags.cc = CC_UNSPECIFIED;
 
 	  opp.common = fpp->common;
 	  opp.common.flags &= IOPARM_COMMON_MASK;
@@ -364,6 +372,7 @@ st_endfile (st_parameter_filepos *fpp)
 	  if (u == NULL)
 	    return;
 	  u->endfile = AFTER_ENDFILE;
+	  u->last_char = EOF - 1;
 	}
     }
 
@@ -405,7 +414,11 @@ st_rewind (st_parameter_filepos *fpp)
 	  u->last_record = 0;
 
 	  if (sseek (u->s, 0, SEEK_SET) < 0)
-	    generate_error (&fpp->common, LIBERROR_OS, NULL);
+	    {
+	      generate_error (&fpp->common, LIBERROR_OS, NULL);
+	      library_end ();
+	      return;
+	    }
 
 	  /* Set this for compatibilty with g77 for /dev/null.  */
 	  if (ssize (u->s) == 0)
@@ -419,6 +432,7 @@ st_rewind (st_parameter_filepos *fpp)
 	  u->current_record = 0;
 	  u->strm_pos = 1;
 	  u->read_bad = 0;
+	  u->last_char = EOF - 1;
 	}
       /* Update position for INQUIRE.  */
       u->flags.position = POSITION_REWIND;
@@ -447,6 +461,7 @@ st_flush (st_parameter_filepos *fpp)
         fbuf_flush (u, u->mode);
 
       sflush (u->s);
+      u->last_char = EOF - 1;
       unlock_unit (u);
     }
   else

@@ -6,7 +6,7 @@
  *                                                                          *
  *                          C Implementation File                           *
  *                                                                          *
- *            Copyright (C) 2005-2011, Free Software Foundation, Inc.       *
+ *            Copyright (C) 2005-2015, Free Software Foundation, Inc.       *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -29,31 +29,31 @@
  *                                                                          *
  ****************************************************************************/
 
-/* Tru64 UNIX V4.0F <stdlib.h> declares unsetenv() only if AES_SOURCE (which
-   is plain broken, this should be _AES_SOURCE instead as everywhere else;
-   Tru64 UNIX V5.1B declares it only if _BSD.  */
-#if defined (__alpha__) && defined (__osf__)
-#define AES_SOURCE
-#define _BSD
-#endif
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #ifdef IN_RTS
-#include "tconfig.h"
-#include "tsystem.h"
+# include "tconfig.h"
+# include "tsystem.h"
 
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <time.h>
-#ifdef VMS
-#include <unixio.h>
-#endif
+# include <sys/stat.h>
+# include <fcntl.h>
+# include <time.h>
+# ifdef VMS
+#  include <unixio.h>
+# endif
+/* We don't have libiberty, so use malloc.  */
+# define xmalloc(S) malloc (S)
+#else /* IN_RTS */
+# include "config.h"
+# include "system.h"
+#endif /* IN_RTS */
 
 #if defined (__MINGW32__)
 #include <stdlib.h>
+#endif
+
+#if defined (__APPLE__) && !(defined (__arm__) || defined (__arm64__))
+/* On Darwin, _NSGetEnviron must be used for shared libraries; but it is not
+   available on iOS.  */
+#include <crt_externs.h>
 #endif
 
 #if defined (__vxworks)
@@ -77,15 +77,8 @@ extern "C" {
   #endif
 #endif
 
-/* We don't have libiberty, so use malloc.  */
-#define xmalloc(S) malloc (S)
-#else /* IN_RTS */
-#include "config.h"
-#include "system.h"
-#endif /* IN_RTS */
-
-#if defined (__APPLE__)
-#include <crt_externs.h>
+#ifdef __cplusplus
+extern "C" {
 #endif
 
 #ifdef VMS
@@ -199,12 +192,9 @@ __gnat_setenv (char *name, char *value)
 
   sprintf (expression, "%s=%s", name, value);
   putenv (expression);
-#if (defined (__FreeBSD__) && (__FreeBSD__ < 7)) \
-   || defined (__MINGW32__) \
-   ||(defined (__vxworks) && ! defined (__RTP__))
-  /* On some systems like FreeBSD 6.x and earlier, MacOS X and Windows,
-     putenv is making a copy of the expression string so we can free
-     it after the call to putenv */
+#if defined (__MINGW32__) || (defined (__vxworks) && ! defined (__RTP__))
+  /* On some systems like MacOS X and Windows, putenv is making a copy of the
+     expression string so we can free it after the call to putenv */
   free (expression);
 #endif
 #endif
@@ -216,14 +206,13 @@ __gnat_environ (void)
 #if defined (VMS) || defined (RTX)
   /* Not implemented */
   return NULL;
-#elif defined (__APPLE__)
-  char ***result = _NSGetEnviron ();
-  return *result;
 #elif defined (__MINGW32__)
   return _environ;
-#elif defined (sun)
+#elif defined (__sun__)
   extern char **_environ;
   return _environ;
+#elif defined (__APPLE__) && !(defined (__arm__) || defined (__arm64__))
+  return *_NSGetEnviron ();
 #elif ! (defined (__vxworks))
   extern char **environ;
   return environ;
@@ -232,16 +221,16 @@ __gnat_environ (void)
 #endif
 }
 
-void __gnat_unsetenv (char *name) {
+void __gnat_unsetenv (char *name)
+{
 #if defined (VMS)
   /* Not implemented */
   return;
-#elif defined (__hpux__) || defined (sun) \
-     || (defined (__mips) && defined (__sgi)) \
+#elif defined (__hpux__) || defined (__sun__) \
      || (defined (__vxworks) && ! defined (__RTP__)) \
      || defined (_AIX) || defined (__Lynx__)
 
-  /* On Solaris, HP-UX and IRIX there is no function to clear an environment
+  /* On Solaris and HP-UX there is no function to clear an environment
      variable. So we look for the variable in the environ table and delete it
      by setting the entry to NULL. This can clearly cause some memory leaks
      but free cannot be used on this context as not all strings in the environ
@@ -291,13 +280,15 @@ void __gnat_unsetenv (char *name) {
 #endif
 }
 
-void __gnat_clearenv (void) {
+void __gnat_clearenv (void)
+{
 #if defined (VMS)
   /* not implemented */
   return;
-#elif defined (sun) || (defined (__mips) && defined (__sgi)) \
-   || (defined (__vxworks) && ! defined (__RTP__)) || defined (__Lynx__)
-  /* On Solaris, IRIX, VxWorks (not RTPs), and Lynx there is no system
+#elif defined (__sun__) \
+  || (defined (__vxworks) && ! defined (__RTP__)) || defined (__Lynx__) \
+  || defined (__PikeOS__)
+  /* On Solaris, VxWorks (not RTPs), and Lynx there is no system
      call to unset a variable or to clear the environment so set all
      the entries in the environ table to NULL (see comment in
      __gnat_unsetenv for more explanation). */
@@ -310,7 +301,8 @@ void __gnat_clearenv (void) {
   }
 #elif defined (__MINGW32__) || defined (__FreeBSD__) || defined (__APPLE__) \
    || (defined (__vxworks) && defined (__RTP__)) || defined (__CYGWIN__) \
-   || defined (__NetBSD__) || defined (__OpenBSD__) || defined (__rtems__)
+   || defined (__NetBSD__) || defined (__OpenBSD__) || defined (__rtems__) \
+   || defined (__DragonFly__) || defined (__DJGPP__)
   /* On Windows, FreeBSD and MacOS there is no function to clean all the
      environment but there is a "clean" way to unset a variable. So go
      through the environ table and call __gnat_unsetenv on all entries */

@@ -1,8 +1,6 @@
 // 1999-04-12 bkoz
 
-// Copyright (C) 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2009,
-// 2010
-// Free Software Foundation, Inc.
+// Copyright (C) 1999-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -21,10 +19,7 @@
 
 // 27.6.1.2.2 arithmetic extractors
 
-// XXX This test fails on Solaris 8 and 9 because of a bug in libc
-// XXX sscanf for very long input.  See:
-// XXX http://gcc.gnu.org/ml/gcc/2002-12/msg01422.html
-// { dg-do run { xfail { { *-*-solaris2.[89] } || lax_strtofp } } }
+// { dg-do run { xfail { lax_strtofp } } }
 
 #include <istream>
 #include <sstream>
@@ -34,10 +29,8 @@
 // libstdc++/3720
 // excess input should not cause a core dump
 template<typename T>
-bool test12_aux(bool integer_type)
+void test12_aux(bool integer_type)
 {
-  bool test __attribute__((unused)) = true;
-  
   int digits_overflow;
   if (integer_type)
     // This many digits will overflow integer types in base 10.
@@ -55,19 +48,16 @@ bool test12_aux(bool integer_type)
   T t;
   is >> t;
   VERIFY(is.fail());
-  return test;
 }
 
-bool test12()
+void test12()
 {
-  bool test __attribute__((unused)) = true;
-  VERIFY(test12_aux<short>(true));
-  VERIFY(test12_aux<int>(true));
-  VERIFY(test12_aux<long>(true));
-  VERIFY(test12_aux<float>(false));
-  VERIFY(test12_aux<double>(false));
-  VERIFY(test12_aux<long double>(false));
-  return test;
+  test12_aux<short>(true);
+  test12_aux<int>(true);
+  test12_aux<long>(true);
+  test12_aux<float>(false);
+  test12_aux<double>(false);
+  test12_aux<long double>(false);
 }
 
 int main()

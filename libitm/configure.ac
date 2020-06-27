@@ -1,5 +1,5 @@
 # Process this file with autoreconf to produce a configure script.
-#   Copyright (C) 2011, 2012 Free Software Foundation, Inc.
+#   Copyright (C) 2011-2017 Free Software Foundation, Inc.
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -70,12 +70,13 @@ target_alias=${target_alias-$host_alias}
 #  no-define:  PACKAGE and VERSION will not be #define'd in config.h (a bunch
 #              of other PACKAGE_* variables will, however, and there's nothing
 #              we can do about that; they come from AC_INIT).
+#  no-dist:  we don't want 'dist' and related rules.
 #  foreign:  we don't follow the normal rules for GNU packages (no COPYING
 #            file in the top srcdir, etc, etc), so stop complaining.
 #  -Wall:  turns on all automake warnings...
 #  -Wno-portability:  ...except this one, since GNU make is required.
 #  -Wno-override: ... and this one, since we do want this in testsuite.
-AM_INIT_AUTOMAKE([1.9.0 foreign -Wall -Wno-portability -Wno-override])
+AM_INIT_AUTOMAKE([1.9.0 foreign no-dist -Wall -Wno-portability -Wno-override])
 AM_ENABLE_MULTILIB(, ..)
 
 # Calculate toolexeclibdir
@@ -159,7 +160,7 @@ AC_SUBST(libtool_VERSION)
 AC_STDC_HEADERS
 AC_HEADER_TIME
 ACX_HEADER_STRING
-AC_CHECK_HEADERS(unistd.h semaphore.h sys/time.h malloc.h)
+AC_CHECK_HEADERS(unistd.h semaphore.h sys/time.h sys/auxv.h malloc.h)
 
 GCC_HEADER_STDINT(gstdint.h)
 
@@ -192,7 +193,7 @@ AC_LINK_IFELSE(
    [AC_MSG_ERROR([Pthreads are required to build libitm])])])
 
 # Check for functions needed.
-AC_CHECK_FUNCS(strtoull memalign posix_memalign)
+AC_CHECK_FUNCS(strtoull memalign posix_memalign getauxval)
 
 # Check for broken semaphore implementation on darwin.
 # sem_init returns: sem_init error: Function not implemented.
@@ -214,7 +215,7 @@ LIBITM_CHECK_ATTRIBUTE_DLLEXPORT
 LIBITM_CHECK_ATTRIBUTE_ALIAS
 
 # Check linker hardware capability support.
-LIBITM_CHECK_LINKER_HWCAP
+GCC_CHECK_LINKER_HWCAP
 # If defaulting to -mavx, don't clear hwcaps.
 AC_CHECK_DECL([__AVX__], [HWCAP_LDFLAGS=''])
 
@@ -243,6 +244,8 @@ CFLAGS="$save_CFLAGS $XCFLAGS"
 LIBITM_CHECK_SYNC_BUILTINS
 LIBITM_CHECK_64BIT_SYNC_BUILTINS
 LIBITM_CHECK_AS_AVX
+LIBITM_CHECK_AS_RTM
+LIBITM_CHECK_AS_HTM
 
 GCC_CHECK_ELF_STYLE_WEAKREF
 
@@ -282,6 +285,9 @@ AM_CONDITIONAL([ARCH_ARM], [test "$ARCH" = arm])
 AM_CONDITIONAL([ARCH_X86], [test "$ARCH" = x86])
 AM_CONDITIONAL([ARCH_X86_AVX], [test "$libitm_cv_as_avx" = yes])
 AM_CONDITIONAL([ARCH_FUTEX], [test $enable_linux_futex = yes])
+
+# Determine what GCC version number to use in filesystem paths.
+GCC_BASE_VER
 
 AC_CONFIG_FILES(Makefile testsuite/Makefile libitm.spec)
 AC_OUTPUT

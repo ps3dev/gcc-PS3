@@ -5,7 +5,10 @@ package sync_test
 
 import (
 	. "sync"
+
+	"runtime"
 	"testing"
+	"time"
 )
 
 func TestCondSignal(t *testing.T) {
@@ -123,4 +126,189 @@ func TestCondBroadcast(t *testing.T) {
 	default:
 	}
 	c.Broadcast()
+}
+
+func TestRace(t *testing.T) {
+	x := 0
+	c := NewCond(&Mutex{})
+	done := make(chan bool)
+	go func() {
+		c.L.Lock()
+		x = 1
+		c.Wait()
+		if x != 2 {
+			t.Error("want 2")
+		}
+		x = 3
+		c.Signal()
+		c.L.Unlock()
+		done <- true
+	}()
+	go func() {
+		c.L.Lock()
+		for {
+			if x == 1 {
+				x = 2
+				c.Signal()
+				break
+			}
+			c.L.Unlock()
+			runtime.Gosched()
+			c.L.Lock()
+		}
+		c.L.Unlock()
+		done <- true
+	}()
+	go func() {
+		c.L.Lock()
+		for {
+			if x == 2 {
+				c.Wait()
+				if x != 3 {
+					t.Error("want 3")
+				}
+				break
+			}
+			if x == 3 {
+				break
+			}
+			c.L.Unlock()
+			runtime.Gosched()
+			c.L.Lock()
+		}
+		c.L.Unlock()
+		done <- true
+	}()
+	<-done
+	<-done
+	<-done
+}
+
+func TestCondSignalStealing(t *testing.T) {
+	for iters := 0; iters < 1000; iters++ {
+		var m Mutex
+		cond := NewCond(&m)
+
+		// Start a waiter.
+		ch := make(chan struct{})
+		go func() {
+			m.Lock()
+			ch <- struct{}{}
+			cond.Wait()
+			m.Unlock()
+
+			ch <- struct{}{}
+		}()
+
+		<-ch
+		m.Lock()
+		m.Unlock()
+
+		// We know that the waiter is in the cond.Wait() call because we
+		// synchronized with it, then acquired/released the mutex it was
+		// holding when we synchronized.
+		//
+		// Start two goroutines that will race: one will broadcast on
+		// the cond var, the other will wait on it.
+		//
+		// The new waiter may or may not get notified, but the first one
+		// has to be notified.
+		done := false
+		go func() {
+			cond.Broadcast()
+		}()
+
+		go func() {
+			m.Lock()
+			for !done {
+				cond.Wait()
+			}
+			m.Unlock()
+		}()
+
+		// Check that the first waiter does get signaled.
+		select {
+		case <-ch:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("First waiter didn't get broadcast.")
+		}
+
+		// Release the second waiter in case it didn't get the
+		// broadcast.
+		m.Lock()
+		done = true
+		m.Unlock()
+		cond.Broadcast()
+	}
+}
+
+func TestCondCopy(t *testing.T) {
+	defer func() {
+		err := recover()
+		if err == nil || err.(string) != "sync.Cond is copied" {
+			t.Fatalf("got %v, expect sync.Cond is copied", err)
+		}
+	}()
+	c := Cond{L: &Mutex{}}
+	c.Signal()
+	c2 := c
+	c2.Signal()
+}
+
+func BenchmarkCond1(b *testing.B) {
+	benchmarkCond(b, 1)
+}
+
+func BenchmarkCond2(b *testing.B) {
+	benchmarkCond(b, 2)
+}
+
+func BenchmarkCond4(b *testing.B) {
+	benchmarkCond(b, 4)
+}
+
+func BenchmarkCond8(b *testing.B) {
+	benchmarkCond(b, 8)
+}
+
+func BenchmarkCond16(b *testing.B) {
+	benchmarkCond(b, 16)
+}
+
+func BenchmarkCond32(b *testing.B) {
+	benchmarkCond(b, 32)
+}
+
+func benchmarkCond(b *testing.B, waiters int) {
+	c := NewCond(&Mutex{})
+	done := make(chan bool)
+	id := 0
+
+	for routine := 0; routine < waiters+1; routine++ {
+		go func() {
+			for i := 0; i < b.N; i++ {
+				c.L.Lock()
+				if id == -1 {
+					c.L.Unlock()
+					break
+				}
+				id++
+				if id == waiters+1 {
+					id = 0
+					c.Broadcast()
+				} else {
+					c.Wait()
+				}
+				c.L.Unlock()
+			}
+			c.L.Lock()
+			id = -1
+			c.Broadcast()
+			c.L.Unlock()
+			done <- true
+		}()
+	}
+	for routine := 0; routine < waiters+1; routine++ {
+		<-done
+	}
 }

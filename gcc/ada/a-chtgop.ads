@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 2004-2009, Free Software Foundation, Inc.         --
+--          Copyright (C) 2004-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -37,7 +37,7 @@ generic
    with package HT_Types is
      new Generic_Hash_Table_Types (<>);
 
-   use HT_Types;
+   use HT_Types, HT_Types.Implementation;
 
    with function Hash_Node (Node : Node_Access) return Hash_Type;
 
@@ -71,6 +71,18 @@ package Ada.Containers.Hash_Tables.Generic_Operations is
    --  Uses the hash value of Node to compute its Hash_Table buckets array
    --  index.
 
+   function Checked_Index
+     (Hash_Table : aliased in out Hash_Table_Type;
+      Buckets    : Buckets_Type;
+      Node       : Node_Access) return Hash_Type;
+   --  Calls Index, but also locks and unlocks the container, per AI05-0022, in
+   --  order to detect element tampering by the generic actual Hash function.
+
+   function Checked_Index
+     (Hash_Table : aliased in out Hash_Table_Type;
+      Node       : Node_Access) return Hash_Type;
+   --  Calls Checked_Index using Hash_Table's buckets array.
+
    procedure Adjust (HT : in out Hash_Table_Type);
    --  Used to implement controlled Adjust. It is assumed that HT has the value
    --  of the bit-wise copy that immediately follows controlled Finalize.
@@ -95,7 +107,7 @@ package Ada.Containers.Hash_Tables.Generic_Operations is
 
    procedure Clear (HT : in out Hash_Table_Type);
    --  Deallocates each node in hash table HT. (Note that it only deallocates
-   --  the nodes, not the buckets array.)  Program_Error is raised if the hash
+   --  the nodes, not the buckets array.) Program_Error is raised if the hash
    --  table is busy.
 
    procedure Move (Target, Source : in out Hash_Table_Type);
@@ -116,6 +128,15 @@ package Ada.Containers.Hash_Tables.Generic_Operations is
    --  rehashed onto the new buckets array, and the old buckets array is
    --  deallocated. Program_Error is raised if the hash table is busy.
 
+   procedure Delete_Node_At_Index
+     (HT   : in out Hash_Table_Type;
+      Indx : Hash_Type;
+      X    : in out Node_Access);
+   --  Delete a node whose bucket position is known. Used to remove a node
+   --  whose element has been modified through a key_preserving reference.
+   --  We cannot use the value of the element precisely because the current
+   --  value does not correspond to the hash code that determines the bucket.
+
    procedure Delete_Node_Sans_Free
      (HT : in out Hash_Table_Type;
       X  : Node_Access);
@@ -126,7 +147,7 @@ package Ada.Containers.Hash_Tables.Generic_Operations is
    --  bucket.
 
    function Next
-     (HT   : Hash_Table_Type;
+     (HT   : aliased in out Hash_Table_Type;
       Node : Node_Access) return Node_Access;
    --  Returns the node that immediately follows Node. This corresponds to
    --  either the next node in the same bucket, or (if Node is the last node in
@@ -151,8 +172,9 @@ package Ada.Containers.Hash_Tables.Generic_Operations is
 
    generic
       use Ada.Streams;
-      with function New_Node (Stream : not null access Root_Stream_Type'Class)
-         return Node_Access;
+      with function New_Node
+             (Stream : not null access Root_Stream_Type'Class)
+              return Node_Access;
    procedure Generic_Read
      (Stream : not null access Root_Stream_Type'Class;
       HT     : out Hash_Table_Type);
@@ -162,7 +184,7 @@ package Ada.Containers.Hash_Tables.Generic_Operations is
 
    function New_Buckets (Length : Hash_Type) return Buckets_Access;
    pragma Inline (New_Buckets);
-   --  Allocate a new Buckets_Type array with bounds 0..Length-1
+   --  Allocate a new Buckets_Type array with bounds 0 .. Length - 1
 
    procedure Free_Buckets (Buckets : in out Buckets_Access);
    pragma Inline (Free_Buckets);

@@ -290,7 +290,7 @@ AC_DEFUN([SC_LOAD_TCLCONFIG], [
     elif test "`uname -s`" = "Darwin"; then
 	# If Tcl was built as a framework, attempt to use the libraries
 	# from the framework at the given location so that linking works
-	# against Tcl.framework installed in an arbitary location.
+	# against Tcl.framework installed in an arbitrary location.
 	case ${TCL_DEFS} in
 	    *TCL_FRAMEWORK*)
 		if test -f "${TCL_BIN_DIR}/${TCL_LIB_FILE}"; then
@@ -373,7 +373,7 @@ AC_DEFUN([SC_LOAD_TKCONFIG], [
     elif test "`uname -s`" = "Darwin"; then
 	# If Tk was built as a framework, attempt to use the libraries
 	# from the framework at the given location so that linking works
-	# against Tk.framework installed in an arbitary location.
+	# against Tk.framework installed in an arbitrary location.
 	case ${TK_DEFS} in
 	    *TK_FRAMEWORK*)
 		if test -f "${TK_BIN_DIR}/${TK_LIB_FILE}"; then
@@ -815,7 +815,7 @@ AC_DEFUN([SC_ENABLE_LANGINFO], [
 #
 #	Defines the following variable:
 #
-#	MAN_FLAGS -	The apropriate flags for installManPage
+#	MAN_FLAGS -	The appropriate flags for installManPage
 #			according to the user's selection.
 #
 #--------------------------------------------------------------------
@@ -2136,7 +2136,7 @@ dnl # preprocessing tests use only CPPFLAGS.
             INSTALL_LIB='$(INSTALL_LIBRARY) $(LIB_FILE) $(LIB_INSTALL_DIR)/$(LIB_FILE) ; (cd $(LIB_INSTALL_DIR) ; $(RANLIB) $(LIB_FILE))'
         fi
 
-dnl        Not at all clear what this was doing in Tcl's configure.in
+dnl        Not at all clear what this was doing in Tcl's configure.ac
 dnl        or why it was needed was needed. In any event, this sort of
 dnl        things needs to be done in the big loop above.
 dnl        REMOVE THIS BLOCK LATER! (mdejong)
@@ -3235,7 +3235,7 @@ AC_DEFUN([SC_TCL_GETGRNAM_R], [AC_CHECK_FUNC(getgrnam_r, [
 #		created. Accumulates.
 #
 #	Requires presence of SC_OUTPUT_COMMANDS_PRE at the end
-#	of configure.in (right before AC_OUTPUT).
+#	of configure.ac (right before AC_OUTPUT).
 #
 #--------------------------------------------------------------------
 

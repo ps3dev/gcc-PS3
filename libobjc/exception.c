@@ -1,5 +1,5 @@
 /* The implementation of exception handling primitives for Objective-C.
-   Copyright (C) 2004, 2005, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2004-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -199,9 +199,11 @@ get_ttype_entry (struct lsda_header_info *info, _Unwind_Word i)
 /* Using a different personality function name causes link failures
    when trying to mix code using different exception handling
    models.  */
-#ifdef SJLJ_EXCEPTIONS
+#ifdef __USING_SJLJ_EXCEPTIONS__
 #define PERSONALITY_FUNCTION	__gnu_objc_personality_sj0
 #define __builtin_eh_return_data_regno(x) x
+#elif defined(__SEH__) 
+#define PERSONALITY_FUNCTION	__gnu_objc_personality_imp
 #else
 #define PERSONALITY_FUNCTION	__gnu_objc_personality_v0
 #endif
@@ -225,6 +227,9 @@ PERSONALITY_FUNCTION (_Unwind_State state,
 
 #define CONTINUE_UNWINDING return _URC_CONTINUE_UNWIND
 
+#if defined (__SEH__) && !defined (__USING_SJLJ_EXCEPTIONS__)
+static
+#endif
 _Unwind_Reason_Code
 PERSONALITY_FUNCTION (int version,
 		      _Unwind_Action actions,
@@ -324,7 +329,7 @@ PERSONALITY_FUNCTION (int version,
   action_record = 0;
   handler_switch_value = 0;
 
-#ifdef SJLJ_EXCEPTIONS
+#ifdef __USING_SJLJ_EXCEPTIONS__
   /* The given "IP" is an index into the call-site table, with two
      exceptions -- -1 means no-action, and 0 means terminate.  But
      since we're using uleb128 values, we've not got random access to
@@ -375,7 +380,7 @@ PERSONALITY_FUNCTION (int version,
 	  goto found_something;
 	}
     }
-#endif /* SJLJ_EXCEPTIONS  */
+#endif /* __USING_SJLJ_EXCEPTIONS__  */
 
   /* If ip is not present in the table, C++ would call terminate.  */
   /* ??? As with Java, it's perhaps better to tweek the LSDA to that
@@ -503,7 +508,7 @@ objc_exception_throw (id exception)
   header->base.exception_cleanup = __objc_exception_cleanup;
   header->value = exception;
 
-#ifdef SJLJ_EXCEPTIONS
+#ifdef __USING_SJLJ_EXCEPTIONS__
   _Unwind_SjLj_RaiseException (&header->base);
 #else
   _Unwind_RaiseException (&header->base);
@@ -519,3 +524,13 @@ objc_exception_throw (id exception)
   abort ();
 }
 
+#if defined (__SEH__) && !defined (__USING_SJLJ_EXCEPTIONS__)
+EXCEPTION_DISPOSITION
+__gnu_objc_personality_seh0 (PEXCEPTION_RECORD ms_exc, void *this_frame,
+			     PCONTEXT ms_orig_context,
+			     PDISPATCHER_CONTEXT ms_disp)
+{
+  return _GCC_specific_handler (ms_exc, this_frame, ms_orig_context,
+				ms_disp, __gnu_objc_personality_imp);
+}
+#endif

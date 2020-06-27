@@ -1,5 +1,5 @@
 /* simple-object-common.h -- common structs for object file manipulation.
-   Copyright (C) 2010 Free Software Foundation, Inc.
+   Copyright (C) 2010-2017 Free Software Foundation, Inc.
 
 This file is part of the libiberty library.
 Libiberty is free software; you can redistribute it and/or
@@ -148,6 +148,7 @@ struct simple_object_functions
 extern const struct simple_object_functions simple_object_coff_functions;
 extern const struct simple_object_functions simple_object_elf_functions;
 extern const struct simple_object_functions simple_object_mach_o_functions;
+extern const struct simple_object_functions simple_object_xcoff_functions;
 
 /* Read SIZE bytes from DESCRIPTOR at file offset OFFSET into BUFFER.
    Return non-zero on success.  On failure return 0 and set *ERRMSG

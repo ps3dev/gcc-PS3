@@ -1,7 +1,6 @@
 // Compatibility symbols for previous versions -*- C++ -*-
 
-// Copyright (C) 2005, 2006, 2007, 2008, 2009, 2010, 2011
-// Free Software Foundation, Inc.
+// Copyright (C) 2005-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -23,9 +22,10 @@
 // see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 // <http://www.gnu.org/licenses/>.
 
+#define _GLIBCXX_USE_CXX11_ABI 0
 #include <bits/c++config.h>
 
-#if defined(_GLIBCXX_SYMVER_GNU) && defined(PIC) \
+#if defined(_GLIBCXX_SYMVER_GNU) && defined(_GLIBCXX_SHARED) \
     && defined(_GLIBCXX_HAVE_AS_SYMVER_DIRECTIVE)\
     && defined(_GLIBCXX_HAVE_SYMVER_SYMBOL_RENAMING_RUNTIME_SUPPORT)
 #define istreambuf_iterator istreambuf_iteratorXX
@@ -62,7 +62,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     {
       if (__n == 1)
 	return ignore();
-      
+
       _M_gcount = 0;
       sentry __cerb(*this, true);
       if ( __n > 0 && __cerb)
@@ -94,7 +94,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 			{
 			  ++_M_gcount;
 			  __c = __sb->snextc();
-			} 
+			}
 		    }
 		  if (__n == __gnu_cxx::__numeric_traits<streamsize>::__max
 		      && !traits_type::eq_int_type(__c, __eof))
@@ -124,7 +124,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	    this->setstate(__err);
 	}
       return *this;
-    } 
+    }
 
 #ifdef _GLIBCXX_USE_WCHAR_T
   template<>
@@ -134,7 +134,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     {
       if (__n == 1)
 	return ignore();
-      
+
       _M_gcount = 0;
       sentry __cerb(*this, true);
       if (__n > 0 && __cerb)
@@ -199,12 +199,12 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 #endif
 
 _GLIBCXX_END_NAMESPACE_VERSION
-} // namespace
+} // namespace std
 
 
 // NB: These symbols renames should go into the shared library only,
 // and only those shared libraries that support versioning.
-#if defined(_GLIBCXX_SYMVER_GNU) && defined(PIC) \
+#if defined(_GLIBCXX_SYMVER_GNU) && defined(_GLIBCXX_SHARED) \
     && defined(_GLIBCXX_HAVE_AS_SYMVER_DIRECTIVE) \
     && defined(_GLIBCXX_HAVE_SYMVER_SYMBOL_RENAMING_RUNTIME_SUPPORT)
 
@@ -228,7 +228,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 #endif
 
 _GLIBCXX_END_NAMESPACE_VERSION
-} // namespace
+} // namespace std
 
 
 /* gcc-4.0.0
@@ -296,7 +296,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   // std::istream
   template
     basic_istream<char>&
-    basic_istream<char>::ignore(); 
+    basic_istream<char>::ignore();
 
   template
     bool
@@ -332,7 +332,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   template
     void
-    basic_string<wchar_t>::_M_check_length(size_t, size_t, 
+    basic_string<wchar_t>::_M_check_length(size_t, size_t,
 					   const char*) const;
 
   template
@@ -341,7 +341,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   template
     basic_istream<wchar_t>&
-    basic_istream<wchar_t>::ignore(); 
+    basic_istream<wchar_t>::ignore();
 
   template
     bool
@@ -357,7 +357,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 #endif
 
 _GLIBCXX_END_NAMESPACE_VERSION
-} // namespace
+} // namespace std
 
 // The rename syntax for default exported names is
 //   asm (".symver name1,exportedname@GLIBCXX_3.4")
@@ -396,7 +396,7 @@ _ZN10__gnu_norm15_List_node_base6unhookEv;
 _ZN10__gnu_norm15_List_node_base7reverseEv;
 _ZN10__gnu_norm15_List_node_base8transferEPS0_S1_;
 */
-#include "list.cc"  
+#include "list.cc"
 _GLIBCXX_ASM_SYMVER(_ZNSt8__detail17_List_node_baseXX7_M_hookEPS0_, \
 _ZN10__gnu_norm15_List_node_base4hookEPS0_, \
 GLIBCXX_3.4)
@@ -419,7 +419,7 @@ GLIBCXX_3.4)
 #undef _List_node_base
 
 // gcc-4.1.0
-// Long double versions of "C" math functions. 
+// Long double versions of "C" math functions.
 #if defined (_GLIBCXX_LONG_DOUBLE_COMPAT) \
     || (defined (__arm__) && defined (__linux__) && defined (__ARM_EABI__)) \
     || (defined (__hppa__) && defined (__linux__)) \
@@ -518,18 +518,25 @@ extern __attribute__((used, weak)) const char _ZTSe[2] = "e";
 extern __attribute__((used, weak)) const char _ZTSPe[3] = "Pe";
 extern __attribute__((used, weak)) const char _ZTSPKe[4] = "PKe";
 extern __attribute__((used, weak)) const void * const _ZTIe[2]
-  = { (void *) &_ZTVN10__cxxabiv123__fundamental_type_infoE[2],
-      (void *) _ZTSe };
+  = { reinterpret_cast<const void *>
+      (&_ZTVN10__cxxabiv123__fundamental_type_infoE[2]),
+      reinterpret_cast<const void *>(_ZTSe) };
 extern __attribute__((used, weak)) const void * const _ZTIPe[4]
-  = { (void *) &_ZTVN10__cxxabiv119__pointer_type_infoE[2],
-      (void *) _ZTSPe, (void *) 0L, (void *) _ZTIe };
+  = { reinterpret_cast<const void *>
+      (&_ZTVN10__cxxabiv119__pointer_type_infoE[2]),
+      reinterpret_cast<const void *>(_ZTSPe),
+      reinterpret_cast<const void *>(0L),
+      reinterpret_cast<const void *>(_ZTIe) };
 extern __attribute__((used, weak)) const void * const _ZTIPKe[4]
-  = { (void *) &_ZTVN10__cxxabiv119__pointer_type_infoE[2],
-      (void *) _ZTSPKe, (void *) 1L, (void *) _ZTIe };
+  = { reinterpret_cast<const void *>
+      (&_ZTVN10__cxxabiv119__pointer_type_infoE[2]),
+      reinterpret_cast<const void *>(_ZTSPKe),
+      reinterpret_cast<const void *>(1L),
+      reinterpret_cast<const void *>(_ZTIe) };
 #endif // _GLIBCXX_LONG_DOUBLE_COMPAT
 
 #ifdef _GLIBCXX_SYMVER_DARWIN
-#if (defined(__ppc__) || defined(__ppc64__)) && defined(PIC)
+#if (defined(__ppc__) || defined(__ppc64__)) && defined(_GLIBCXX_SHARED)
 /* __eprintf shouldn't have been made visible from libstdc++, or
    anywhere, but on Mac OS X 10.4 it was defined in
    libstdc++.6.0.3.dylib; so on that platform we have to keep defining

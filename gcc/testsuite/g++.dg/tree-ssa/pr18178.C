@@ -35,7 +35,7 @@ void doit (array *a)
 {
   for (ORIG i = 0; i < a->len; ++i)
     {
-      if (FIRST  CAST (i) >= CAST (a->len))
+      if (FIRST  CAST i >= CAST (a->len))
 	throw 5;
       call (a->data[i]);
     }
@@ -44,4 +44,3 @@ void doit (array *a)
 /* VRP should remove all but 1 if() in the loop.  */
 
 /* { dg-final { scan-tree-dump-times "if " 1 "vrp1"} } */
-/* { dg-final { cleanup-tree-dump "vrp1" } } */

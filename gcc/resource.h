@@ -1,6 +1,5 @@
 /* Definitions for computing resource usage of specific insns.
-   Copyright (C) 1999, 2003, 2004, 2006, 2007, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 1999-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -21,19 +20,15 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef GCC_RESOURCE_H
 #define GCC_RESOURCE_H
 
-#include "hard-reg-set.h"
-#include "df.h"
-
 /* Macro to clear all resources.  */
 #define CLEAR_RESOURCE(RES)	\
- do { (RES)->memory = (RES)->unch_memory = (RES)->volatil = (RES)->cc = 0; \
+ do { (RES)->memory = (RES)->volatil = (RES)->cc = 0; \
       CLEAR_HARD_REG_SET ((RES)->regs); } while (0)
 
 /* The resources used by a given insn.  */
 struct resources
 {
   char memory;		/* Insn sets or needs a memory location.  */
-  char unch_memory;	/* Insn sets or needs an "unchanging" MEM.  */
   char volatil;		/* Insn sets or needs a volatile memory loc.  */
   char cc;		/* Insn sets or needs the condition codes.  */
   HARD_REG_SET regs;	/* Which registers are set or needed.  */
@@ -46,14 +41,14 @@ enum mark_resource_type
   MARK_SRC_DEST_CALL = 1
 };
 
-extern void mark_target_live_regs (rtx, rtx, struct resources *);
+extern void mark_target_live_regs (rtx_insn *, rtx, struct resources *);
 extern void mark_set_resources (rtx, struct resources *, int,
 				enum mark_resource_type);
 extern void mark_referenced_resources (rtx, struct resources *, bool);
-extern void clear_hashed_info_for_insn (rtx);
-extern void incr_ticks_for_insn (rtx);
+extern void clear_hashed_info_for_insn (rtx_insn *);
+extern void incr_ticks_for_insn (rtx_insn *);
 extern void mark_end_of_function_resources (rtx, bool);
-extern void init_resource_info (rtx);
+extern void init_resource_info (rtx_insn *);
 extern void free_resource_info (void);
 
 #endif /* GCC_RESOURCE_H */

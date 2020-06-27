@@ -6,10 +6,12 @@ package sort_test
 
 import (
 	"fmt"
+	"internal/testenv"
 	"math"
 	"math/rand"
 	. "sort"
 	"strconv"
+	stringspkg "strings"
 	"testing"
 )
 
@@ -74,6 +76,17 @@ func TestStrings(t *testing.T) {
 	}
 }
 
+func TestSlice(t *testing.T) {
+	data := strings
+	Slice(data[:], func(i, j int) bool {
+		return data[i] < data[j]
+	})
+	if !SliceIsSorted(data[:], func(i, j int) bool { return data[i] < data[j] }) {
+		t.Errorf("sorted %v", strings)
+		t.Errorf("   got %v", data)
+	}
+}
+
 func TestSortLarge_Random(t *testing.T) {
 	n := 1000000
 	if testing.Short() {
@@ -92,15 +105,104 @@ func TestSortLarge_Random(t *testing.T) {
 	}
 }
 
+func TestReverseSortIntSlice(t *testing.T) {
+	data := ints
+	data1 := ints
+	a := IntSlice(data[0:])
+	Sort(a)
+	r := IntSlice(data1[0:])
+	Sort(Reverse(r))
+	for i := 0; i < len(data); i++ {
+		if a[i] != r[len(data)-1-i] {
+			t.Errorf("reverse sort didn't sort")
+		}
+		if i > len(data)/2 {
+			break
+		}
+	}
+}
+
+type nonDeterministicTestingData struct {
+	r *rand.Rand
+}
+
+func (t *nonDeterministicTestingData) Len() int {
+	return 500
+}
+func (t *nonDeterministicTestingData) Less(i, j int) bool {
+	if i < 0 || j < 0 || i >= t.Len() || j >= t.Len() {
+		panic("nondeterministic comparison out of bounds")
+	}
+	return t.r.Float32() < 0.5
+}
+func (t *nonDeterministicTestingData) Swap(i, j int) {
+	if i < 0 || j < 0 || i >= t.Len() || j >= t.Len() {
+		panic("nondeterministic comparison out of bounds")
+	}
+}
+
+func TestNonDeterministicComparison(t *testing.T) {
+	// Ensure that sort.Sort does not panic when Less returns inconsistent results.
+	// See https://golang.org/issue/14377.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Error(r)
+		}
+	}()
+
+	td := &nonDeterministicTestingData{
+		r: rand.New(rand.NewSource(0)),
+	}
+
+	for i := 0; i < 10; i++ {
+		Sort(td)
+	}
+}
+
 func BenchmarkSortString1K(b *testing.B) {
 	b.StopTimer()
+	unsorted := make([]string, 1<<10)
+	for i := range unsorted {
+		unsorted[i] = strconv.Itoa(i ^ 0x2cc)
+	}
+	data := make([]string, len(unsorted))
+
 	for i := 0; i < b.N; i++ {
-		data := make([]string, 1<<10)
-		for i := 0; i < len(data); i++ {
-			data[i] = strconv.Itoa(i ^ 0x2cc)
-		}
+		copy(data, unsorted)
 		b.StartTimer()
 		Strings(data)
+		b.StopTimer()
+	}
+}
+
+func BenchmarkSortString1K_Slice(b *testing.B) {
+	b.StopTimer()
+	unsorted := make([]string, 1<<10)
+	for i := range unsorted {
+		unsorted[i] = strconv.Itoa(i ^ 0x2cc)
+	}
+	data := make([]string, len(unsorted))
+
+	for i := 0; i < b.N; i++ {
+		copy(data, unsorted)
+		b.StartTimer()
+		Slice(data, func(i, j int) bool { return data[i] < data[j] })
+		b.StopTimer()
+	}
+}
+
+func BenchmarkStableString1K(b *testing.B) {
+	b.StopTimer()
+	unsorted := make([]string, 1<<10)
+	for i := 0; i < len(data); i++ {
+		unsorted[i] = strconv.Itoa(i ^ 0x2cc)
+	}
+	data := make([]string, len(unsorted))
+
+	for i := 0; i < b.N; i++ {
+		copy(data, unsorted)
+		b.StartTimer()
+		Stable(StringSlice(data))
 		b.StopTimer()
 	}
 }
@@ -118,6 +220,36 @@ func BenchmarkSortInt1K(b *testing.B) {
 	}
 }
 
+func BenchmarkStableInt1K(b *testing.B) {
+	b.StopTimer()
+	unsorted := make([]int, 1<<10)
+	for i := range unsorted {
+		unsorted[i] = i ^ 0x2cc
+	}
+	data := make([]int, len(unsorted))
+	for i := 0; i < b.N; i++ {
+		copy(data, unsorted)
+		b.StartTimer()
+		Stable(IntSlice(data))
+		b.StopTimer()
+	}
+}
+
+func BenchmarkStableInt1K_Slice(b *testing.B) {
+	b.StopTimer()
+	unsorted := make([]int, 1<<10)
+	for i := range unsorted {
+		unsorted[i] = i ^ 0x2cc
+	}
+	data := make([]int, len(unsorted))
+	for i := 0; i < b.N; i++ {
+		copy(data, unsorted)
+		b.StartTimer()
+		SliceStable(data, func(i, j int) bool { return data[i] < data[j] })
+		b.StopTimer()
+	}
+}
+
 func BenchmarkSortInt64K(b *testing.B) {
 	b.StopTimer()
 	for i := 0; i < b.N; i++ {
@@ -127,6 +259,32 @@ func BenchmarkSortInt64K(b *testing.B) {
 		}
 		b.StartTimer()
 		Ints(data)
+		b.StopTimer()
+	}
+}
+
+func BenchmarkSortInt64K_Slice(b *testing.B) {
+	b.StopTimer()
+	for i := 0; i < b.N; i++ {
+		data := make([]int, 1<<16)
+		for i := 0; i < len(data); i++ {
+			data[i] = i ^ 0xcccc
+		}
+		b.StartTimer()
+		Slice(data, func(i, j int) bool { return data[i] < data[j] })
+		b.StopTimer()
+	}
+}
+
+func BenchmarkStableInt64K(b *testing.B) {
+	b.StopTimer()
+	for i := 0; i < b.N; i++ {
+		data := make([]int, 1<<16)
+		for i := 0; i < len(data); i++ {
+			data[i] = i ^ 0xcccc
+		}
+		b.StartTimer()
+		Stable(IntSlice(data))
 		b.StopTimer()
 	}
 }
@@ -151,15 +309,18 @@ const (
 )
 
 type testingData struct {
-	desc    string
-	t       *testing.T
-	data    []int
-	maxswap int // number of swaps allowed
-	nswap   int
+	desc        string
+	t           *testing.T
+	data        []int
+	maxswap     int // number of swaps allowed
+	ncmp, nswap int
 }
 
-func (d *testingData) Len() int           { return len(d.data) }
-func (d *testingData) Less(i, j int) bool { return d.data[i] < d.data[j] }
+func (d *testingData) Len() int { return len(d.data) }
+func (d *testingData) Less(i, j int) bool {
+	d.ncmp++
+	return d.data[i] < d.data[j]
+}
 func (d *testingData) Swap(i, j int) {
 	if d.nswap >= d.maxswap {
 		d.t.Errorf("%s: used %d swaps sorting slice of %d", d.desc, d.nswap, len(d.data))
@@ -184,7 +345,7 @@ func lg(n int) int {
 	return i
 }
 
-func testBentleyMcIlroy(t *testing.T, sort func(Interface)) {
+func testBentleyMcIlroy(t *testing.T, sort func(Interface), maxswap func(int) int) {
 	sizes := []int{100, 1023, 1024, 1025}
 	if testing.Short() {
 		sizes = []int{100, 127, 128, 129}
@@ -192,8 +353,7 @@ func testBentleyMcIlroy(t *testing.T, sort func(Interface)) {
 	dists := []string{"sawtooth", "rand", "stagger", "plateau", "shuffle"}
 	modes := []string{"copy", "reverse", "reverse1", "reverse2", "sort", "dither"}
 	var tmp1, tmp2 [1025]int
-	for ni := 0; ni < len(sizes); ni++ {
-		n := sizes[ni]
+	for _, n := range sizes {
 		for m := 1; m < 2*n; m *= 2 {
 			for dist := 0; dist < _NDist; dist++ {
 				j := 0
@@ -259,8 +419,10 @@ func testBentleyMcIlroy(t *testing.T, sort func(Interface)) {
 					}
 
 					desc := fmt.Sprintf("n=%d m=%d dist=%s mode=%s", n, m, dists[dist], modes[mode])
-					d := &testingData{desc, t, mdata[0:n], n * lg(n) * 12 / 10, 0}
+					d := &testingData{desc: desc, t: t, data: mdata[0:n], maxswap: maxswap(n)}
 					sort(d)
+					// Uncomment if you are trying to improve the number of compares/swaps.
+					//t.Logf("%s: ncmp=%d, nswp=%d", desc, d.ncmp, d.nswap)
 
 					// If we were testing C qsort, we'd have to make a copy
 					// of the slice and sort it ourselves and then compare
@@ -282,11 +444,15 @@ func testBentleyMcIlroy(t *testing.T, sort func(Interface)) {
 }
 
 func TestSortBM(t *testing.T) {
-	testBentleyMcIlroy(t, Sort)
+	testBentleyMcIlroy(t, Sort, func(n int) int { return n * lg(n) * 12 / 10 })
 }
 
 func TestHeapsortBM(t *testing.T) {
-	testBentleyMcIlroy(t, Heapsort)
+	testBentleyMcIlroy(t, Heapsort, func(n int) int { return n * lg(n) * 12 / 10 })
+}
+
+func TestStableBM(t *testing.T) {
+	testBentleyMcIlroy(t, Stable, func(n int) int { return n * lg(n) * lg(n) / 3 })
 }
 
 // This is based on the "antiquicksort" implementation by M. Douglas McIlroy.
@@ -336,3 +502,157 @@ func TestAdversary(t *testing.T) {
 	d := &adversaryTestingData{data, make(map[int]int), 0}
 	Sort(d) // This should degenerate to heapsort.
 }
+
+func TestStableInts(t *testing.T) {
+	data := ints
+	Stable(IntSlice(data[0:]))
+	if !IntsAreSorted(data[0:]) {
+		t.Errorf("nsorted %v\n   got %v", ints, data)
+	}
+}
+
+type intPairs []struct {
+	a, b int
+}
+
+// IntPairs compare on a only.
+func (d intPairs) Len() int           { return len(d) }
+func (d intPairs) Less(i, j int) bool { return d[i].a < d[j].a }
+func (d intPairs) Swap(i, j int)      { d[i], d[j] = d[j], d[i] }
+
+// Record initial order in B.
+func (d intPairs) initB() {
+	for i := range d {
+		d[i].b = i
+	}
+}
+
+// InOrder checks if a-equal elements were not reordered.
+func (d intPairs) inOrder() bool {
+	lastA, lastB := -1, 0
+	for i := 0; i < len(d); i++ {
+		if lastA != d[i].a {
+			lastA = d[i].a
+			lastB = d[i].b
+			continue
+		}
+		if d[i].b <= lastB {
+			return false
+		}
+		lastB = d[i].b
+	}
+	return true
+}
+
+func TestStability(t *testing.T) {
+	n, m := 100000, 1000
+	if testing.Short() {
+		n, m = 1000, 100
+	}
+	data := make(intPairs, n)
+
+	// random distribution
+	for i := 0; i < len(data); i++ {
+		data[i].a = rand.Intn(m)
+	}
+	if IsSorted(data) {
+		t.Fatalf("terrible rand.rand")
+	}
+	data.initB()
+	Stable(data)
+	if !IsSorted(data) {
+		t.Errorf("Stable didn't sort %d ints", n)
+	}
+	if !data.inOrder() {
+		t.Errorf("Stable wasn't stable on %d ints", n)
+	}
+
+	// already sorted
+	data.initB()
+	Stable(data)
+	if !IsSorted(data) {
+		t.Errorf("Stable shuffled sorted %d ints (order)", n)
+	}
+	if !data.inOrder() {
+		t.Errorf("Stable shuffled sorted %d ints (stability)", n)
+	}
+
+	// sorted reversed
+	for i := 0; i < len(data); i++ {
+		data[i].a = len(data) - i
+	}
+	data.initB()
+	Stable(data)
+	if !IsSorted(data) {
+		t.Errorf("Stable didn't sort %d ints", n)
+	}
+	if !data.inOrder() {
+		t.Errorf("Stable wasn't stable on %d ints", n)
+	}
+}
+
+var countOpsSizes = []int{1e2, 3e2, 1e3, 3e3, 1e4, 3e4, 1e5, 3e5, 1e6}
+
+func countOps(t *testing.T, algo func(Interface), name string) {
+	sizes := countOpsSizes
+	if testing.Short() {
+		sizes = sizes[:5]
+	}
+	if !testing.Verbose() {
+		t.Skip("Counting skipped as non-verbose mode.")
+	}
+	for _, n := range sizes {
+		td := testingData{
+			desc:    name,
+			t:       t,
+			data:    make([]int, n),
+			maxswap: 1<<31 - 1,
+		}
+		for i := 0; i < n; i++ {
+			td.data[i] = rand.Intn(n / 5)
+		}
+		algo(&td)
+		t.Logf("%s %8d elements: %11d Swap, %10d Less", name, n, td.nswap, td.ncmp)
+	}
+}
+
+func TestCountStableOps(t *testing.T) { countOps(t, Stable, "Stable") }
+func TestCountSortOps(t *testing.T)   { countOps(t, Sort, "Sort  ") }
+
+func bench(b *testing.B, size int, algo func(Interface), name string) {
+	if stringspkg.HasSuffix(testenv.Builder(), "-race") && size > 1e4 {
+		b.Skip("skipping slow benchmark on race builder")
+	}
+	b.StopTimer()
+	data := make(intPairs, size)
+	x := ^uint32(0)
+	for i := 0; i < b.N; i++ {
+		for n := size - 3; n <= size+3; n++ {
+			for i := 0; i < len(data); i++ {
+				x += x
+				x ^= 1
+				if int32(x) < 0 {
+					x ^= 0x88888eef
+				}
+				data[i].a = int(x % uint32(n/5))
+			}
+			data.initB()
+			b.StartTimer()
+			algo(data)
+			b.StopTimer()
+			if !IsSorted(data) {
+				b.Errorf("%s did not sort %d ints", name, n)
+			}
+			if name == "Stable" && !data.inOrder() {
+				b.Errorf("%s unstable on %d ints", name, n)
+			}
+		}
+	}
+}
+
+func BenchmarkSort1e2(b *testing.B)   { bench(b, 1e2, Sort, "Sort") }
+func BenchmarkStable1e2(b *testing.B) { bench(b, 1e2, Stable, "Stable") }
+func BenchmarkSort1e4(b *testing.B)   { bench(b, 1e4, Sort, "Sort") }
+func BenchmarkStable1e4(b *testing.B) { bench(b, 1e4, Stable, "Stable") }
+func BenchmarkSort1e6(b *testing.B)   { bench(b, 1e6, Sort, "Sort") }
+func BenchmarkStable1e6(b *testing.B) { bench(b, 1e6, Stable, "Stable") }

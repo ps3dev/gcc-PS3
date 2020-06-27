@@ -1,8 +1,7 @@
 /* Definitions of target machine for GNU compiler,
    for m68k (including m68010) NetBSD platforms using the
    ELF object format.
-   Copyright (C) 2002, 2003, 2004, 2006, 2007, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 2002-2017 Free Software Foundation, Inc.
    Contributed by Wasabi Systems. Inc.
 
    This file is derived from <m68k/m68kv4.h>, <m68k/m68kelf.h>,
@@ -40,13 +39,6 @@ along with GCC; see the file COPYING3.  If not see
 #undef LONG_DOUBLE_TYPE_SIZE
 #define LONG_DOUBLE_TYPE_SIZE (TARGET_68020 ? 80 : 64)
 
-#undef LIBGCC2_LONG_DOUBLE_TYPE_SIZE
-#ifdef __mc68010__
-#define LIBGCC2_LONG_DOUBLE_TYPE_SIZE 64
-#else
-#define LIBGCC2_LONG_DOUBLE_TYPE_SIZE 80
-#endif
-
 #undef SUBTARGET_EXTRA_SPECS
 #define SUBTARGET_EXTRA_SPECS \
   { "netbsd_entry_point",   NETBSD_ENTRY_POINT },
@@ -64,7 +56,8 @@ along with GCC; see the file COPYING3.  If not see
    to pass PIC code generation options.  */
 
 #undef ASM_SPEC
-#define ASM_SPEC "%(asm_cpu_spec) %{fpic|fpie:-k} %{fPIC|fPIE:-k -K}"
+#define ASM_SPEC \
+  "%(asm_cpu_spec) %{" FPIE1_OR_FPIC1_SPEC ":-k} %{" FPIE2_OR_FPIC2_SPEC ":-k -K}"
 
 /* Provide a LINK_SPEC appropriate for a NetBSD/m68k ELF target.  */
 
@@ -143,9 +136,13 @@ while (0)
       {							\
 	if (ADDRESS_REG_P (operands[0]))		\
 	  return "jmp %%pc@(2,%0:l)";			\
+	else if (TARGET_LONG_JUMP_TABLE_OFFSETS)	\
+	  return "jmp %%pc@(2,%0:l)";			\
 	else						\
 	  return "ext%.l %0\n\tjmp %%pc@(2,%0:l)";	\
       }							\
+    else if (TARGET_LONG_JUMP_TABLE_OFFSETS)		\
+      return "jmp %%pc@(2,%0:l)";			\
     else						\
       return "jmp %%pc@(2,%0:w)";			\
   } while (0)

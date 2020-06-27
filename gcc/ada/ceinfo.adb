@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1998-2010, Free Software Foundation, Inc.         --
+--          Copyright (C) 1998-2014, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -61,11 +61,11 @@ procedure CEinfo is
    Fnam : constant Pattern := (UC & Break (' ')) * Fieldnm;
 
    Field_Def : constant Pattern :=
-                 "--    " & Fnam & " (" & Break (')') * Accessfunc;
+     "--    " & Fnam & " (" & Break (')') * Accessfunc;
 
    Field_Ref : constant Pattern :=
-                 "   --    " & Fnam & Break ('(') & Len (1) &
-                   Break (')') * Accessfunc;
+     "   --    " & Fnam & Break ('(') & Len (1) &
+     Break (')') * Accessfunc;
 
    Field_Com : constant Pattern := "   --    " & Fnam & Span (' ') &
                                      (Break (' ') or Rest) * Accessfunc;
@@ -99,7 +99,14 @@ begin
 
    loop
       Next_Line;
+
+      --  Old format of einfo.ads
+
       exit when Match (Line, "   -- Access Kinds --");
+
+      --  New format of einfo.ads
+
+      exit when Match (Line, "-- Access Kinds --");
 
       if Match (Line, Field_Def) then
          Set (Fields, Fieldnm, Accessfunc);

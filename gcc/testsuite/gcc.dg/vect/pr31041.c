@@ -9,6 +9,7 @@ struct UNewTrie
   int index[(0x110000 >> 1)];
 };
 typedef struct UNewTrie UNewTrie;
+void
 utrie_open_3_4 ()
 {
   UNewTrie *trie;
@@ -23,4 +24,3 @@ utrie_open_3_4 ()
       while (i < 5);
     }
 }
-/* { dg-final { cleanup-tree-dump "vect" } } */

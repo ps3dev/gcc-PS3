@@ -6,7 +6,7 @@
 --                                                                          --
 --                               B o d y                                    --
 --                                                                          --
---          Copyright (C) 1998-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1998-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNARL is free software; you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -41,8 +41,6 @@
 
 --  Note: the compiler generates direct calls to this interface, via Rtsfind
 
-with Ada.Unchecked_Deallocation;
-
 with System.Task_Primitives.Operations;
 with System.Restrictions;
 with System.Parameters;
@@ -57,13 +55,6 @@ package body System.Tasking.Protected_Objects.Entries is
 
    use Parameters;
    use Task_Primitives.Operations;
-
-   -----------------------
-   -- Local Subprograms --
-   -----------------------
-
-   procedure Free_Entry_Names (Object : Protection_Entries);
-   --  Deallocate all string names associated with protected entries
 
    ----------------
    -- Local Data --
@@ -112,7 +103,7 @@ package body System.Tasking.Protected_Objects.Entries is
          STPO.Write_Lock (Object.L'Unrestricted_Access, Ceiling_Violation);
 
          if Ceiling_Violation then
-            raise Program_Error with "Ceiling Violation";
+            raise Program_Error with "ceiling violation";
          end if;
 
          if Single_Lock then
@@ -141,8 +132,6 @@ package body System.Tasking.Protected_Objects.Entries is
          end loop;
       end loop;
 
-      Free_Entry_Names (Object);
-
       Object.Finalized := True;
 
       if Single_Lock then
@@ -153,26 +142,6 @@ package body System.Tasking.Protected_Objects.Entries is
 
       STPO.Finalize_Lock (Object.L'Unrestricted_Access);
    end Finalize;
-
-   ----------------------
-   -- Free_Entry_Names --
-   ----------------------
-
-   procedure Free_Entry_Names (Object : Protection_Entries) is
-      Names : Entry_Names_Array_Access := Object.Entry_Names;
-
-      procedure Free_Entry_Names_Array_Access is new
-        Ada.Unchecked_Deallocation
-          (Entry_Names_Array, Entry_Names_Array_Access);
-
-   begin
-      if Names = null then
-         return;
-      end if;
-
-      Free_Entry_Names_Array (Names.all);
-      Free_Entry_Names_Array_Access (Names);
-   end Free_Entry_Names;
 
    -----------------
    -- Get_Ceiling --
@@ -205,9 +174,9 @@ package body System.Tasking.Protected_Objects.Entries is
      (Object            : Protection_Entries_Access;
       Ceiling_Priority  : Integer;
       Compiler_Info     : System.Address;
+      Entry_Queue_Maxes : Protected_Entry_Queue_Max_Access;
       Entry_Bodies      : Protected_Entry_Body_Access;
-      Find_Body_Index   : Find_Body_Index_Access;
-      Build_Entry_Names : Boolean)
+      Find_Body_Index   : Find_Body_Index_Access)
    is
       Init_Priority : Integer := Ceiling_Priority;
       Self_ID       : constant Task_Id := STPO.Self;
@@ -237,24 +206,20 @@ package body System.Tasking.Protected_Objects.Entries is
       Initialize_Lock (Init_Priority, Object.L'Access);
       Initialization.Undefer_Abort_Nestable (Self_ID);
 
-      Object.Ceiling          := System.Any_Priority (Init_Priority);
-      Object.New_Ceiling      := System.Any_Priority (Init_Priority);
-      Object.Owner            := Null_Task;
-      Object.Compiler_Info    := Compiler_Info;
-      Object.Pending_Action   := False;
-      Object.Call_In_Progress := null;
-      Object.Entry_Bodies     := Entry_Bodies;
-      Object.Find_Body_Index  := Find_Body_Index;
+      Object.Ceiling           := System.Any_Priority (Init_Priority);
+      Object.New_Ceiling       := System.Any_Priority (Init_Priority);
+      Object.Owner             := Null_Task;
+      Object.Compiler_Info     := Compiler_Info;
+      Object.Pending_Action    := False;
+      Object.Call_In_Progress  := null;
+      Object.Entry_Queue_Maxes := Entry_Queue_Maxes;
+      Object.Entry_Bodies      := Entry_Bodies;
+      Object.Find_Body_Index   := Find_Body_Index;
 
       for E in Object.Entry_Queues'Range loop
          Object.Entry_Queues (E).Head := null;
          Object.Entry_Queues (E).Tail := null;
       end loop;
-
-      if Build_Entry_Names then
-         Object.Entry_Names :=
-           new Entry_Names_Array (1 .. Entry_Index (Object.Num_Entries));
-      end if;
    end Initialize_Protection_Entries;
 
    ------------------
@@ -268,7 +233,7 @@ package body System.Tasking.Protected_Objects.Entries is
       Lock_Entries_With_Status (Object, Ceiling_Violation);
 
       if Ceiling_Violation then
-         raise Program_Error with "Ceiling Violation";
+         raise Program_Error with "ceiling violation";
       end if;
    end Lock_Entries;
 
@@ -282,7 +247,7 @@ package body System.Tasking.Protected_Objects.Entries is
    is
    begin
       if Object.Finalized then
-         raise Program_Error with "Protected Object is finalized";
+         raise Program_Error with "protected object is finalized";
       end if;
 
       --  If pragma Detect_Blocking is active then, as described in the ARM
@@ -342,7 +307,7 @@ package body System.Tasking.Protected_Objects.Entries is
 
    begin
       if Object.Finalized then
-         raise Program_Error with "Protected Object is finalized";
+         raise Program_Error with "protected object is finalized";
       end if;
 
       --  If pragma Detect_Blocking is active then, as described in the ARM
@@ -367,7 +332,7 @@ package body System.Tasking.Protected_Objects.Entries is
       Read_Lock (Object.L'Access, Ceiling_Violation);
 
       if Ceiling_Violation then
-         raise Program_Error with "Ceiling Violation";
+         raise Program_Error with "ceiling violation";
       end if;
 
       --  We are entering in a protected action, so that we increase the
@@ -391,6 +356,17 @@ package body System.Tasking.Protected_Objects.Entries is
       end if;
    end Lock_Read_Only_Entries;
 
+   -----------------------
+   -- Number_Of_Entries --
+   -----------------------
+
+   function Number_Of_Entries
+     (Object : Protection_Entries_Access) return Entry_Index
+   is
+   begin
+      return Entry_Index (Object.Num_Entries);
+   end Number_Of_Entries;
+
    -----------------
    -- Set_Ceiling --
    -----------------
@@ -401,21 +377,6 @@ package body System.Tasking.Protected_Objects.Entries is
    begin
       Object.New_Ceiling := Prio;
    end Set_Ceiling;
-
-   --------------------
-   -- Set_Entry_Name --
-   --------------------
-
-   procedure Set_Entry_Name
-     (Object : Protection_Entries'Class;
-      Pos    : Protected_Entry_Index;
-      Val    : String_Access)
-   is
-   begin
-      pragma Assert (Object.Entry_Names /= null);
-
-      Object.Entry_Names (Entry_Index (Pos)) := Val;
-   end Set_Entry_Name;
 
    --------------------
    -- Unlock_Entries --

@@ -1,6 +1,6 @@
-// { dg-do compile }
+// { dg-do compile { target c++11 } }
 
-// Copyright (C) 2007, 2009 Free Software Foundation, Inc.
+// Copyright (C) 2007-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -25,10 +25,12 @@ namespace std {
 
   typedef void (*unexpected_handler)();
   unexpected_handler set_unexpected(unexpected_handler  f ) throw();
+  unexpected_handler get_unexpected() noexcept;
   void unexpected();
 
   typedef void (*terminate_handler)();
   terminate_handler set_terminate(terminate_handler  f ) throw();
+  terminate_handler get_terminate() noexcept;
   void terminate() throw();
 
   bool uncaught_exception() throw();

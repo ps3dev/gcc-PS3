@@ -1,5 +1,5 @@
 /* crtbegin object for windows32 targets.
-   Copyright (C) 2007, 2009, 2010, 2011  Free Software Foundation, Inc.
+   Copyright (C) 2007-2017 Free Software Foundation, Inc.
 
    Contributed by Danny Smith <dannysmith@users.sourceforge.net>
 
@@ -42,18 +42,32 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #define LIBGCC_SONAME "libgcc_s.dll"
 #endif
 
-#ifndef LIBGCJ_SONAME
-#define LIBGCJ_SONAME "libgcj_s.dll"
-#endif
-
-
+#if DWARF2_UNWIND_INFO
 /* Make the declarations weak.  This is critical for
    _Jv_RegisterClasses because it lives in libgcj.a  */
-extern void __register_frame_info (const void *, struct object *)
+extern void __register_frame_info (__attribute__((unused)) const void *,
+				   __attribute__((unused)) struct object *)
 				   TARGET_ATTRIBUTE_WEAK;
-extern void *__deregister_frame_info (const void *)
+extern void *__deregister_frame_info (__attribute__((unused)) const void *)
 				      TARGET_ATTRIBUTE_WEAK;
-extern void _Jv_RegisterClasses (const void *) TARGET_ATTRIBUTE_WEAK;
+
+/* Work around for current cygwin32 build problems (Bug gas/16858).
+   Compile weak default functions only for 64-bit systems,
+   when absolutely necessary.  */
+#ifdef __x86_64__
+TARGET_ATTRIBUTE_WEAK void
+__register_frame_info (__attribute__((unused)) const void *p,
+		       __attribute__((unused)) struct object *o)
+{
+}
+
+TARGET_ATTRIBUTE_WEAK void *
+__deregister_frame_info (__attribute__((unused)) const void *p)
+{
+  return (void*) 0;
+}
+#endif
+#endif /* DWARF2_UNWIND_INFO */
 
 #if defined(HAVE_LD_RO_RW_SECTION_MIXING)
 # define EH_FRAME_SECTION_CONST const
@@ -65,17 +79,32 @@ extern void _Jv_RegisterClasses (const void *) TARGET_ATTRIBUTE_WEAK;
    register/deregister it with the exception handling library code.  */
 #if DWARF2_UNWIND_INFO
 static EH_FRAME_SECTION_CONST char __EH_FRAME_BEGIN__[]
-  __attribute__((used, section(EH_FRAME_SECTION_NAME), aligned(4)))
+  __attribute__((used, section(__LIBGCC_EH_FRAME_SECTION_NAME__), aligned(4)))
   = { };
 
 static struct object obj;
+
+/* Handle of libgcc's DLL reference.  */
+HANDLE hmod_libgcc;
+static void *  (*deregister_frame_fn) (const void *) = NULL;
 #endif
 
-#if TARGET_USE_JCR_SECTION
-static void *__JCR_LIST__[]
-  __attribute__ ((used, section(JCR_SECTION_NAME), aligned(4)))
-  = { };
+#ifdef __CYGWIN__
+/* Declare the __dso_handle variable.  It should have a unique value
+   in every shared-object; in a main program its value is zero.  The
+   object should in any case be protected.  This means the instance
+   in one DSO or the main program is not used in another object.  The
+   dynamic linker takes care of this.  */
+
+#ifdef CRTSTUFFS_O
+extern void *__ImageBase;
+void *__dso_handle = &__ImageBase;
+#else
+void *__dso_handle = 0;
 #endif
+
+#endif /* __CYGWIN__ */
+
 
 /* Pull in references from libgcc.a(unwind-dw2-fde.o) in the
    startfile. These are referenced by a ctor and dtor in crtend.o.  */
@@ -93,44 +122,40 @@ __gcc_register_frame (void)
 
   void (*register_frame_fn) (const void *, struct object *);
   HANDLE h = GetModuleHandle (LIBGCC_SONAME);
+
   if (h)
-    register_frame_fn = (void (*) (const void *, struct object *))
-			GetProcAddress (h, "__register_frame_info");
-  else 
-    register_frame_fn = __register_frame_info;
+    {
+      /* Increasing the load-count of LIBGCC_SONAME DLL.  */
+      hmod_libgcc = LoadLibrary (LIBGCC_SONAME);
+      register_frame_fn = (void (*) (const void *, struct object *))
+			  GetProcAddress (h, "__register_frame_info");
+      deregister_frame_fn = (void* (*) (const void *))
+	                    GetProcAddress (h, "__deregister_frame_info");
+    }
+  else
+    {
+      register_frame_fn = __register_frame_info;
+      deregister_frame_fn = __deregister_frame_info;
+    }
   if (register_frame_fn)
      register_frame_fn (__EH_FRAME_BEGIN__, &obj);
 #endif
 
-#if TARGET_USE_JCR_SECTION 
-  if (__JCR_LIST__[0])
-    {
-      void (*register_class_fn) (const void *);
-      HANDLE h = GetModuleHandle (LIBGCJ_SONAME);
-      if (h)
-	register_class_fn = (void (*) (const void *))
-			     GetProcAddress (h, "_Jv_RegisterClasses");
-      else
-	register_class_fn = _Jv_RegisterClasses;
-
-      if (register_class_fn)
-	register_class_fn (__JCR_LIST__);
-    }
-#endif
+#if DEFAULT_USE_CXA_ATEXIT
+  /* If we use the __cxa_atexit method to register C++ dtors
+     at object construction,  also use atexit to register eh frame
+     info cleanup.  */
+  atexit(__gcc_deregister_frame);
+#endif /* DEFAULT_USE_CXA_ATEXIT */
 }
 
 void
 __gcc_deregister_frame (void)
 {
 #if DWARF2_UNWIND_INFO
-  void *  (*deregister_frame_fn) (const void *);
-  HANDLE h = GetModuleHandle (LIBGCC_SONAME);
-  if (h)
-    deregister_frame_fn = (void* (*) (const void *))
-			  GetProcAddress (h, "__deregister_frame_info");
-  else 
-    deregister_frame_fn = __deregister_frame_info;
   if (deregister_frame_fn)
      deregister_frame_fn (__EH_FRAME_BEGIN__);
+  if (hmod_libgcc)
+    FreeLibrary (hmod_libgcc);
 #endif
 }

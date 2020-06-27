@@ -138,10 +138,11 @@ func TestParseMediaType(t *testing.T) {
 			m("title", "This is even more ***fun*** isn't it!")},
 
 		// Tests from http://greenbytes.de/tech/tc2231/
+		// Note: Backslash escape handling is a bit loose, like MSIE.
 		// TODO(bradfitz): add the rest of the tests from that site.
 		{`attachment; filename="f\oo.html"`,
 			"attachment",
-			m("filename", "foo.html")},
+			m("filename", "f\\oo.html")},
 		{`attachment; filename="\"quoting\" tested.html"`,
 			"attachment",
 			m("filename", `"quoting" tested.html`)},
@@ -159,13 +160,13 @@ func TestParseMediaType(t *testing.T) {
 			m("filename", "foo.html")},
 		{`attachment; filename='foo.html'`,
 			"attachment",
-			m("filename", "foo.html")},
+			m("filename", "'foo.html'")},
 		{`attachment; filename="foo-%41.html"`,
 			"attachment",
 			m("filename", "foo-%41.html")},
 		{`attachment; filename="foo-%\41.html"`,
 			"attachment",
-			m("filename", "foo-%41.html")},
+			m("filename", "foo-%\\41.html")},
 		{`filename=foo.html`,
 			"", m()},
 		{`x=y; filename=foo.html`,
@@ -217,18 +218,24 @@ func TestParseMediaType(t *testing.T) {
 		{`form-data; firstname="Брэд"; lastname="Фицпатрик"`,
 			"form-data",
 			m("firstname", "Брэд", "lastname", "Фицпатрик")},
+
+		// Empty string used to be mishandled.
+		{`foo; bar=""`, "foo", m("bar", "")},
+
+		// Microsoft browers in intranet mode do not think they need to escape \ in file name.
+		{`form-data; name="file"; filename="C:\dev\go\robots.txt"`, "form-data", m("name", "file", "filename", `C:\dev\go\robots.txt`)},
 	}
 	for _, test := range tests {
 		mt, params, err := ParseMediaType(test.in)
 		if err != nil {
 			if test.t != "" {
-				t.Errorf("for input %q, unexpected error: %v", test.in, err)
+				t.Errorf("for input %#q, unexpected error: %v", test.in, err)
 				continue
 			}
 			continue
 		}
 		if g, e := mt, test.t; g != e {
-			t.Errorf("for input %q, expected type %q, got %q",
+			t.Errorf("for input %#q, expected type %q, got %q",
 				test.in, e, g)
 			continue
 		}
@@ -236,7 +243,7 @@ func TestParseMediaType(t *testing.T) {
 			continue
 		}
 		if !reflect.DeepEqual(params, test.p) {
-			t.Errorf("for input %q, wrong params.\n"+
+			t.Errorf("for input %#q, wrong params.\n"+
 				"expected: %#v\n"+
 				"     got: %#v",
 				test.in, test.p, params)
@@ -244,13 +251,33 @@ func TestParseMediaType(t *testing.T) {
 	}
 }
 
+type badMediaTypeTest struct {
+	in  string
+	err string
+}
+
+var badMediaTypeTests = []badMediaTypeTest{
+	{"bogus ;=========", "mime: invalid media parameter"},
+	{"bogus/<script>alert</script>", "mime: expected token after slash"},
+	{"bogus/bogus<script>alert</script>", "mime: unexpected content after media subtype"},
+}
+
 func TestParseMediaTypeBogus(t *testing.T) {
-	mt, params, err := ParseMediaType("bogus ;=========")
-	if err == nil {
-		t.Fatalf("expected an error parsing invalid media type; got type %q, params %#v", mt, params)
-	}
-	if err.Error() != "mime: invalid media parameter" {
-		t.Errorf("expected invalid media parameter; got error %q", err)
+	for _, tt := range badMediaTypeTests {
+		mt, params, err := ParseMediaType(tt.in)
+		if err == nil {
+			t.Errorf("ParseMediaType(%q) = nil error; want parse error", tt.in)
+			continue
+		}
+		if err.Error() != tt.err {
+			t.Errorf("ParseMediaType(%q) = err %q; want %q", tt.in, err.Error(), tt.err)
+		}
+		if params != nil {
+			t.Errorf("ParseMediaType(%q): got non-nil params on error", tt.in)
+		}
+		if mt != "" {
+			t.Errorf("ParseMediaType(%q): got non-empty media type string on error", tt.in)
+		}
 	}
 }
 
@@ -261,9 +288,21 @@ type formatTest struct {
 }
 
 var formatTests = []formatTest{
-	{"noslash", nil, ""},
+	{"noslash", map[string]string{"X": "Y"}, "noslash; x=Y"}, // e.g. Content-Disposition values (RFC 2183); issue 11289
+	{"foo bar/baz", nil, ""},
+	{"foo/bar baz", nil, ""},
 	{"foo/BAR", nil, "foo/bar"},
 	{"foo/BAR", map[string]string{"X": "Y"}, "foo/bar; x=Y"},
+	{"foo/BAR", map[string]string{"space": "With space"}, `foo/bar; space="With space"`},
+	{"foo/BAR", map[string]string{"quote": `With "quote`}, `foo/bar; quote="With \"quote"`},
+	{"foo/BAR", map[string]string{"bslash": `With \backslash`}, `foo/bar; bslash="With \\backslash"`},
+	{"foo/BAR", map[string]string{"both": `With \backslash and "quote`}, `foo/bar; both="With \\backslash and \"quote"`},
+	{"foo/BAR", map[string]string{"": "empty attribute"}, ""},
+	{"foo/BAR", map[string]string{"bad attribute": "baz"}, ""},
+	{"foo/BAR", map[string]string{"nonascii": "not an ascii character: ä"}, ""},
+	{"foo/bar", map[string]string{"a": "av", "b": "bv", "c": "cv"}, "foo/bar; a=av; b=bv; c=cv"},
+	{"foo/bar", map[string]string{"0": "'", "9": "'"}, "foo/bar; 0='; 9='"},
+	{"foo", map[string]string{"bar": ""}, `foo; bar=""`},
 }
 
 func TestFormatMediaType(t *testing.T) {

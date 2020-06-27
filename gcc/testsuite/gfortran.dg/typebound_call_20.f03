@@ -1,4 +1,5 @@
 ! { dg-do run }
+! { dg-require-visibility "" }
 !
 ! PR 47565: [4.6 Regression][OOP] Segfault with TBP
 !
@@ -37,5 +38,3 @@ program p
   y = this%find_y()
   if (y/=3) call abort()
 end 
-
-! { dg-final { cleanup-modules "class_t" } }

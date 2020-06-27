@@ -1,7 +1,7 @@
 /* Data structures and declarations used for reading and writing
    GIMPLE to a file stream.
 
-   Copyright (C) 2009, 2010, 2011 Free Software Foundation, Inc.
+   Copyright (C) 2009-2017 Free Software Foundation, Inc.
    Contributed by Doug Kwan <dougkwan@google.com>
 
 This file is part of GCC.
@@ -24,13 +24,6 @@ along with GCC; see the file COPYING3.  If not see
 #define GCC_LTO_STREAMER_H
 
 #include "plugin-api.h"
-#include "tree.h"
-#include "gimple.h"
-#include "target.h"
-#include "cgraph.h"
-#include "vec.h"
-#include "vecprim.h"
-#include "alloc-pool.h"
 #include "gcov-io.h"
 #include "diagnostic.h"
 
@@ -135,14 +128,8 @@ along with GCC; see the file COPYING3.  If not see
      String are represented in the table as pairs, a length in ULEB128
      form followed by the data for the string.  */
 
-/* The string that is the prefix on the section names we make for lto.
-   For decls the DECL_ASSEMBLER_NAME is appended to make the section
-   name for the functions and static_initializers.  For other types of
-   sections a '.' and the section type are appended.  */
-#define LTO_SECTION_NAME_PREFIX         ".gnu.lto_"
-
-#define LTO_major_version 2
-#define LTO_minor_version 1
+#define LTO_major_version 6
+#define LTO_minor_version 0
 
 typedef unsigned char	lto_decl_flags_t;
 
@@ -154,6 +141,9 @@ typedef unsigned char	lto_decl_flags_t;
 enum LTO_tags
 {
   LTO_null = 0,
+
+  /* Special for streamer.  Reference to previously-streamed node.  */
+  LTO_tree_pickle_reference,
 
   /* Reserve enough entries to fit all the tree and gimple codes handled
      by the streamer.  This guarantees that:
@@ -172,8 +162,8 @@ enum LTO_tags
   /* EH region holding the previous statement.  */
   LTO_eh_region,
 
-  /* An MD or NORMAL builtin.  Only the code and class are streamed out.  */
-  LTO_builtin_decl,
+  /* Shared INTEGER_CST node.  */
+  LTO_integer_cst,
 
   /* Function body.  */
   LTO_function,
@@ -193,8 +183,8 @@ enum LTO_tags
   /* EH try/catch node.  */
   LTO_eh_catch,
 
-  /* Special for global streamer. Reference to previously-streamed node.  */
-  LTO_tree_pickle_reference,
+  /* Special for global streamer.  A blob of unnamed tree nodes.  */
+  LTO_tree_scc,
 
   /* References to indexable tree nodes.  These objects are stored in
      tables that are written separately from the function bodies that
@@ -217,7 +207,8 @@ enum LTO_tags
   LTO_const_decl_ref,
   LTO_imported_decl_ref,
   LTO_translation_unit_decl_ref,
-  LTO_global_decl_ref,			/* Do not change.  */
+  LTO_global_decl_ref,
+  LTO_namelist_decl_ref,		/* Do not change.  */
 
   /* This tag must always be last.  */
   LTO_NUM_TAGS
@@ -235,22 +226,27 @@ enum lto_section_type
   LTO_section_decls = 0,
   LTO_section_function_body,
   LTO_section_static_initializer,
-  LTO_section_cgraph,
-  LTO_section_varpool,
+  LTO_section_symtab,
   LTO_section_refs,
   LTO_section_asm,
   LTO_section_jump_functions,
   LTO_section_ipa_pure_const,
   LTO_section_ipa_reference,
-  LTO_section_symtab,
+  LTO_section_ipa_profile,
+  LTO_section_symtab_nodes,
   LTO_section_opts,
   LTO_section_cgraph_opt_sum,
   LTO_section_inline_summary,
+  LTO_section_ipcp_transform,
+  LTO_section_ipa_icf,
+  LTO_section_offload_table,
+  LTO_section_mode_table,
+  LTO_section_ipa_hsa,
   LTO_N_SECTION_TYPES		/* Must be last.  */
 };
 
 /* Indices to the various function, type and symbol streams. */
-typedef enum
+enum lto_decl_stream_e_t
 {
   LTO_DECL_STREAM_TYPE = 0,		/* Must be first. */
   LTO_DECL_STREAM_FIELD_DECL,
@@ -260,11 +256,9 @@ typedef enum
   LTO_DECL_STREAM_NAMESPACE_DECL,
   LTO_DECL_STREAM_LABEL_DECL,
   LTO_N_DECL_STREAMS
-} lto_decl_stream_e_t;
+};
 
 typedef enum ld_plugin_symbol_resolution ld_plugin_symbol_resolution_t;
-DEF_VEC_I(ld_plugin_symbol_resolution_t);
-DEF_VEC_ALLOC_I(ld_plugin_symbol_resolution_t, heap);
 
 
 /* Macro to define convenience functions for type and decl streams
@@ -275,15 +269,14 @@ lto_file_decl_data_get_ ## name (struct lto_file_decl_data *data, \
 				 unsigned int idx) \
 { \
   struct lto_in_decl_state *state = data->current_decl_state; \
-  gcc_assert (idx < state->streams[LTO_DECL_STREAM_## UPPER_NAME].size); \
-  return state->streams[LTO_DECL_STREAM_## UPPER_NAME].trees[idx]; \
+   return (*state->streams[LTO_DECL_STREAM_## UPPER_NAME])[idx]; \
 } \
 \
 static inline unsigned int \
 lto_file_decl_data_num_ ## name ## s (struct lto_file_decl_data *data) \
 { \
   struct lto_in_decl_state *state = data->current_decl_state; \
-  return state->streams[LTO_DECL_STREAM_## UPPER_NAME].size; \
+  return vec_safe_length (state->streams[LTO_DECL_STREAM_## UPPER_NAME]); \
 }
 
 
@@ -300,34 +293,98 @@ typedef const char* (lto_get_section_data_f) (struct lto_file_decl_data *,
 
 /* Return the data found from the above call.  The first three
    parameters are the same as above.  The fourth parameter is the data
-   itself and the fifth is the lenght of the data. */
+   itself and the fifth is the length of the data. */
 typedef void (lto_free_section_data_f) (struct lto_file_decl_data *,
 					enum lto_section_type,
 					const char *,
 					const char *,
 					size_t);
 
-/* Structure used as buffer for reading an LTO file.  */
-struct lto_input_block
+/* The location cache holds expanded locations for streamed in trees.
+   This is done to reduce memory usage of libcpp linemap that strongly preffers
+   locations to be inserted in the soruce order.  */
+
+class lto_location_cache
 {
+public:
+  /* Apply all changes in location cache.  Add locations into linemap and patch
+     trees.  */
+  bool apply_location_cache ();
+  /* Tree merging did not suceed; mark all changes in the cache as accepted.  */
+  void accept_location_cache ();
+  /* Tree merging did suceed; throw away recent changes.  */
+  void revert_location_cache ();
+  void input_location (location_t *loc, struct bitpack_d *bp,
+		       struct data_in *data_in);
+  lto_location_cache ()
+     : loc_cache (), accepted_length (0), current_file (NULL), current_line (0),
+       current_col (0), current_sysp (false), current_loc (UNKNOWN_LOCATION)
+  {
+    gcc_assert (!current_cache);
+    current_cache = this;
+  }
+  ~lto_location_cache ()
+  {
+    apply_location_cache ();
+    gcc_assert (current_cache == this);
+    current_cache = NULL;
+  }
+
+  /* There can be at most one instance of location cache (combining multiple
+     would bring it out of sync with libcpp linemap); point to current
+     one.  */
+  static lto_location_cache *current_cache;
+  
+private:
+  static int cmp_loc (const void *pa, const void *pb);
+
+  struct cached_location
+  {
+    const char *file;
+    location_t *loc;
+    int line, col;
+    bool sysp;
+  };
+
+  /* The location cache.  */
+
+  auto_vec<cached_location> loc_cache;
+
+  /* Accepted entries are ones used by trees that are known to be not unified
+     by tree merging.  */
+
+  int accepted_length;
+
+  /* Bookkeeping to remember state in between calls to lto_apply_location_cache
+     When streaming gimple, the location cache is not used and thus
+     lto_apply_location_cache happens per location basis.  It is then
+     useful to avoid redundant calls of linemap API.  */
+
+  const char *current_file;
+  int current_line;
+  int current_col;
+  bool current_sysp;
+  location_t current_loc;
+};
+
+/* Structure used as buffer for reading an LTO file.  */
+class lto_input_block
+{
+public:
+  /* Special constructor for the string table, it abuses this to
+     do random access but use the uhwi decoder.  */
+  lto_input_block (const char *data_, unsigned int p_, unsigned int len_,
+		   const unsigned char *mode_table_)
+      : data (data_), mode_table (mode_table_), p (p_), len (len_) {}
+  lto_input_block (const char *data_, unsigned int len_,
+		   const unsigned char *mode_table_)
+      : data (data_), mode_table (mode_table_), p (0), len (len_) {}
+
   const char *data;
+  const unsigned char *mode_table;
   unsigned int p;
   unsigned int len;
 };
-
-#define LTO_INIT_INPUT_BLOCK(BASE,D,P,L)   \
-  do {                                     \
-    BASE.data = D;                         \
-    BASE.p = P;                            \
-    BASE.len = L;                          \
-  } while (0)
-
-#define LTO_INIT_INPUT_BLOCK_PTR(BASE,D,P,L) \
-  do {                                       \
-    BASE->data = D;                          \
-    BASE->p = P;                             \
-    BASE->len = L;                           \
-  } while (0)
 
 
 /* The is the first part of the record for a function or constructor
@@ -336,72 +393,38 @@ struct lto_header
 {
   int16_t major_version;
   int16_t minor_version;
-  enum lto_section_type section_type;
 };
 
-/* The header for a function body.  */
-struct lto_function_header
+/* The is the first part of the record in an LTO file for many of the
+   IPA passes.  */
+struct lto_simple_header : lto_header
 {
-  /* The header for all types of sections. */
-  struct lto_header lto_header;
-
-  /* Number of labels with names.  */
-  int32_t num_named_labels;
-
-  /* Number of labels without names.  */
-  int32_t num_unnamed_labels;
-
-  /* Size compressed or 0 if not compressed.  */
-  int32_t compressed_size;
-
-  /* Size of names for named labels.  */
-  int32_t named_label_size;
-
-  /* Size of the cfg.  */
-  int32_t cfg_size;
-
   /* Size of main gimple body of function.  */
   int32_t main_size;
+};
 
+struct lto_simple_header_with_strings : lto_simple_header
+{
   /* Size of the string table.  */
   int32_t string_size;
 };
 
+/* The header for a function body.  */
+struct lto_function_header : lto_simple_header_with_strings
+{
+  /* Size of the cfg.  */
+  int32_t cfg_size;
+};
+
 
 /* Structure describing a symbol section.  */
-struct lto_decl_header
+struct lto_decl_header : lto_simple_header_with_strings
 {
-  /* The header for all types of sections. */
-  struct lto_header lto_header;
-
   /* Size of region for decl state. */
   int32_t decl_state_size;
 
   /* Number of nodes in globals stream.  */
   int32_t num_nodes;
-
-  /* Size of region for expressions, decls, types, etc. */
-  int32_t main_size;
-
-  /* Size of the string table.  */
-  int32_t string_size;
-};
-
-
-/* Structure describing top level asm()s.  */
-struct lto_asm_header
-{
-  /* The header for all types of sections. */
-  struct lto_header lto_header;
-
-  /* Size compressed or 0 if not compressed.  */
-  int32_t compressed_size;
-
-  /* Size of region for expressions, decls, types, etc. */
-  int32_t main_size;
-
-  /* Size of the string table.  */
-  int32_t string_size;
 };
 
 
@@ -409,7 +432,7 @@ struct lto_asm_header
 struct lto_stats_d
 {
   unsigned HOST_WIDE_INT num_input_cgraph_nodes;
-  unsigned HOST_WIDE_INT num_output_cgraph_nodes;
+  unsigned HOST_WIDE_INT num_output_symtab_nodes;
   unsigned HOST_WIDE_INT num_input_files;
   unsigned HOST_WIDE_INT num_output_files;
   unsigned HOST_WIDE_INT num_cgraph_partitions;
@@ -420,96 +443,83 @@ struct lto_stats_d
   unsigned HOST_WIDE_INT num_compressed_il_bytes;
   unsigned HOST_WIDE_INT num_input_il_bytes;
   unsigned HOST_WIDE_INT num_uncompressed_il_bytes;
+  unsigned HOST_WIDE_INT num_tree_bodies_output;
+  unsigned HOST_WIDE_INT num_pickle_refs_output;
 };
 
-/* Encoder data structure used to stream callgraph nodes.  */
-struct lto_cgraph_encoder_d
+/* Entry of LTO symtab encoder.  */
+struct lto_encoder_entry
 {
-  /* Map nodes to reference number. */
-  struct pointer_map_t *map;
-
-  /* Map reference number to node. */
-  VEC(cgraph_node_ptr,heap) *nodes;
-
-  /* Map of nodes where we want to output body.  */
-  struct pointer_set_t *body;
+  symtab_node *node;
+  /* Is the node in this partition (i.e. ltrans of this partition will
+     be responsible for outputting it)? */
+  unsigned int in_partition:1;
+  /* Do we encode body in this partition?  */
+  unsigned int body:1;
+  /* Do we encode initializer in this partition?
+     For example the readonly variable initializers are encoded to aid
+     constant folding even if they are not in the partition.  */
+  unsigned int initializer:1;
 };
-
-typedef struct lto_cgraph_encoder_d *lto_cgraph_encoder_t;
-
-/* Return number of encoded nodes in ENCODER.  */
-
-static inline int
-lto_cgraph_encoder_size (lto_cgraph_encoder_t encoder)
-{
-  return VEC_length (cgraph_node_ptr, encoder->nodes);
-}
 
 
 /* Encoder data structure used to stream callgraph nodes.  */
-struct lto_varpool_encoder_d
+struct lto_symtab_encoder_d
 {
-  /* Map nodes to reference number. */
-  struct pointer_map_t *map;
-
-  /* Map reference number to node. */
-  VEC(varpool_node_ptr,heap) *nodes;
-
-  /* Map of nodes where we want to output initializer.  */
-  struct pointer_set_t *initializer;
-};
-typedef struct lto_varpool_encoder_d *lto_varpool_encoder_t;
-
-/* Return number of encoded nodes in ENCODER.  */
-
-static inline int
-lto_varpool_encoder_size (lto_varpool_encoder_t encoder)
-{
-  return VEC_length (varpool_node_ptr, encoder->nodes);
-}
-
-/* Mapping from indices to trees.  */
-struct GTY(()) lto_tree_ref_table
-{
-  /* Array of referenced trees . */
-  tree * GTY((length ("%h.size"))) trees;
-
-  /* Size of array. */
-  unsigned int size;
+  vec<lto_encoder_entry> nodes;
+  hash_map<symtab_node *, size_t> *map;
 };
 
+typedef struct lto_symtab_encoder_d *lto_symtab_encoder_t;
 
-/* Mapping between trees and slots in an array.  */
-struct lto_decl_slot
+/* Iterator structure for cgraph node sets.  */
+struct lto_symtab_encoder_iterator
 {
-  tree t;
-  int slot_num;
+  lto_symtab_encoder_t encoder;
+  unsigned index;
 };
+
 
 
 /* The lto_tree_ref_encoder struct is used to encode trees into indices. */
 
 struct lto_tree_ref_encoder
 {
-  htab_t tree_hash_table;	/* Maps pointers to indices. */
-  unsigned int next_index;	/* Next available index. */
-  VEC(tree,heap) *trees;	/* Maps indices to pointers. */
+  hash_map<tree, unsigned> *tree_hash_table;	/* Maps pointers to indices. */
+  vec<tree> trees;			/* Maps indices to pointers. */
 };
 
 
 /* Structure to hold states of input scope.  */
-struct GTY(()) lto_in_decl_state
+struct GTY((for_user)) lto_in_decl_state
 {
   /* Array of lto_in_decl_buffers to store type and decls streams. */
-  struct lto_tree_ref_table streams[LTO_N_DECL_STREAMS];
+  vec<tree, va_gc> *streams[LTO_N_DECL_STREAMS];
 
   /* If this in-decl state is associated with a function. FN_DECL
      point to the FUNCTION_DECL. */
   tree fn_decl;
+
+  /* True if decl state is compressed.  */
+  bool compressed;
 };
 
 typedef struct lto_in_decl_state *lto_in_decl_state_ptr;
 
+struct decl_state_hasher : ggc_ptr_hash<lto_in_decl_state>
+{
+  static hashval_t
+  hash (lto_in_decl_state *s)
+  {
+    return htab_hash_pointer (s->fn_decl);
+  }
+
+  static bool
+  equal (lto_in_decl_state *a, lto_in_decl_state *b)
+  {
+    return a->fn_decl == b->fn_decl;
+  }
+};
 
 /* The structure that holds all of the vectors of global types,
    decls and cgraph nodes used in the serialization of this file.  */
@@ -520,20 +530,27 @@ struct lto_out_decl_state
   struct lto_tree_ref_encoder streams[LTO_N_DECL_STREAMS];
 
   /* Encoder for cgraph nodes.  */
-  lto_cgraph_encoder_t cgraph_node_encoder;
-
-  /* Encoder for varpool nodes.  */
-  lto_varpool_encoder_t varpool_node_encoder;
+  lto_symtab_encoder_t symtab_node_encoder;
 
   /* If this out-decl state belongs to a function, fn_decl points to that
      function.  Otherwise, it is NULL. */
   tree fn_decl;
+
+  /* True if decl state is compressed.  */
+  bool compressed;
 };
 
 typedef struct lto_out_decl_state *lto_out_decl_state_ptr;
 
-DEF_VEC_P(lto_out_decl_state_ptr);
-DEF_VEC_ALLOC_P(lto_out_decl_state_ptr, heap);
+
+/* Compact representation of a index <-> resolution pair. Unpacked to an 
+   vector later. */
+struct res_pair 
+{
+  ld_plugin_symbol_resolution_t res;
+  unsigned index;
+};
+
 
 /* One of these is allocated for each object file that being compiled
    by lto.  This structure contains the tables that are needed by the
@@ -549,13 +566,10 @@ struct GTY(()) lto_file_decl_data
   struct lto_in_decl_state *global_decl_state;
 
   /* Table of cgraph nodes present in this file.  */
-  lto_cgraph_encoder_t GTY((skip)) cgraph_node_encoder;
-
-  /* Table of varpool nodes present in this file.  */
-  lto_varpool_encoder_t GTY((skip)) varpool_node_encoder;
+  lto_symtab_encoder_t GTY((skip)) symtab_node_encoder;
 
   /* Hash table maps lto-related section names to location in file.  */
-  htab_t GTY((param_is (struct lto_in_decl_state))) function_decl_states;
+  hash_table<decl_state_hasher> *function_decl_states;
 
   /* The .o file that these offsets relate to.  */
   const char *GTY((skip)) file_name;
@@ -573,9 +587,16 @@ struct GTY(()) lto_file_decl_data
   unsigned HOST_WIDE_INT id;
 
   /* Symbol resolutions for this file */
-  VEC(ld_plugin_symbol_resolution_t,heap) * GTY((skip)) resolutions;
+  vec<res_pair>  GTY((skip)) respairs;
+  unsigned max_index;
 
   struct gcov_ctr_summary GTY((skip)) profile_info;
+
+  /* Map assigning declarations their resolutions.  */
+  hash_map<tree, ld_plugin_symbol_resolution> * GTY((skip)) resolution_map;
+
+  /* Mode translation table.  */
+  const unsigned char *mode_table;
 };
 
 typedef struct lto_file_decl_data *lto_file_decl_data_ptr;
@@ -610,20 +631,6 @@ struct lto_output_stream
   unsigned int total_size;
 };
 
-/* The is the first part of the record in an LTO file for many of the
-   IPA passes.  */
-struct lto_simple_header
-{
-  /* The header for all types of sections. */
-  struct lto_header lto_header;
-
-  /* Size of main gimple body of function.  */
-  int32_t main_size;
-
-  /* Size of main stream when compressed.  */
-  int32_t compressed_size;
-};
-
 /* A simple output block.  This can be used for simple IPA passes that
    do not need more than one stream.  */
 struct lto_simple_output_block
@@ -634,6 +641,48 @@ struct lto_simple_output_block
   /* The stream that the main tree codes are written to.  */
   struct lto_output_stream *main_stream;
 };
+
+/* String hashing.  */
+
+struct string_slot
+{
+  const char *s;
+  int len;
+  unsigned int slot_num;
+};
+
+/* Hashtable helpers.  */
+
+struct string_slot_hasher : nofree_ptr_hash <string_slot>
+{
+  static inline hashval_t hash (const string_slot *);
+  static inline bool equal (const string_slot *, const string_slot *);
+};
+
+/* Returns a hash code for DS.  Adapted from libiberty's htab_hash_string
+   to support strings that may not end in '\0'.  */
+
+inline hashval_t
+string_slot_hasher::hash (const string_slot *ds)
+{
+  hashval_t r = ds->len;
+  int i;
+
+  for (i = 0; i < ds->len; i++)
+     r = r * 67 + (unsigned)ds->s[i] - 113;
+  return r;
+}
+
+/* Returns nonzero if DS1 and DS2 are equal.  */
+
+inline bool
+string_slot_hasher::equal (const string_slot *ds1, const string_slot *ds2)
+{
+  if (ds1->len == ds2->len)
+    return memcmp (ds1->s, ds2->s, ds1->len) == 0;
+
+  return 0;
+}
 
 /* Data structure holding all the data and descriptors used when writing
    an LTO file.  */
@@ -653,11 +702,11 @@ struct output_block
 
   /* The hash table that contains the set of strings we have seen so
      far and the indexes assigned to them.  */
-  htab_t string_hash_table;
+  hash_table<string_slot_hasher> *string_hash_table;
 
-  /* The current cgraph_node that we are currently serializing.  Null
+  /* The current symbol that we are currently serializing.  Null
      if we are serializing something else.  */
-  struct cgraph_node *cgraph_node;
+  symtab_node *symbol;
 
   /* These are the last file and line that were seen in the stream.
      If the current node differs from these, it needs to insert
@@ -665,9 +714,7 @@ struct output_block
   const char *current_file;
   int current_line;
   int current_col;
-
-  /* True if writing globals and types.  */
-  bool global;
+  bool current_sysp;
 
   /* Cache of nodes written in this section.  */
   struct streamer_tree_cache_d *writer_cache;
@@ -684,31 +731,20 @@ struct data_in
   /* The global decls and types.  */
   struct lto_file_decl_data *file_data;
 
-  /* All of the labels.  */
-  tree *labels;
-
   /* The string table.  */
   const char *strings;
 
   /* The length of the string table.  */
   unsigned int strings_len;
 
-  /* Number of named labels.  Used to find the index of unnamed labels
-     since they share space with the named labels.  */
-  unsigned int num_named_labels;
-
-  /* Number of unnamed labels.  */
-  unsigned int num_unnamed_labels;
-
-  const char *current_file;
-  int current_line;
-  int current_col;
-
   /* Maps each reference number to the resolution done by the linker. */
-  VEC(ld_plugin_symbol_resolution_t,heap) *globals_resolution;
+  vec<ld_plugin_symbol_resolution_t> globals_resolution;
 
   /* Cache of pickled nodes.  */
   struct streamer_tree_cache_d *reader_cache;
+
+  /* Cache of source code location.  */
+  lto_location_cache location_cache;
 };
 
 
@@ -726,10 +762,18 @@ extern void lto_set_in_hooks (struct lto_file_decl_data **,
 extern struct lto_file_decl_data **lto_get_file_decl_data (void);
 extern const char *lto_get_section_data (struct lto_file_decl_data *,
 					 enum lto_section_type,
-					 const char *, size_t *);
+					 const char *, size_t *,
+					 bool decompress = false);
+extern const char *lto_get_raw_section_data (struct lto_file_decl_data *,
+					     enum lto_section_type,
+					     const char *, size_t *);
 extern void lto_free_section_data (struct lto_file_decl_data *,
-				   enum lto_section_type,
-				   const char *, const char *, size_t);
+			           enum lto_section_type,
+				   const char *, const char *, size_t,
+				   bool decompress = false);
+extern void lto_free_raw_section_data (struct lto_file_decl_data *,
+				       enum lto_section_type,
+				       const char *, const char *, size_t);
 extern htab_t lto_create_renaming_table (void);
 extern void lto_record_renamed_decl (struct lto_file_decl_data *,
 				     const char *, const char *);
@@ -737,25 +781,21 @@ extern const char *lto_get_decl_name_mapping (struct lto_file_decl_data *,
 					      const char *);
 extern struct lto_in_decl_state *lto_new_in_decl_state (void);
 extern void lto_delete_in_decl_state (struct lto_in_decl_state *);
-extern hashval_t lto_hash_in_decl_state (const void *);
-extern int lto_eq_in_decl_state (const void *, const void *);
 extern struct lto_in_decl_state *lto_get_function_in_decl_state (
 				      struct lto_file_decl_data *, tree);
+extern void lto_free_function_in_decl_state (struct lto_in_decl_state *);
+extern void lto_free_function_in_decl_state_for_node (symtab_node *);
 extern void lto_section_overrun (struct lto_input_block *) ATTRIBUTE_NORETURN;
 extern void lto_value_range_error (const char *,
 				   HOST_WIDE_INT, HOST_WIDE_INT,
 				   HOST_WIDE_INT) ATTRIBUTE_NORETURN;
 
 /* In lto-section-out.c  */
-extern hashval_t lto_hash_decl_slot_node (const void *);
-extern int lto_eq_decl_slot_node (const void *, const void *);
-extern hashval_t lto_hash_type_slot_node (const void *);
-extern int lto_eq_type_slot_node (const void *, const void *);
 extern void lto_begin_section (const char *, bool);
 extern void lto_end_section (void);
+extern void lto_write_data (const void *, unsigned int);
+extern void lto_write_raw_data (const void *, unsigned int);
 extern void lto_write_stream (struct lto_output_stream *);
-extern void lto_output_data_stream (struct lto_output_stream *, const void *,
-				    size_t);
 extern bool lto_output_decl_index (struct lto_output_stream *,
 			    struct lto_tree_ref_encoder *,
 			    tree, unsigned int *);
@@ -785,11 +825,15 @@ extern void lto_append_block (struct lto_output_stream *);
 
 
 /* In lto-streamer.c.  */
+
+/* Set when streaming LTO for offloading compiler.  */
+extern bool lto_stream_offload_p;
+
 extern const char *lto_tag_name (enum LTO_tags);
 extern bitmap lto_bitmap_alloc (void);
 extern void lto_bitmap_free (bitmap);
 extern char *lto_get_section_name (int, const char *, struct lto_file_decl_data *);
-extern void print_lto_report (void);
+extern void print_lto_report (const char *);
 extern void lto_streamer_init (void);
 extern bool gate_lto_out (void);
 #ifdef LTO_STREAMER_DEBUG
@@ -797,27 +841,38 @@ extern void lto_orig_address_map (tree, intptr_t);
 extern intptr_t lto_orig_address_get (tree);
 extern void lto_orig_address_remove (tree);
 #endif
-extern void lto_check_version (int, int);
+extern void lto_check_version (int, int, const char *);
 extern void lto_streamer_hooks_init (void);
 
 /* In lto-streamer-in.c */
 extern void lto_input_cgraph (struct lto_file_decl_data *, const char *);
 extern void lto_reader_init (void);
-extern void lto_input_function_body (struct lto_file_decl_data *, tree,
+extern void lto_input_function_body (struct lto_file_decl_data *,
+				     struct cgraph_node *,
 				     const char *);
+extern void lto_input_variable_constructor (struct lto_file_decl_data *,
+					    struct varpool_node *,
+					    const char *);
 extern void lto_input_constructors_and_inits (struct lto_file_decl_data *,
 					      const char *);
 extern void lto_input_toplevel_asms (struct lto_file_decl_data *, int);
+extern void lto_input_mode_table (struct lto_file_decl_data *);
 extern struct data_in *lto_data_in_create (struct lto_file_decl_data *,
 				    const char *, unsigned,
-				    VEC(ld_plugin_symbol_resolution_t,heap) *);
+				    vec<ld_plugin_symbol_resolution_t> );
 extern void lto_data_in_delete (struct data_in *);
 extern void lto_input_data_block (struct lto_input_block *, void *, size_t);
-location_t lto_input_location (struct lto_input_block *, struct data_in *);
+void lto_input_location (location_t *, struct bitpack_d *, struct data_in *);
+location_t stream_input_location_now (struct bitpack_d *bp,
+				      struct data_in *data);
 tree lto_input_tree_ref (struct lto_input_block *, struct data_in *,
 			 struct function *, enum LTO_tags);
 void lto_tag_check_set (enum LTO_tags, int, ...);
 void lto_init_eh (void);
+hashval_t lto_input_scc (struct lto_input_block *, struct data_in *,
+			 unsigned *, unsigned *);
+tree lto_input_tree_1 (struct lto_input_block *, struct data_in *,
+		       enum LTO_tags, hashval_t hash);
 tree lto_input_tree (struct lto_input_block *, struct data_in *);
 
 
@@ -828,66 +883,63 @@ extern void destroy_output_block (struct output_block *);
 extern void lto_output_tree (struct output_block *, tree, bool, bool);
 extern void lto_output_toplevel_asms (void);
 extern void produce_asm (struct output_block *ob, tree fn);
+extern void lto_output ();
+extern void produce_asm_for_decls ();
 void lto_output_decl_state_streams (struct output_block *,
 				    struct lto_out_decl_state *);
 void lto_output_decl_state_refs (struct output_block *,
 			         struct lto_output_stream *,
 			         struct lto_out_decl_state *);
-void lto_output_location (struct output_block *, location_t);
+void lto_output_location (struct output_block *, struct bitpack_d *, location_t);
+void lto_output_init_mode_table (void);
 
 
 /* In lto-cgraph.c  */
-struct cgraph_node *lto_cgraph_encoder_deref (lto_cgraph_encoder_t, int);
-int lto_cgraph_encoder_lookup (lto_cgraph_encoder_t, struct cgraph_node *);
-lto_cgraph_encoder_t lto_cgraph_encoder_new (void);
-int lto_cgraph_encoder_encode (lto_cgraph_encoder_t, struct cgraph_node *);
-void lto_cgraph_encoder_delete (lto_cgraph_encoder_t);
-bool lto_cgraph_encoder_encode_body_p (lto_cgraph_encoder_t,
+extern bool asm_nodes_output;
+lto_symtab_encoder_t lto_symtab_encoder_new (bool);
+int lto_symtab_encoder_encode (lto_symtab_encoder_t, symtab_node *);
+void lto_symtab_encoder_delete (lto_symtab_encoder_t);
+bool lto_symtab_encoder_delete_node (lto_symtab_encoder_t, symtab_node *);
+bool lto_symtab_encoder_encode_body_p (lto_symtab_encoder_t,
 				       struct cgraph_node *);
+bool lto_symtab_encoder_in_partition_p (lto_symtab_encoder_t,
+					symtab_node *);
+void lto_set_symtab_encoder_in_partition (lto_symtab_encoder_t,
+					  symtab_node *);
 
-bool lto_varpool_encoder_encode_body_p (lto_varpool_encoder_t,
-				        struct varpool_node *);
-struct varpool_node *lto_varpool_encoder_deref (lto_varpool_encoder_t, int);
-int lto_varpool_encoder_lookup (lto_varpool_encoder_t, struct varpool_node *);
-lto_varpool_encoder_t lto_varpool_encoder_new (void);
-int lto_varpool_encoder_encode (lto_varpool_encoder_t, struct varpool_node *);
-void lto_varpool_encoder_delete (lto_varpool_encoder_t);
-bool lto_varpool_encoder_encode_initializer_p (lto_varpool_encoder_t,
-					       struct varpool_node *);
-void output_cgraph (cgraph_node_set, varpool_node_set);
-void input_cgraph (void);
+bool lto_symtab_encoder_encode_initializer_p (lto_symtab_encoder_t,
+					      varpool_node *);
+void output_symtab (void);
+void input_symtab (void);
+void output_offload_tables (void);
+void input_offload_tables (bool);
 bool referenced_from_other_partition_p (struct ipa_ref_list *,
-				        cgraph_node_set,
-				        varpool_node_set vset);
+				        lto_symtab_encoder_t);
 bool reachable_from_other_partition_p (struct cgraph_node *,
-				       cgraph_node_set);
-bool referenced_from_this_partition_p (struct ipa_ref_list *,
-				        cgraph_node_set,
-				        varpool_node_set vset);
+				       lto_symtab_encoder_t);
+bool referenced_from_this_partition_p (symtab_node *,
+					lto_symtab_encoder_t);
 bool reachable_from_this_partition_p (struct cgraph_node *,
-				       cgraph_node_set);
-void compute_ltrans_boundary (struct lto_out_decl_state *state,
-			      cgraph_node_set, varpool_node_set);
+				      lto_symtab_encoder_t);
+lto_symtab_encoder_t compute_ltrans_boundary (lto_symtab_encoder_t encoder);
+void select_what_to_stream (void);
 
+/* In options-save.c.  */
+void cl_target_option_stream_out (struct output_block *, struct bitpack_d *,
+				  struct cl_target_option *);
 
-/* In lto-symtab.c.  */
-extern void lto_symtab_register_decl (tree, ld_plugin_symbol_resolution_t,
-				      struct lto_file_decl_data *);
-extern void lto_symtab_merge_decls (void);
-extern void lto_symtab_merge_cgraph_nodes (void);
-extern tree lto_symtab_prevailing_decl (tree decl);
-extern enum ld_plugin_symbol_resolution lto_symtab_get_resolution (tree decl);
-extern void lto_symtab_free (void);
-extern GTY(()) VEC(tree,gc) *lto_global_var_decls;
+void cl_target_option_stream_in (struct data_in *,
+				 struct bitpack_d *,
+				 struct cl_target_option *);
+
+void cl_optimization_stream_out (struct bitpack_d *, struct cl_optimization *);
+
+void cl_optimization_stream_in (struct bitpack_d *, struct cl_optimization *);
+
 
 
 /* In lto-opts.c.  */
 extern void lto_write_options (void);
-
-
-/* In lto-wpa-fixup.c  */
-void lto_mark_nothrow_fndecl (tree);
-void lto_fixup_nothrow_decls (void);
 
 
 /* Statistics gathered during LTO, WPA and LTRANS.  */
@@ -898,13 +950,13 @@ extern const char *lto_section_name[];
 
 /* Holds all the out decl states of functions output so far in the
    current output file.  */
-extern VEC(lto_out_decl_state_ptr, heap) *lto_function_decl_states;
+extern vec<lto_out_decl_state_ptr> lto_function_decl_states;
 
 /* Return true if LTO tag TAG corresponds to a tree code.  */
 static inline bool
 lto_tag_is_tree_code_p (enum LTO_tags tag)
 {
-  return tag > LTO_null && (unsigned) tag <= MAX_TREE_CODES;
+  return tag > LTO_tree_pickle_reference && (unsigned) tag <= MAX_TREE_CODES;
 }
 
 
@@ -912,8 +964,8 @@ lto_tag_is_tree_code_p (enum LTO_tags tag)
 static inline bool
 lto_tag_is_gimple_code_p (enum LTO_tags tag)
 {
-  return (unsigned) tag >= NUM_TREE_CODES + 1
-	 && (unsigned) tag < 1 + NUM_TREE_CODES + LAST_AND_UNUSED_GIMPLE_CODE;
+  return (unsigned) tag >= NUM_TREE_CODES + 2
+	 && (unsigned) tag < 2 + NUM_TREE_CODES + LAST_AND_UNUSED_GIMPLE_CODE;
 }
 
 
@@ -922,7 +974,7 @@ lto_tag_is_gimple_code_p (enum LTO_tags tag)
 static inline enum LTO_tags
 lto_gimple_code_to_tag (enum gimple_code code)
 {
-  return (enum LTO_tags) ((unsigned) code + NUM_TREE_CODES + 1);
+  return (enum LTO_tags) ((unsigned) code + NUM_TREE_CODES + 2);
 }
 
 
@@ -932,7 +984,7 @@ static inline enum gimple_code
 lto_tag_to_gimple_code (enum LTO_tags tag)
 {
   gcc_assert (lto_tag_is_gimple_code_p (tag));
-  return (enum gimple_code) ((unsigned) tag - NUM_TREE_CODES - 1);
+  return (enum gimple_code) ((unsigned) tag - NUM_TREE_CODES - 2);
 }
 
 
@@ -941,7 +993,7 @@ lto_tag_to_gimple_code (enum LTO_tags tag)
 static inline enum LTO_tags
 lto_tree_code_to_tag (enum tree_code code)
 {
-  return (enum LTO_tags) ((unsigned) code + 1);
+  return (enum LTO_tags) ((unsigned) code + 2);
 }
 
 
@@ -951,7 +1003,7 @@ static inline enum tree_code
 lto_tag_to_tree_code (enum LTO_tags tag)
 {
   gcc_assert (lto_tag_is_tree_code_p (tag));
-  return (enum tree_code) ((unsigned) tag - 1);
+  return (enum tree_code) ((unsigned) tag - 2);
 }
 
 /* Check that tag ACTUAL == EXPECTED.  */
@@ -978,31 +1030,29 @@ lto_tag_check_range (enum LTO_tags actual, enum LTO_tags tag1,
 
 /* Initialize an lto_out_decl_buffer ENCODER.  */
 static inline void
-lto_init_tree_ref_encoder (struct lto_tree_ref_encoder *encoder,
-			   htab_hash hash_fn, htab_eq eq_fn)
+lto_init_tree_ref_encoder (struct lto_tree_ref_encoder *encoder)
 {
-  encoder->tree_hash_table = htab_create (37, hash_fn, eq_fn, free);
-  encoder->next_index = 0;
-  encoder->trees = NULL;
+  encoder->tree_hash_table = new hash_map<tree, unsigned> (251);
+  encoder->trees.create (0);
 }
 
 
-/* Destory an lto_tree_ref_encoder ENCODER by freeing its contents.  The
+/* Destroy an lto_tree_ref_encoder ENCODER by freeing its contents.  The
    memory used by ENCODER is not freed by this function.  */
 static inline void
 lto_destroy_tree_ref_encoder (struct lto_tree_ref_encoder *encoder)
 {
   /* Hash table may be delete already.  */
-  if (encoder->tree_hash_table)
-    htab_delete (encoder->tree_hash_table);
-  VEC_free (tree, heap, encoder->trees);
+  delete encoder->tree_hash_table;
+  encoder->tree_hash_table = NULL;
+  encoder->trees.release ();
 }
 
 /* Return the number of trees encoded in ENCODER. */
 static inline unsigned int
 lto_tree_ref_encoder_size (struct lto_tree_ref_encoder *encoder)
 {
-  return VEC_length (tree, encoder->trees);
+  return encoder->trees.length ();
 }
 
 /* Return the IDX-th tree in ENCODER. */
@@ -1010,15 +1060,161 @@ static inline tree
 lto_tree_ref_encoder_get_tree (struct lto_tree_ref_encoder *encoder,
 			       unsigned int idx)
 {
-  return VEC_index (tree, encoder->trees, idx);
+  return encoder->trees[idx];
 }
 
-
-/* Return true if LABEL should be emitted in the global context.  */
-static inline bool
-emit_label_in_global_context_p (tree label)
+/* Return number of encoded nodes in ENCODER.  */
+static inline int
+lto_symtab_encoder_size (lto_symtab_encoder_t encoder)
 {
-  return DECL_NONLOCAL (label) || FORCED_LABEL (label);
+  return encoder->nodes.length ();
+}
+
+/* Value used to represent failure of lto_symtab_encoder_lookup.  */
+#define LCC_NOT_FOUND	(-1)
+
+/* Look up NODE in encoder.  Return NODE's reference if it has been encoded
+   or LCC_NOT_FOUND if it is not there.  */
+
+static inline int
+lto_symtab_encoder_lookup (lto_symtab_encoder_t encoder,
+			   symtab_node *node)
+{
+  size_t *slot = encoder->map->get (node);
+  return (slot && *slot ? *(slot) - 1 : LCC_NOT_FOUND);
+}
+
+/* Return true if iterator LSE points to nothing.  */
+static inline bool
+lsei_end_p (lto_symtab_encoder_iterator lsei)
+{
+  return lsei.index >= (unsigned)lto_symtab_encoder_size (lsei.encoder);
+}
+
+/* Advance iterator LSE.  */
+static inline void
+lsei_next (lto_symtab_encoder_iterator *lsei)
+{
+  lsei->index++;
+}
+
+/* Return the node pointed to by LSI.  */
+static inline symtab_node *
+lsei_node (lto_symtab_encoder_iterator lsei)
+{
+  return lsei.encoder->nodes[lsei.index].node;
+}
+
+/* Return the node pointed to by LSI.  */
+static inline struct cgraph_node *
+lsei_cgraph_node (lto_symtab_encoder_iterator lsei)
+{
+  return dyn_cast<cgraph_node *> (lsei.encoder->nodes[lsei.index].node);
+}
+
+/* Return the node pointed to by LSI.  */
+static inline varpool_node *
+lsei_varpool_node (lto_symtab_encoder_iterator lsei)
+{
+  return dyn_cast<varpool_node *> (lsei.encoder->nodes[lsei.index].node);
+}
+
+/* Return the cgraph node corresponding to REF using ENCODER.  */
+
+static inline symtab_node *
+lto_symtab_encoder_deref (lto_symtab_encoder_t encoder, int ref)
+{
+  if (ref == LCC_NOT_FOUND)
+    return NULL;
+
+  return encoder->nodes[ref].node;
+}
+
+/* Return an iterator to the first node in LSI.  */
+static inline lto_symtab_encoder_iterator
+lsei_start (lto_symtab_encoder_t encoder)
+{
+  lto_symtab_encoder_iterator lsei;
+
+  lsei.encoder = encoder;
+  lsei.index = 0;
+  return lsei;
+}
+
+/* Advance iterator LSE.  */
+static inline void
+lsei_next_in_partition (lto_symtab_encoder_iterator *lsei)
+{
+  lsei_next (lsei);
+  while (!lsei_end_p (*lsei)
+	 && !lto_symtab_encoder_in_partition_p (lsei->encoder, lsei_node (*lsei)))
+    lsei_next (lsei);
+}
+
+/* Return an iterator to the first node in LSI.  */
+static inline lto_symtab_encoder_iterator
+lsei_start_in_partition (lto_symtab_encoder_t encoder)
+{
+  lto_symtab_encoder_iterator lsei = lsei_start (encoder);
+
+  if (lsei_end_p (lsei))
+    return lsei;
+  if (!lto_symtab_encoder_in_partition_p (encoder, lsei_node (lsei)))
+    lsei_next_in_partition (&lsei);
+
+  return lsei;
+}
+
+/* Advance iterator LSE.  */
+static inline void
+lsei_next_function_in_partition (lto_symtab_encoder_iterator *lsei)
+{
+  lsei_next (lsei);
+  while (!lsei_end_p (*lsei)
+	 && (!is_a <cgraph_node *> (lsei_node (*lsei))
+	     || !lto_symtab_encoder_in_partition_p (lsei->encoder, lsei_node (*lsei))))
+    lsei_next (lsei);
+}
+
+/* Return an iterator to the first node in LSI.  */
+static inline lto_symtab_encoder_iterator
+lsei_start_function_in_partition (lto_symtab_encoder_t encoder)
+{
+  lto_symtab_encoder_iterator lsei = lsei_start (encoder);
+
+  if (lsei_end_p (lsei))
+    return lsei;
+  if (!is_a <cgraph_node *> (lsei_node (lsei))
+      || !lto_symtab_encoder_in_partition_p (encoder, lsei_node (lsei)))
+    lsei_next_function_in_partition (&lsei);
+
+  return lsei;
+}
+
+/* Advance iterator LSE.  */
+static inline void
+lsei_next_variable_in_partition (lto_symtab_encoder_iterator *lsei)
+{
+  lsei_next (lsei);
+  while (!lsei_end_p (*lsei)
+	 && (!is_a <varpool_node *> (lsei_node (*lsei))
+	     || !lto_symtab_encoder_in_partition_p (lsei->encoder, lsei_node (*lsei))))
+    lsei_next (lsei);
+}
+
+/* Return an iterator to the first node in LSI.  */
+static inline lto_symtab_encoder_iterator
+lsei_start_variable_in_partition (lto_symtab_encoder_t encoder)
+{
+  lto_symtab_encoder_iterator lsei = lsei_start (encoder);
+
+  if (lsei_end_p (lsei))
+    return lsei;
+  if (!is_a <varpool_node *> (lsei_node (lsei))
+      || !lto_symtab_encoder_in_partition_p (encoder, lsei_node (lsei)))
+    lsei_next_variable_in_partition (&lsei);
+
+  return lsei;
 }
 
 DEFINE_DECL_STREAM_FUNCS (TYPE, type)

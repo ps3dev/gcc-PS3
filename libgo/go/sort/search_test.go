@@ -5,6 +5,7 @@
 package sort_test
 
 import (
+	"runtime"
 	. "sort"
 	"testing"
 )
@@ -117,8 +118,37 @@ func TestSearchWrappers(t *testing.T) {
 	}
 }
 
+func runSearchWrappers() {
+	SearchInts(data, 11)
+	SearchFloat64s(fdata, 2.1)
+	SearchStrings(sdata, "")
+	IntSlice(data).Search(0)
+	Float64Slice(fdata).Search(2.0)
+	StringSlice(sdata).Search("x")
+}
+
+func TestSearchWrappersDontAlloc(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping malloc count in short mode")
+	}
+	if runtime.GOMAXPROCS(0) > 1 {
+		t.Skip("skipping; GOMAXPROCS>1")
+	}
+	t.Skip("skipping alloc test for gccgo")
+	allocs := testing.AllocsPerRun(100, runSearchWrappers)
+	if allocs != 0 {
+		t.Errorf("expected no allocs for runSearchWrappers, got %v", allocs)
+	}
+}
+
+func BenchmarkSearchWrappers(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		runSearchWrappers()
+	}
+}
+
 // Abstract exhaustive test: all sizes up to 100,
-// all possible return values.  If there are any small
+// all possible return values. If there are any small
 // corner cases, this test exercises them.
 func TestSearchExhaustive(t *testing.T) {
 	for size := 0; size <= 100; size++ {

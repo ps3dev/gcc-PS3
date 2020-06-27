@@ -1,8 +1,8 @@
 `/* Helper function for repacking arrays.
-   Copyright 2003, 2006, 2007, 2009 Free Software Foundation, Inc.
+   Copyright (C) 2003-2017 Free Software Foundation, Inc.
    Contributed by Paul Brook <paul@nowt.org>
 
-This file is part of the GNU Fortran 95 runtime library (libgfortran).
+This file is part of the GNU Fortran runtime library (libgfortran).
 
 Libgfortran is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public
@@ -23,9 +23,7 @@ a copy of the GCC Runtime Library Exception along with this program;
 see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 <http://www.gnu.org/licenses/>.  */
 
-#include "libgfortran.h"
-#include <stdlib.h>
-#include <assert.h>'
+#include "libgfortran.h"'
 
 include(iparm.m4)dnl
 
@@ -76,12 +74,12 @@ internal_pack_'rtype_ccode` ('rtype` * source)
     }
 
   if (packed)
-    return source->data;
+    return source->base_addr;
 
   /* Allocate storage for the destination.  */
-  destptr = ('rtype_name` *)internal_malloc_size (ssize * sizeof ('rtype_name`));
+  destptr = xmallocarray (ssize, sizeof ('rtype_name`));
   dest = destptr;
-  src = source->data;
+  src = source->base_addr;
   stride0 = stride[0];
 
 

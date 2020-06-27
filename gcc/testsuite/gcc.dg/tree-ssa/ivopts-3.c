@@ -1,7 +1,9 @@
 /* { dg-do compile } */
 /* { dg-options "-O2 -fdump-tree-ivopts-details" } */
 
-void main (void)
+void f2 (void);
+
+int main (void)
 {
   int i;
   for (i = 0; i < 10; i++)
@@ -9,4 +11,3 @@ void main (void)
 }
 
 /* { dg-final { scan-tree-dump-times "!= 0" 5 "ivopts" } }  */
-/* { dg-final { cleanup-tree-dump "ivopts" } }  */

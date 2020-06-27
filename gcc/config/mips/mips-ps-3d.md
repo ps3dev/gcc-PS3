@@ -1,5 +1,5 @@
 ;; MIPS Paired-Single Floating and MIPS-3D Instructions.
-;; Copyright (C) 2004, 2007, 2010 Free Software Foundation, Inc.
+;; Copyright (C) 2004-2017 Free Software Foundation, Inc.
 ;;
 ;; This file is part of GCC.
 ;;
@@ -371,13 +371,17 @@
   [(set_attr "type" "fadd")
    (set_attr "mode" "SF")])
 
-(define_insn "reduc_splus_v2sf"
-  [(set (match_operand:V2SF 0 "register_operand" "=f")
-	(unspec:V2SF [(match_operand:V2SF 1 "register_operand" "f")
-		      (match_dup 1)]
-		     UNSPEC_ADDR_PS))]
+(define_expand "reduc_plus_scal_v2sf"
+  [(match_operand:SF 0 "register_operand" "=f")
+   (match_operand:V2SF 1 "register_operand" "f")]
   "TARGET_HARD_FLOAT && TARGET_MIPS3D"
-  "")
+  {
+    rtx temp = gen_reg_rtx (V2SFmode);
+    emit_insn (gen_mips_addr_ps (temp, operands[1], operands[1]));
+    rtx lane = BYTES_BIG_ENDIAN ? const1_rtx : const0_rtx;
+    emit_insn (gen_vec_extractv2sf (operands[0], temp, lane));
+    DONE;
+  })
 
 ; cvt.pw.ps - Floating Point Convert Paired Single to Paired Word
 (define_insn "mips_cvt_pw_ps"
@@ -481,7 +485,7 @@
   operands[7] = simplify_gen_subreg (CCV2mode, operands[0], CCV4mode, 8);
 }
   [(set_attr "type" "fcmp")
-   (set_attr "length" "8")
+   (set_attr "insn_count" "2")
    (set_attr "mode" "FPSW")])
 
 (define_insn_and_split "mips_cabs_cond_4s"
@@ -510,7 +514,7 @@
   operands[7] = simplify_gen_subreg (CCV2mode, operands[0], CCV4mode, 8);
 }
   [(set_attr "type" "fcmp")
-   (set_attr "length" "8")
+   (set_attr "insn_count" "2")
    (set_attr "mode" "FPSW")])
 
 
@@ -745,20 +749,26 @@
   DONE;
 })
 
-(define_expand "reduc_smin_v2sf"
-  [(match_operand:V2SF 0 "register_operand")
+(define_expand "reduc_smin_scal_v2sf"
+  [(match_operand:SF 0 "register_operand")
    (match_operand:V2SF 1 "register_operand")]
   "TARGET_HARD_FLOAT && TARGET_PAIRED_SINGLE_FLOAT"
 {
-  mips_expand_vec_reduc (operands[0], operands[1], gen_sminv2sf3);
+  rtx temp = gen_reg_rtx (V2SFmode);
+  mips_expand_vec_reduc (temp, operands[1], gen_sminv2sf3);
+  rtx lane = BYTES_BIG_ENDIAN ? const1_rtx : const0_rtx;
+  emit_insn (gen_vec_extractv2sf (operands[0], temp, lane));
   DONE;
 })
 
-(define_expand "reduc_smax_v2sf"
-  [(match_operand:V2SF 0 "register_operand")
+(define_expand "reduc_smax_scal_v2sf"
+  [(match_operand:SF 0 "register_operand")
    (match_operand:V2SF 1 "register_operand")]
   "TARGET_HARD_FLOAT && TARGET_PAIRED_SINGLE_FLOAT"
 {
-  mips_expand_vec_reduc (operands[0], operands[1], gen_smaxv2sf3);
+  rtx temp = gen_reg_rtx (V2SFmode);
+  mips_expand_vec_reduc (temp, operands[1], gen_smaxv2sf3);
+  rtx lane = BYTES_BIG_ENDIAN ? const1_rtx : const0_rtx;
+  emit_insn (gen_vec_extractv2sf (operands[0], temp, lane));
   DONE;
 })

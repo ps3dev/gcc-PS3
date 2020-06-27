@@ -1,7 +1,7 @@
-// { dg-options "-std=gnu++0x" }
+// { dg-do run { target c++11 } }
 // 2007-05-29 Benjamin Kosnik  <bkoz@redhat.com>
 
-// Copyright (C) 2007, 2008, 2009 Free Software Foundation, Inc.
+// Copyright (C) 2007-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---           Copyright (C) 2009, Free Software Foundation, Inc.             --
+--          Copyright (C) 2009-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -36,8 +36,10 @@
 --  This is an internal unit and should be not used directly in applications.
 --  Use GNAT.MD5 and GNAT.SHA* instead.
 
-with Ada.Streams;
+with Ada.Streams; use Ada.Streams;
+
 with Interfaces;
+
 with System;
 
 package GNAT.Secure_Hashes is
@@ -84,16 +86,15 @@ package GNAT.Secure_Hashes is
 
       procedure To_Hash
         (H      : State;
-         H_Bits : out Ada.Streams.Stream_Element_Array);
-      --  Convert H to stream representation with the given bit order.
-      --  If H_Bits is smaller than the internal hash state, then the state
+         H_Bits : out Stream_Element_Array);
+      --  Convert H to stream representation with the given bit order. If
+      --  H_Bits is smaller than the internal hash state, then the state
       --  is truncated.
 
    end Hash_Function_State;
 
-   --  Generic hashing framework:
-   --  The user interface for each implemented secure hash function is an
-   --  instance of this generic package.
+   --  Generic hashing framework: The user interface for each implemented
+   --  secure hash function is an instance of this generic package.
 
    generic
       Block_Words : Natural;
@@ -143,11 +144,14 @@ package GNAT.Secure_Hashes is
       --  Initial value of a Context object. May be used to reinitialize
       --  a Context value by simple assignment of this value to the object.
 
+      function HMAC_Initial_Context (Key : String) return Context;
+      --  Initial Context for HMAC computation with the given Key
+
       procedure Update      (C : in out Context; Input : String);
       procedure Wide_Update (C : in out Context; Input : Wide_String);
       procedure Update
         (C     : in out Context;
-         Input : Ada.Streams.Stream_Element_Array);
+         Input : Stream_Element_Array);
       --  Update C to process the given input. Successive calls to Update are
       --  equivalent to a single call with the concatenation of the inputs. For
       --  the Wide_String version, each Wide_Character is processed low order
@@ -156,28 +160,57 @@ package GNAT.Secure_Hashes is
       Word_Length : constant Natural := Hash_State.Word'Size / 8;
       Hash_Length : constant Natural := Hash_Words * Word_Length;
 
+      subtype Binary_Message_Digest is
+        Stream_Element_Array (1 .. Stream_Element_Offset (Hash_Length));
+      --  The fixed-length byte array returned by Digest, providing
+      --  the hash in binary representation.
+
+      function Digest (C : Context) return Binary_Message_Digest;
+      --  Return hash or HMAC for the data accumulated with C
+
+      function Digest      (S : String)      return Binary_Message_Digest;
+      function Wide_Digest (W : Wide_String) return Binary_Message_Digest;
+      function Digest
+        (A : Stream_Element_Array)           return Binary_Message_Digest;
+      --  These functions are equivalent to the corresponding Update (or
+      --  Wide_Update) on a default initialized Context, followed by Digest
+      --  on the resulting Context.
+
       subtype Message_Digest is String (1 .. 2 * Hash_Length);
       --  The fixed-length string returned by Digest, providing the hash in
       --  hexadecimal representation.
 
       function Digest (C : Context) return Message_Digest;
-      --  Return hash for the data accumulated with C in hexadecimal
+      --  Return hash or HMAC for the data accumulated with C in hexadecimal
       --  representation.
 
-      function Digest      (S : String)      return Message_Digest;
-      function Wide_Digest (W : Wide_String) return Message_Digest;
-      function Digest
-        (A : Ada.Streams.Stream_Element_Array) return Message_Digest;
+      function Digest      (S : String)               return Message_Digest;
+      function Wide_Digest (W : Wide_String)          return Message_Digest;
+      function Digest      (A : Stream_Element_Array) return Message_Digest;
       --  These functions are equivalent to the corresponding Update (or
       --  Wide_Update) on a default initialized Context, followed by Digest
       --  on the resulting Context.
+
+      type Hash_Stream (C : access Context) is
+        new Root_Stream_Type with private;
+      --  Stream wrapper converting Write calls to Update calls on C.
+      --  Arbitrary data structures can thus be conveniently hashed using
+      --  their stream attributes.
 
    private
 
       Block_Length : constant Natural := Block_Words * Word_Length;
       --  Length in bytes of a data block
 
-      type Context is record
+      subtype Key_Length is
+        Stream_Element_Offset range 0 .. Stream_Element_Offset (Block_Length);
+
+      --  KL is 0 for a normal hash context, > 0 for HMAC
+
+      type Context (KL : Key_Length := 0) is record
+         Key : Stream_Element_Array (1 .. KL);
+         --  HMAC key
+
          H_State : Hash_State.State (0 .. State_Words - 1) := Initial_State;
          --  Function-specific state
 
@@ -185,8 +218,22 @@ package GNAT.Secure_Hashes is
          --  Function-independent state (block buffer)
       end record;
 
-      Initial_Context : constant Context := (others => <>);
+      Initial_Context : constant Context (KL => 0) := (others => <>);
       --  Initial values are provided by default initialization of Context
+
+      type Hash_Stream (C : access Context) is
+        new Root_Stream_Type with null record;
+
+      procedure Read
+        (Stream : in out Hash_Stream;
+         Item   : out Stream_Element_Array;
+         Last   : out Stream_Element_Offset);
+      --  Raise Program_Error: hash streams are write-only
+
+      procedure Write
+         (Stream : in out Hash_Stream;
+          Item   : Stream_Element_Array);
+      --  Call Update
 
    end H;
 

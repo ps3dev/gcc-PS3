@@ -1,5 +1,5 @@
 /* Implementation of the MAXLOC intrinsic
-   Copyright 2002, 2007, 2009 Free Software Foundation, Inc.
+   Copyright (C) 2002-2017 Free Software Foundation, Inc.
    Contributed by Paul Brook <paul@nowt.org>
 
 This file is part of the GNU Fortran 95 runtime library (libgfortran).
@@ -24,9 +24,6 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 <http://www.gnu.org/licenses/>.  */
 
 #include "libgfortran.h"
-#include <stdlib.h>
-#include <assert.h>
-#include <limits.h>
 
 
 #if defined (HAVE_GFC_REAL_10) && defined (HAVE_GFC_INTEGER_16)
@@ -53,12 +50,12 @@ maxloc0_16_r10 (gfc_array_i16 * const restrict retarray,
   if (rank <= 0)
     runtime_error ("Rank of array needs to be > 0");
 
-  if (retarray->data == NULL)
+  if (retarray->base_addr == NULL)
     {
       GFC_DIMENSION_SET(retarray->dim[0], 0, rank-1, 1);
       retarray->dtype = (retarray->dtype & ~GFC_DTYPE_RANK_MASK) | 1;
       retarray->offset = 0;
-      retarray->data = internal_malloc_size (sizeof (GFC_INTEGER_16) * rank);
+      retarray->base_addr = xmallocarray (rank, sizeof (GFC_INTEGER_16));
     }
   else
     {
@@ -68,7 +65,7 @@ maxloc0_16_r10 (gfc_array_i16 * const restrict retarray,
     }
 
   dstride = GFC_DESCRIPTOR_STRIDE(retarray,0);
-  dest = retarray->data;
+  dest = retarray->base_addr;
   for (n = 0; n < rank; n++)
     {
       sstride[n] = GFC_DESCRIPTOR_STRIDE(array,n);
@@ -83,7 +80,7 @@ maxloc0_16_r10 (gfc_array_i16 * const restrict retarray,
 	}
     }
 
-  base = array->data;
+  base = array->base_addr;
 
   /* Initialize the return value.  */
   for (n = 0; n < rank; n++)
@@ -151,7 +148,7 @@ maxloc0_16_r10 (gfc_array_i16 * const restrict retarray,
 	     frequently used path so probably not worth it.  */
 	  base -= sstride[n] * extent[n];
 	  n++;
-	  if (n == rank)
+	  if (n >= rank)
 	    {
 	      /* Break out of the loop.  */
 	      base = NULL;
@@ -194,12 +191,12 @@ mmaxloc0_16_r10 (gfc_array_i16 * const restrict retarray,
   if (rank <= 0)
     runtime_error ("Rank of array needs to be > 0");
 
-  if (retarray->data == NULL)
+  if (retarray->base_addr == NULL)
     {
       GFC_DIMENSION_SET(retarray->dim[0], 0, rank - 1, 1);
       retarray->dtype = (retarray->dtype & ~GFC_DTYPE_RANK_MASK) | 1;
       retarray->offset = 0;
-      retarray->data = internal_malloc_size (sizeof (GFC_INTEGER_16) * rank);
+      retarray->base_addr = xmallocarray (rank, sizeof (GFC_INTEGER_16));
     }
   else
     {
@@ -215,7 +212,7 @@ mmaxloc0_16_r10 (gfc_array_i16 * const restrict retarray,
 
   mask_kind = GFC_DESCRIPTOR_SIZE (mask);
 
-  mbase = mask->data;
+  mbase = mask->base_addr;
 
   if (mask_kind == 1 || mask_kind == 2 || mask_kind == 4 || mask_kind == 8
 #ifdef HAVE_GFC_LOGICAL_16
@@ -227,7 +224,7 @@ mmaxloc0_16_r10 (gfc_array_i16 * const restrict retarray,
     runtime_error ("Funny sized logical array");
 
   dstride = GFC_DESCRIPTOR_STRIDE(retarray,0);
-  dest = retarray->data;
+  dest = retarray->base_addr;
   for (n = 0; n < rank; n++)
     {
       sstride[n] = GFC_DESCRIPTOR_STRIDE(array,n);
@@ -243,7 +240,7 @@ mmaxloc0_16_r10 (gfc_array_i16 * const restrict retarray,
 	}
     }
 
-  base = array->data;
+  base = array->base_addr;
 
   /* Initialize the return value.  */
   for (n = 0; n < rank; n++)
@@ -318,7 +315,7 @@ mmaxloc0_16_r10 (gfc_array_i16 * const restrict retarray,
 	  base -= sstride[n] * extent[n];
 	  mbase -= mstride[n] * extent[n];
 	  n++;
-	  if (n == rank)
+	  if (n >= rank)
 	    {
 	      /* Break out of the loop.  */
 	      base = NULL;
@@ -362,12 +359,12 @@ smaxloc0_16_r10 (gfc_array_i16 * const restrict retarray,
   if (rank <= 0)
     runtime_error ("Rank of array needs to be > 0");
 
-  if (retarray->data == NULL)
+  if (retarray->base_addr == NULL)
     {
       GFC_DIMENSION_SET(retarray->dim[0], 0, rank-1, 1);
       retarray->dtype = (retarray->dtype & ~GFC_DTYPE_RANK_MASK) | 1;
       retarray->offset = 0;
-      retarray->data = internal_malloc_size (sizeof (GFC_INTEGER_16) * rank);
+      retarray->base_addr = xmallocarray (rank, sizeof (GFC_INTEGER_16));
     }
   else if (unlikely (compile_options.bounds_check))
     {
@@ -376,7 +373,7 @@ smaxloc0_16_r10 (gfc_array_i16 * const restrict retarray,
     }
 
   dstride = GFC_DESCRIPTOR_STRIDE(retarray,0);
-  dest = retarray->data;
+  dest = retarray->base_addr;
   for (n = 0; n<rank; n++)
     dest[n * dstride] = 0 ;
 }

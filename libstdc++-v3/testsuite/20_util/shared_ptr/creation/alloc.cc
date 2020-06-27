@@ -1,6 +1,6 @@
-// { dg-options "-std=gnu++0x" }
+// { dg-do run { target c++11 } }
 
-// Copyright (C) 2007, 2008, 2009 Free Software Foundation
+// Copyright (C) 2007-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -56,7 +56,6 @@ struct reset_count_struct
 void
 test01()
 {
-  bool test __attribute__((unused)) = true;
   reset_count_struct __attribute__((unused)) reset;
 
   {
@@ -74,7 +73,6 @@ test01()
 void
 test02()
 {
-  bool test __attribute__((unused)) = true;
   reset_count_struct __attribute__((unused)) reset;
 
   std::shared_ptr<A> p1;
@@ -101,10 +99,19 @@ test02()
 	  == tracker_allocator_counter::get_deallocation_count() );
 }
 
+void
+test03()
+{
+  __gnu_test::CustomPointerAlloc<int> alloc;
+  auto p = std::allocate_shared<int>(alloc, 1);
+  VERIFY( *p == 1 );
+}
+
 int
 main()
 {
   test01();
   test02();
+  test03();
   return 0;
 }

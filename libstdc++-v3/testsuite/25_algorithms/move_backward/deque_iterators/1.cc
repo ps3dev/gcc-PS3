@@ -1,4 +1,4 @@
-// { dg-options "-std=gnu++0x" }
+// { dg-do run { target c++11 } }
 
 // 2009-12-24  Paolo Carlini  <paolo.carlini@oracle.com>
 //
@@ -9,7 +9,7 @@
 // any later version.
 
 // This library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without Pred the implied warranty of
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
@@ -23,7 +23,6 @@
 
 void test01()
 {
-  bool test __attribute__((unused)) = true;
   using namespace std;
 
   deque<long> data(200);

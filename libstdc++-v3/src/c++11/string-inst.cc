@@ -1,7 +1,6 @@
 // Components for manipulating sequences of characters -*- C++ -*-
 
-// Copyright (C) 1997, 1998, 2009, 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006
-// Free Software Foundation, Inc.
+// Copyright (C) 1997-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -30,6 +29,12 @@
 // Written by Jason Merrill based upon the specification by Takanori Adachi
 // in ANSI X3J16/94-0013R2.  Rewritten by Nathan Myers.
 
+#ifndef _GLIBCXX_USE_CXX11_ABI
+// Instantiations in this file use the new SSO std::string ABI unless included
+// by another file which defines _GLIBCXX_USE_CXX11_ABI=0.
+# define _GLIBCXX_USE_CXX11_ABI 1
+#endif
+
 #include <string>
 
 // Instantiation configuration.
@@ -48,21 +53,41 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   template S operator+(C, const S&);
   template S operator+(const S&, const S&);
 
-  // Only one template keyword allowed here. 
+  // Only one template keyword allowed here.
   // See core issue #46 (NAD)
-  // http://anubis.dkuug.dk/jtc1/sc22/wg21/docs/cwg_closed.html#46
+  // http://www.open-std.org/jtc1/sc22/wg21/docs/cwg_closed.html#46
   template
     S::basic_string(C*, C*, const allocator<C>&);
 
   template
     S::basic_string(const C*, const C*, const allocator<C>&);
 
-  template 
+  template
     S::basic_string(S::iterator, S::iterator, const allocator<C>&);
 
-  template 
-    C* 
-    S::_S_construct(S::iterator, S::iterator, 
+#if _GLIBCXX_USE_CXX11_ABI
+  template
+    void
+    S::_M_construct(S::iterator, S::iterator, forward_iterator_tag);
+
+  template
+    void
+    S::_M_construct(S::const_iterator, S::const_iterator,
+		    forward_iterator_tag);
+
+  template
+    void
+    S::_M_construct(C*, C*, forward_iterator_tag);
+
+  template
+    void
+    S::_M_construct(const C*, const C*, forward_iterator_tag);
+
+#else // !_GLIBCXX_USE_CXX11_ABI
+
+  template
+    C*
+    S::_S_construct(S::iterator, S::iterator,
 		    const allocator<C>&, forward_iterator_tag);
 
   template
@@ -73,6 +98,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     C*
     S::_S_construct(const C*, const C*, const allocator<C>&,
 		    forward_iterator_tag);
+#endif
 
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace

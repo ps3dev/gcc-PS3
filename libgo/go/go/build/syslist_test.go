@@ -1,4 +1,4 @@
-// Copyright 2011 The Go Authors.  All rights reserved.
+// Copyright 2011 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -55,7 +55,7 @@ var tests = []GoodFileTest{
 
 func TestGoodOSArch(t *testing.T) {
 	for _, test := range tests {
-		if Default.goodOSArchFile(test.name) != test.result {
+		if Default.goodOSArchFile(test.name, make(map[string]bool)) != test.result {
 			t.Fatalf("goodOSArchFile(%q) != %v", test.name, test.result)
 		}
 	}

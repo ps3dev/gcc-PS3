@@ -7,6 +7,7 @@ package os_test
 import (
 	. "os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -66,5 +67,75 @@ func TestConsistentEnviron(t *testing.T) {
 		if !reflect.DeepEqual(e0, e1) {
 			t.Fatalf("environment changed")
 		}
+	}
+}
+
+func TestUnsetenv(t *testing.T) {
+	const testKey = "GO_TEST_UNSETENV"
+	set := func() bool {
+		prefix := testKey + "="
+		for _, key := range Environ() {
+			if strings.HasPrefix(key, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+	if err := Setenv(testKey, "1"); err != nil {
+		t.Fatalf("Setenv: %v", err)
+	}
+	if !set() {
+		t.Error("Setenv didn't set TestUnsetenv")
+	}
+	if err := Unsetenv(testKey); err != nil {
+		t.Fatalf("Unsetenv: %v", err)
+	}
+	if set() {
+		t.Fatal("Unsetenv didn't clear TestUnsetenv")
+	}
+}
+
+func TestClearenv(t *testing.T) {
+	const testKey = "GO_TEST_CLEARENV"
+	const testValue = "1"
+
+	// reset env
+	defer func(origEnv []string) {
+		for _, pair := range origEnv {
+			// Environment variables on Windows can begin with =
+			// http://blogs.msdn.com/b/oldnewthing/archive/2010/05/06/10008132.aspx
+			i := strings.Index(pair[1:], "=") + 1
+			if err := Setenv(pair[:i], pair[i+1:]); err != nil {
+				t.Errorf("Setenv(%q, %q) failed during reset: %v", pair[:i], pair[i+1:], err)
+			}
+		}
+	}(Environ())
+
+	if err := Setenv(testKey, testValue); err != nil {
+		t.Fatalf("Setenv(%q, %q) failed: %v", testKey, testValue, err)
+	}
+	if _, ok := LookupEnv(testKey); !ok {
+		t.Errorf("Setenv(%q, %q) didn't set $%s", testKey, testValue, testKey)
+	}
+	Clearenv()
+	if val, ok := LookupEnv(testKey); ok {
+		t.Errorf("Clearenv() didn't clear $%s, remained with value %q", testKey, val)
+	}
+}
+
+func TestLookupEnv(t *testing.T) {
+	const smallpox = "SMALLPOX"      // No one has smallpox.
+	value, ok := LookupEnv(smallpox) // Should not exist.
+	if ok || value != "" {
+		t.Fatalf("%s=%q", smallpox, value)
+	}
+	defer Unsetenv(smallpox)
+	err := Setenv(smallpox, "virus")
+	if err != nil {
+		t.Fatalf("failed to release smallpox virus")
+	}
+	value, ok = LookupEnv(smallpox)
+	if !ok {
+		t.Errorf("smallpox release failed; world remains safe but LookupEnv is broken")
 	}
 }

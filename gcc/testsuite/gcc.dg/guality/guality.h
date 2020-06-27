@@ -228,6 +228,16 @@ main (int argc, char *argv[])
 	}
     }
 
+  if (argv[0])
+    {
+      int len = strlen (guality_gdb_command) + 1 + strlen (argv[0]);
+      char *buf = (char *) __builtin_alloca (len);
+      strcpy (buf, guality_gdb_command);
+      strcat (buf, " ");
+      strcat (buf, argv[0]);
+      guality_gdb_command = buf;
+    }
+
   for (i = 1; i < argc; i++)
     if (strcmp (argv[i], "--guality-skip") == 0)
       guality_skip = 1;
@@ -242,6 +252,10 @@ main (int argc, char *argv[])
       if (!guality_gdb_input
 	  || fprintf (guality_gdb_input, "\
 set height 0\n\
+handle SIGINT pass nostop\n\
+handle SIGTERM pass nostop\n\
+handle SIGSEGV pass nostop\n\
+handle SIGBUS pass nostop\n\
 attach %i\n\
 set guality_attached = 1\n\
 b %i\n\

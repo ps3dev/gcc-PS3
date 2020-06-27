@@ -4,7 +4,11 @@
 #ifdef __hppa__
 #define REGISTER "1"
 #else
+#ifdef __moxie__
+#define REGISTER "2"
+#else
 #define REGISTER "0"
+#endif
 #endif
 
 void baz(void)
@@ -14,4 +18,3 @@ void baz(void)
 }
 
 /* { dg-final { scan-tree-dump-times "asm\[^\\r\\n\]*xyzzy" 1 "optimized" } } */
-/* { dg-final { cleanup-tree-dump "optimized" } } */

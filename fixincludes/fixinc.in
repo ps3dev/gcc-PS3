@@ -41,7 +41,7 @@ shift
 
 # Make sure it exists.
 if [ ! -d $LIB ]; then
-  mkdir $LIB || {
+  mkdir -p $LIB || {
     echo fixincludes:  output dir '`'$LIB"' cannot be created"
     exit 1
   }
@@ -125,6 +125,22 @@ elif ln -s X /tmp/ShouldNotExist 2>/dev/null; then
 else
   LINKS=false
 fi
+
+# # # # # # # # # # # # # # # # # # # # #
+#
+#  Check to see if the machine_name fix needs to be disabled.
+#
+#  On some platforms, machine_name doesn't work properly and
+#  breaks some of the header files.  Since everything works
+#  properly without it, just wipe the macro list to
+#  disable the fix.
+
+case "${target_canonical}" in
+    *-*-vxworks*)
+	test -f ${MACRO_LIST} &&  echo > ${MACRO_LIST}
+        ;;
+esac
+
 
 # # # # # # # # # # # # # # # # # # # # #
 #

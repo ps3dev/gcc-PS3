@@ -5,6 +5,7 @@
 package path
 
 import (
+	"runtime"
 	"testing"
 )
 
@@ -67,6 +68,29 @@ func TestClean(t *testing.T) {
 		if s := Clean(test.path); s != test.result {
 			t.Errorf("Clean(%q) = %q, want %q", test.path, s, test.result)
 		}
+		if s := Clean(test.result); s != test.result {
+			t.Errorf("Clean(%q) = %q, want %q", test.result, s, test.result)
+		}
+	}
+}
+
+func TestCleanMallocs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping malloc count in short mode")
+	}
+	if runtime.GOMAXPROCS(0) > 1 {
+		t.Log("skipping AllocsPerRun checks; GOMAXPROCS>1")
+		return
+	}
+
+	t.Log("Skipping AllocsPerRun for gccgo")
+	return
+
+	for _, test := range cleantests {
+		allocs := testing.AllocsPerRun(100, func() { Clean(test.result) })
+		if allocs > 0 {
+			t.Errorf("Clean(%q): %v allocs, want zero", test.result, allocs)
+		}
 	}
 }
 
@@ -114,15 +138,9 @@ var jointests = []JoinTest{
 	{[]string{"", ""}, ""},
 }
 
-// join takes a []string and passes it to Join.
-func join(elem []string, args ...string) string {
-	args = elem
-	return Join(args...)
-}
-
 func TestJoin(t *testing.T) {
 	for _, test := range jointests {
-		if p := join(test.elem); p != test.path {
+		if p := Join(test.elem...); p != test.path {
 			t.Errorf("join(%q) = %q, want %q", test.elem, p, test.path)
 		}
 	}
@@ -181,6 +199,7 @@ var dirtests = []PathTest{
 	{"x/", "x"},
 	{"abc", "."},
 	{"abc/def", "abc"},
+	{"abc////def", "abc"},
 	{"a/b/.x", "a/b"},
 	{"a/b/c.", "a/b"},
 	{"a/b/c.x", "a/b"},

@@ -2,10 +2,9 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package image_test
+package image
 
 import (
-	. "image"
 	"image/color"
 	"testing"
 )
@@ -37,6 +36,9 @@ func TestYCbCr(t *testing.T) {
 		YCbCrSubsampleRatio444,
 		YCbCrSubsampleRatio422,
 		YCbCrSubsampleRatio420,
+		YCbCrSubsampleRatio440,
+		YCbCrSubsampleRatio411,
+		YCbCrSubsampleRatio410,
 	}
 	deltas := []Point{
 		Pt(0, 0),
@@ -101,6 +103,30 @@ func testYCbCr(t *testing.T, r Rectangle, subsampleRatio YCbCrSubsampleRatio, de
 						}
 					}
 				}
+			}
+		}
+	}
+}
+
+func TestYCbCrSlicesDontOverlap(t *testing.T) {
+	m := NewYCbCr(Rect(0, 0, 8, 8), YCbCrSubsampleRatio420)
+	names := []string{"Y", "Cb", "Cr"}
+	slices := [][]byte{
+		m.Y[:cap(m.Y)],
+		m.Cb[:cap(m.Cb)],
+		m.Cr[:cap(m.Cr)],
+	}
+	for i, slice := range slices {
+		want := uint8(10 + i)
+		for j := range slice {
+			slice[j] = want
+		}
+	}
+	for i, slice := range slices {
+		want := uint8(10 + i)
+		for j, got := range slice {
+			if got != want {
+				t.Fatalf("m.%s[%d]: got %d, want %d", names[i], j, got, want)
 			}
 		}
 	}

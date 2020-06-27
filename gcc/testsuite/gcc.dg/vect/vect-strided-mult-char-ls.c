@@ -15,6 +15,8 @@ typedef struct {
    unsigned int b;
 } ii;
 
+volatile int y = 0;
+
 __attribute__ ((noinline)) int
 main1 (s *arr, ii *iarr)
 {
@@ -62,8 +64,8 @@ int main (void)
       arr[i].b = i * 2;
       iarr[i].a = i;
       iarr[i].b = i * 3;
-      if (arr[i].a == 178)
-         abort();
+      if (y) /* Avoid vectorization.  */
+        abort ();
     }
 
   main1 (arr, iarr);
@@ -72,5 +74,4 @@ int main (void)
 }
 
 /* { dg-final { scan-tree-dump-times "vectorized 1 loops" 1 "vect"  { target vect_strided2 } } } */
-/* { dg-final { cleanup-tree-dump "vect" } } */
   

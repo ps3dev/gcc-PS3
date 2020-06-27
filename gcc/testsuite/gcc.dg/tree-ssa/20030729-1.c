@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-options "-O1 -fdump-tree-dom2" } */
+/* { dg-options "-O1 -fdump-tree-dom2 -std=gnu89" } */
 
 extern void abort (void);
 union tree_node;
@@ -51,4 +51,3 @@ readonly_fields_p (type)
    because we load from ->common.code using different types.  */
 /* { dg-final { scan-tree-dump-times "common\.code" 1 "dom2"} } */
 
-/* { dg-final { cleanup-tree-dump "dom2" } } */

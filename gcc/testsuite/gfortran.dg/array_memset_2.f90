@@ -34,5 +34,3 @@ program test
 end program
 
 ! { dg-final { scan-tree-dump-times "= {}" 2 "original" } }
-! { dg-final { cleanup-tree-dump "original" } }
-! { dg-final { cleanup-modules "foo" } }

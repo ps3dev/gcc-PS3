@@ -5,7 +5,6 @@
 package strconv_test
 
 import (
-	"runtime"
 	. "strconv"
 	"testing"
 )
@@ -52,6 +51,7 @@ var itob64tests = []itob64Test{
 	{-0x123456789abcdef, 16, "-123456789abcdef"},
 	{1<<63 - 1, 16, "7fffffffffffffff"},
 	{1<<63 - 1, 2, "111111111111111111111111111111111111111111111111111111111111111"},
+	{-1 << 63, 2, "-1000000000000000000000000000000000000000000000000000000000000000"},
 
 	{16, 17, "g"},
 	{25, 25, "10"},
@@ -125,39 +125,6 @@ func TestUitoa(t *testing.T) {
 
 	}
 }
-
-func numAllocations(f func()) int {
-	runtime.GC()
-	memstats := new(runtime.MemStats)
-	runtime.ReadMemStats(memstats)
-	n0 := memstats.Mallocs
-	f()
-	runtime.ReadMemStats(memstats)
-	return int(memstats.Mallocs - n0)
-}
-
-/* This test relies on escape analysis which gccgo does not yet do.
-
-var globalBuf [64]byte
-
-func TestAppendUintDoesntAllocate(t *testing.T) {
-	n := numAllocations(func() {
-		var buf [64]byte
-		AppendInt(buf[:0], 123, 10)
-	})
-	want := 1 // TODO(bradfitz): this might be 0, once escape analysis is better
-	if n != want {
-		t.Errorf("with local buffer, did %d allocations, want %d", n, want)
-	}
-	n = numAllocations(func() {
-		AppendInt(globalBuf[:0], 123, 10)
-	})
-	if n != 0 {
-		t.Errorf("with reused buffer, did %d allocations, want 0", n)
-	}
-}
-
-*/
 
 func BenchmarkFormatInt(b *testing.B) {
 	for i := 0; i < b.N; i++ {

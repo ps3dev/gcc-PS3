@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2009, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -31,10 +31,10 @@ with Types; use Types;
 
 package Binderr is
 
-   Errors_Detected : Int;
+   Errors_Detected : Nat;
    --  Number of errors detected so far
 
-   Warnings_Detected : Int;
+   Warnings_Detected : Nat;
    --  Number of warnings detected
 
    Info_Prefix_Suppress : Boolean := False;
@@ -59,7 +59,7 @@ package Binderr is
    --      specified by the File_Name_Type value stored in Error_Msg_File_2.
 
    --    Insertion character $ (Dollar: insert unit name from Names table)
-   --      The character & is replaced by the text for the unit name specified
+   --      The character $ is replaced by the text for the unit name specified
    --      by the Name_Id value stored in Error_Msg_Unit_1. The name is always
    --      enclosed in quotes. A second $ may appear in a single message in
    --      which case it is similarly replaced by the name which is specified

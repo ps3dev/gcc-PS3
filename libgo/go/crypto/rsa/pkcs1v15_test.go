@@ -51,14 +51,25 @@ var decryptPKCS1v15Tests = []DecryptPKCS1v15Test{
 }
 
 func TestDecryptPKCS1v15(t *testing.T) {
-	for i, test := range decryptPKCS1v15Tests {
-		out, err := DecryptPKCS1v15(nil, rsaPrivateKey, decodeBase64(test.in))
-		if err != nil {
-			t.Errorf("#%d error decrypting", i)
-		}
-		want := []byte(test.out)
-		if bytes.Compare(out, want) != 0 {
-			t.Errorf("#%d got:%#v want:%#v", i, out, want)
+	decryptionFuncs := []func([]byte) ([]byte, error){
+		func(ciphertext []byte) (plaintext []byte, err error) {
+			return DecryptPKCS1v15(nil, rsaPrivateKey, ciphertext)
+		},
+		func(ciphertext []byte) (plaintext []byte, err error) {
+			return rsaPrivateKey.Decrypt(nil, ciphertext, nil)
+		},
+	}
+
+	for _, decryptFunc := range decryptionFuncs {
+		for i, test := range decryptPKCS1v15Tests {
+			out, err := decryptFunc(decodeBase64(test.in))
+			if err != nil {
+				t.Errorf("#%d error decrypting", i)
+			}
+			want := []byte(test.out)
+			if !bytes.Equal(out, want) {
+				t.Errorf("#%d got:%#v want:%#v", i, out, want)
+			}
 		}
 	}
 }
@@ -90,7 +101,7 @@ func TestEncryptPKCS1v15(t *testing.T) {
 			return false
 		}
 
-		if bytes.Compare(plaintext, in) != 0 {
+		if !bytes.Equal(plaintext, in) {
 			t.Errorf("output mismatch: %#v %#v", plaintext, in)
 			return false
 		}
@@ -132,8 +143,24 @@ func TestEncryptPKCS1v15SessionKey(t *testing.T) {
 			t.Errorf("#%d error decrypting", i)
 		}
 		want := []byte(test.out)
-		if bytes.Compare(key, want) != 0 {
+		if !bytes.Equal(key, want) {
 			t.Errorf("#%d got:%#v want:%#v", i, key, want)
+		}
+	}
+}
+
+func TestEncryptPKCS1v15DecrypterSessionKey(t *testing.T) {
+	for i, test := range decryptPKCS1v15SessionKeyTests {
+		plaintext, err := rsaPrivateKey.Decrypt(rand.Reader, decodeBase64(test.in), &PKCS1v15DecryptOptions{SessionKeyLen: 4})
+		if err != nil {
+			t.Fatalf("#%d: error decrypting: %s", i, err)
+		}
+		if len(plaintext) != 4 {
+			t.Fatalf("#%d: incorrect length plaintext: got %d, want 4", i, len(plaintext))
+		}
+
+		if test.out != "FAIL" && !bytes.Equal(plaintext, []byte(test.out)) {
+			t.Errorf("#%d: incorrect plaintext: got %x, want %x", i, plaintext, test.out)
 		}
 	}
 }
@@ -176,7 +203,7 @@ func TestSignPKCS1v15(t *testing.T) {
 		}
 
 		expected, _ := hex.DecodeString(test.out)
-		if bytes.Compare(s, expected) != 0 {
+		if !bytes.Equal(s, expected) {
 			t.Errorf("#%d got: %x want: %x", i, s, expected)
 		}
 	}
@@ -193,6 +220,56 @@ func TestVerifyPKCS1v15(t *testing.T) {
 		err := VerifyPKCS1v15(&rsaPrivateKey.PublicKey, crypto.SHA1, digest, sig)
 		if err != nil {
 			t.Errorf("#%d %s", i, err)
+		}
+	}
+}
+
+func TestOverlongMessagePKCS1v15(t *testing.T) {
+	ciphertext := decodeBase64("fjOVdirUzFoLlukv80dBllMLjXythIf22feqPrNo0YoIjzyzyoMFiLjAc/Y4krkeZ11XFThIrEvw\nkRiZcCq5ng==")
+	_, err := DecryptPKCS1v15(nil, rsaPrivateKey, ciphertext)
+	if err == nil {
+		t.Error("RSA decrypted a message that was too long.")
+	}
+}
+
+func TestUnpaddedSignature(t *testing.T) {
+	msg := []byte("Thu Dec 19 18:06:16 EST 2013\n")
+	// This base64 value was generated with:
+	// % echo Thu Dec 19 18:06:16 EST 2013 > /tmp/msg
+	// % openssl rsautl -sign -inkey key -out /tmp/sig -in /tmp/msg
+	//
+	// Where "key" contains the RSA private key given at the bottom of this
+	// file.
+	expectedSig := decodeBase64("pX4DR8azytjdQ1rtUiC040FjkepuQut5q2ZFX1pTjBrOVKNjgsCDyiJDGZTCNoh9qpXYbhl7iEym30BWWwuiZg==")
+
+	sig, err := SignPKCS1v15(nil, rsaPrivateKey, crypto.Hash(0), msg)
+	if err != nil {
+		t.Fatalf("SignPKCS1v15 failed: %s", err)
+	}
+	if !bytes.Equal(sig, expectedSig) {
+		t.Fatalf("signature is not expected value: got %x, want %x", sig, expectedSig)
+	}
+	if err := VerifyPKCS1v15(&rsaPrivateKey.PublicKey, crypto.Hash(0), msg, sig); err != nil {
+		t.Fatalf("signature failed to verify: %s", err)
+	}
+}
+
+func TestShortSessionKey(t *testing.T) {
+	// This tests that attempting to decrypt a session key where the
+	// ciphertext is too small doesn't run outside the array bounds.
+	ciphertext, err := EncryptPKCS1v15(rand.Reader, &rsaPrivateKey.PublicKey, []byte{1})
+	if err != nil {
+		t.Fatalf("Failed to encrypt short message: %s", err)
+	}
+
+	var key [32]byte
+	if err := DecryptPKCS1v15SessionKey(nil, rsaPrivateKey, ciphertext, key[:]); err != nil {
+		t.Fatalf("Failed to decrypt short message: %s", err)
+	}
+
+	for _, v := range key {
+		if v != 0 {
+			t.Fatal("key was modified when ciphertext was invalid")
 		}
 	}
 }

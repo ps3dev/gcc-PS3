@@ -1,8 +1,8 @@
-// { dg-options "-std=gnu++0x" }
+// { dg-do compile { target c++11 } }
 template<typename..., typename> void foo(); // { dg-message "note" }
 
 void bar()
 {
   foo<int>(); // { dg-error "no matching function" }
-  // { dg-message "(candidate|deduce template parameter)" "candidate note" { target *-*-* } 6 }
+  // { dg-message "(candidate|deduce template parameter)" "candidate note" { target *-*-* } .-1 }
 }

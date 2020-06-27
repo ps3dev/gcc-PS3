@@ -1,8 +1,6 @@
 ## Makefile for the C++03 sources of the GNU C++ Standard library.
 ##
-## Copyright (C) 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005
-## 2006, 2007, 2008, 2009, 2010, 2011, 2012
-## Free Software Foundation, Inc.
+## Copyright (C) 1997-2017 Free Software Foundation, Inc.
 ##
 ## This file is part of the libstdc++ version 3 distribution.
 ## Process this file with automake to produce Makefile.in.
@@ -29,40 +27,104 @@ noinst_LTLIBRARIES = libc++11convenience.la
 
 headers =
 
+# Source files linked in via configuration/make substitution for a
+# particular host.
+host_sources = \
+	ctype_configure_char.cc \
+	ctype_members.cc
+
+ctype_configure_char.cc: ${glibcxx_srcdir}/$(OS_INC_SRCDIR)/ctype_configure_char.cc
+	$(LN_S) ${glibcxx_srcdir}/$(OS_INC_SRCDIR)/ctype_configure_char.cc . || true
+
+ctype_members.cc: ${glibcxx_srcdir}/$(CCTYPE_CC)
+	$(LN_S) ${glibcxx_srcdir}/$(CCTYPE_CC) . || true
+
+if ENABLE_DUAL_ABI
+cxx11_abi_sources = \
+	cow-locale_init.cc \
+	cow-shim_facets.cc \
+	cxx11-hash_tr1.cc \
+	cxx11-ios_failure.cc \
+	cxx11-shim_facets.cc \
+	cxx11-stdexcept.cc
+else
+cxx11_abi_sources =
+endif
+
 sources = \
 	chrono.cc \
+	codecvt.cc \
 	condition_variable.cc \
-	compatibility-c++0x.cc \
-	compatibility-atomic-c++0x.cc \
+	cow-stdexcept.cc \
+	ctype.cc \
 	debug.cc \
 	functexcept.cc \
 	functional.cc \
+	futex.cc \
 	future.cc \
 	hash_c++0x.cc \
 	hashtable_c++0x.cc \
+	ios.cc \
 	limits.cc \
 	mutex.cc \
 	placeholders.cc \
+	random.cc \
 	regex.cc  \
 	shared_ptr.cc \
+	snprintf_lite.cc \
 	system_error.cc \
-	thread.cc
+	thread.cc \
+	${cxx11_abi_sources} \
+	${host_sources}
+
+if ENABLE_DUAL_ABI
+extra_string_inst_sources = \
+	cow-fstream-inst.cc \
+	cow-sstream-inst.cc \
+	cow-string-inst.cc \
+	cow-string-io-inst.cc \
+	cow-wstring-inst.cc \
+	cow-wstring-io-inst.cc \
+	cxx11-locale-inst.cc \
+	cxx11-wlocale-inst.cc \
+	sso_string.cc
+else
+extra_string_inst_sources =
+endif
 
 if ENABLE_EXTERN_TEMPLATE
-XTEMPLATE_FLAGS = -fno-implicit-templates
+# XTEMPLATE_FLAGS = -fno-implicit-templates
 inst_sources = \
+	$(extra_string_inst_sources) \
+	ext11-inst.cc \
 	fstream-inst.cc \
+	ios-inst.cc \
+	iostream-inst.cc \
+	istream-inst.cc \
+	locale-inst.cc \
+	ostream-inst.cc \
+	sstream-inst.cc \
+	streambuf-inst.cc \
 	string-inst.cc \
-	wstring-inst.cc
+	string-io-inst.cc \
+	wlocale-inst.cc \
+	wstring-inst.cc \
+	wstring-io-inst.cc
 else
-XTEMPLATE_FLAGS =
+# XTEMPLATE_FLAGS =
 inst_sources =
 endif
 
 vpath % $(top_srcdir)/src/c++11
-vpath % $(top_srcdir)
 
 libc__11convenience_la_SOURCES = $(sources)  $(inst_sources)
+
+# Use special rules for the hashtable.cc file so that all
+# the generated template functions are also instantiated.
+hashtable_c++0x.lo: hashtable_c++0x.cc
+	$(LTCXXCOMPILE) -fimplicit-templates -c $<
+hashtable_c++0x.o: hashtable_c++0x.cc
+	$(CXXCOMPILE) -fimplicit-templates -c $<
 
 # AM_CXXFLAGS needs to be in each subdirectory so that it can be
 # modified in a per-library or per-sub-library way.  Need to manually
@@ -70,22 +132,17 @@ libc__11convenience_la_SOURCES = $(sources)  $(inst_sources)
 # OPTIMIZE_CXXFLAGS on the compile line so that -O2 can be overridden
 # as the occasion calls for it.
 AM_CXXFLAGS = \
-	$(PIC_CXXFLAGS) \
-	$(XTEMPLATE_FLAGS) \
-	$(WARN_CXXFLAGS) \
-	$(OPTIMIZE_CXXFLAGS) \
-	$(CONFIG_CXXFLAGS) -std=gnu++11
+	-std=gnu++11 \
+	$(glibcxx_lt_pic_flag) $(glibcxx_compiler_shared_flag) \
+	$(XTEMPLATE_FLAGS) $(VTV_CXXFLAGS) \
+	$(WARN_CXXFLAGS) $(OPTIMIZE_CXXFLAGS) $(CONFIG_CXXFLAGS)
 
 AM_MAKEFLAGS = \
 	"gxx_include_dir=$(gxx_include_dir)"
 
 # Libtool notes
 
-# 1) Need to explicitly set LTCXXCOMPILE so that AM_CXXFLAGS is
-# last. (That way, things like -O2 passed down from the toplevel can
-# be overridden by --enable-debug.)
-
-# 2) In general, libtool expects an argument such as `--tag=CXX' when
+# 1) In general, libtool expects an argument such as `--tag=CXX' when
 # using the C++ compiler, because that will enable the settings
 # detected when C++ support was being configured.  However, when no
 # such flag is given in the command line, libtool attempts to figure
@@ -97,11 +154,23 @@ AM_MAKEFLAGS = \
 # correct solution is to add `--tag CXX' to LTCXXCOMPILE and maybe
 # CXXLINK, just after $(LIBTOOL), so that libtool doesn't have to
 # attempt to infer which configuration to use.
-# We have to put --tag disable-shared after --tag CXX lest things
-# CXX undo the affect of disable-shared.
-LTCXXCOMPILE = $(LIBTOOL) --tag CXX --tag disable-shared $(LIBTOOLFLAGS) \
-	       --mode=compile $(CXX) $(TOPLEVEL_INCLUDES) \
-	       $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS)
+#
+# The second tag argument, `--tag disable-shared` means that libtool
+# only compiles each source once, for static objects. In actuality,
+# glibcxx_lt_pic_flag and glibcxx_compiler_shared_flag are added to
+# the libtool command that is used create the object, which is
+# suitable for shared libraries.  The `--tag disable-shared` must be
+# placed after --tag CXX lest things CXX undo the affect of
+# disable-shared.
+
+# 2) Need to explicitly set LTCXXCOMPILE so that EXTRA_CXX_FLAGS is
+# last. (That way, things like -O2 passed down from the toplevel can
+# be overridden by --enable-debug.)
+LTCXXCOMPILE = \
+	$(LIBTOOL) --tag CXX --tag disable-shared \
+	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
+	--mode=compile $(CXX) $(TOPLEVEL_INCLUDES) \
+	$(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) $(EXTRA_CXX_FLAGS)
 
 LTLDFLAGS = $(shell $(SHELL) $(top_srcdir)/../libtool-ldflags $(LDFLAGS))
 
@@ -111,6 +180,9 @@ LTLDFLAGS = $(shell $(SHELL) $(top_srcdir)/../libtool-ldflags $(LDFLAGS))
 # course is problematic at this point.  So, we get the top-level
 # directory to configure libstdc++-v3 to use gcc as the C++
 # compilation driver.
-CXXLINK = $(LIBTOOL) --tag CXX --tag disable-shared $(LIBTOOLFLAGS) \
-	  --mode=link $(CXX) \
-	  $(OPT_LDFLAGS) $(SECTION_LDFLAGS) $(AM_CXXFLAGS) $(LTLDFLAGS) -o $@
+CXXLINK = \
+	$(LIBTOOL) --tag CXX --tag disable-shared \
+	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
+	--mode=link $(CXX) \
+	$(VTV_CXXLINKFLAGS) \
+	$(OPT_LDFLAGS) $(SECTION_LDFLAGS) $(AM_CXXFLAGS) $(LTLDFLAGS) -o $@

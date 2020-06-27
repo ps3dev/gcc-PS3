@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -31,12 +31,17 @@
 
 with Ada.Exceptions;
 with Ada.Unchecked_Conversion;
+
 with System.HTable;
 with System.Storage_Elements; use System.Storage_Elements;
 with System.WCh_Con;          use System.WCh_Con;
 with System.WCh_StW;          use System.WCh_StW;
 
-pragma Elaborate_All (System.HTable);
+pragma Elaborate (System.HTable);
+--  Elaborate needed instead of Elaborate_All to avoid elaboration cycles
+--  when polling is turned on. This is safe because HTable doesn't do anything
+--  at elaboration time; it just contains a generic package we want to
+--  instantiate.
 
 package body Ada.Tags is
 
@@ -56,9 +61,17 @@ package body Ada.Tags is
    --  table.  This is Inline_Always since it is called from other Inline_
    --  Always subprograms where we want no out of line code to be generated.
 
+   function IW_Membership
+     (Descendant_TSD : Type_Specific_Data_Ptr;
+      T              : Tag) return Boolean;
+   --  Subsidiary function of IW_Membership and CW_Membership which factorizes
+   --  the functionality needed to check if a given descendant implements an
+   --  interface tag T.
+
    function Length (Str : Cstring_Ptr) return Natural;
    --  Length of string represented by the given pointer (treating the string
-   --  as a C-style string, which is Nul terminated).
+   --  as a C-style string, which is Nul terminated). See comment in body
+   --  explaining why we cannot use the normal strlen built-in.
 
    function OSD (T : Tag) return Object_Specific_Data_Ptr;
    --  Ada 2005 (AI-251): Given a pointer T to a secondary dispatch table,
@@ -139,13 +152,13 @@ package body Ada.Tags is
 
    function CW_Membership (Obj_Tag : Tag; Typ_Tag : Tag) return Boolean is
       Obj_TSD_Ptr : constant Addr_Ptr :=
-                     To_Addr_Ptr (To_Address (Obj_Tag) - DT_Typeinfo_Ptr_Size);
+        To_Addr_Ptr (To_Address (Obj_Tag) - DT_Typeinfo_Ptr_Size);
       Typ_TSD_Ptr : constant Addr_Ptr :=
-                     To_Addr_Ptr (To_Address (Typ_Tag) - DT_Typeinfo_Ptr_Size);
+        To_Addr_Ptr (To_Address (Typ_Tag) - DT_Typeinfo_Ptr_Size);
       Obj_TSD     : constant Type_Specific_Data_Ptr :=
-                     To_Type_Specific_Data_Ptr (Obj_TSD_Ptr.all);
+        To_Type_Specific_Data_Ptr (Obj_TSD_Ptr.all);
       Typ_TSD     : constant Type_Specific_Data_Ptr :=
-                     To_Type_Specific_Data_Ptr (Typ_TSD_Ptr.all);
+        To_Type_Specific_Data_Ptr (Typ_TSD_Ptr.all);
       Pos         : constant Integer := Obj_TSD.Idepth - Typ_TSD.Idepth;
    begin
       return Pos >= 0 and then Obj_TSD.Tags_Table (Pos) = Typ_Tag;
@@ -157,9 +170,9 @@ package body Ada.Tags is
 
    function Get_External_Tag (T : Tag) return System.Address is
       TSD_Ptr : constant Addr_Ptr :=
-                  To_Addr_Ptr (To_Address (T) - DT_Typeinfo_Ptr_Size);
+        To_Addr_Ptr (To_Address (T) - DT_Typeinfo_Ptr_Size);
       TSD     : constant Type_Specific_Data_Ptr :=
-                  To_Type_Specific_Data_Ptr (TSD_Ptr.all);
+        To_Type_Specific_Data_Ptr (TSD_Ptr.all);
    begin
       return To_Address (TSD.External_Tag);
    end Get_External_Tag;
@@ -241,8 +254,9 @@ package body Ada.Tags is
       function Equal (A, B : System.Address) return Boolean is
          Str1 : constant Cstring_Ptr := To_Cstring_Ptr (A);
          Str2 : constant Cstring_Ptr := To_Cstring_Ptr (B);
-         J    : Integer := 1;
+         J    : Integer;
       begin
+         J := 1;
          loop
             if Str1 (J) /= Str2 (J) then
                return False;
@@ -345,23 +359,19 @@ package body Ada.Tags is
 
    function Descendant_Tag (External : String; Ancestor : Tag) return Tag is
       Int_Tag : constant Tag := Internal_Tag (External);
-
    begin
       if not Is_Descendant_At_Same_Level (Int_Tag, Ancestor) then
          raise Tag_Error;
+      else
+         return Int_Tag;
       end if;
-
-      return Int_Tag;
    end Descendant_Tag;
 
    --------------
    -- Displace --
    --------------
 
-   function Displace
-     (This : System.Address;
-      T    : Tag) return System.Address
-   is
+   function Displace (This : System.Address; T : Tag) return System.Address is
       Iface_Table : Interface_Data_Ptr;
       Obj_Base    : System.Address;
       Obj_DT      : Dispatch_Table_Ptr;
@@ -428,27 +438,14 @@ package body Ada.Tags is
    -- IW_Membership --
    -------------------
 
-   --  Canonical implementation of Classwide Membership corresponding to:
-
-   --     Obj in Iface'Class
-
-   --  Each dispatch table contains a table with the tags of all the
-   --  implemented interfaces.
-
-   --  Obj is in Iface'Class if Iface'Tag is found in the table of interfaces
-   --  that are contained in the dispatch table referenced by Obj'Tag.
-
-   function IW_Membership (This : System.Address; T : Tag) return Boolean is
+   function IW_Membership
+     (Descendant_TSD : Type_Specific_Data_Ptr;
+      T              : Tag) return Boolean
+   is
       Iface_Table : Interface_Data_Ptr;
-      Obj_Base    : System.Address;
-      Obj_DT      : Dispatch_Table_Ptr;
-      Obj_TSD     : Type_Specific_Data_Ptr;
 
    begin
-      Obj_Base    := Base_Address (This);
-      Obj_DT      := DT (To_Tag_Ptr (Obj_Base).all);
-      Obj_TSD     := To_Type_Specific_Data_Ptr (Obj_DT.TSD);
-      Iface_Table := Obj_TSD.Interfaces_Table;
+      Iface_Table := Descendant_TSD.Interfaces_Table;
 
       if Iface_Table /= null then
          for Id in 1 .. Iface_Table.Nb_Ifaces loop
@@ -461,13 +458,40 @@ package body Ada.Tags is
       --  Look for the tag in the ancestor tags table. This is required for:
       --     Iface_CW in Typ'Class
 
-      for Id in 0 .. Obj_TSD.Idepth loop
-         if Obj_TSD.Tags_Table (Id) = T then
+      for Id in 0 .. Descendant_TSD.Idepth loop
+         if Descendant_TSD.Tags_Table (Id) = T then
             return True;
          end if;
       end loop;
 
       return False;
+   end IW_Membership;
+
+   -------------------
+   -- IW_Membership --
+   -------------------
+
+   --  Canonical implementation of Classwide Membership corresponding to:
+
+   --     Obj in Iface'Class
+
+   --  Each dispatch table contains a table with the tags of all the
+   --  implemented interfaces.
+
+   --  Obj is in Iface'Class if Iface'Tag is found in the table of interfaces
+   --  that are contained in the dispatch table referenced by Obj'Tag.
+
+   function IW_Membership (This : System.Address; T : Tag) return Boolean is
+      Obj_Base : System.Address;
+      Obj_DT   : Dispatch_Table_Ptr;
+      Obj_TSD  : Type_Specific_Data_Ptr;
+
+   begin
+      Obj_Base := Base_Address (This);
+      Obj_DT   := DT (To_Tag_Ptr (Obj_Base).all);
+      Obj_TSD  := To_Type_Specific_Data_Ptr (Obj_DT.TSD);
+
+      return IW_Membership (Obj_TSD, T);
    end IW_Membership;
 
    -------------------
@@ -574,6 +598,7 @@ package body Ada.Tags is
          begin
             return Table;
          end;
+
       else
          declare
             Table : Tag_Array (1 .. Iface_Table.Nb_Ifaces);
@@ -606,9 +631,9 @@ package body Ada.Tags is
 
       if External'Length > Internal_Tag_Header'Length
         and then
-         External (External'First ..
-                     External'First + Internal_Tag_Header'Length - 1)
-           = Internal_Tag_Header
+          External (External'First ..
+                      External'First + Internal_Tag_Header'Length - 1) =
+                                                        Internal_Tag_Header
       then
          declare
             Addr_First : constant Natural :=
@@ -717,26 +742,37 @@ package body Ada.Tags is
      (Descendant : Tag;
       Ancestor   : Tag) return Boolean
    is
-      D_TSD_Ptr : constant Addr_Ptr :=
-                    To_Addr_Ptr (To_Address (Descendant)
-                                   - DT_Typeinfo_Ptr_Size);
-      A_TSD_Ptr : constant Addr_Ptr :=
-                    To_Addr_Ptr (To_Address (Ancestor) - DT_Typeinfo_Ptr_Size);
-      D_TSD     : constant Type_Specific_Data_Ptr :=
-                    To_Type_Specific_Data_Ptr (D_TSD_Ptr.all);
-      A_TSD     : constant Type_Specific_Data_Ptr :=
-                    To_Type_Specific_Data_Ptr (A_TSD_Ptr.all);
-
    begin
-      return CW_Membership (Descendant, Ancestor)
-        and then D_TSD.Access_Level = A_TSD.Access_Level;
+      if Descendant = Ancestor then
+         return True;
+
+      else
+         declare
+            D_TSD_Ptr : constant Addr_Ptr :=
+              To_Addr_Ptr (To_Address (Descendant) - DT_Typeinfo_Ptr_Size);
+            A_TSD_Ptr : constant Addr_Ptr :=
+              To_Addr_Ptr (To_Address (Ancestor) - DT_Typeinfo_Ptr_Size);
+            D_TSD     : constant Type_Specific_Data_Ptr :=
+              To_Type_Specific_Data_Ptr (D_TSD_Ptr.all);
+            A_TSD     : constant Type_Specific_Data_Ptr :=
+              To_Type_Specific_Data_Ptr (A_TSD_Ptr.all);
+         begin
+            return
+              D_TSD.Access_Level = A_TSD.Access_Level
+                and then (CW_Membership (Descendant, Ancestor)
+                           or else IW_Membership (D_TSD, Ancestor));
+         end;
+      end if;
    end Is_Descendant_At_Same_Level;
 
    ------------
    -- Length --
    ------------
 
-   --  Should this be reimplemented using the strlen GCC builtin???
+   --  Note: This unit is used in the Ravenscar runtime library, so it cannot
+   --  depend on System.CTRL. Furthermore, this happens on CPUs where the GCC
+   --  intrinsic strlen may not be available, so we need to recode our own Ada
+   --  version here.
 
    function Length (Str : Cstring_Ptr) return Natural is
       Len : Integer;
@@ -809,10 +845,9 @@ package body Ada.Tags is
 
       Parent_Tag     : constant Tag := TSD.Tags_Table (Parent_Slot);
       Parent_TSD_Ptr : constant Addr_Ptr :=
-                         To_Addr_Ptr (To_Address (Parent_Tag)
-                                       - DT_Typeinfo_Ptr_Size);
+        To_Addr_Ptr (To_Address (Parent_Tag) - DT_Typeinfo_Ptr_Size);
       Parent_TSD     : constant Type_Specific_Data_Ptr :=
-                         To_Type_Specific_Data_Ptr (Parent_TSD_Ptr.all);
+        To_Type_Specific_Data_Ptr (Parent_TSD_Ptr.all);
 
    begin
       --  Here we compute the size of the _parent field of the object
@@ -961,6 +996,7 @@ package body Ada.Tags is
    is
       Sec_Base : System.Address;
       Sec_DT   : Dispatch_Table_Ptr;
+
    begin
       --  Save the offset to top field in the secondary dispatch table
 

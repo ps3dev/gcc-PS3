@@ -13,7 +13,7 @@ import (
 
 // A writer is a buffered, flushable writer.
 type writer interface {
-	WriteByte(byte) error
+	io.ByteWriter
 	Flush() error
 }
 
@@ -119,7 +119,7 @@ func (e *encoder) incHi() error {
 		if err := e.write(e, clear); err != nil {
 			return err
 		}
-		e.width = uint(e.litWidth) + 1
+		e.width = e.litWidth + 1
 		e.hi = clear + 1
 		e.overflow = clear << 1
 		for i := range e.table {
@@ -131,22 +131,30 @@ func (e *encoder) incHi() error {
 }
 
 // Write writes a compressed representation of p to e's underlying writer.
-func (e *encoder) Write(p []byte) (int, error) {
+func (e *encoder) Write(p []byte) (n int, err error) {
 	if e.err != nil {
 		return 0, e.err
 	}
 	if len(p) == 0 {
 		return 0, nil
 	}
-	litMask := uint32(1<<e.litWidth - 1)
+	if maxLit := uint8(1<<e.litWidth - 1); maxLit != 0xff {
+		for _, x := range p {
+			if x > maxLit {
+				e.err = errors.New("lzw: input byte too large for the litWidth")
+				return 0, e.err
+			}
+		}
+	}
+	n = len(p)
 	code := e.savedCode
 	if code == invalidCode {
 		// The first code sent is always a literal code.
-		code, p = uint32(p[0])&litMask, p[1:]
+		code, p = uint32(p[0]), p[1:]
 	}
 loop:
 	for _, x := range p {
-		literal := uint32(x) & litMask
+		literal := uint32(x)
 		key := code<<8 | literal
 		// If there is a hash table hit for this key then we continue the loop
 		// and do not emit a code yet.
@@ -167,11 +175,11 @@ loop:
 		code = literal
 		// Increment e.hi, the next implied code. If we run out of codes, reset
 		// the encoder state (including clearing the hash table) and continue.
-		if err := e.incHi(); err != nil {
-			if err == errOutOfCodes {
+		if err1 := e.incHi(); err1 != nil {
+			if err1 == errOutOfCodes {
 				continue
 			}
-			e.err = err
+			e.err = err1
 			return 0, e.err
 		}
 		// Otherwise, insert key -> e.hi into the map that e.table represents.
@@ -184,7 +192,7 @@ loop:
 		}
 	}
 	e.savedCode = code
-	return len(p), nil
+	return n, nil
 }
 
 // Close closes the encoder, flushing any pending output. It does not close or
@@ -224,12 +232,12 @@ func (e *encoder) Close() error {
 	return e.w.Flush()
 }
 
-// NewWriter creates a new io.WriteCloser that satisfies writes by compressing
-// the data and writing it to w.
+// NewWriter creates a new io.WriteCloser.
+// Writes to the returned io.WriteCloser are compressed and written to w.
 // It is the caller's responsibility to call Close on the WriteCloser when
 // finished writing.
 // The number of bits to use for literal codes, litWidth, must be in the
-// range [2,8] and is typically 8.
+// range [2,8] and is typically 8. Input bytes must be less than 1<<litWidth.
 func NewWriter(w io.Writer, order Order, litWidth int) io.WriteCloser {
 	var write func(*encoder, uint32) error
 	switch order {

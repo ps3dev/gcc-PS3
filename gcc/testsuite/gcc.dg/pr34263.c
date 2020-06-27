@@ -14,6 +14,7 @@ int count = 0;
 void sub( struct s *p, struct s **pp );
 int look( struct s *p, struct s **pp );
 
+int
 main()
 {
     struct s *pp;
@@ -55,5 +56,4 @@ int look( struct s *p, struct s **pp )
 }
 
 /* { dg-final { scan-tree-dump "Cleaned-up latch block of loop with single BB" "optimized" { xfail { *-*-* } } } } */
-/* { dg-final { cleanup-tree-dump "optimized" } } */
 

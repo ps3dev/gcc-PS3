@@ -37,9 +37,11 @@ func (r *halfReader) Read(p []byte) (int, error) {
 	return r.r.Read(p[0 : (len(p)+1)/2])
 }
 
-// DataErrReader returns a Reader that returns the final
-// error with the last data read, instead of by itself with
-// zero bytes of data.
+// DataErrReader changes the way errors are handled by a Reader. Normally, a
+// Reader returns an error (typically EOF) from the first Read call after the
+// last piece of data is read. DataErrReader wraps a Reader and changes its
+// behavior so the final error is returned along with the final data, instead
+// of in the first call after the final data.
 func DataErrReader(r io.Reader) io.Reader { return &dataErrReader{r, nil, make([]byte, 1024)} }
 
 type dataErrReader struct {
@@ -69,7 +71,7 @@ func (r *dataErrReader) Read(p []byte) (n int, err error) {
 var ErrTimeout = errors.New("timeout")
 
 // TimeoutReader returns ErrTimeout on the second read
-// with no data.  Subsequent calls to read succeed.
+// with no data. Subsequent calls to read succeed.
 func TimeoutReader(r io.Reader) io.Reader { return &timeoutReader{r, 0} }
 
 type timeoutReader struct {

@@ -1,4 +1,4 @@
-/* Copyright (C) 1989, 1997, 1998, 1999, 2000, 2009 Free Software Foundation, Inc.
+/* Copyright (C) 1989-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -47,7 +47,8 @@ typedef __builtin_va_list __gnuc_va_list;
 #define va_start(v,l)	__builtin_va_start(v,l)
 #define va_end(v)	__builtin_va_end(v)
 #define va_arg(v,l)	__builtin_va_arg(v,l)
-#if !defined(__STRICT_ANSI__) || __STDC_VERSION__ + 0 >= 199900L || defined(__GXX_EXPERIMENTAL_CXX0X__)
+#if !defined(__STRICT_ANSI__) || __STDC_VERSION__ + 0 >= 199900L \
+    || __cplusplus + 0 >= 201103L
 #define va_copy(d,s)	__builtin_va_copy(d,s)
 #endif
 #define __va_copy(d,s)	__builtin_va_copy(d,s)
@@ -58,10 +59,6 @@ typedef __builtin_va_list __gnuc_va_list;
    va_list.  stdio.h needs to have access to that data type, 
    but must not use that name.  It should use the name __gnuc_va_list,
    which is safe because it is reserved for the implementation.  */
-
-#ifdef _HIDDEN_VA_LIST  /* On OSF1, this means varargs.h is "half-loaded".  */
-#undef _VA_LIST
-#endif
 
 #ifdef _BSD_VA_LIST
 #undef _BSD_VA_LIST

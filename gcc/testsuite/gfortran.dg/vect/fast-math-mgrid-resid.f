@@ -1,8 +1,7 @@
-! { dg-do compile { target i?86-*-* x86_64-*-* } }
+! { dg-do compile }
 ! { dg-require-effective-target vect_double }
-! { dg-require-effective-target sse2 }
-! { dg-options "-O3 -ffast-math -msse2 -fpredictive-commoning -ftree-vectorize -fdump-tree-optimized" }
-
+! { dg-options "-O3 --param vect-max-peeling-for-alignment=0 -fpredictive-commoning -fdump-tree-pcom-details" }
+! { dg-additional-options "-mprefer-avx128" { target { i?86-*-* x86_64-*-* } } }
 
 ******* RESID COMPUTES THE RESIDUAL:  R = V - AU
 *
@@ -39,8 +38,8 @@ C
       RETURN
       END
 ! we want to check that predictive commoning did something on the
-! vectorized loop, which means we have to have exactly 13 vector
-! additions.
-! { dg-final { scan-tree-dump-times "vect_var\[^\\n\]*\\+ " 13 "optimized" } }
-! { dg-final { cleanup-tree-dump "vect" } }
-! { dg-final { cleanup-tree-dump "optimized" } }
+! vectorized loop.  If vector factor is 2, the vectorized loop can
+! be predictive commoned, we check if predictive commoning PHI node
+! is created with vector(2) type.
+! { dg-final { scan-tree-dump "Executing predictive commoning without unrolling" "pcom" } }
+! { dg-final { scan-tree-dump "vectp_u.*__lsm.* = PHI <.*vectp_u.*__lsm" "pcom" } }

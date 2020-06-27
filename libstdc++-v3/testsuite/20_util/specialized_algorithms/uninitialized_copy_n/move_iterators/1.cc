@@ -1,8 +1,8 @@
-// { dg-options "-std=gnu++0x" }
+// { dg-do run { target c++11 } }
 
 // 2008-06-29  Paolo Carlini  <paolo.carlini@oracle.com>
 
-// Copyright (C) 2008, 2009 Free Software Foundation, Inc.
+// Copyright (C) 2008-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -11,7 +11,7 @@
 // any later version.
 
 // This library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without Pred the implied warranty of
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
@@ -21,7 +21,7 @@
 
 #undef _GLIBCXX_CONCEPT_CHECKS
 
-#include <algorithm>
+#include <memory>
 #include <iterator>
 #include <testsuite_hooks.h>
 #include <testsuite_iterators.h>
@@ -38,8 +38,6 @@ typedef test_container<rvalstruct, forward_iterator_wrapper> container_out;
 
 void test01()
 {
-  bool test __attribute__((unused)) = true;
-
   int inarray[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
   const int size = sizeof(inarray) / sizeof(int);
 

@@ -7,7 +7,7 @@
 --                                 S p e c                                  --
 --                         (VxWorks 5 Version PPC)                          --
 --                                                                          --
---          Copyright (C) 1992-2012, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- This specification is derived from the Ada Reference Manual for use with --
 -- GNAT. The copyright notice above, and the license provisions that follow --
@@ -39,6 +39,9 @@ package System is
    --  Note that we take advantage of the implementation permission to make
    --  this unit Pure instead of Preelaborable; see RM 13.7.1(15). In Ada
    --  2005, this is Pure in any case (AI-362).
+
+   pragma No_Elaboration_Code_All;
+   --  Allow the use of that restriction in units that WITH this unit
 
    type Name is (SYSTEM_NAME_GNAT);
    System_Name : constant Name := SYSTEM_NAME_GNAT;
@@ -115,8 +118,12 @@ package System is
 
 private
 
-   pragma Linker_Options ("-crtbe");
-   --  Required by ZCX on VxWorks kernel
+   pragma Linker_Options ("--specs=vxworks-gnat-crtbe-link.spec");
+   --  Pull in crtbegin/crtend objects and register exceptions for ZCX.
+   --  This is commented out by our Makefile for SJLJ runtimes.
+
+   pragma Linker_Options ("--specs=vxworks-ppc-link.spec");
+   --  Setup proper set of -L's for this configuration
 
    type Address is mod Memory_Size;
    Null_Address : constant Address := 0;
@@ -145,8 +152,8 @@ private
    Preallocated_Stacks       : constant Boolean := False;
    Signed_Zeros              : constant Boolean := True;
    Stack_Check_Default       : constant Boolean := False;
-   Stack_Check_Probes        : constant Boolean := False;
-   Stack_Check_Limits        : constant Boolean := True;
+   Stack_Check_Probes        : constant Boolean := True;
+   Stack_Check_Limits        : constant Boolean := False;
    Support_Aggregates        : constant Boolean := True;
    Support_Composite_Assign  : constant Boolean := True;
    Support_Composite_Compare : constant Boolean := True;
@@ -154,6 +161,9 @@ private
    Always_Compatible_Rep     : constant Boolean := False;
    Suppress_Standard_Library : constant Boolean := False;
    Use_Ada_Main_Program_Name : constant Boolean := True;
+   Frontend_Exceptions       : constant Boolean := True;
    ZCX_By_Default            : constant Boolean := False;
+
+   Executable_Extension : constant String := ".out";
 
 end System;

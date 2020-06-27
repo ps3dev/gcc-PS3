@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -49,14 +49,6 @@ package Sem_Ch6 is
    --  Analyze subprogram specification in both subprogram declarations
    --  and body declarations. Returns the defining entity for the
    --  specification N.
-
-   procedure Cannot_Inline (Msg : String; N : Node_Id; Subp : Entity_Id);
-   --  This procedure is called if the node N, an instance of a call to
-   --  subprogram Subp, cannot be inlined. Msg is the message to be issued,
-   --  and has a ? as the last character. If Subp has a pragma Always_Inlined,
-   --  then an error message is issued (by removing the last character of Msg).
-   --  If Subp is not Always_Inlined, then a warning is issued if the flag
-   --  Ineffective_Inline_Warnings is set, and if not, the call has no effect.
 
    procedure Check_Conventions (Typ : Entity_Id);
    --  Ada 2005 (AI-430): Check that the conventions of all inherited and
@@ -113,22 +105,31 @@ package Sem_Ch6 is
    --  type-conformant subprogram that becomes hidden by the new subprogram.
    --  Is_Primitive indicates whether the subprogram is primitive.
 
-   procedure Check_Subprogram_Contract (Spec_Id : Entity_Id);
-   --  Spec_Id is the spec entity for a subprogram. This routine issues
-   --  warnings on suspicious contracts if Warn_On_Suspicious_Contract is set.
-
    procedure Check_Subtype_Conformant
      (New_Id                   : Entity_Id;
       Old_Id                   : Entity_Id;
       Err_Loc                  : Node_Id := Empty;
-      Skip_Controlling_Formals : Boolean := False);
+      Skip_Controlling_Formals : Boolean := False;
+      Get_Inst                 : Boolean := False);
    --  Check that two callable entities (subprograms, entries, literals)
    --  are subtype conformant, post error message if not (RM 6.3.1(16)),
    --  the flag being placed on the Err_Loc node if it is specified, and
    --  on the appropriate component of the New_Id construct if not.
    --  Skip_Controlling_Formals is True when checking the conformance of
    --  a subprogram that implements an interface operation. In that case,
-   --  only the non-controlling formals can (and must) be examined.
+   --  only the non-controlling formals can (and must) be examined. The
+   --  argument Get_Inst is set to True when this is a check against a
+   --  formal access-to-subprogram type, indicating that mapping of types
+   --  is needed.
+
+   procedure Check_Synchronized_Overriding
+     (Def_Id          : Entity_Id;
+      Overridden_Subp : out Entity_Id);
+   --  First determine if Def_Id is an entry or a subprogram either defined in
+   --  the scope of a task or protected type, or that is a primitive of such
+   --  a type. Check whether Def_Id overrides a subprogram of an interface
+   --  implemented by the synchronized type, returning the overridden entity
+   --  or Empty.
 
    procedure Check_Type_Conformant
      (New_Id  : Entity_Id;
@@ -146,8 +147,10 @@ package Sem_Ch6 is
       Get_Inst : Boolean := False) return Boolean;
    --  Check that the types of two formal parameters are conforming. In most
    --  cases this is just a name comparison, but within an instance it involves
-   --  generic actual types, and in the presence of anonymous access types it
-   --  must examine the designated types.
+   --  generic actual types, and in the presence of anonymous access types
+   --  it must examine the designated types. The argument Get_Inst is set to
+   --  True when this is a check against a formal access-to-subprogram type,
+   --  indicating that mapping of types is needed.
 
    procedure Create_Extra_Formals (E : Entity_Id);
    --  For each parameter of a subprogram or entry that requires an additional
@@ -201,6 +204,13 @@ package Sem_Ch6 is
    procedure List_Inherited_Pre_Post_Aspects (E : Entity_Id);
    --  E is the entity for a subprogram or generic subprogram spec. This call
    --  lists all inherited Pre/Post aspects if List_Inherited_Pre_Post is True.
+
+   procedure May_Need_Actuals (Fun : Entity_Id);
+   --  Flag functions that can be called without parameters, i.e. those that
+   --  have no parameters, or those for which defaults exist for all parameters
+   --  Used for subprogram declarations and for access subprogram declarations,
+   --  where they apply to the anonymous designated type. On return the flag
+   --  Set_Needs_No_Actuals is set appropriately in Fun.
 
    function Mode_Conformant (New_Id, Old_Id : Entity_Id) return Boolean;
    --  Determine whether two callable entities (subprograms, entries,

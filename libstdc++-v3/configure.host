@@ -50,6 +50,11 @@
 #   cpu_defines_dir        location of cpu_defines.h
 #                          defaults to generic.
 #
+#   cpu_opt_bits_random    path name of random.h containing CPU-specific
+#                          optimizations
+#
+#   cpu_opt_ext_random     path name of random.h containing CPU-specific
+#                          optimizations for extensions
 #
 #   error_constants_dir    location of error_constants.h
 #                          defaults to os/generic.
@@ -61,7 +66,7 @@
 #                          (defaults to empty in acinclude.m4)
 #
 #   port_specific_symbol_files
-#                          whitespace-seperated list of files containing
+#                          whitespace-separated list of files containing
 #                          additional symbols to export from the shared
 #                          library, when symbol versioning is in use
 #
@@ -109,10 +114,6 @@ case "${host_cpu}" in
   hppa*)
     try_cpu=hppa
     ;;
-  mep*)
-    EXTRA_CXX_FLAGS=-mm
-    try_cpu=generic
-    ;;
   mips*)
     try_cpu=mips
     ;;
@@ -138,6 +139,9 @@ cpu_include_dir=cpu/${try_cpu}
 # Set specific CPU overrides for cpu_defines_dir. Most can just use generic.
 # THIS TABLE IS SORTED.  KEEP IT THAT WAY.
 case "${host_cpu}" in
+  arm*)
+    cpu_defines_dir=cpu/arm
+    ;;
   powerpc* | rs6000)
     cpu_defines_dir=cpu/powerpc
     ;;
@@ -148,20 +152,11 @@ esac
 # Most can just use generic.
 # THIS TABLE IS SORTED.  KEEP IT THAT WAY.
 case "${host_cpu}" in
-  alpha*)
-    atomic_word_dir=cpu/alpha
-    ;;
   cris*)
     atomic_word_dir=cpu/cris
     ;;
-  ia64)
-    atomic_word_dir=cpu/ia64
-    ;;
   i[4567]86 | x86_64)
     atomic_flags="-march=native"
-    ;;
-  powerpc* | rs6000)
-    atomic_word_dir=cpu/powerpc
     ;;
   sparc* | ultrasparc)
     atomic_word_dir=cpu/sparc
@@ -183,6 +178,22 @@ if test -f ${glibcxx_srcdir}/config/${cpu_include_dir}/cxxabi_tweaks.h ; then
 fi
 
 
+# Set directory with CPU-specific optimization
+cpu_opt_dir=${cpu_include_dir}/opt
+test -d ${glibcxx_srcdir}/config/${cpu_include_dir}/opt ||
+cpu_opt_dir=cpu/generic/opt
+# For each header with CPU-specific optimizations check whether it
+# exists in ${cpu_opt_dir}.  If not, point the variable at the
+# appropriate file in the generic directory.
+cpu_opt_ext_random=${cpu_opt_dir}/ext/opt_random.h
+test -f ${glibcxx_srcdir}/config/${cpu_opt_ext_random} ||
+cpu_opt_ext_random=cpu/generic/opt/ext/opt_random.h
+
+cpu_opt_bits_random=${cpu_opt_dir}/bits/opt_random.h
+test -f ${glibcxx_srcdir}/config/${cpu_opt_ext_random} ||
+cpu_opt_ext_random=cpu/generic/opt/bits/opt_random.h
+
+
 # Set any OS-dependent bits.
 # Set the os_include_dir.
 # Set the error_costants_dir.
@@ -191,19 +202,21 @@ fi
 # CPU-specifc, set those here too.
 # THIS TABLE IS SORTED.  KEEP IT THAT WAY.
 case "${host_os}" in
-  aix4.[3456789]* | aix[56789]*)
+  aix[56789]*)
+    # Newer versions of AIX only support PowerPC architecture, so use
+    # atomic instructions directly.
+    os_include_dir="os/aix"
+    ;;
+  aix4.[3456789]*)
     # We set os_include_dir to os/aix only on AIX 4.3 and newer, but
     # os/aix/atomicity.h works on earlier versions of AIX 4.*, so we
     # explicitly duplicate the directory for 4.[<3].
     os_include_dir="os/aix"
     atomicity_dir="os/aix"
-    atomic_word_dir="os/aix"
-    OPT_LDFLAGS="-Wl,-G"
     ;;
   aix4.*)
     os_include_dir="os/generic"
     atomicity_dir="os/aix"
-    atomic_word_dir="os/aix"
     ;;
   aix*)
     os_include_dir="os/generic"
@@ -239,10 +252,16 @@ case "${host_os}" in
     os_include_dir="os/djgpp"
     error_constants_dir="os/djgpp"
     ;;
+  dragonfly*)
+    os_include_dir="os/bsd/dragonfly"
+    ;;
   freebsd*)
     os_include_dir="os/bsd/freebsd"
     ;;
-  gnu* | linux* | kfreebsd*-gnu | knetbsd*-gnu)
+  linux-musl*)
+    os_include_dir="os/generic"
+    ;;
+  gnu* | linux* | kfreebsd*-gnu)
     if [ "$uclibc" = "yes" ]; then
       os_include_dir="os/uclibc"
     elif [ "$bionic" = "yes" ]; then
@@ -253,15 +272,6 @@ case "${host_os}" in
     ;;
   hpux*)
     os_include_dir="os/hpux"
-    ;;
-  irix6.5*)
-    os_include_dir="os/irix/irix6.5"
-    atomicity_dir=os/irix
-    atomic_word_dir=os/irix
-    # libstdc++.so relies on emutls on IRIX, which only works with the
-    # real functions implemented in libpthread.so, not with the stubs in
-    # libc, so always pass -lpthread.
-    OPT_LDFLAGS="${OPT_LDFLAGS} -lpthread"
     ;;
   mingw32*)
     case "$host" in
@@ -279,25 +289,25 @@ case "${host_os}" in
   netbsd*)
     os_include_dir="os/bsd/netbsd"
     ;;
-  osf*)
-    os_include_dir="os/osf"
-    # libstdc++.so relies on emutls on Tru64 UNIX, which only works with the
-    # real functions implemented in libpthread.so, not with the dummies in
-    # libgcc, so always pass -lpthread.
-    OPT_LDFLAGS="${OPT_LDFLAGS} -lpthread"
+  openbsd*)
+    os_include_dir="os/bsd/openbsd"
     ;;
   qnx6.[12]*)
     os_include_dir="os/qnx/qnx6.1"
     c_model=c
     ;;
+  rtems*)
+    # Use libatomic if necessary and avoid libstdc++ specific atomicity support
+    atomicity_dir="cpu/generic/atomicity_builtins"
+    ;;
   solaris2)
     # This too-vague configuration does not provide enough information
     # to select a ctype include, and thus os_include_dir is a crap shoot.
-    echo "Please specify the full version of Solaris, ie. solaris2.9 " 1>&2
+    echo "Please specify the full version of Solaris, ie. solaris2.10 " 1>&2
     exit 1
     ;;
-  solaris2.[89] | solaris2.1[0-9])
-    os_include_dir="os/solaris/solaris2.8"
+  solaris2.1[0-9])
+    os_include_dir="os/solaris/solaris2.10"
     ;;
   tpf)
     os_include_dir="os/tpf"
@@ -322,7 +332,7 @@ case "${host}" in
       mips64*)
 	abi_baseline_pair=mips64-linux-gnu
 	;;
-      powerpc64)
+      powerpc64*)
         abi_baseline_pair=powerpc64-linux-gnu
         ;;
       s390)
@@ -335,25 +345,48 @@ case "${host}" in
         abi_baseline_pair=x86_64-linux-gnu
         ;;
       *)
-        if test -d ${glibcxx_srcdir}/config/abi/post/${try_cpu}-linux-gnu; then
-          abi_baseline_pair=${try_cpu}-linux-gnu
+        if test $try_cpu = generic; then
+          try_abi_cpu=$host_cpu
+        else
+          try_abi_cpu=$try_cpu
+        fi
+        if test -d ${glibcxx_srcdir}/config/abi/post/${try_abi_cpu}-linux-gnu; then
+          abi_baseline_pair=${try_abi_cpu}-linux-gnu
         fi
     esac
     case "${host}" in
-      arm*-*-linux-*eabi)
+      arm*-*-linux-*)
 	port_specific_symbol_files="\$(srcdir)/../config/os/gnu-linux/arm-eabi-extra.ver"
 	;;
     esac
     ;;
+  arm*-*-freebsd*)
+     port_specific_symbol_files="\$(srcdir)/../config/os/gnu-linux/arm-eabi-extra.ver"
+     ;;
   powerpc*-*-darwin*)
     port_specific_symbol_files="\$(srcdir)/../config/os/bsd/darwin/ppc-extra.ver"
     ;;
-  *-*-solaris2.[89])
-    abi_baseline_pair=solaris2.8
-    abi_baseline_subdir_switch=--print-multi-os-directory
-    ;;
   *-*-solaris2.1[0-9])
-    abi_baseline_pair=solaris2.10
+    # On Solaris 10 with Solaris ld, there's no COMDAT support.  GNU ld always
+    # provides it, as does Solaris ld since Solaris 11, leading to different
+    # baselines.
+    case "${host_os}:${with_gnu_ld}" in
+      # with_gnu_ld may either be unset (default) or no (with --without-gnu-ld).
+      solaris2.10: | solaris2.10:no)
+        abi_baseline_pair=solaris2.10
+	;;
+      *)
+        abi_baseline_pair=solaris2.11
+	;;
+    esac
+    case "${host_cpu}" in
+	i?86 | x86_64)
+	    abi_baseline_pair=i386-${abi_baseline_pair}
+	    ;;
+	sparc*)
+	    abi_baseline_pair=sparc-${abi_baseline_pair}
+	    ;;
+    esac
     abi_baseline_subdir_switch=--print-multi-os-directory
     ;;
 esac

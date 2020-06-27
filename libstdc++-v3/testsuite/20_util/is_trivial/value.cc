@@ -1,7 +1,8 @@
-// { dg-options "-std=gnu++0x" }
+// { dg-do compile { target c++11 } }
+
 // 2010-03-23  Paolo Carlini  <paolo.carlini@oracle.com>
 //
-// Copyright (C) 2010 Free Software Foundation, Inc.
+// Copyright (C) 2010-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -19,24 +20,16 @@
 // <http://www.gnu.org/licenses/>.
 
 #include <type_traits>
-#include <testsuite_hooks.h>
 #include <testsuite_tr1.h>
 
 void test01()
 {
-  bool test __attribute__((unused)) = true;
   using std::is_trivial;
   using namespace __gnu_test;
 
-  VERIFY( (test_category<is_trivial, TType>(true)) );
-  VERIFY( (test_category<is_trivial, PODType>(true)) );
+  static_assert(test_category<is_trivial, TType>(true), "");
+  static_assert(test_category<is_trivial, PODType>(true), "");
 
-  VERIFY( (test_category<is_trivial, NType>(false)) );
-  VERIFY( (test_category<is_trivial, SLType>(false)) );
-}
-
-int main()
-{
-  test01();
-  return 0;
+  static_assert(test_category<is_trivial, NType>(false), "");
+  static_assert(test_category<is_trivial, SLType>(false), "");
 }

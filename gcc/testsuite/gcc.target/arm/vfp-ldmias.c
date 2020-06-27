@@ -1,9 +1,10 @@
 /* { dg-do compile } */
-/* { dg-require-effective-target arm_vfp_ok } */
+/* { dg-require-effective-target arm_fp_ok } */
 /* { dg-skip-if "need fp instructions" { *-*-* } { "-mfloat-abi=soft" } { "" } } */
-/* { dg-options "-O2 -mfpu=vfp -mfloat-abi=softfp" } */
+/* { dg-options "-O2" } */
+/* { dg-add-options arm_fp } */
 
-extern void baz (float);
+extern void bar (float);
 
 void
 foo (float *p, float a, int n)
@@ -13,4 +14,4 @@ foo (float *p, float a, int n)
   while (n--);
 }
 
-/* { dg-final { scan-assembler "fldmias" } } */
+/* { dg-final { scan-assembler "vldmia.32" } } */

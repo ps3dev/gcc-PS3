@@ -1,6 +1,5 @@
 /* Tree-dumping functionality for intermediate representation.
-   Copyright (C) 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2007, 2008, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 1999-2017 Free Software Foundation, Inc.
    Written by Mark Mitchell <mark@codesourcery.com>
 
 This file is part of GCC.
@@ -22,8 +21,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "tm.h"
-#include "tree.h"
 #include "cp-tree.h"
 #include "tree-dump.h"
 
@@ -202,6 +199,15 @@ dump_op (dump_info_p di, tree t)
   }
 }
 
+/* Dump information common to statements from STMT.  */
+
+static void
+dump_stmt (dump_info_p di, const_tree t)
+{
+  if (EXPR_HAS_LOCATION (t))
+    dump_int (di, "line", EXPR_LINENO (t));
+}
+
 bool
 cp_dump_tree (void* dump_info, tree t)
 {
@@ -338,7 +344,7 @@ cp_dump_tree (void* dump_info, tree t)
 	    }
 	  dump_int (di, "fixd", THUNK_FIXED_OFFSET (t));
 	  if (virt)
-	    dump_int (di, "virt", tree_low_cst (virt, 0));
+	    dump_int (di, "virt", tree_to_shwi (virt));
 	  dump_child ("fn", DECL_INITIAL (t));
 	}
       break;

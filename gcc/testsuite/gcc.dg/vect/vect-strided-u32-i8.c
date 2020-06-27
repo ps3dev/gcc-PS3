@@ -16,6 +16,8 @@ typedef struct {
    int h;
 } s;
 
+volatile int y = 0;
+
 __attribute__ ((noinline)) int
 main1 (s *arr)
 {
@@ -68,8 +70,8 @@ int main (void)
       arr[i].f = i * 5;
       arr[i].g = i - 3;
       arr[i].h = 56;
-      if (arr[i].a == 178)
-         abort(); 
+      if (y) /* Avoid vectorization.  */
+        abort ();
     } 
 
   main1 (arr);
@@ -78,5 +80,4 @@ int main (void)
 }
 
 /* { dg-final { scan-tree-dump-times "vectorized 1 loops" 1 "vect" { target vect_strided8 } } } */
-/* { dg-final { cleanup-tree-dump "vect" } } */
   

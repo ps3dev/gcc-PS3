@@ -1,4 +1,4 @@
-// Copyright (C) 2009 Free Software Foundation, Inc.
+// Copyright (C) 2009-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -16,6 +16,7 @@
 // <http://www.gnu.org/licenses/>.
 
 // { dg-require-effective-target dfp }
+// { dg-options "-Wno-pedantic" }
 
 // ISO/IEC TR 24733  3.2.5  Initialization from coefficient and exponent.
 
@@ -32,8 +33,8 @@
   i = ESIGN EXP;							\
   a = PASTE(make_decimal,32) (sll, i);					\
   b = PASTE(make_decimal,32) (PASTE(COEFF,LL), ESIGN EXP);	\
-  VERIFY ((__builtin_memcmp ((void *)&x, (void *)&a, SIZE) == 0)	\
-          && (__builtin_memcmp ((void *)&x, (void *)&b,SIZE) == 0));
+  VERIFY ((std::memcmp ((void *)&x, (void *)&a, SIZE) == 0)	\
+          && (std::memcmp ((void *)&x, (void *)&b,SIZE) == 0));
 
 #define TESTVAL_NONNEG(COEFF,ESIGN,EXP,SUF,NUM,SIZE)			\
   x = PASTE(PASTE(PASTE(PASTE(PASTE(COEFF,.),E),ESIGN),EXP),SUF);	\
@@ -44,10 +45,10 @@
   b = PASTE(make_decimal,32) (PASTE(COEFF,LL), ESIGN EXP);		\
   c = PASTE(make_decimal,32) (ull, i);					\
   d = PASTE(make_decimal,32) (PASTE(COEFF,ULL), ESIGN EXP);		\
-  VERIFY ((__builtin_memcmp ((void *)&x, (void *)&a, SIZE) == 0)	\
-          && (__builtin_memcmp ((void *)&x, (void *)&b,SIZE) == 0)	\
-          && (__builtin_memcmp ((void *)&x, (void *)&c,SIZE) == 0)	\
-          && (__builtin_memcmp ((void *)&x, (void *)&d,SIZE) == 0));
+  VERIFY ((std::memcmp ((void *)&x, (void *)&a, SIZE) == 0)	\
+          && (std::memcmp ((void *)&x, (void *)&b,SIZE) == 0)	\
+          && (std::memcmp ((void *)&x, (void *)&c,SIZE) == 0)	\
+          && (std::memcmp ((void *)&x, (void *)&d,SIZE) == 0));
 
 using namespace std::decimal;
 

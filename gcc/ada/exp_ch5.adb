@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2012, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -28,6 +28,7 @@ with Atree;    use Atree;
 with Checks;   use Checks;
 with Debug;    use Debug;
 with Einfo;    use Einfo;
+with Elists;   use Elists;
 with Errout;   use Errout;
 with Exp_Aggr; use Exp_Aggr;
 with Exp_Ch6;  use Exp_Ch6;
@@ -37,6 +38,7 @@ with Exp_Dbug; use Exp_Dbug;
 with Exp_Pakd; use Exp_Pakd;
 with Exp_Tss;  use Exp_Tss;
 with Exp_Util; use Exp_Util;
+with Inline;   use Inline;
 with Namet;    use Namet;
 with Nlists;   use Nlists;
 with Nmake;    use Nmake;
@@ -56,22 +58,32 @@ with Sem_Util; use Sem_Util;
 with Snames;   use Snames;
 with Stand;    use Stand;
 with Stringt;  use Stringt;
-with Targparm; use Targparm;
 with Tbuild;   use Tbuild;
+with Uintp;    use Uintp;
 with Validsw;  use Validsw;
 
 package body Exp_Ch5 is
 
+   procedure Build_Formal_Container_Iteration
+     (N         : Node_Id;
+      Container : Entity_Id;
+      Cursor    : Entity_Id;
+      Init      : out Node_Id;
+      Advance   : out Node_Id;
+      New_Loop  : out Node_Id);
+   --  Utility to create declarations and loop statement for both forms
+   --  of formal container iterators.
+
    function Change_Of_Representation (N : Node_Id) return Boolean;
-   --  Determine if the right hand side of assignment N is a type conversion
+   --  Determine if the right-hand side of assignment N is a type conversion
    --  which requires a change of representation. Called only for the array
    --  and record cases.
 
    procedure Expand_Assign_Array (N : Node_Id; Rhs : Node_Id);
    --  N is an assignment which assigns an array value. This routine process
    --  the various special cases and checks required for such assignments,
-   --  including change of representation. Rhs is normally simply the right
-   --  hand side of the assignment, except that if the right hand side is a
+   --  including change of representation. Rhs is normally simply the right-
+   --  hand side of the assignment, except that if the right-hand side is a
    --  type conversion or a qualified expression, then the RHS is the actual
    --  expression inside any such type conversions or qualifications.
 
@@ -86,26 +98,53 @@ package body Exp_Ch5 is
    --  N is an assignment statement which assigns an array value. This routine
    --  expands the assignment into a loop (or nested loops for the case of a
    --  multi-dimensional array) to do the assignment component by component.
-   --  Larray and Rarray are the entities of the actual arrays on the left
-   --  hand and right hand sides. L_Type and R_Type are the types of these
-   --  arrays (which may not be the same, due to either sliding, or to a
-   --  change of representation case). Ndim is the number of dimensions and
-   --  the parameter Rev indicates if the loops run normally (Rev = False),
-   --  or reversed (Rev = True). The value returned is the constructed
-   --  loop statement. Auxiliary declarations are inserted before node N
-   --  using the standard Insert_Actions mechanism.
+   --  Larray and Rarray are the entities of the actual arrays on the left-hand
+   --  and right-hand sides. L_Type and R_Type are the types of these arrays
+   --  (which may not be the same, due to either sliding, or to a change of
+   --  representation case). Ndim is the number of dimensions and the parameter
+   --  Rev indicates if the loops run normally (Rev = False), or reversed
+   --  (Rev = True). The value returned is the constructed loop statement.
+   --  Auxiliary declarations are inserted before node N using the standard
+   --  Insert_Actions mechanism.
 
    procedure Expand_Assign_Record (N : Node_Id);
-   --  N is an assignment of a non-tagged record value. This routine handles
+   --  N is an assignment of an untagged record value. This routine handles
    --  the case where the assignment must be made component by component,
    --  either because the target is not byte aligned, or there is a change
    --  of representation, or when we have a tagged type with a representation
    --  clause (this last case is required because holes in the tagged type
    --  might be filled with components from child types).
 
+   procedure Expand_Assign_With_Target_Names (N : Node_Id);
+   --  (AI12-0125): N is an assignment statement whose RHS contains occurrences
+   --  of @ that designate the value of the LHS of the assignment. If the LHS
+   --  is side-effect free the target names can be replaced with a copy of the
+   --  LHS; otherwise the semantics of the assignment is described in terms of
+   --  a procedure with an in-out parameter, and expanded as such.
+
+   procedure Expand_Formal_Container_Loop (N : Node_Id);
+   --  Use the primitives specified in an Iterable aspect to expand a loop
+   --  over a so-called formal container, primarily for SPARK usage.
+
+   procedure Expand_Formal_Container_Element_Loop (N : Node_Id);
+   --  Same, for an iterator of the form " For E of C". In this case the
+   --  iterator provides the name of the element, and the cursor is generated
+   --  internally.
+
    procedure Expand_Iterator_Loop (N : Node_Id);
    --  Expand loop over arrays and containers that uses the form "for X of C"
    --  with an optional subtype mark, or "for Y in C".
+
+   procedure Expand_Iterator_Loop_Over_Container
+     (N             : Node_Id;
+      Isc           : Node_Id;
+      I_Spec        : Node_Id;
+      Container     : Node_Id;
+      Container_Typ : Entity_Id);
+   --  Expand loop over containers that uses the form "for X of C" with an
+   --  optional subtype mark, or "for Y in C". Isc is the iteration scheme.
+   --  I_Spec is the iterator specification and Container is either the
+   --  Container (for OF) or the iterator (for IN).
 
    procedure Expand_Predicated_Loop (N : Node_Id);
    --  Expand for loop over predicated subtype
@@ -116,6 +155,69 @@ package body Exp_Ch5 is
    --  after and save and restore of the tag and finalization pointers which
    --  are not 'part of the value' and must not be changed upon assignment. N
    --  is the original Assignment node.
+
+   --------------------------------------
+   -- Build_Formal_Container_iteration --
+   --------------------------------------
+
+   procedure Build_Formal_Container_Iteration
+     (N         : Node_Id;
+      Container : Entity_Id;
+      Cursor    : Entity_Id;
+      Init      : out Node_Id;
+      Advance   : out Node_Id;
+      New_Loop  : out Node_Id)
+   is
+      Loc      : constant Source_Ptr := Sloc (N);
+      Stats    : constant List_Id    := Statements (N);
+      Typ      : constant Entity_Id  := Base_Type (Etype (Container));
+      First_Op : constant Entity_Id  :=
+                   Get_Iterable_Type_Primitive (Typ, Name_First);
+      Next_Op  : constant Entity_Id  :=
+                   Get_Iterable_Type_Primitive (Typ, Name_Next);
+
+      Has_Element_Op : constant Entity_Id :=
+                   Get_Iterable_Type_Primitive (Typ, Name_Has_Element);
+   begin
+      --  Declaration for Cursor
+
+      Init :=
+        Make_Object_Declaration (Loc,
+          Defining_Identifier => Cursor,
+          Object_Definition   => New_Occurrence_Of (Etype (First_Op),  Loc),
+          Expression          =>
+            Make_Function_Call (Loc,
+              Name                   => New_Occurrence_Of (First_Op, Loc),
+              Parameter_Associations => New_List (
+                New_Occurrence_Of (Container, Loc))));
+
+      --  Statement that advances cursor in loop
+
+      Advance :=
+        Make_Assignment_Statement (Loc,
+          Name       => New_Occurrence_Of (Cursor, Loc),
+          Expression =>
+            Make_Function_Call (Loc,
+              Name                   => New_Occurrence_Of (Next_Op, Loc),
+              Parameter_Associations => New_List (
+                New_Occurrence_Of (Container, Loc),
+                New_Occurrence_Of (Cursor, Loc))));
+
+      --  Iterator is rewritten as a while_loop
+
+      New_Loop :=
+        Make_Loop_Statement (Loc,
+          Iteration_Scheme =>
+            Make_Iteration_Scheme (Loc,
+              Condition =>
+                Make_Function_Call (Loc,
+                  Name => New_Occurrence_Of (Has_Element_Op, Loc),
+                  Parameter_Associations => New_List (
+                    New_Occurrence_Of (Container, Loc),
+                    New_Occurrence_Of (Cursor, Loc)))),
+          Statements       => Stats,
+          End_Label        => Empty);
+   end Build_Formal_Container_Iteration;
 
    ------------------------------
    -- Change_Of_Representation --
@@ -182,9 +284,9 @@ package body Exp_Ch5 is
 
       function Is_Non_Local_Array (Exp : Node_Id) return Boolean;
       --  Determine if Exp is a reference to an array variable which is other
-      --  than an object defined in the current scope, or a slice of such
-      --  an object. Such objects can be aliased to parameters (unlike local
-      --  array references).
+      --  than an object defined in the current scope, or a component or a
+      --  slice of such an object. Such objects can be aliased to parameters
+      --  (unlike local array references).
 
       -----------------------
       -- Apply_Dereference --
@@ -231,10 +333,18 @@ package body Exp_Ch5 is
 
       function Is_Non_Local_Array (Exp : Node_Id) return Boolean is
       begin
-         return (Is_Entity_Name (Exp)
-                   and then Scope (Entity (Exp)) /= Current_Scope)
-            or else (Nkind (Exp) = N_Slice
-                       and then Is_Non_Local_Array (Prefix (Exp)));
+         case Nkind (Exp) is
+            when N_Indexed_Component
+               | N_Selected_Component
+               | N_Slice
+            =>
+               return Is_Non_Local_Array (Prefix (Exp));
+
+            when others =>
+               return
+                 not (Is_Entity_Name (Exp)
+                       and then Scope (Entity (Exp)) = Current_Scope);
+         end case;
       end Is_Non_Local_Array;
 
       --  Determine if Lhs, Rhs are formal arrays or nonlocal arrays
@@ -249,7 +359,7 @@ package body Exp_Ch5 is
 
    begin
       --  Deal with length check. Note that the length check is done with
-      --  respect to the right hand side as given, not a possible underlying
+      --  respect to the right-hand side as given, not a possible underlying
       --  renamed object, since this would generate incorrect extra checks.
 
       Apply_Length_Check (Rhs, L_Type);
@@ -287,14 +397,6 @@ package body Exp_Ch5 is
         and then
            (not Is_Constrained (Etype (Lhs))
              or else not Is_First_Subtype (Etype (Lhs)))
-
-         --  In the case of compiling for the Java or .NET Virtual Machine,
-         --  slices are always passed by making a copy, so we don't have to
-         --  worry about overlap. We also want to prevent generation of "<"
-         --  comparisons for array addresses, since that's a meaningless
-         --  operation on the VM.
-
-        and then VM_Target = No_VM
       then
          Set_Forwards_OK  (N, False);
          Set_Backwards_OK (N, False);
@@ -318,8 +420,8 @@ package body Exp_Ch5 is
       end if;
 
       --  We certainly must use a loop for change of representation and also
-      --  we use the operand of the conversion on the right hand side as the
-      --  effective right hand side (the component types must match in this
+      --  we use the operand of the conversion on the right-hand side as the
+      --  effective right-hand side (the component types must match in this
       --  situation).
 
       if Crep then
@@ -341,11 +443,11 @@ package body Exp_Ch5 is
       elsif Has_Controlled_Component (L_Type) then
          Loop_Required := True;
 
-         --  If object is atomic, we cannot tolerate a loop
+      --  If object is atomic/VFA, we cannot tolerate a loop
 
-      elsif Is_Atomic_Object (Act_Lhs)
+      elsif Is_Atomic_Or_VFA_Object (Act_Lhs)
               or else
-            Is_Atomic_Object (Act_Rhs)
+            Is_Atomic_Or_VFA_Object (Act_Rhs)
       then
          return;
 
@@ -354,8 +456,8 @@ package body Exp_Ch5 is
 
       elsif Has_Atomic_Components (L_Type)
         or else Has_Atomic_Components (R_Type)
-        or else Is_Atomic (Component_Type (L_Type))
-        or else Is_Atomic (Component_Type (R_Type))
+        or else Is_Atomic_Or_VFA (Component_Type (L_Type))
+        or else Is_Atomic_Or_VFA (Component_Type (R_Type))
       then
          Loop_Required := True;
 
@@ -418,9 +520,9 @@ package body Exp_Ch5 is
                Des_Type : Entity_Id;
 
             begin
-               if Present (Packed_Array_Type (Typ))
-                 and then Is_Array_Type (Packed_Array_Type (Typ))
-                 and then not Is_Constrained (Packed_Array_Type (Typ))
+               if Present (Packed_Array_Impl_Type (Typ))
+                 and then Is_Array_Type (Packed_Array_Impl_Type (Typ))
+                 and then not Is_Constrained (Packed_Array_Impl_Type (Typ))
                then
                   return True;
 
@@ -615,7 +717,7 @@ package body Exp_Ch5 is
             Act_L_Array := Get_Referenced_Object (Prefix (Act_Lhs));
             Act_R_Array := Get_Referenced_Object (Prefix (Act_Rhs));
 
-            --  If both left and right hand arrays are entity names, and refer
+            --  If both left- and right-hand arrays are entity names, and refer
             --  to different entities, then we know that the move is safe (the
             --  two storage areas are completely disjoint).
 
@@ -628,7 +730,7 @@ package body Exp_Ch5 is
             --  Otherwise, we assume the worst, which is that the two arrays
             --  are the same array. There is no need to check if we know that
             --  is the case, because if we don't know it, we still have to
-            --  assume it!
+            --  assume it.
 
             --  Generally if the same array is involved, then we have an
             --  overlapping case. We will have to really assume the worst (i.e.
@@ -647,10 +749,15 @@ package body Exp_Ch5 is
                end if;
 
                case Cresult is
-                  when LT | LE | EQ => Set_Backwards_OK (N, False);
-                  when GT | GE      => Set_Forwards_OK  (N, False);
-                  when NE | Unknown => Set_Backwards_OK (N, False);
-                                       Set_Forwards_OK  (N, False);
+                  when EQ | LE | LT =>
+                     Set_Backwards_OK (N, False);
+
+                  when GE | GT =>
+                     Set_Forwards_OK  (N, False);
+
+                  when NE | Unknown =>
+                     Set_Backwards_OK (N, False);
+                     Set_Forwards_OK  (N, False);
                end case;
             end if;
          end if;
@@ -660,25 +767,11 @@ package body Exp_Ch5 is
          --  then the outcome depends on the capabilities of the back end.
 
          if not Loop_Required then
+            --  Assume the back end can deal with all cases of overlap by
+            --  falling back to memmove if it cannot use a more efficient
+            --  approach.
 
-            --  The GCC back end can deal with all cases of overlap by falling
-            --  back to memmove if it cannot use a more efficient approach.
-
-            if VM_Target = No_VM and not AAMP_On_Target then
-               return;
-
-            --  Assume other back ends can handle it if Forwards_OK is set
-
-            elsif Forwards_OK (N) then
-               return;
-
-            --  If Forwards_OK is not set, the back end will need something
-            --  like memmove to handle the move. For now, this processing is
-            --  activated using the .s debug flag (-gnatd.s).
-
-            elsif Debug_Flag_Dot_S then
-               return;
-            end if;
+            return;
          end if;
 
          --  At this stage we have to generate an explicit loop, and we have
@@ -694,7 +787,7 @@ package body Exp_Ch5 is
 
          --    Note: the above code MUST be analyzed with checks off, because
          --    otherwise the Succ could overflow. But in any case this is more
-         --    efficient!
+         --    efficient.
 
          --  Forwards_OK = False, Backwards_OK = True
 
@@ -706,7 +799,7 @@ package body Exp_Ch5 is
 
          --    Note: the above code MUST be analyzed with checks off, because
          --    otherwise the Pred could overflow. But in any case this is more
-         --    efficient!
+         --    efficient.
 
          --  Forwards_OK = Backwards_OK = False
 
@@ -786,7 +879,7 @@ package body Exp_Ch5 is
 
                   Rewrite (N,
                     Make_Procedure_Call_Statement (Loc,
-                      Name => New_Reference_To (Proc, Loc),
+                      Name => New_Occurrence_Of (Proc, Loc),
                       Parameter_Associations => Actuals));
                end;
 
@@ -837,9 +930,9 @@ package body Exp_Ch5 is
             --  We normally compare addresses to find out which way round to
             --  do the loop, since this is reliable, and handles the cases of
             --  parameters, conversions etc. But we can't do that in the bit
-            --  packed case or the VM case, because addresses don't work there.
+            --  packed case, because addresses don't work there.
 
-            if not Is_Bit_Packed_Array (L_Type) and then VM_Target = No_VM then
+            if not Is_Bit_Packed_Array (L_Type) then
                Condition :=
                  Make_Op_Le (Loc,
                    Left_Opnd =>
@@ -852,7 +945,7 @@ package body Exp_Ch5 is
                              Expressions => New_List (
                                Make_Attribute_Reference (Loc,
                                  Prefix =>
-                                   New_Reference_To
+                                   New_Occurrence_Of
                                      (L_Index_Typ, Loc),
                                  Attribute_Name => Name_First))),
                          Attribute_Name => Name_Address)),
@@ -867,7 +960,7 @@ package body Exp_Ch5 is
                              Expressions => New_List (
                                Make_Attribute_Reference (Loc,
                                  Prefix =>
-                                   New_Reference_To
+                                   New_Occurrence_Of
                                      (R_Index_Typ, Loc),
                                  Attribute_Name => Name_First))),
                          Attribute_Name => Name_Address)));
@@ -911,7 +1004,7 @@ package body Exp_Ch5 is
             then
 
                --  Call TSS procedure for array assignment, passing the
-               --  explicit bounds of right and left hand sides.
+               --  explicit bounds of right- and left-hand sides.
 
                declare
                   Proc    : constant Entity_Id :=
@@ -935,7 +1028,7 @@ package body Exp_Ch5 is
 
                   Rewrite (N,
                     Make_Procedure_Call_Statement (Loc,
-                      Name => New_Reference_To (Proc, Loc),
+                      Name => New_Occurrence_Of (Proc, Loc),
                       Parameter_Associations => Actuals));
                end;
 
@@ -987,7 +1080,7 @@ package body Exp_Ch5 is
    --       end loop;
    --    end;
 
-   --  Here Rev is False, and Tm1Xn are the subscript types for the right hand
+   --  Here Rev is False, and Tm1Xn are the subscript types for the right-hand
    --  side. The declarations of R2b and R4b are inserted before the original
    --  assignment statement.
 
@@ -1165,7 +1258,7 @@ package body Exp_Ch5 is
                            Defining_Identifier => Lnn (J),
                            Reverse_Present => Rev,
                            Discrete_Subtype_Definition =>
-                             New_Reference_To (L_Index_Type (J), Loc))),
+                             New_Occurrence_Of (L_Index_Type (J), Loc))),
 
                    Statements => New_List (Assign, Build_Step (J))))));
       end loop;
@@ -1183,7 +1276,7 @@ package body Exp_Ch5 is
       L_Typ : constant Entity_Id  := Base_Type (Etype (Lhs));
 
    begin
-      --  If change of representation, then extract the real right hand side
+      --  If change of representation, then extract the real right-hand side
       --  from the type conversion, and proceed with component-wise assignment,
       --  since the two types are not the same as far as the back end is
       --  concerned.
@@ -1247,7 +1340,7 @@ package body Exp_Ch5 is
          --  Given C, the entity for a discriminant or component, build an
          --  assignment for the corresponding field values. The flag U_U
          --  signals the presence of an Unchecked_Union and forces the usage
-         --  of the inferred discriminant value of C as the right hand side
+         --  of the inferred discriminant value of C as the right-hand side
          --  of the assignment.
 
          function Make_Field_Assigns (CI : List_Id) return List_Id;
@@ -1359,7 +1452,7 @@ package body Exp_Ch5 is
 
          begin
             --  In the case of an Unchecked_Union, use the discriminant
-            --  constraint value as on the right hand side of the assignment.
+            --  constraint value as on the right-hand side of the assignment.
 
             if U_U then
                Expr :=
@@ -1519,6 +1612,142 @@ package body Exp_Ch5 is
       end;
    end Expand_Assign_Record;
 
+   -------------------------------------
+   -- Expand_Assign_With_Target_Names --
+   -------------------------------------
+
+   procedure Expand_Assign_With_Target_Names (N : Node_Id) is
+      LHS     : constant Node_Id    := Name (N);
+      LHS_Typ : constant Entity_Id  := Etype (LHS);
+      Loc     : constant Source_Ptr := Sloc (N);
+      RHS     : constant Node_Id    := Expression (N);
+
+      Ent : Entity_Id;
+      --  The entity of the left-hand side
+
+      function Replace_Target (N : Node_Id) return Traverse_Result;
+      --  Replace occurrences of the target name by the proper entity: either
+      --  the entity of the LHS in simple cases, or the formal of the
+      --  constructed procedure otherwise.
+
+      --------------------
+      -- Replace_Target --
+      --------------------
+
+      function Replace_Target (N : Node_Id) return Traverse_Result is
+      begin
+         if Nkind (N) = N_Target_Name then
+            Rewrite (N, New_Occurrence_Of (Ent, Sloc (N)));
+         end if;
+
+         Set_Analyzed (N, False);
+         return OK;
+      end Replace_Target;
+
+      procedure Replace_Target_Name is new Traverse_Proc (Replace_Target);
+
+      --  Local variables
+
+      New_RHS : Node_Id;
+      Proc_Id : Entity_Id;
+
+   --  Start of processing for Expand_Assign_With_Target_Names
+
+   begin
+      New_RHS := New_Copy_Tree (RHS);
+
+      --  The left-hand side is a direct name
+
+      if Is_Entity_Name (LHS)
+        and then not Is_Renaming_Of_Object (Entity (LHS))
+      then
+         Ent := Entity (LHS);
+         Replace_Target_Name (New_RHS);
+
+         --  Generate:
+         --    LHS := ... LHS ...;
+
+         Rewrite (N,
+           Make_Assignment_Statement (Loc,
+             Name       => Relocate_Node (LHS),
+             Expression => New_RHS));
+
+      --  The left-hand side is not a direct name, but is side-effect free.
+      --  Capture its value in a temporary to avoid multiple evaluations.
+
+      elsif Side_Effect_Free (LHS) then
+         Ent := Make_Temporary (Loc, 'T');
+         Replace_Target_Name (New_RHS);
+
+         --  Generate:
+         --    T : LHS_Typ := LHS;
+
+         Insert_Before_And_Analyze (N,
+           Make_Object_Declaration (Loc,
+             Defining_Identifier => Ent,
+             Object_Definition   => New_Occurrence_Of (LHS_Typ, Loc),
+             Expression          => New_Copy_Tree (LHS)));
+
+         --  Generate:
+         --    LHS := ... T ...;
+
+         Rewrite (N,
+           Make_Assignment_Statement (Loc,
+             Name       => Relocate_Node (LHS),
+             Expression => New_RHS));
+
+      --  Otherwise wrap the whole assignment statement in a procedure with an
+      --  IN OUT parameter. The original assignment then becomes a call to the
+      --  procedure with the left-hand side as an actual.
+
+      else
+         Ent := Make_Temporary (Loc, 'T');
+         Replace_Target_Name (New_RHS);
+
+         --  Generate:
+         --    procedure P (T : in out LHS_Typ) is
+         --    begin
+         --       T := ... T ...;
+         --    end P;
+
+         Proc_Id := Make_Temporary (Loc, 'P');
+
+         Insert_Before_And_Analyze (N,
+           Make_Subprogram_Body (Loc,
+             Specification              =>
+               Make_Procedure_Specification (Loc,
+                 Defining_Unit_Name       => Proc_Id,
+                 Parameter_Specifications => New_List (
+                   Make_Parameter_Specification (Loc,
+                     Defining_Identifier => Ent,
+                     In_Present          => True,
+                     Out_Present         => True,
+                     Parameter_Type      =>
+                       New_Occurrence_Of (LHS_Typ, Loc)))),
+
+             Declarations               => Empty_List,
+
+             Handled_Statement_Sequence =>
+               Make_Handled_Sequence_Of_Statements (Loc,
+                 Statements => New_List (
+                   Make_Assignment_Statement (Loc,
+                     Name       => New_Occurrence_Of (Ent, Loc),
+                     Expression => New_RHS)))));
+
+         --  Generate:
+         --    P (LHS);
+
+         Rewrite (N,
+           Make_Procedure_Call_Statement (Loc,
+             Name                   => New_Occurrence_Of (Proc_Id, Loc),
+             Parameter_Associations => New_List (Relocate_Node (LHS))));
+      end if;
+
+      --  Analyze rewritten node, either as assignment or procedure call
+
+      Analyze (N);
+   end Expand_Assign_With_Target_Names;
+
    -----------------------------------
    -- Expand_N_Assignment_Statement --
    -----------------------------------
@@ -1527,9 +1756,9 @@ package body Exp_Ch5 is
    --  cannot just be passed on to the back end in untransformed state.
 
    procedure Expand_N_Assignment_Statement (N : Node_Id) is
-      Loc  : constant Source_Ptr := Sloc (N);
       Crep : constant Boolean    := Change_Of_Representation (N);
       Lhs  : constant Node_Id    := Name (N);
+      Loc  : constant Source_Ptr := Sloc (N);
       Rhs  : constant Node_Id    := Expression (N);
       Typ  : constant Entity_Id  := Underlying_Type (Etype (Lhs));
       Exp  : Node_Id;
@@ -1559,6 +1788,14 @@ package body Exp_Ch5 is
         and then not Validity_Check_Subscripts
       then
          Check_Valid_Lvalue_Subscripts (Lhs);
+      end if;
+
+      --  Separate expansion if RHS contain target names. Note that assignment
+      --  may already have been expanded if RHS is aggregate.
+
+      if Nkind (N) = N_Assignment_Statement and then Has_Target_Names (N) then
+         Expand_Assign_With_Target_Names (N);
+         return;
       end if;
 
       --  Ada 2005 (AI-327): Handle assignment to priority of protected object
@@ -1595,13 +1832,10 @@ package body Exp_Ch5 is
 
             --  The attribute Priority applied to protected objects has been
             --  previously expanded into a call to the Get_Ceiling run-time
-            --  subprogram.
+            --  subprogram. In restricted profiles this is not available.
 
-            if Nkind (Ent) = N_Function_Call
-              and then (Entity (Name (Ent)) = RTE (RE_Get_Ceiling)
-                          or else
-                        Entity (Name (Ent)) = RTE (RO_PE_Get_Ceiling))
-            then
+            if Is_Expanded_Priority_Attribute (Ent) then
+
                --  Look for the enclosing concurrent type
 
                Conctyp := Current_Scope;
@@ -1622,10 +1856,10 @@ package body Exp_Ch5 is
 
                if Number_Entries (Conctyp) = 0 then
                   RT_Subprg_Name :=
-                    New_Reference_To (RTE (RE_Set_Ceiling), Loc);
+                    New_Occurrence_Of (RTE (RE_Set_Ceiling), Loc);
                else
                   RT_Subprg_Name :=
-                    New_Reference_To (RTE (RO_PE_Set_Ceiling), Loc);
+                    New_Occurrence_Of (RTE (RO_PE_Set_Ceiling), Loc);
                end if;
 
                Call :=
@@ -1637,6 +1871,7 @@ package body Exp_Ch5 is
 
                Rewrite (N, Call);
                Analyze (N);
+
                return;
             end if;
          end;
@@ -1649,7 +1884,6 @@ package body Exp_Ch5 is
          --  First deal with generation of range check if required
 
          if Do_Range_Check (Rhs) then
-            Set_Do_Range_Check (Rhs, False);
             Generate_Range_Check (Rhs, Typ, CE_Range_Check_Failed);
          end if;
 
@@ -1717,7 +1951,7 @@ package body Exp_Ch5 is
             --  where the reference was not expanded in the original tree,
             --  since it was on the left side of an assignment. But in the
             --  pre-assignment statement (the object definition), BPAR_Expr
-            --  will end up on the right hand side, and must be reexpanded. To
+            --  will end up on the right-hand side, and must be reexpanded. To
             --  achieve this, we reset the analyzed flag of all selected and
             --  indexed components down to the actual indexed component for
             --  the packed array.
@@ -1726,8 +1960,8 @@ package body Exp_Ch5 is
             loop
                Set_Analyzed (Exp, False);
 
-               if Nkind_In
-                   (Exp, N_Selected_Component, N_Indexed_Component)
+               if Nkind_In (Exp, N_Indexed_Component,
+                                 N_Selected_Component)
                then
                   Exp := Prefix (Exp);
                else
@@ -1772,7 +2006,7 @@ package body Exp_Ch5 is
             --  We do not need to reanalyze that assignment, and we do not need
             --  to worry about references to the temporary, but we do need to
             --  make sure that the temporary is not marked as a true constant
-            --  since we now have a generated assignment to it!
+            --  since we now have a generated assignment to it.
 
             Set_Is_True_Constant (Tnn, False);
          end;
@@ -1787,14 +2021,17 @@ package body Exp_Ch5 is
          Convert_Aggr_In_Assignment (N);
          Rewrite (N, Make_Null_Statement (Loc));
          Analyze (N);
+
          return;
       end if;
 
       --  Apply discriminant check if required. If Lhs is an access type to a
-      --  designated type with discriminants, we must always check.
+      --  designated type with discriminants, we must always check. If the
+      --  type has unknown discriminants, more elaborate processing below.
 
-      if Has_Discriminants (Etype (Lhs)) then
-
+      if Has_Discriminants (Etype (Lhs))
+        and then not Has_Unknown_Discriminants (Etype (Lhs))
+      then
          --  Skip discriminant check if change of representation. Will be
          --  done when the change of representation is expanded out.
 
@@ -1842,15 +2079,19 @@ package body Exp_Ch5 is
             Set_Etype (Lhs, Lt);
          end;
 
-         --  If the Lhs has a private type with unknown discriminants, it
-         --  may have a full view with discriminants, but those are nameable
-         --  only in the underlying type, so convert the Rhs to it before
-         --  potential checking.
+      --  If the Lhs has a private type with unknown discriminants, it may
+      --  have a full view with discriminants, but those are nameable only
+      --  in the underlying type, so convert the Rhs to it before potential
+      --  checking. Convert Lhs as well, otherwise the actual subtype might
+      --  not be constructible. If the discriminants have defaults the type
+      --  is unconstrained and there is nothing to check.
 
       elsif Has_Unknown_Discriminants (Base_Type (Etype (Lhs)))
         and then Has_Discriminants (Typ)
+        and then not Has_Defaulted_Discriminants (Typ)
       then
          Rewrite (Rhs, OK_Convert_To (Base_Type (Typ), Rhs));
+         Rewrite (Lhs, OK_Convert_To (Base_Type (Typ), Lhs));
          Apply_Discriminant_Check (Rhs, Typ, Lhs);
 
       --  In the access type case, we need the same discriminant check, and
@@ -1913,16 +2154,28 @@ package body Exp_Ch5 is
       if Is_Access_Type (Typ)
         and then Can_Never_Be_Null (Etype (Lhs))
         and then not Can_Never_Be_Null (Etype (Rhs))
+
+        --  If an actual is an out parameter of a null-excluding access
+        --  type, there is access check on entry, so we set the flag
+        --  Suppress_Assignment_Checks on the generated statement to
+        --  assign the actual to the parameter block, and we do not want
+        --  to generate an additional check at this point.
+
+        and then not Suppress_Assignment_Checks (N)
       then
          Apply_Constraint_Check (Rhs, Etype (Lhs));
       end if;
 
       --  Ada 2012 (AI05-148): Update current accessibility level if Rhs is a
-      --  stand-alone obj of an anonymous access type.
+      --  stand-alone obj of an anonymous access type. Do not install the check
+      --  when the Lhs denotes a container cursor and the Next function employs
+      --  an access type, because this can never result in a dangling pointer.
 
       if Is_Access_Type (Typ)
         and then Is_Entity_Name (Lhs)
-        and then Present (Effective_Extra_Accessibility (Entity (Lhs))) then
+        and then Ekind (Entity (Lhs)) /= E_Loop_Parameter
+        and then Present (Effective_Extra_Accessibility (Entity (Lhs)))
+      then
          declare
             function Lhs_Entity return Entity_Id;
             --  Look through renames to find the underlying entity.
@@ -2039,13 +2292,6 @@ package body Exp_Ch5 is
       then
          Make_Build_In_Place_Call_In_Assignment (N, Rhs);
 
-      elsif Is_Tagged_Type (Typ) and then Is_Value_Type (Etype (Lhs)) then
-
-         --  Nothing to do for valuetypes
-         --  ??? Set_Scope_Is_Transient (False);
-
-         return;
-
       elsif Is_Tagged_Type (Typ)
         or else (Needs_Finalization (Typ) and then not Is_Array_Type (Typ))
       then
@@ -2056,7 +2302,7 @@ package body Exp_Ch5 is
          begin
             --  In the controlled case, we ensure that function calls are
             --  evaluated before finalizing the target. In all cases, it makes
-            --  the expansion easier if the side-effects are removed first.
+            --  the expansion easier if the side effects are removed first.
 
             Remove_Side_Effects (Lhs);
             Remove_Side_Effects (Rhs);
@@ -2075,13 +2321,12 @@ package body Exp_Ch5 is
                --  by a dispatching call to _assign. It is suppressed in the
                --  case of assignments created by the expander that correspond
                --  to initializations, where we do want to copy the tag
-               --  (Expand_Ctrl_Actions flag is set True in this case). It is
+               --  (Expand_Ctrl_Actions flag is set False in this case). It is
                --  also suppressed if restriction No_Dispatching_Calls is in
                --  force because in that case predefined primitives are not
                --  generated.
 
                or else (Is_Tagged_Type (Typ)
-                         and then not Is_Value_Type (Etype (Lhs))
                          and then Chars (Current_Scope) /= Name_uAssign
                          and then Expand_Ctrl_Actions
                          and then
@@ -2125,25 +2370,56 @@ package body Exp_Ch5 is
                   --  the assignment we generate run-time check to ensure that
                   --  the tags of source and target match.
 
-                  if Is_Class_Wide_Type (Typ)
+                  if not Tag_Checks_Suppressed (Typ)
+                    and then Is_Class_Wide_Type (Typ)
                     and then Is_Tagged_Type (Typ)
                     and then Is_Tagged_Type (Underlying_Type (Etype (Rhs)))
                   then
-                     Append_To (L,
-                       Make_Raise_Constraint_Error (Loc,
-                         Condition =>
-                           Make_Op_Ne (Loc,
-                             Left_Opnd =>
-                               Make_Selected_Component (Loc,
-                                 Prefix        => Duplicate_Subexpr (Lhs),
-                                 Selector_Name =>
-                                   Make_Identifier (Loc, Name_uTag)),
-                             Right_Opnd =>
-                               Make_Selected_Component (Loc,
-                                 Prefix        => Duplicate_Subexpr (Rhs),
-                                 Selector_Name =>
-                                   Make_Identifier (Loc, Name_uTag))),
-                         Reason => CE_Tag_Check_Failed));
+                     declare
+                        Lhs_Tag : Node_Id;
+                        Rhs_Tag : Node_Id;
+
+                     begin
+                        if not Is_Interface (Typ) then
+                           Lhs_Tag :=
+                             Make_Selected_Component (Loc,
+                               Prefix        => Duplicate_Subexpr (Lhs),
+                               Selector_Name =>
+                                 Make_Identifier (Loc, Name_uTag));
+                           Rhs_Tag :=
+                             Make_Selected_Component (Loc,
+                               Prefix        => Duplicate_Subexpr (Rhs),
+                               Selector_Name =>
+                                 Make_Identifier (Loc, Name_uTag));
+                        else
+                           --  Displace the pointer to the base of the objects
+                           --  applying 'Address, which is later expanded into
+                           --  a call to RE_Base_Address.
+
+                           Lhs_Tag :=
+                             Make_Explicit_Dereference (Loc,
+                               Prefix =>
+                                 Unchecked_Convert_To (RTE (RE_Tag_Ptr),
+                                   Make_Attribute_Reference (Loc,
+                                     Prefix         => Duplicate_Subexpr (Lhs),
+                                     Attribute_Name => Name_Address)));
+                           Rhs_Tag :=
+                             Make_Explicit_Dereference (Loc,
+                               Prefix =>
+                                 Unchecked_Convert_To (RTE (RE_Tag_Ptr),
+                                   Make_Attribute_Reference (Loc,
+                                     Prefix         => Duplicate_Subexpr (Rhs),
+                                     Attribute_Name => Name_Address)));
+                        end if;
+
+                        Append_To (L,
+                          Make_Raise_Constraint_Error (Loc,
+                            Condition =>
+                              Make_Op_Ne (Loc,
+                                Left_Opnd  => Lhs_Tag,
+                                Right_Opnd => Rhs_Tag),
+                            Reason    => CE_Tag_Check_Failed));
+                     end;
                   end if;
 
                   declare
@@ -2164,7 +2440,7 @@ package body Exp_Ch5 is
 
                      Append_To (L,
                        Make_Procedure_Call_Statement (Loc,
-                         Name => New_Reference_To (Op, Loc),
+                         Name => New_Occurrence_Of (Op, Loc),
                          Parameter_Associations => New_List (
                            Node1 => Left_N,
                            Node2 => Right_N)));
@@ -2242,15 +2518,24 @@ package body Exp_Ch5 is
                   Blk : constant Entity_Id :=
                           New_Internal_Entity
                             (E_Block, Current_Scope, Sloc (N), 'B');
+                  AUD : constant Entity_Id := RTE (RE_Abort_Undefer_Direct);
 
                begin
+                  Set_Is_Abort_Block (N);
+
                   Set_Scope (Blk, Current_Scope);
                   Set_Etype (Blk, Standard_Void_Type);
                   Set_Identifier (N, New_Occurrence_Of (Blk, Sloc (N)));
 
                   Prepend_To (L, Build_Runtime_Call (Loc, RE_Abort_Defer));
                   Set_At_End_Proc (Handled_Statement_Sequence (N),
-                    New_Occurrence_Of (RTE (RE_Abort_Undefer_Direct), Loc));
+                    New_Occurrence_Of (AUD, Loc));
+
+                  --  Present the Abort_Undefer_Direct function to the backend
+                  --  so that it can inline the call to the function.
+
+                  Add_Inlined_Body (AUD, N);
+
                   Expand_At_End_Handler
                     (Handled_Statement_Sequence (N), Blk);
                end;
@@ -2343,7 +2628,7 @@ package body Exp_Ch5 is
             if Validity_Checks_On
               and then Validity_Check_Copies
             then
-               --  Skip this if left hand side is an array or record component
+               --  Skip this if left-hand side is an array or record component
                --  and elementary component validity checks are suppressed.
 
                if Nkind_In (Lhs, N_Selected_Component, N_Indexed_Component)
@@ -2428,12 +2713,37 @@ package body Exp_Ch5 is
 
    begin
       --  Check for the situation where we know at compile time which branch
-      --  will be taken
+      --  will be taken.
 
-      if Compile_Time_Known_Value (Expr) then
+      --  If the value is static but its subtype is predicated and the value
+      --  does not obey the predicate, the value is marked non-static, and
+      --  there can be no corresponding static alternative. In that case we
+      --  replace the case statement with an exception, regardless of whether
+      --  assertions are enabled or not, unless predicates are ignored.
+
+      if Compile_Time_Known_Value (Expr)
+        and then Has_Predicates (Etype (Expr))
+        and then not Predicates_Ignored (Etype (Expr))
+        and then not Is_OK_Static_Expression (Expr)
+      then
+         Rewrite (N,
+           Make_Raise_Constraint_Error (Loc, Reason => CE_Invalid_Data));
+         Analyze (N);
+         return;
+
+      elsif Compile_Time_Known_Value (Expr)
+        and then (not Has_Predicates (Etype (Expr))
+                   or else Is_Static_Expression (Expr))
+      then
          Alt := Find_Static_Alternative (N);
 
-         Process_Statements_For_Controlled_Objects (Alt);
+         --  Do not consider controlled objects found in a case statement which
+         --  actually models a case expression because their early finalization
+         --  will affect the result of the expression.
+
+         if not From_Conditional_Expression (N) then
+            Process_Statements_For_Controlled_Objects (Alt);
+         end if;
 
          --  Move statements from this alternative after the case statement.
          --  They are already analyzed, so will be skipped by the analyzer.
@@ -2496,7 +2806,9 @@ package body Exp_Ch5 is
          --  comes from source -- no need to validity check internally
          --  generated case statements).
 
-         if Validity_Check_Default then
+         if Validity_Check_Default
+           and then not Predicates_Ignored (Etype (Expr))
+         then
             Ensure_Valid (Expr);
          end if;
 
@@ -2512,10 +2824,16 @@ package body Exp_Ch5 is
             --  effects.
 
             Remove_Side_Effects (Expression (N));
-
             Alt := First (Alternatives (N));
 
-            Process_Statements_For_Controlled_Objects (Alt);
+            --  Do not consider controlled objects found in a case statement
+            --  which actually models a case expression because their early
+            --  finalization will affect the result of the expression.
+
+            if not From_Conditional_Expression (N) then
+               Process_Statements_For_Controlled_Objects (Alt);
+            end if;
+
             Insert_List_After (N, Statements (Alt));
 
             --  That leaves the case statement as a shell. The alternative that
@@ -2531,7 +2849,11 @@ package body Exp_Ch5 is
          --  if statement, since this can result in subsequent optimizations.
          --  This helps not only with case statements in the source of a
          --  simple form, but also with generated code (discriminant check
-         --  functions in particular)
+         --  functions in particular).
+
+         --  Note: it is OK to do this before expanding out choices for any
+         --  static predicates, since the if statement processing will handle
+         --  the static predicate case fine.
 
          elsif Len = 2 then
             Chlist := Discrete_Choices (First (Alternatives (N)));
@@ -2565,12 +2887,22 @@ package body Exp_Ch5 is
                            and then Attribute_Name (Choice) = Name_Range)
                  or else (Is_Entity_Name (Choice)
                            and then Is_Type (Entity (Choice)))
-                 or else Nkind (Choice) = N_Subtype_Indication
                then
                   Cond :=
                     Make_In (Loc,
                       Left_Opnd  => Expression (N),
                       Right_Opnd => Relocate_Node (Choice));
+
+               --  A subtype indication is not a legal operator in a membership
+               --  test, so retrieve its range.
+
+               elsif Nkind (Choice) = N_Subtype_Indication then
+                  Cond :=
+                    Make_In (Loc,
+                      Left_Opnd  => Expression (N),
+                      Right_Opnd =>
+                        Relocate_Node
+                          (Range_Expression (Constraint (Choice))));
 
                --  For any other subexpression "expression = value"
 
@@ -2599,24 +2931,60 @@ package body Exp_Ch5 is
          --  compute the contents of the Others_Discrete_Choices which is not
          --  needed by the back end anyway.
 
-         --  The reason we do this is that the back end always needs some
-         --  default for a switch, so if we have not supplied one in the
-         --  processing above for validity checking, then we need to supply
-         --  one here.
+         --  The reason for this is that the back end always needs some default
+         --  for a switch, so if we have not supplied one in the processing
+         --  above for validity checking, then we need to supply one here.
 
          if not Others_Present then
             Others_Node := Make_Others_Choice (Sloc (Last_Alt));
-            Set_Others_Discrete_Choices
-              (Others_Node, Discrete_Choices (Last_Alt));
-            Set_Discrete_Choices (Last_Alt, New_List (Others_Node));
+
+            --  If Predicates_Ignored is true the value does not satisfy the
+            --  predicate, and there is no Others choice, Constraint_Error
+            --  must be raised (4.5.7 (21/3)).
+
+            if Predicates_Ignored (Etype (Expr)) then
+               declare
+                  Except  : constant Node_Id :=
+                              Make_Raise_Constraint_Error (Loc,
+                                Reason => CE_Invalid_Data);
+                  New_Alt : constant Node_Id :=
+                              Make_Case_Statement_Alternative (Loc,
+                                Discrete_Choices => New_List (
+                                  Make_Others_Choice (Loc)),
+                                Statements       => New_List (Except));
+
+               begin
+                  Append (New_Alt, Alternatives (N));
+                  Analyze_And_Resolve (Except);
+               end;
+
+            else
+               Set_Others_Discrete_Choices
+                 (Others_Node, Discrete_Choices (Last_Alt));
+               Set_Discrete_Choices (Last_Alt, New_List (Others_Node));
+            end if;
+
          end if;
 
-         Alt := First (Alternatives (N));
-         while Present (Alt)
-           and then Nkind (Alt) = N_Case_Statement_Alternative
-         loop
-            Process_Statements_For_Controlled_Objects (Alt);
-            Next (Alt);
+         --  Deal with possible declarations of controlled objects, and also
+         --  with rewriting choice sequences for static predicate references.
+
+         Alt := First_Non_Pragma (Alternatives (N));
+         while Present (Alt) loop
+
+            --  Do not consider controlled objects found in a case statement
+            --  which actually models a case expression because their early
+            --  finalization will affect the result of the expression.
+
+            if not From_Conditional_Expression (N) then
+               Process_Statements_For_Controlled_Objects (Alt);
+            end if;
+
+            if Has_SP_Choice (Alt) then
+               Expand_Static_Predicates_In_Choices (Alt);
+            end if;
+
+            Next_Non_Pragma (Alt);
          end loop;
       end;
    end Expand_N_Case_Statement;
@@ -2632,6 +3000,181 @@ package body Exp_Ch5 is
    begin
       Adjust_Condition (Condition (N));
    end Expand_N_Exit_Statement;
+
+   ----------------------------------
+   -- Expand_Formal_Container_Loop --
+   ----------------------------------
+
+   procedure Expand_Formal_Container_Loop (N : Node_Id) is
+      Loc       : constant Source_Ptr := Sloc (N);
+      Isc       : constant Node_Id    := Iteration_Scheme (N);
+      I_Spec    : constant Node_Id    := Iterator_Specification (Isc);
+      Cursor    : constant Entity_Id  := Defining_Identifier (I_Spec);
+      Container : constant Node_Id    := Entity (Name (I_Spec));
+      Stats     : constant List_Id    := Statements (N);
+
+      Advance  : Node_Id;
+      Blk_Nod  : Node_Id;
+      Init     : Node_Id;
+      New_Loop : Node_Id;
+
+   begin
+      --  The expansion resembles the one for Ada containers, but the
+      --  primitives mention the domain of iteration explicitly, and
+      --  function First applied to the container yields a cursor directly.
+
+      --    Cursor : Cursor_type := First (Container);
+      --    while Has_Element (Cursor, Container) loop
+      --          <original loop statements>
+      --       Cursor := Next (Container, Cursor);
+      --    end loop;
+
+      Build_Formal_Container_Iteration
+        (N, Container, Cursor, Init, Advance, New_Loop);
+
+      Set_Ekind (Cursor, E_Variable);
+      Append_To (Stats, Advance);
+
+      --  Build block to capture declaration of cursor entity.
+
+      Blk_Nod :=
+        Make_Block_Statement (Loc,
+          Declarations               => New_List (Init),
+          Handled_Statement_Sequence =>
+            Make_Handled_Sequence_Of_Statements (Loc,
+              Statements => New_List (New_Loop)));
+
+      Rewrite (N, Blk_Nod);
+      Analyze (N);
+   end Expand_Formal_Container_Loop;
+
+   ------------------------------------------
+   -- Expand_Formal_Container_Element_Loop --
+   ------------------------------------------
+
+   procedure Expand_Formal_Container_Element_Loop (N : Node_Id) is
+      Loc           : constant Source_Ptr := Sloc (N);
+      Isc           : constant Node_Id    := Iteration_Scheme (N);
+      I_Spec        : constant Node_Id    := Iterator_Specification (Isc);
+      Element       : constant Entity_Id  := Defining_Identifier (I_Spec);
+      Container     : constant Node_Id    := Entity (Name (I_Spec));
+      Container_Typ : constant Entity_Id  := Base_Type (Etype (Container));
+      Stats         : constant List_Id    := Statements (N);
+
+      Cursor    : constant Entity_Id :=
+                    Make_Defining_Identifier (Loc,
+                      Chars => New_External_Name (Chars (Element), 'C'));
+      Elmt_Decl : Node_Id;
+      Elmt_Ref  : Node_Id;
+
+      Element_Op : constant Entity_Id :=
+                     Get_Iterable_Type_Primitive (Container_Typ, Name_Element);
+
+      Advance   : Node_Id;
+      Init      : Node_Id;
+      New_Loop  : Node_Id;
+
+   begin
+      --  For an element iterator, the Element aspect must be present,
+      --  (this is checked during analysis) and the expansion takes the form:
+
+      --    Cursor : Cursor_Type := First (Container);
+      --    Elmt : Element_Type;
+      --    while Has_Element (Cursor, Container) loop
+      --       Elmt := Element (Container, Cursor);
+      --          <original loop statements>
+      --       Cursor := Next (Container, Cursor);
+      --    end loop;
+
+      --   However this expansion is not legal if the element is indefinite.
+      --   In that case we create a block to hold a variable declaration
+      --   initialized with a call to Element, and generate:
+
+      --    Cursor : Cursor_Type := First (Container);
+      --    while Has_Element (Cursor, Container) loop
+      --       declare
+      --          Elmt : Element_Type := Element (Container, Cursor);
+      --       begin
+      --          <original loop statements>
+      --          Cursor := Next (Container, Cursor);
+      --       end;
+      --    end loop;
+
+      Build_Formal_Container_Iteration
+        (N, Container, Cursor, Init, Advance, New_Loop);
+      Append_To (Stats, Advance);
+
+      Set_Ekind (Cursor, E_Variable);
+      Insert_Action (N, Init);
+
+      --  Declaration for Element
+
+      Elmt_Decl :=
+        Make_Object_Declaration (Loc,
+          Defining_Identifier => Element,
+          Object_Definition   => New_Occurrence_Of (Etype (Element_Op), Loc));
+
+      if not Is_Constrained (Etype (Element_Op)) then
+         Set_Expression (Elmt_Decl,
+           Make_Function_Call (Loc,
+             Name                   => New_Occurrence_Of (Element_Op, Loc),
+             Parameter_Associations => New_List (
+               New_Occurrence_Of (Container, Loc),
+               New_Occurrence_Of (Cursor, Loc))));
+
+         Set_Statements (New_Loop,
+           New_List
+             (Make_Block_Statement (Loc,
+                Declarations => New_List (Elmt_Decl),
+                Handled_Statement_Sequence =>
+                  Make_Handled_Sequence_Of_Statements (Loc,
+                    Statements =>  Stats))));
+
+      else
+         Elmt_Ref :=
+           Make_Assignment_Statement (Loc,
+             Name       => New_Occurrence_Of (Element, Loc),
+             Expression =>
+               Make_Function_Call (Loc,
+                 Name                   => New_Occurrence_Of (Element_Op, Loc),
+                 Parameter_Associations => New_List (
+                   New_Occurrence_Of (Container, Loc),
+                   New_Occurrence_Of (Cursor, Loc))));
+
+         Prepend (Elmt_Ref, Stats);
+
+         --  The element is assignable in the expanded code
+
+         Set_Assignment_OK (Name (Elmt_Ref));
+
+         --  The loop is rewritten as a block, to hold the element declaration
+
+         New_Loop :=
+           Make_Block_Statement (Loc,
+             Declarations               => New_List (Elmt_Decl),
+             Handled_Statement_Sequence =>
+               Make_Handled_Sequence_Of_Statements (Loc,
+                 Statements =>  New_List (New_Loop)));
+      end if;
+
+      --  The element is only modified in expanded code, so it appears as
+      --  unassigned to the warning machinery. We must suppress this spurious
+      --  warning explicitly.
+
+      Set_Warnings_Off (Element);
+
+      Rewrite (N, New_Loop);
+
+      --  The loop parameter is declared by an object declaration, but within
+      --  the loop we must prevent user assignments to it, so we analyze the
+      --  declaration and reset the entity kind, before analyzing the rest of
+      --  the loop;
+
+      Analyze (Elmt_Decl);
+      Set_Ekind (Defining_Identifier (Elmt_Decl), E_Loop_Parameter);
+
+      Analyze (N);
+   end Expand_Formal_Container_Element_Loop;
 
    -----------------------------
    -- Expand_N_Goto_Statement --
@@ -2692,7 +3235,13 @@ package body Exp_Ch5 is
       --  these warnings for expander generated code.
 
    begin
-      Process_Statements_For_Controlled_Objects (N);
+      --  Do not consider controlled objects found in an if statement which
+      --  actually models an if expression because their early finalization
+      --  will affect the result of the expression.
+
+      if not From_Conditional_Expression (N) then
+         Process_Statements_For_Controlled_Objects (N);
+      end if;
 
       Adjust_Condition (Condition (N));
 
@@ -2774,12 +3323,19 @@ package body Exp_Ch5 is
       end loop;
 
       --  Loop through elsif parts, dealing with constant conditions and
-      --  possible expression actions that are present.
+      --  possible condition actions that are present.
 
       if Present (Elsif_Parts (N)) then
          E := First (Elsif_Parts (N));
          while Present (E) loop
-            Process_Statements_For_Controlled_Objects (E);
+
+            --  Do not consider controlled objects found in an if statement
+            --  which actually models an if expression because their early
+            --  finalization will affect the result of the expression.
+
+            if not From_Conditional_Expression (N) then
+               Process_Statements_For_Controlled_Objects (E);
+            end if;
 
             Adjust_Condition (Condition (E));
 
@@ -2792,10 +3348,6 @@ package body Exp_Ch5 is
             if Present (Condition_Actions (E))
               or else Compile_Time_Known_Value (Condition (E))
             then
-               --  Note this is not an implicit if statement, since it is part
-               --  of an explicit if statement in the source (or of an implicit
-               --  if statement that has already been tested).
-
                New_If :=
                  Make_If_Statement (Sloc (E),
                    Condition       => Condition (E),
@@ -2826,6 +3378,15 @@ package body Exp_Ch5 is
                end if;
 
                Analyze (New_If);
+
+               --  Note this is not an implicit if statement, since it is part
+               --  of an explicit if statement in the source (or of an implicit
+               --  if statement that has already been tested). We set the flag
+               --  after calling Analyze to avoid generating extra warnings
+               --  specific to pure if statements, however (see
+               --  Sem_Ch5.Analyze_If_Statement).
+
+               Set_Comes_From_Source (New_If, Comes_From_Source (N));
                return;
 
             --  No special processing for that elsif part, move to next
@@ -2932,383 +3493,755 @@ package body Exp_Ch5 is
    procedure Expand_Iterator_Loop (N : Node_Id) is
       Isc    : constant Node_Id    := Iteration_Scheme (N);
       I_Spec : constant Node_Id    := Iterator_Specification (Isc);
-      Id     : constant Entity_Id  := Defining_Identifier (I_Spec);
-      Loc    : constant Source_Ptr := Sloc (N);
 
-      Container     : constant Node_Id   := Name (I_Spec);
-      Container_Typ : constant Entity_Id := Base_Type (Etype (Container));
-      Cursor        : Entity_Id;
-      Iterator      : Entity_Id;
-      New_Loop      : Node_Id;
-      Stats         : List_Id := Statements (N);
+      Container     : constant Node_Id     := Name (I_Spec);
+      Container_Typ : constant Entity_Id   := Base_Type (Etype (Container));
 
    begin
       --  Processing for arrays
 
       if Is_Array_Type (Container_Typ) then
+         pragma Assert (Of_Present (I_Spec));
+         Expand_Iterator_Loop_Over_Array (N);
 
-         --  for Element of Array loop
-         --
-         --  This case requires an internally generated cursor to iterate over
-         --  the array.
-
+      elsif Has_Aspect (Container_Typ, Aspect_Iterable) then
          if Of_Present (I_Spec) then
-            Iterator := Make_Temporary (Loc, 'C');
-
-            --  Generate:
-            --    Element : Component_Type renames Container (Iterator);
-
-            Prepend_To (Stats,
-              Make_Object_Renaming_Declaration (Loc,
-                Defining_Identifier => Id,
-                Subtype_Mark =>
-                  New_Reference_To (Component_Type (Container_Typ), Loc),
-                Name =>
-                  Make_Indexed_Component (Loc,
-                    Prefix => Relocate_Node (Container),
-                    Expressions => New_List (
-                      New_Reference_To (Iterator, Loc)))));
-
-         --  for Index in Array loop
-
-         --  This case utilizes the already given iterator name
-
+            Expand_Formal_Container_Element_Loop (N);
          else
-            Iterator := Id;
+            Expand_Formal_Container_Loop (N);
          end if;
-
-         --  Generate:
-         --    for Iterator in [reverse] Container'Range loop
-         --       Element : Component_Type renames Container (Iterator);
-         --       --  for the "of" form
-
-         --       <original loop statements>
-         --    end loop;
-
-         New_Loop :=
-           Make_Loop_Statement (Loc,
-             Iteration_Scheme =>
-               Make_Iteration_Scheme (Loc,
-                 Loop_Parameter_Specification =>
-                   Make_Loop_Parameter_Specification (Loc,
-                     Defining_Identifier => Iterator,
-                       Discrete_Subtype_Definition =>
-                         Make_Attribute_Reference (Loc,
-                           Prefix => Relocate_Node (Container),
-                           Attribute_Name => Name_Range),
-                      Reverse_Present => Reverse_Present (I_Spec))),
-              Statements => Stats,
-              End_Label  => Empty);
 
       --  Processing for containers
 
       else
-         --  For an "of" iterator the name is a container expression, which
-         --  is transformed into a call to the default iterator.
+         Expand_Iterator_Loop_Over_Container
+           (N, Isc, I_Spec, Container, Container_Typ);
+      end if;
+   end Expand_Iterator_Loop;
 
-         --  For an iterator of the form "in" the name is a function call
-         --  that delivers an iterator type.
+   -------------------------------------
+   -- Expand_Iterator_Loop_Over_Array --
+   -------------------------------------
 
-         --  In both cases, analysis of the iterator has introduced an object
-         --  declaration to capture the domain, so that Container is an entity.
+   procedure Expand_Iterator_Loop_Over_Array (N : Node_Id) is
+      Isc        : constant Node_Id    := Iteration_Scheme (N);
+      I_Spec     : constant Node_Id    := Iterator_Specification (Isc);
+      Array_Node : constant Node_Id    := Name (I_Spec);
+      Array_Typ  : constant Entity_Id  := Base_Type (Etype (Array_Node));
+      Array_Dim  : constant Pos        := Number_Dimensions (Array_Typ);
+      Id         : constant Entity_Id  := Defining_Identifier (I_Spec);
+      Loc        : constant Source_Ptr := Sloc (N);
+      Stats      : constant List_Id    := Statements (N);
+      Core_Loop  : Node_Id;
+      Dim1       : Int;
+      Ind_Comp   : Node_Id;
+      Iterator   : Entity_Id;
 
-         --  The for loop is expanded into a while loop which uses a container
-         --  specific cursor to desgnate each element.
+   --  Start of processing for Expand_Iterator_Loop_Over_Array
 
-         --    Iter : Iterator_Type := Container.Iterate;
-         --    Cursor : Cursor_type := First (Iter);
-         --    while Has_Element (Iter) loop
-         --       declare
-         --       --  The block is added when Element_Type is controlled
+   begin
+      --  for Element of Array loop
 
-         --          Obj : Pack.Element_Type := Element (Cursor);
-         --          --  for the "of" loop form
-         --       begin
-         --          <original loop statements>
-         --       end;
+      --  It requires an internally generated cursor to iterate over the array
 
-         --       Cursor := Iter.Next (Cursor);
-         --    end loop;
+      pragma Assert (Of_Present (I_Spec));
 
-         --  If "reverse" is present, then the initialization of the cursor
-         --  uses Last and the step becomes Prev. Pack is the name of the
-         --  scope where the container package is instantiated.
+      Iterator := Make_Temporary (Loc, 'C');
 
-         declare
-            Element_Type : constant Entity_Id := Etype (Id);
-            Iter_Type    : Entity_Id;
-            Pack         : Entity_Id;
-            Decl         : Node_Id;
-            Name_Init    : Name_Id;
-            Name_Step    : Name_Id;
+      --  Generate:
+      --    Element : Component_Type renames Array (Iterator);
+      --    Iterator is the index value, or a list of index values
+      --    in the case of a multidimensional array.
 
-         begin
-            --  The type of the iterator is the return type of the Iterate
-            --  function used. For the "of" form this is the default iterator
-            --  for the type, otherwise it is the type of the explicit
-            --  function used in the iterator specification. The most common
-            --  case will be an Iterate function in the container package.
+      Ind_Comp :=
+        Make_Indexed_Component (Loc,
+          Prefix      => Relocate_Node (Array_Node),
+          Expressions => New_List (New_Occurrence_Of (Iterator, Loc)));
 
-            --  The primitive operations of the container type may not be
-            --  use-visible, so we introduce the name of the enclosing package
-            --  in the declarations below. The Iterator type is declared in a
-            --  an instance within the container package itself.
+      Prepend_To (Stats,
+        Make_Object_Renaming_Declaration (Loc,
+          Defining_Identifier => Id,
+          Subtype_Mark        =>
+            New_Occurrence_Of (Component_Type (Array_Typ), Loc),
+          Name                => Ind_Comp));
 
-            --  If the container type is a derived type, the cursor type is
-            --  found in the package of the parent type.
+      --  Mark the loop variable as needing debug info, so that expansion
+      --  of the renaming will result in Materialize_Entity getting set via
+      --  Debug_Renaming_Declaration. (This setting is needed here because
+      --  the setting in Freeze_Entity comes after the expansion, which is
+      --  too late. ???)
 
-            if Is_Derived_Type (Container_Typ) then
-               Pack := Scope (Root_Type (Container_Typ));
+      Set_Debug_Info_Needed (Id);
+
+      --  Generate:
+
+      --    for Iterator in [reverse] Array'Range (Array_Dim) loop
+      --       Element : Component_Type renames Array (Iterator);
+      --       <original loop statements>
+      --    end loop;
+
+      --  If this is an iteration over a multidimensional array, the
+      --  innermost loop is over the last dimension in Ada, and over
+      --  the first dimension in Fortran.
+
+      if Convention (Array_Typ) = Convention_Fortran then
+         Dim1 := 1;
+      else
+         Dim1 := Array_Dim;
+      end if;
+
+      Core_Loop :=
+        Make_Loop_Statement (Loc,
+          Iteration_Scheme =>
+            Make_Iteration_Scheme (Loc,
+              Loop_Parameter_Specification =>
+                Make_Loop_Parameter_Specification (Loc,
+                  Defining_Identifier         => Iterator,
+                  Discrete_Subtype_Definition =>
+                    Make_Attribute_Reference (Loc,
+                      Prefix         => Relocate_Node (Array_Node),
+                      Attribute_Name => Name_Range,
+                      Expressions    => New_List (
+                        Make_Integer_Literal (Loc, Dim1))),
+                  Reverse_Present             => Reverse_Present (I_Spec))),
+           Statements      => Stats,
+           End_Label       => Empty);
+
+      --  Processing for multidimensional array. The body of each loop is
+      --  a loop over a previous dimension, going in decreasing order in Ada
+      --  and in increasing order in Fortran.
+
+      if Array_Dim > 1 then
+         for Dim in 1 .. Array_Dim - 1 loop
+            if Convention (Array_Typ) = Convention_Fortran then
+               Dim1 := Dim + 1;
             else
-               Pack := Scope (Container_Typ);
+               Dim1 := Array_Dim - Dim;
             end if;
 
-            Iter_Type := Etype (Name (I_Spec));
+            Iterator := Make_Temporary (Loc, 'C');
 
-            --  The "of" case uses an internally generated cursor whose type
-            --  is found in the container package. The domain of iteration
-            --  is expanded into a call to the default Iterator function, but
-            --  this expansion does not take place in quantified expressions
-            --  that are analyzed with expansion disabled, and in that case the
-            --  type of the iterator must be obtained from the aspect.
+            --  Generate the dimension loops starting from the innermost one
 
-            if Of_Present (I_Spec) then
-               declare
-                  Default_Iter : constant Entity_Id :=
-                                   Entity
-                                     (Find_Aspect
-                                       (Etype (Container),
-                                        Aspect_Default_Iterator));
+            --    for Iterator in [reverse] Array'Range (Array_Dim - Dim) loop
+            --       <core loop>
+            --    end loop;
 
-                  Container_Arg : Node_Id;
-                  Ent           : Entity_Id;
+            Core_Loop :=
+              Make_Loop_Statement (Loc,
+                Iteration_Scheme =>
+                  Make_Iteration_Scheme (Loc,
+                    Loop_Parameter_Specification =>
+                      Make_Loop_Parameter_Specification (Loc,
+                        Defining_Identifier         => Iterator,
+                        Discrete_Subtype_Definition =>
+                          Make_Attribute_Reference (Loc,
+                            Prefix         => Relocate_Node (Array_Node),
+                            Attribute_Name => Name_Range,
+                            Expressions    => New_List (
+                              Make_Integer_Literal (Loc, Dim1))),
+                    Reverse_Present              => Reverse_Present (I_Spec))),
+                Statements       => New_List (Core_Loop),
+                End_Label        => Empty);
 
-               begin
-                  Cursor := Make_Temporary (Loc, 'I');
+            --  Update the previously created object renaming declaration with
+            --  the new iterator, by adding the index of the next loop to the
+            --  indexed component, in the order that corresponds to the
+            --  convention.
 
-                  --  For an container element iterator, the iterator type
-                  --  is obtained from the corresponding aspect.
+            if Convention (Array_Typ) = Convention_Fortran then
+               Append_To (Expressions (Ind_Comp),
+                 New_Occurrence_Of (Iterator, Loc));
+            else
+               Prepend_To (Expressions (Ind_Comp),
+                 New_Occurrence_Of (Iterator, Loc));
+            end if;
+         end loop;
+      end if;
 
-                  Iter_Type := Etype (Default_Iter);
-                  Pack := Scope (Iter_Type);
+      --  Inherit the loop identifier from the original loop. This ensures that
+      --  the scope stack is consistent after the rewriting.
 
-                  --  Rewrite domain of iteration as a call to the default
-                  --  iterator for the container type. If the container is
-                  --  a derived type and the aspect is inherited, convert
-                  --  container to parent type. The Cursor type is also
-                  --  inherited from the scope of the parent.
+      if Present (Identifier (N)) then
+         Set_Identifier (Core_Loop, Relocate_Node (Identifier (N)));
+      end if;
 
-                  if Base_Type (Etype (Container)) =
-                     Base_Type (Etype (First_Formal (Default_Iter)))
+      Rewrite (N, Core_Loop);
+      Analyze (N);
+   end Expand_Iterator_Loop_Over_Array;
+
+   -----------------------------------------
+   -- Expand_Iterator_Loop_Over_Container --
+   -----------------------------------------
+
+   --  For a 'for ... in' loop, such as:
+
+   --      for Cursor in Iterator_Function (...) loop
+   --          ...
+   --      end loop;
+
+   --  we generate:
+
+   --    Iter : Iterator_Type := Iterator_Function (...);
+   --    Cursor : Cursor_type := First (Iter); -- or Last for "reverse"
+   --    while Has_Element (Cursor) loop
+   --       ...
+   --
+   --       Cursor := Iter.Next (Cursor); -- or Prev for "reverse"
+   --    end loop;
+
+   --  For a 'for ... of' loop, such as:
+
+   --      for X of Container loop
+   --          ...
+   --      end loop;
+
+   --  the RM implies the generation of:
+
+   --    Iter : Iterator_Type := Container.Iterate; -- the Default_Iterator
+   --    Cursor : Cursor_Type := First (Iter); -- or Last for "reverse"
+   --    while Has_Element (Cursor) loop
+   --       declare
+   --          X : Element_Type renames Element (Cursor).Element.all;
+   --          --  or Constant_Element
+   --       begin
+   --          ...
+   --       end;
+   --       Cursor := Iter.Next (Cursor); -- or Prev for "reverse"
+   --    end loop;
+
+   --  In the general case, we do what the RM says. However, the operations
+   --  Element and Iter.Next are slow, which is bad inside a loop, because they
+   --  involve dispatching via interfaces, secondary stack manipulation,
+   --  Busy/Lock incr/decr, and adjust/finalization/at-end handling. So for the
+   --  predefined containers, we use an equivalent but optimized expansion.
+
+   --  In the optimized case, we make use of these:
+
+   --     procedure Next (Position : in out Cursor); -- instead of Iter.Next
+
+   --     function Pseudo_Reference
+   --       (Container : aliased Vector'Class) return Reference_Control_Type;
+
+   --     type Element_Access is access all Element_Type;
+
+   --     function Get_Element_Access
+   --       (Position : Cursor) return not null Element_Access;
+
+   --  Next is declared in the visible part of the container packages.
+   --  The other three are added in the private part. (We're not supposed to
+   --  pollute the namespace for clients. The compiler has no trouble breaking
+   --  privacy to call things in the private part of an instance.)
+
+   --  Source:
+
+   --      for X of My_Vector loop
+   --          X.Count := X.Count + 1;
+   --          ...
+   --      end loop;
+
+   --  The compiler will generate:
+
+   --      Iter : Reversible_Iterator'Class := Iterate (My_Vector);
+   --      --  Reversible_Iterator is an interface. Iterate is the
+   --      --  Default_Iterator aspect of Vector. This increments Lock,
+   --      --  disallowing tampering with cursors. Unfortunately, it does not
+   --      --  increment Busy. The result of Iterate is Limited_Controlled;
+   --      --  finalization will decrement Lock.  This is a build-in-place
+   --      --  dispatching call to Iterate.
+
+   --      Cur : Cursor := First (Iter); -- or Last
+   --      --  Dispatching call via interface.
+
+   --      Control : Reference_Control_Type := Pseudo_Reference (My_Vector);
+   --      --  Pseudo_Reference increments Busy, to detect tampering with
+   --      --  elements, as required by RM. Also redundantly increment
+   --      --  Lock. Finalization of Control will decrement both Busy and
+   --      --  Lock. Pseudo_Reference returns a record containing a pointer to
+   --      --  My_Vector, used by Finalize.
+   --      --
+   --      --  Control is not used below, except to finalize it -- it's purely
+   --      --  an RAII thing. This is needed because we are eliminating the
+   --      --  call to Reference within the loop.
+
+   --      while Has_Element (Cur) loop
+   --          declare
+   --              X : My_Element renames Get_Element_Access (Cur).all;
+   --              --  Get_Element_Access returns a pointer to the element
+   --              --  designated by Cur. No dispatching here, and no horsing
+   --              --  around with access discriminants. This is instead of the
+   --              --  existing
+   --              --
+   --              --    X : My_Element renames Reference (Cur).Element.all;
+   --              --
+   --              --  which creates a controlled object.
+   --          begin
+   --              --  Any attempt to tamper with My_Vector here in the loop
+   --              --  will correctly raise Program_Error, because of the
+   --              --  Control.
+   --
+   --              X.Count := X.Count + 1;
+   --              ...
+   --
+   --              Next (Cur); -- or Prev
+   --              --  This is instead of "Cur := Next (Iter, Cur);"
+   --          end;
+   --          --  No finalization here
+   --      end loop;
+   --      Finalize Iter and Control here, decrementing Lock twice and Busy
+   --      once.
+
+   --  This optimization makes "for ... of" loops over 30 times faster in cases
+   --  measured.
+
+   procedure Expand_Iterator_Loop_Over_Container
+     (N             : Node_Id;
+      Isc           : Node_Id;
+      I_Spec        : Node_Id;
+      Container     : Node_Id;
+      Container_Typ : Entity_Id)
+   is
+      Id       : constant Entity_Id   := Defining_Identifier (I_Spec);
+      Elem_Typ : constant Entity_Id   := Etype (Id);
+      Id_Kind  : constant Entity_Kind := Ekind (Id);
+      Loc      : constant Source_Ptr  := Sloc (N);
+      Stats    : constant List_Id     := Statements (N);
+
+      Cursor    : Entity_Id;
+      Decl      : Node_Id;
+      Iter_Type : Entity_Id;
+      Iterator  : Entity_Id;
+      Name_Init : Name_Id;
+      Name_Step : Name_Id;
+      New_Loop  : Node_Id;
+
+      Fast_Element_Access_Op : Entity_Id := Empty;
+      Fast_Step_Op           : Entity_Id := Empty;
+      --  Only for optimized version of "for ... of"
+
+      Iter_Pack : Entity_Id;
+      --  The package in which the iterator interface is instantiated. This is
+      --  typically an instance within the container package.
+
+      Pack : Entity_Id;
+      --  The package in which the container type is declared
+
+   begin
+      --  Determine the advancement and initialization steps for the cursor.
+      --  Analysis of the expanded loop will verify that the container has a
+      --  reverse iterator.
+
+      if Reverse_Present (I_Spec) then
+         Name_Init := Name_Last;
+         Name_Step := Name_Previous;
+      else
+         Name_Init := Name_First;
+         Name_Step := Name_Next;
+      end if;
+
+      --  The type of the iterator is the return type of the Iterate function
+      --  used. For the "of" form this is the default iterator for the type,
+      --  otherwise it is the type of the explicit function used in the
+      --  iterator specification. The most common case will be an Iterate
+      --  function in the container package.
+
+      --  The Iterator type is declared in an instance within the container
+      --  package itself, for example:
+
+      --    package Vector_Iterator_Interfaces is new
+      --      Ada.Iterator_Interfaces (Cursor, Has_Element);
+
+      --  If the container type is a derived type, the cursor type is found in
+      --  the package of the ultimate ancestor type.
+
+      if Is_Derived_Type (Container_Typ) then
+         Pack := Scope (Root_Type (Container_Typ));
+      else
+         Pack := Scope (Container_Typ);
+      end if;
+
+      if Of_Present (I_Spec) then
+         Handle_Of : declare
+            Container_Arg : Node_Id;
+
+            function Get_Default_Iterator
+              (T : Entity_Id) return Entity_Id;
+            --  If the container is a derived type, the aspect holds the parent
+            --  operation. The required one is a primitive of the derived type
+            --  and is either inherited or overridden. Also sets Container_Arg.
+
+            --------------------------
+            -- Get_Default_Iterator --
+            --------------------------
+
+            function Get_Default_Iterator
+              (T : Entity_Id) return Entity_Id
+            is
+               Iter : constant Entity_Id :=
+                 Entity (Find_Value_Of_Aspect (T, Aspect_Default_Iterator));
+               Prim : Elmt_Id;
+               Op   : Entity_Id;
+
+            begin
+               Container_Arg := New_Copy_Tree (Container);
+
+               --  A previous version of GNAT allowed indexing aspects to
+               --  be redefined on derived container types, while the
+               --  default iterator was inherited from the parent type.
+               --  This non-standard extension is preserved temporarily for
+               --  use by the modelling project under debug flag d.X.
+
+               if Debug_Flag_Dot_XX then
+                  if Base_Type (Etype (Container)) /=
+                     Base_Type (Etype (First_Formal (Iter)))
                   then
-                     Container_Arg := New_Copy_Tree (Container);
-
-                  else
                      Container_Arg :=
                        Make_Type_Conversion (Loc,
                          Subtype_Mark =>
                            New_Occurrence_Of
-                             (Etype (First_Formal (Default_Iter)), Loc),
-                         Expression => New_Copy_Tree (Container));
+                             (Etype (First_Formal (Iter)), Loc),
+                         Expression   => Container_Arg);
                   end if;
 
-                  Rewrite (Name (I_Spec),
-                    Make_Function_Call (Loc,
-                      Name => New_Occurrence_Of (Default_Iter, Loc),
-                      Parameter_Associations =>
-                        New_List (Container_Arg)));
-                  Analyze_And_Resolve (Name (I_Spec));
+                  return Iter;
 
-                  --  Find cursor type in proper iterator package, which is an
-                  --  instantiation of Iterator_Interfaces.
+               elsif Is_Derived_Type (T) then
 
-                  Ent := First_Entity (Pack);
-                  while Present (Ent) loop
-                     if Chars (Ent) = Name_Cursor then
-                        Set_Etype (Cursor, Etype (Ent));
-                        exit;
+                  --  The default iterator must be a primitive operation of the
+                  --  type, at the same dispatch slot position. The DT position
+                  --  may not be established if type is not frozen yet.
+
+                  Prim := First_Elmt (Primitive_Operations (T));
+                  while Present (Prim) loop
+                     Op := Node (Prim);
+
+                     if Alias (Op) = Iter
+                       or else
+                         (Chars (Op) = Chars (Iter)
+                           and then Present (DTC_Entity (Op))
+                           and then DT_Position (Op) = DT_Position (Iter))
+                     then
+                        return Op;
                      end if;
-                     Next_Entity (Ent);
+
+                     Next_Elmt (Prim);
                   end loop;
 
-                  --  Generate:
-                  --    Id : Element_Type renames Container (Cursor);
-                  --  This assumes that the container type has an indexing
-                  --  operation with Cursor. The check that this operation
-                  --  exists is performed in Check_Container_Indexing.
+                  --  Default iterator must exist
 
-                  Decl :=
-                    Make_Object_Renaming_Declaration (Loc,
-                      Defining_Identifier => Id,
-                      Subtype_Mark     =>
-                        New_Reference_To (Element_Type, Loc),
-                      Name             =>
-                        Make_Indexed_Component (Loc,
-                          Prefix      => Relocate_Node (Container_Arg),
-                          Expressions =>
-                            New_List (New_Occurrence_Of (Cursor, Loc))));
+                  pragma Assert (False);
 
-                  --  If the container holds controlled objects, wrap the loop
-                  --  statements and element renaming declaration with a block.
-                  --  This ensures that the result of Element (Cusor) is
-                  --  cleaned up after each iteration of the loop.
+               --  Otherwise not a derived type
 
-                  if Needs_Finalization (Element_Type) then
+               else
+                  return Iter;
+               end if;
+            end Get_Default_Iterator;
 
-                     --  Generate:
-                     --    declare
-                     --       Id : Element_Type := Element (curosr);
-                     --    begin
-                     --       <original loop statements>
-                     --    end;
+            --  Local variables
 
-                     Stats := New_List (
-                       Make_Block_Statement (Loc,
-                         Declarations               => New_List (Decl),
-                         Handled_Statement_Sequence =>
-                           Make_Handled_Sequence_Of_Statements (Loc,
-                              Statements => Stats)));
+            Default_Iter : Entity_Id;
+            Ent          : Entity_Id;
 
-                  --  Elements do not need finalization
+            Reference_Control_Type : Entity_Id := Empty;
+            Pseudo_Reference       : Entity_Id := Empty;
 
-                  else
-                     Prepend_To (Stats, Decl);
-                  end if;
-               end;
+         --  Start of processing for Handle_Of
 
-            --  X in Iterate (S) : type of iterator is type of explicitly
-            --  given Iterate function, and the loop variable is the cursor.
-            --  It will be assigned in the loop and must be a variable.
-
+         begin
+            if Is_Class_Wide_Type (Container_Typ) then
+               Default_Iter :=
+                 Get_Default_Iterator (Etype (Base_Type (Container_Typ)));
             else
-               Cursor := Id;
-               Set_Ekind (Cursor, E_Variable);
+               Default_Iter := Get_Default_Iterator (Etype (Container));
             end if;
 
-            Iterator := Make_Temporary (Loc, 'I');
+            Cursor := Make_Temporary (Loc, 'C');
 
-            --  Determine the advancement and initialization steps for the
-            --  cursor.
+            --  For a container element iterator, the iterator type is obtained
+            --  from the corresponding aspect, whose return type is descended
+            --  from the corresponding interface type in some instance of
+            --  Ada.Iterator_Interfaces. The actuals of that instantiation
+            --  are Cursor and Has_Element.
 
-            --  Analysis of the expanded loop will verify that the container
-            --  has a reverse iterator.
+            Iter_Type := Etype (Default_Iter);
 
-            if Reverse_Present (I_Spec) then
-               Name_Init := Name_Last;
-               Name_Step := Name_Previous;
+            --  The iterator type, which is a class-wide type, may itself be
+            --  derived locally, so the desired instantiation is the scope of
+            --  the root type of the iterator type.
 
-            else
-               Name_Init := Name_First;
-               Name_Step := Name_Next;
+            Iter_Pack := Scope (Root_Type (Etype (Iter_Type)));
+
+            --  Find declarations needed for "for ... of" optimization
+
+            Ent := First_Entity (Pack);
+            while Present (Ent) loop
+               if Chars (Ent) = Name_Get_Element_Access then
+                  Fast_Element_Access_Op := Ent;
+
+               elsif Chars (Ent) = Name_Step
+                 and then Ekind (Ent) = E_Procedure
+               then
+                  Fast_Step_Op := Ent;
+
+               elsif Chars (Ent) = Name_Reference_Control_Type then
+                  Reference_Control_Type := Ent;
+
+               elsif Chars (Ent) = Name_Pseudo_Reference then
+                  Pseudo_Reference := Ent;
+               end if;
+
+               Next_Entity (Ent);
+            end loop;
+
+            if Present (Reference_Control_Type)
+              and then Present (Pseudo_Reference)
+            then
+               Insert_Action (N,
+                 Make_Object_Declaration (Loc,
+                   Defining_Identifier => Make_Temporary (Loc, 'D'),
+                   Object_Definition   =>
+                     New_Occurrence_Of (Reference_Control_Type, Loc),
+                   Expression          =>
+                     Make_Function_Call (Loc,
+                       Name                   =>
+                         New_Occurrence_Of (Pseudo_Reference, Loc),
+                       Parameter_Associations =>
+                         New_List (New_Copy_Tree (Container_Arg)))));
             end if;
 
-            --  For both iterator forms, add a call to the step operation to
-            --  advance the cursor. Generate:
-
-            --     Cursor := Iterator.Next (Cursor);
-
-            --   or else
-
-            --     Cursor := Next (Cursor);
+            --  Rewrite domain of iteration as a call to the default iterator
+            --  for the container type. The formal may be an access parameter
+            --  in which case we must build a reference to the container.
 
             declare
-               Rhs : Node_Id;
-
+               Arg : Node_Id;
             begin
-               Rhs :=
+               if Is_Access_Type (Etype (First_Entity (Default_Iter))) then
+                  Arg :=
+                    Make_Attribute_Reference (Loc,
+                      Prefix         => Container_Arg,
+                      Attribute_Name => Name_Unrestricted_Access);
+               else
+                  Arg := Container_Arg;
+               end if;
+
+               Rewrite (Name (I_Spec),
                  Make_Function_Call (Loc,
                    Name                   =>
-                     Make_Selected_Component (Loc,
-                       Prefix        => New_Reference_To (Iterator, Loc),
-                       Selector_Name => Make_Identifier (Loc, Name_Step)),
-                   Parameter_Associations => New_List (
-                      New_Reference_To (Cursor, Loc)));
-
-               Append_To (Stats,
-                 Make_Assignment_Statement (Loc,
-                    Name       => New_Occurrence_Of (Cursor, Loc),
-                    Expression => Rhs));
+                     New_Occurrence_Of (Default_Iter, Loc),
+                   Parameter_Associations => New_List (Arg)));
             end;
 
-            --  Generate:
-            --    while Iterator.Has_Element loop
-            --       <Stats>
-            --    end loop;
+            Analyze_And_Resolve (Name (I_Spec));
 
-            --   Has_Element is the second actual in the iterator package
+            --  Find cursor type in proper iterator package, which is an
+            --  instantiation of Iterator_Interfaces.
 
-            New_Loop :=
-              Make_Loop_Statement (Loc,
-                Iteration_Scheme =>
-                  Make_Iteration_Scheme (Loc,
-                    Condition =>
-                      Make_Function_Call (Loc,
-                        Name                   =>
-                          New_Occurrence_Of (
-                           Next_Entity (First_Entity (Pack)), Loc),
-                        Parameter_Associations =>
-                          New_List (
-                            New_Reference_To (Cursor, Loc)))),
+            Ent := First_Entity (Iter_Pack);
+            while Present (Ent) loop
+               if Chars (Ent) = Name_Cursor then
+                  Set_Etype (Cursor, Etype (Ent));
+                  exit;
+               end if;
 
-                Statements => Stats,
-                End_Label  => Empty);
+               Next_Entity (Ent);
+            end loop;
 
-            --  Create the declarations for Iterator and cursor and insert them
-            --  before the source loop. Given that the domain of iteration is
-            --  already an entity, the iterator is just a renaming of that
-            --  entity. Possible optimization ???
-            --  Generate:
-
-            --    I : Iterator_Type renames Container;
-            --    C : Cursor_Type := Container.[First | Last];
-
-            Insert_Action (N,
-              Make_Object_Renaming_Declaration (Loc,
-                Defining_Identifier => Iterator,
-                Subtype_Mark  => New_Occurrence_Of (Iter_Type, Loc),
-                Name          => Relocate_Node (Name (I_Spec))));
-
-            --  Create declaration for cursor
-
-            declare
-               Decl : Node_Id;
-
-            begin
+            if Present (Fast_Element_Access_Op) then
                Decl :=
-                 Make_Object_Declaration (Loc,
-                   Defining_Identifier => Cursor,
-                   Object_Definition   =>
-                     New_Occurrence_Of (Etype (Cursor), Loc),
-                   Expression          =>
-                     Make_Selected_Component (Loc,
-                       Prefix        => New_Reference_To (Iterator, Loc),
-                       Selector_Name =>
-                         Make_Identifier (Loc, Name_Init)));
+                 Make_Object_Renaming_Declaration (Loc,
+                   Defining_Identifier => Id,
+                   Subtype_Mark        =>
+                     New_Occurrence_Of (Elem_Typ, Loc),
+                   Name                =>
+                     Make_Explicit_Dereference (Loc,
+                       Prefix =>
+                         Make_Function_Call (Loc,
+                           Name                   =>
+                             New_Occurrence_Of (Fast_Element_Access_Op, Loc),
+                           Parameter_Associations =>
+                             New_List (New_Occurrence_Of (Cursor, Loc)))));
 
-               --  The cursor is only modified in expanded code, so it appears
-               --  as unassigned to the warning machinery. We must suppress
-               --  this spurious warning explicitly.
-
-               Set_Warnings_Off (Cursor);
-               Set_Assignment_OK (Decl);
-
-               Insert_Action (N, Decl);
-            end;
-
-            --  If the range of iteration is given by a function call that
-            --  returns a container, the finalization actions have been saved
-            --  in the Condition_Actions of the iterator. Insert them now at
-            --  the head of the loop.
-
-            if Present (Condition_Actions (Isc)) then
-               Insert_List_Before (N, Condition_Actions (Isc));
+            else
+               Decl :=
+                 Make_Object_Renaming_Declaration (Loc,
+                   Defining_Identifier => Id,
+                   Subtype_Mark        =>
+                     New_Occurrence_Of (Elem_Typ, Loc),
+                   Name                =>
+                     Make_Indexed_Component (Loc,
+                       Prefix      => Relocate_Node (Container_Arg),
+                       Expressions =>
+                         New_List (New_Occurrence_Of (Cursor, Loc))));
             end if;
+
+            --  The defining identifier in the iterator is user-visible and
+            --  must be visible in the debugger.
+
+            Set_Debug_Info_Needed (Id);
+
+            --  If the container does not have a variable indexing aspect,
+            --  the element is a constant in the loop. The container itself
+            --  may be constant, in which case the element is a constant as
+            --  well. The container has been rewritten as a call to Iterate,
+            --  so examine original node.
+
+            if No (Find_Value_Of_Aspect
+                     (Container_Typ, Aspect_Variable_Indexing))
+              or else not Is_Variable (Original_Node (Container))
+            then
+               Set_Ekind (Id, E_Constant);
+            end if;
+
+            Prepend_To (Stats, Decl);
+         end Handle_Of;
+
+      --  X in Iterate (S) : type of iterator is type of explicitly given
+      --  Iterate function, and the loop variable is the cursor. It will be
+      --  assigned in the loop and must be a variable.
+
+      else
+         Iter_Type := Etype (Name (I_Spec));
+
+         --  The iterator type, which is a class-wide type, may itself be
+         --  derived locally, so the desired instantiation is the scope of
+         --  the root type of the iterator type, as in the "of" case.
+
+         Iter_Pack := Scope (Root_Type (Etype (Iter_Type)));
+         Cursor := Id;
+      end if;
+
+      Iterator := Make_Temporary (Loc, 'I');
+
+      --  For both iterator forms, add a call to the step operation to advance
+      --  the cursor. Generate:
+
+      --     Cursor := Iterator.Next (Cursor);
+
+      --   or else
+
+      --     Cursor := Next (Cursor);
+
+      if Present (Fast_Element_Access_Op) and then Present (Fast_Step_Op) then
+         declare
+            Curs_Name : constant Node_Id := New_Occurrence_Of (Cursor, Loc);
+            Step_Call : Node_Id;
+
+         begin
+            Step_Call :=
+              Make_Procedure_Call_Statement (Loc,
+                Name                   =>
+                  New_Occurrence_Of (Fast_Step_Op, Loc),
+                Parameter_Associations => New_List (Curs_Name));
+
+            Append_To (Stats, Step_Call);
+            Set_Assignment_OK (Curs_Name);
          end;
+
+      else
+         declare
+            Rhs : Node_Id;
+
+         begin
+            Rhs :=
+              Make_Function_Call (Loc,
+                Name                   =>
+                  Make_Selected_Component (Loc,
+                    Prefix        => New_Occurrence_Of (Iterator, Loc),
+                    Selector_Name => Make_Identifier (Loc, Name_Step)),
+                Parameter_Associations => New_List (
+                   New_Occurrence_Of (Cursor, Loc)));
+
+            Append_To (Stats,
+              Make_Assignment_Statement (Loc,
+                 Name       => New_Occurrence_Of (Cursor, Loc),
+                 Expression => Rhs));
+            Set_Assignment_OK (Name (Last (Stats)));
+         end;
+      end if;
+
+      --  Generate:
+      --    while Has_Element (Cursor) loop
+      --       <Stats>
+      --    end loop;
+
+      --   Has_Element is the second actual in the iterator package
+
+      New_Loop :=
+        Make_Loop_Statement (Loc,
+          Iteration_Scheme =>
+            Make_Iteration_Scheme (Loc,
+              Condition =>
+                Make_Function_Call (Loc,
+                  Name                   =>
+                    New_Occurrence_Of
+                      (Next_Entity (First_Entity (Iter_Pack)), Loc),
+                  Parameter_Associations => New_List (
+                    New_Occurrence_Of (Cursor, Loc)))),
+
+          Statements => Stats,
+          End_Label  => Empty);
+
+      --  If present, preserve identifier of loop, which can be used in an exit
+      --  statement in the body.
+
+      if Present (Identifier (N)) then
+         Set_Identifier (New_Loop, Relocate_Node (Identifier (N)));
+      end if;
+
+      --  Create the declarations for Iterator and cursor and insert them
+      --  before the source loop. Given that the domain of iteration is already
+      --  an entity, the iterator is just a renaming of that entity. Possible
+      --  optimization ???
+
+      Insert_Action (N,
+        Make_Object_Renaming_Declaration (Loc,
+          Defining_Identifier => Iterator,
+          Subtype_Mark        => New_Occurrence_Of (Iter_Type, Loc),
+          Name                => Relocate_Node (Name (I_Spec))));
+
+      --  Create declaration for cursor
+
+      declare
+         Cursor_Decl : constant Node_Id :=
+                         Make_Object_Declaration (Loc,
+                           Defining_Identifier => Cursor,
+                           Object_Definition   =>
+                             New_Occurrence_Of (Etype (Cursor), Loc),
+                           Expression          =>
+                             Make_Selected_Component (Loc,
+                               Prefix        =>
+                                 New_Occurrence_Of (Iterator, Loc),
+                               Selector_Name =>
+                                 Make_Identifier (Loc, Name_Init)));
+
+      begin
+         --  The cursor is only modified in expanded code, so it appears
+         --  as unassigned to the warning machinery. We must suppress this
+         --  spurious warning explicitly. The cursor's kind is that of the
+         --  original loop parameter (it is a constant if the domain of
+         --  iteration is constant).
+
+         Set_Warnings_Off (Cursor);
+         Set_Assignment_OK (Cursor_Decl);
+
+         Insert_Action (N, Cursor_Decl);
+         Set_Ekind (Cursor, Id_Kind);
+      end;
+
+      --  If the range of iteration is given by a function call that returns
+      --  a container, the finalization actions have been saved in the
+      --  Condition_Actions of the iterator. Insert them now at the head of
+      --  the loop.
+
+      if Present (Condition_Actions (Isc)) then
+         Insert_List_Before (N, Condition_Actions (Isc));
       end if;
 
       Rewrite (N, New_Loop);
       Analyze (N);
-   end Expand_Iterator_Loop;
+   end Expand_Iterator_Loop_Over_Container;
 
    -----------------------------
    -- Expand_N_Loop_Statement --
@@ -3323,8 +4256,9 @@ package body Exp_Ch5 is
    --  7. Insert polling call if required
 
    procedure Expand_N_Loop_Statement (N : Node_Id) is
-      Loc  : constant Source_Ptr := Sloc (N);
-      Isc  : constant Node_Id    := Iteration_Scheme (N);
+      Loc    : constant Source_Ptr := Sloc (N);
+      Scheme : constant Node_Id    := Iteration_Scheme (N);
+      Stmt   : Node_Id;
 
    begin
       --  Delete null loop
@@ -3334,12 +4268,10 @@ package body Exp_Ch5 is
          return;
       end if;
 
-      Process_Statements_For_Controlled_Objects (N);
-
       --  Deal with condition for C/Fortran Boolean
 
-      if Present (Isc) then
-         Adjust_Condition (Condition (Isc));
+      if Present (Scheme) then
+         Adjust_Condition (Condition (Scheme));
       end if;
 
       --  Generate polling call
@@ -3350,7 +4282,7 @@ package body Exp_Ch5 is
 
       --  Nothing more to do for plain loop with no iteration scheme
 
-      if No (Isc) then
+      if No (Scheme) then
          null;
 
       --  Case of for loop (Loop_Parameter_Specification present)
@@ -3359,13 +4291,15 @@ package body Exp_Ch5 is
       --  range bounds here, since they were frozen with constant declarations
       --  and it is during that process that the validity checking is done.
 
-      elsif Present (Loop_Parameter_Specification (Isc)) then
+      elsif Present (Loop_Parameter_Specification (Scheme)) then
          declare
-            LPS     : constant Node_Id   := Loop_Parameter_Specification (Isc);
+            LPS     : constant Node_Id   :=
+                        Loop_Parameter_Specification (Scheme);
             Loop_Id : constant Entity_Id := Defining_Identifier (LPS);
             Ltype   : constant Entity_Id := Etype (Loop_Id);
             Btype   : constant Entity_Id := Base_Type (Ltype);
             Expr    : Node_Id;
+            Decls   : List_Id;
             New_Id  : Entity_Id;
 
          begin
@@ -3413,17 +4347,27 @@ package body Exp_Ch5 is
                          Left_Opnd =>
                             Make_Integer_Literal (Loc,
                               Enumeration_Rep (First_Literal (Btype))),
-                         Right_Opnd => New_Reference_To (New_Id, Loc)));
+                         Right_Opnd => New_Occurrence_Of (New_Id, Loc)));
                else
                   --  Use the constructed array Enum_Pos_To_Rep
 
                   Expr :=
                     Make_Indexed_Component (Loc,
                       Prefix      =>
-                        New_Reference_To (Enum_Pos_To_Rep (Btype), Loc),
+                        New_Occurrence_Of (Enum_Pos_To_Rep (Btype), Loc),
                       Expressions =>
-                        New_List (New_Reference_To (New_Id, Loc)));
+                        New_List (New_Occurrence_Of (New_Id, Loc)));
                end if;
+
+               --  Build declaration for loop identifier
+
+               Decls :=
+                 New_List (
+                   Make_Object_Declaration (Loc,
+                     Defining_Identifier => Loop_Id,
+                     Constant_Present    => True,
+                     Object_Definition   => New_Occurrence_Of (Ltype, Loc),
+                     Expression          => Expr));
 
                Rewrite (N,
                  Make_Loop_Statement (Loc,
@@ -3440,7 +4384,7 @@ package body Exp_Ch5 is
                              Make_Subtype_Indication (Loc,
 
                                Subtype_Mark =>
-                                 New_Reference_To (Standard_Natural, Loc),
+                                 New_Occurrence_Of (Standard_Natural, Loc),
 
                                Constraint =>
                                  Make_Range_Constraint (Loc,
@@ -3450,7 +4394,7 @@ package body Exp_Ch5 is
                                        Low_Bound =>
                                          Make_Attribute_Reference (Loc,
                                            Prefix =>
-                                             New_Reference_To (Btype, Loc),
+                                             New_Occurrence_Of (Btype, Loc),
 
                                            Attribute_Name => Name_Pos,
 
@@ -3461,7 +4405,7 @@ package body Exp_Ch5 is
                                        High_Bound =>
                                          Make_Attribute_Reference (Loc,
                                            Prefix =>
-                                             New_Reference_To (Btype, Loc),
+                                             New_Occurrence_Of (Btype, Loc),
 
                                            Attribute_Name => Name_Pos,
 
@@ -3472,14 +4416,7 @@ package body Exp_Ch5 is
 
                    Statements => New_List (
                      Make_Block_Statement (Loc,
-                       Declarations => New_List (
-                         Make_Object_Declaration (Loc,
-                           Defining_Identifier => Loop_Id,
-                           Constant_Present    => True,
-                           Object_Definition   =>
-                             New_Reference_To (Ltype, Loc),
-                           Expression          => Expr)),
-
+                       Declarations => Decls,
                        Handled_Statement_Sequence =>
                          Make_Handled_Sequence_Of_Statements (Loc,
                            Statements => Statements (N)))),
@@ -3487,13 +4424,22 @@ package body Exp_Ch5 is
                    End_Label => End_Label (N)));
 
                --  The loop parameter's entity must be removed from the loop
-               --  scope's entity list, since it will now be located in the
-               --  new block scope. Any other entities already associated with
-               --  the loop scope, such as the loop parameter's subtype, will
-               --  remain there.
+               --  scope's entity list and rendered invisible, since it will
+               --  now be located in the new block scope. Any other entities
+               --  already associated with the loop scope, such as the loop
+               --  parameter's subtype, will remain there.
 
-               pragma Assert (First_Entity (Scope (Loop_Id)) = Loop_Id);
+               --  In an element loop, the loop will contain a declaration for
+               --  a cursor variable; otherwise the loop id is the first entity
+               --  in the scope constructed for the loop.
+
+               if Comes_From_Source (Loop_Id) then
+                  pragma Assert (First_Entity (Scope (Loop_Id)) = Loop_Id);
+                  null;
+               end if;
+
                Set_First_Entity (Scope (Loop_Id), Next_Entity (Loop_Id));
+               Remove_Homonym (Loop_Id);
 
                if Last_Entity (Scope (Loop_Id)) = Loop_Id then
                   Set_Last_Entity (Scope (Loop_Id), Empty);
@@ -3523,22 +4469,22 @@ package body Exp_Ch5 is
       --       ...
       --    end loop
 
-      elsif Present (Isc)
-        and then Present (Condition_Actions (Isc))
-        and then Present (Condition (Isc))
+      elsif Present (Scheme)
+        and then Present (Condition_Actions (Scheme))
+        and then Present (Condition (Scheme))
       then
          declare
             ES : Node_Id;
 
          begin
             ES :=
-              Make_Exit_Statement (Sloc (Condition (Isc)),
+              Make_Exit_Statement (Sloc (Condition (Scheme)),
                 Condition =>
-                  Make_Op_Not (Sloc (Condition (Isc)),
-                    Right_Opnd => Condition (Isc)));
+                  Make_Op_Not (Sloc (Condition (Scheme)),
+                    Right_Opnd => Condition (Scheme)));
 
             Prepend (ES, Statements (N));
-            Insert_List_Before (ES, Condition_Actions (Isc));
+            Insert_List_Before (ES, Condition_Actions (Scheme));
 
             --  This is not an implicit loop, since it is generated in response
             --  to the loop statement being processed. If this is itself
@@ -3556,11 +4502,37 @@ package body Exp_Ch5 is
 
       --  Here to deal with iterator case
 
-      elsif Present (Isc)
-        and then Present (Iterator_Specification (Isc))
+      elsif Present (Scheme)
+        and then Present (Iterator_Specification (Scheme))
       then
          Expand_Iterator_Loop (N);
+
+         --  An iterator loop may generate renaming declarations for elements
+         --  that require debug information. This is the case in particular
+         --  with element iterators, where debug information must be generated
+         --  for the temporary that holds the element value. These temporaries
+         --  are created within a transient block whose local declarations are
+         --  transferred to the loop, which now has nontrivial local objects.
+
+         if Nkind (N) = N_Loop_Statement
+           and then Present (Identifier (N))
+         then
+            Qualify_Entity_Names (N);
+         end if;
       end if;
+
+      --  When the iteration scheme mentiones attribute 'Loop_Entry, the loop
+      --  is transformed into a conditional block where the original loop is
+      --  the sole statement. Inspect the statements of the nested loop for
+      --  controlled objects.
+
+      Stmt := N;
+
+      if Subject_To_Loop_Entry_Attributes (Stmt) then
+         Stmt := Find_Loop_In_Conditional_Block (Stmt);
+      end if;
+
+      Process_Statements_For_Controlled_Objects (Stmt);
    end Expand_N_Loop_Statement;
 
    ----------------------------
@@ -3578,7 +4550,7 @@ package body Exp_Ch5 is
       LPS     : constant Node_Id    := Loop_Parameter_Specification (Isc);
       Loop_Id : constant Entity_Id  := Defining_Identifier (LPS);
       Ltype   : constant Entity_Id  := Etype (Loop_Id);
-      Stat    : constant List_Id    := Static_Predicate (Ltype);
+      Stat    : constant List_Id    := Static_Discrete_Predicate (Ltype);
       Stmts   : constant List_Id    := Statements (N);
 
    begin
@@ -3614,11 +4586,14 @@ package body Exp_Ch5 is
       --        end loop;
       --     end;
 
+      --  with min-val replaced by max-val and Succ replaced by Pred if the
+      --  loop parameter specification carries a Reverse indicator.
+
       --  To make this a little clearer, let's take a specific example:
 
       --        type Int is range 1 .. 10;
-      --        subtype L is Int with
-      --          predicate => L in 3 | 10 | 5 .. 7;
+      --        subtype StaticP is Int with
+      --          predicate => StaticP in 3 | 10 | 5 .. 7;
       --          ...
       --        for L in StaticP loop
       --           Put_Line ("static:" & J'Img);
@@ -3661,7 +4636,7 @@ package body Exp_Ch5 is
 
             function Hi_Val (N : Node_Id) return Node_Id is
             begin
-               if Is_Static_Expression (N) then
+               if Is_OK_Static_Expression (N) then
                   return New_Copy (N);
                else
                   pragma Assert (Nkind (N) = N_Range);
@@ -3675,7 +4650,7 @@ package body Exp_Ch5 is
 
             function Lo_Val (N : Node_Id) return Node_Id is
             begin
-               if Is_Static_Expression (N) then
+               if Is_OK_Static_Expression (N) then
                   return New_Copy (N);
                else
                   pragma Assert (Nkind (N) = N_Range);
@@ -3693,41 +4668,102 @@ package body Exp_Ch5 is
             Set_Analyzed (Loop_Id, False);
             Set_Ekind    (Loop_Id, E_Variable);
 
+            --  In most loops the loop variable is assigned in various
+            --  alternatives in the body. However, in the rare case when
+            --  the range specifies a single element, the loop variable
+            --  may trigger a spurious warning that is could be constant.
+            --  This warning might as well be suppressed.
+
+            Set_Warnings_Off (Loop_Id);
+
             --  Loop to create branches of case statement
 
             Alts := New_List;
-            P := First (Stat);
-            while Present (P) loop
-               if No (Next (P)) then
-                  S := Make_Exit_Statement (Loc);
-               else
-                  S :=
-                    Make_Assignment_Statement (Loc,
-                      Name       => New_Occurrence_Of (Loop_Id, Loc),
-                      Expression => Lo_Val (Next (P)));
-                  Set_Suppress_Assignment_Checks (S);
-               end if;
 
-               Append_To (Alts,
-                 Make_Case_Statement_Alternative (Loc,
-                   Statements       => New_List (S),
-                   Discrete_Choices => New_List (Hi_Val (P))));
+            if Reverse_Present (LPS) then
 
-               Next (P);
-            end loop;
+               --  Initial value is largest value in predicate.
+
+               D :=
+                 Make_Object_Declaration (Loc,
+                   Defining_Identifier => Loop_Id,
+                   Object_Definition   => New_Occurrence_Of (Ltype, Loc),
+                   Expression          => Hi_Val (Last (Stat)));
+
+               P := Last (Stat);
+               while Present (P) loop
+                  if No (Prev (P)) then
+                     S := Make_Exit_Statement (Loc);
+                  else
+                     S :=
+                       Make_Assignment_Statement (Loc,
+                         Name       => New_Occurrence_Of (Loop_Id, Loc),
+                         Expression => Hi_Val (Prev (P)));
+                     Set_Suppress_Assignment_Checks (S);
+                  end if;
+
+                  Append_To (Alts,
+                    Make_Case_Statement_Alternative (Loc,
+                      Statements       => New_List (S),
+                      Discrete_Choices => New_List (Lo_Val (P))));
+
+                  Prev (P);
+               end loop;
+
+            else
+
+               --  Initial value is smallest value in predicate.
+
+               D :=
+                 Make_Object_Declaration (Loc,
+                   Defining_Identifier => Loop_Id,
+                   Object_Definition   => New_Occurrence_Of (Ltype, Loc),
+                   Expression          => Lo_Val (First (Stat)));
+
+               P := First (Stat);
+               while Present (P) loop
+                  if No (Next (P)) then
+                     S := Make_Exit_Statement (Loc);
+                  else
+                     S :=
+                       Make_Assignment_Statement (Loc,
+                         Name       => New_Occurrence_Of (Loop_Id, Loc),
+                         Expression => Lo_Val (Next (P)));
+                     Set_Suppress_Assignment_Checks (S);
+                  end if;
+
+                  Append_To (Alts,
+                    Make_Case_Statement_Alternative (Loc,
+                      Statements       => New_List (S),
+                      Discrete_Choices => New_List (Hi_Val (P))));
+
+                  Next (P);
+               end loop;
+            end if;
 
             --  Add others choice
 
-            S :=
-               Make_Assignment_Statement (Loc,
-                 Name       => New_Occurrence_Of (Loop_Id, Loc),
-                 Expression =>
-                   Make_Attribute_Reference (Loc,
-                     Prefix => New_Occurrence_Of (Ltype, Loc),
-                     Attribute_Name => Name_Succ,
-                     Expressions    => New_List (
-                       New_Occurrence_Of (Loop_Id, Loc))));
-            Set_Suppress_Assignment_Checks (S);
+            declare
+               Name_Next : Name_Id;
+
+            begin
+               if Reverse_Present (LPS) then
+                  Name_Next := Name_Pred;
+               else
+                  Name_Next := Name_Succ;
+               end if;
+
+               S :=
+                  Make_Assignment_Statement (Loc,
+                    Name       => New_Occurrence_Of (Loop_Id, Loc),
+                    Expression =>
+                      Make_Attribute_Reference (Loc,
+                        Prefix => New_Occurrence_Of (Ltype, Loc),
+                        Attribute_Name => Name_Next,
+                        Expressions    => New_List (
+                          New_Occurrence_Of (Loop_Id, Loc))));
+               Set_Suppress_Assignment_Checks (S);
+            end;
 
             Append_To (Alts,
               Make_Case_Statement_Alternative (Loc,
@@ -3744,11 +4780,6 @@ package body Exp_Ch5 is
 
             --  Rewrite the loop
 
-            D :=
-               Make_Object_Declaration (Loc,
-                 Defining_Identifier => Loop_Id,
-                 Object_Definition   => New_Occurrence_Of (Ltype, Loc),
-                 Expression          => Lo_Val (First (Stat)));
             Set_Suppress_Assignment_Checks (D);
 
             Rewrite (N,
@@ -3784,12 +4815,9 @@ package body Exp_Ch5 is
                                        and then not Comp_Asn
                                        and then not No_Ctrl_Actions (N)
                                        and then Tagged_Type_Expansion;
-      --  Tags are not saved and restored when VM_Target because VM tags are
-      --  represented implicitly in objects.
-
-      Next_Id : Entity_Id;
-      Prev_Id : Entity_Id;
-      Tag_Id  : Entity_Id;
+      Adj_Call : Node_Id;
+      Fin_Call : Node_Id;
+      Tag_Id   : Entity_Id;
 
    begin
       --  Finalize the target of the assignment when controlled
@@ -3811,7 +4839,7 @@ package body Exp_Ch5 is
       if not Ctrl_Act then
          null;
 
-      --  The left hand side is an uninitialized temporary object
+      --  The left-hand side is an uninitialized temporary object
 
       elsif Nkind (L) = N_Type_Conversion
         and then Is_Entity_Name (Expression (L))
@@ -3822,10 +4850,14 @@ package body Exp_Ch5 is
          null;
 
       else
-         Append_To (Res,
+         Fin_Call :=
            Make_Final_Call
              (Obj_Ref => Duplicate_Subexpr_No_Checks (L),
-              Typ     => Etype (L)));
+              Typ     => Etype (L));
+
+         if Present (Fin_Call) then
+            Append_To (Res, Fin_Call);
+         end if;
       end if;
 
       --  Save the Tag in a local variable Tag_Id
@@ -3836,59 +4868,17 @@ package body Exp_Ch5 is
          Append_To (Res,
            Make_Object_Declaration (Loc,
              Defining_Identifier => Tag_Id,
-             Object_Definition   => New_Reference_To (RTE (RE_Tag), Loc),
+             Object_Definition   => New_Occurrence_Of (RTE (RE_Tag), Loc),
              Expression          =>
                Make_Selected_Component (Loc,
                  Prefix        => Duplicate_Subexpr_No_Checks (L),
                  Selector_Name =>
-                   New_Reference_To (First_Tag_Component (T), Loc))));
+                   New_Occurrence_Of (First_Tag_Component (T), Loc))));
 
       --  Otherwise Tag_Id is not used
 
       else
          Tag_Id := Empty;
-      end if;
-
-      --  Save the Prev and Next fields on .NET/JVM. This is not needed on non
-      --  VM targets since the fields are not part of the object.
-
-      if VM_Target /= No_VM
-        and then Is_Controlled (T)
-      then
-         Prev_Id := Make_Temporary (Loc, 'P');
-         Next_Id := Make_Temporary (Loc, 'N');
-
-         --  Generate:
-         --    Pnn : Root_Controlled_Ptr := Root_Controlled (L).Prev;
-
-         Append_To (Res,
-           Make_Object_Declaration (Loc,
-             Defining_Identifier => Prev_Id,
-             Object_Definition   =>
-               New_Reference_To (RTE (RE_Root_Controlled_Ptr), Loc),
-             Expression          =>
-               Make_Selected_Component (Loc,
-                 Prefix        =>
-                   Unchecked_Convert_To
-                     (RTE (RE_Root_Controlled), New_Copy_Tree (L)),
-                 Selector_Name =>
-                   Make_Identifier (Loc, Name_Prev))));
-
-         --  Generate:
-         --    Nnn : Root_Controlled_Ptr := Root_Controlled (L).Next;
-
-         Append_To (Res,
-           Make_Object_Declaration (Loc,
-             Defining_Identifier => Next_Id,
-             Object_Definition   =>
-               New_Reference_To (RTE (RE_Root_Controlled_Ptr), Loc),
-             Expression          =>
-               Make_Selected_Component (Loc,
-                 Prefix        =>
-                   Unchecked_Convert_To
-                     (RTE (RE_Root_Controlled), New_Copy_Tree (L)),
-                 Selector_Name =>
-                   Make_Identifier (Loc, Name_Next))));
       end if;
 
       --  If the tagged type has a full rep clause, expand the assignment into
@@ -3912,51 +4902,22 @@ package body Exp_Ch5 is
                Make_Selected_Component (Loc,
                  Prefix        => Duplicate_Subexpr_No_Checks (L),
                  Selector_Name =>
-                   New_Reference_To (First_Tag_Component (T), Loc)),
-             Expression => New_Reference_To (Tag_Id, Loc)));
-      end if;
-
-      --  Restore the Prev and Next fields on .NET/JVM
-
-      if VM_Target /= No_VM
-        and then Is_Controlled (T)
-      then
-         --  Generate:
-         --    Root_Controlled (L).Prev := Prev_Id;
-
-         Append_To (Res,
-           Make_Assignment_Statement (Loc,
-             Name       =>
-               Make_Selected_Component (Loc,
-                 Prefix        =>
-                   Unchecked_Convert_To
-                     (RTE (RE_Root_Controlled), New_Copy_Tree (L)),
-                 Selector_Name =>
-                   Make_Identifier (Loc, Name_Prev)),
-             Expression => New_Reference_To (Prev_Id, Loc)));
-
-         --  Generate:
-         --    Root_Controlled (L).Next := Next_Id;
-
-         Append_To (Res,
-           Make_Assignment_Statement (Loc,
-             Name       =>
-               Make_Selected_Component (Loc,
-                 Prefix        =>
-                   Unchecked_Convert_To
-                     (RTE (RE_Root_Controlled), New_Copy_Tree (L)),
-                 Selector_Name => Make_Identifier (Loc, Name_Next)),
-             Expression => New_Reference_To (Next_Id, Loc)));
+                   New_Occurrence_Of (First_Tag_Component (T), Loc)),
+             Expression => New_Occurrence_Of (Tag_Id, Loc)));
       end if;
 
       --  Adjust the target after the assignment when controlled (not in the
       --  init proc since it is an initialization more than an assignment).
 
       if Ctrl_Act then
-         Append_To (Res,
+         Adj_Call :=
            Make_Adjust_Call
              (Obj_Ref => Duplicate_Subexpr_Move_Checks (L),
-              Typ     => Etype (L)));
+              Typ     => Etype (L));
+
+         if Present (Adj_Call) then
+            Append_To (Res, Adj_Call);
+         end if;
       end if;
 
       return Res;

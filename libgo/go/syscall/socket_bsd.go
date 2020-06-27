@@ -4,6 +4,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+// +build darwin dragonfly freebsd openbsd netbsd
+
 package syscall
 
 const SizeofSockaddrInet4 = 16
@@ -11,11 +13,11 @@ const SizeofSockaddrInet6 = 28
 const SizeofSockaddrUnix = 110
 
 type RawSockaddrInet4 struct {
-	Len uint8;
-	Family uint8;
-	Port uint16;
-	Addr [4]byte /* in_addr */;
-	Zero [8]uint8;
+	Len    uint8
+	Family uint8
+	Port   uint16
+	Addr   [4]byte /* in_addr */
+	Zero   [8]uint8
 }
 
 func (sa *RawSockaddrInet4) setLen() Socklen_t {
@@ -24,12 +26,12 @@ func (sa *RawSockaddrInet4) setLen() Socklen_t {
 }
 
 type RawSockaddrInet6 struct {
-	Len uint8;
-	Family uint8;
-	Port uint16;
-	Flowinfo uint32;
-	Addr [16]byte /* in6_addr */;
-	Scope_id uint32;
+	Len      uint8
+	Family   uint8
+	Port     uint16
+	Flowinfo uint32
+	Addr     [16]byte /* in6_addr */
+	Scope_id uint32
 }
 
 func (sa *RawSockaddrInet6) setLen() Socklen_t {
@@ -38,9 +40,9 @@ func (sa *RawSockaddrInet6) setLen() Socklen_t {
 }
 
 type RawSockaddrUnix struct {
-	Len uint8;
-	Family uint8;
-	Path [108]int8;
+	Len    uint8
+	Family uint8
+	Path   [108]int8
 }
 
 func (sa *RawSockaddrUnix) setLen(n int) {
@@ -62,10 +64,14 @@ func (sa *RawSockaddrUnix) getLen() (int, error) {
 	return n, nil
 }
 
+func (sa *RawSockaddrUnix) adjustAbstract(sl Socklen_t) Socklen_t {
+	return sl
+}
+
 type RawSockaddr struct {
-	Len uint8;
-	Family uint8;
-	Data [14]int8;
+	Len    uint8
+	Family uint8
+	Data   [14]int8
 }
 
 // BindToDevice binds the socket associated with fd to device.
@@ -75,4 +81,11 @@ func BindToDevice(fd int, device string) (err error) {
 
 func anyToSockaddrOS(rsa *RawSockaddrAny) (Sockaddr, error) {
 	return nil, EAFNOSUPPORT
+}
+
+func GetsockoptIPv6MTUInfo(fd, level, opt int) (*IPv6MTUInfo, error) {
+	var value IPv6MTUInfo
+	vallen := Socklen_t(SizeofIPv6MTUInfo)
+	err := getsockopt(fd, level, opt, unsafe.Pointer(&value), &vallen)
+	return &value, err
 }

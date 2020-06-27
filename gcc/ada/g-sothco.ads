@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---                     Copyright (C) 2008-2010, AdaCore                     --
+--                     Copyright (C) 2008-2016, AdaCore                     --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -40,9 +40,6 @@ with Interfaces.C.Pointers;
 package GNAT.Sockets.Thin_Common is
 
    package C renames Interfaces.C;
-
-   use type C.int;
-   --  This is so we can declare the Failure constant below
 
    Success : constant C.int :=  0;
    Failure : constant C.int := -1;
@@ -212,11 +209,6 @@ package GNAT.Sockets.Thin_Common is
    pragma Convention (C, Hostent_Access);
    --  Access to host entry
 
-   --  Note: the hostent and servent accessors that return char*
-   --  values are compiled with GCC, and on VMS they always return
-   --  64-bit pointers, so we can't use C.Strings.chars_ptr, which
-   --  on VMS is 32 bits.
-
    function Hostent_H_Name
      (E : Hostent_Access) return System.Address;
 
@@ -385,7 +377,7 @@ package GNAT.Sockets.Thin_Common is
 
    function C_Ioctl
      (Fd  : C.int;
-      Req : C.int;
+      Req : SOSC.IOCTL_Req_T;
       Arg : access C.int) return C.int;
 
 private

@@ -1,4 +1,4 @@
-@c Copyright (c) 2006, 2007, 2008 Free Software Foundation, Inc.
+@c Copyright (C) 2006-2017 Free Software Foundation, Inc.
 @c Free Software Foundation, Inc.
 @c This is part of the GCC manual.
 @c For copying conditions, see the file gcc.texi.
@@ -25,8 +25,6 @@ variable analysis and number of iterations analysis).
 * loop-iv::                     Induction variables on RTL.
 * Number of iterations::        Number of iterations analysis.
 * Dependency analysis::         Data dependency analysis.
-* Lambda::                      Linear loop transformations framework.
-* Omega::                       A solver for linear programming problems.
 @end menu
 
 @node Loop representation
@@ -37,10 +35,13 @@ variable analysis and number of iterations analysis).
 This chapter describes the representation of loops in GCC, and functions
 that can be used to build, modify and analyze this representation.  Most
 of the interfaces and data structures are declared in @file{cfgloop.h}.
-At the moment, loop structures are analyzed and this information is
-updated only by the optimization passes that deal with loops, but some
-efforts are being made to make it available throughout most of the
-optimization passes.
+Loop structures are analyzed and this information disposed or updated
+at the discretion of individual passes.  Still most of the generic
+CFG manipulation routines are aware of loop structures and try to
+keep them up-to-date.  By this means an increasing part of the
+compilation pipeline is setup to maintain loop structure across
+passes to allow attaching meta information to individual loops
+for consumption by later passes.
 
 In general, a natural loop has one entry block (header) and possibly
 several back edges (latches) leading to the header from the inside of
@@ -139,15 +140,23 @@ recorded.
 These properties may also be computed/enforced later, using functions
 @code{create_preheaders}, @code{force_single_succ_latches},
 @code{mark_irreducible_loops} and @code{record_loop_exits}.
+The properties can be queried using @code{loops_state_satisfies_p}.
 
 The memory occupied by the loops structures should be freed with
-@code{loop_optimizer_finalize} function.
+@code{loop_optimizer_finalize} function.  When loop structures are
+setup to be preserved across passes this function reduces the
+information to be kept up-to-date to a minimum (only
+@code{LOOPS_MAY_HAVE_MULTIPLE_LATCHES} set).
 
 The CFG manipulation functions in general do not update loop structures.
 Specialized versions that additionally do so are provided for the most
 common tasks.  On GIMPLE, @code{cleanup_tree_cfg_loop} function can be
 used to cleanup CFG while updating the loops structures if
 @code{current_loops} is set.
+
+At the moment loop structure is preserved from the start of GIMPLE
+loop optimizations until the end of RTL loop optimizations.  During
+this time a loop can be tracked by its @code{struct loop} and number.
 
 @node Loop querying
 @section Loop querying
@@ -164,8 +173,6 @@ loop structure (that are kept up-to-date at all times) are:
 loop.
 @item @code{num_nodes}: Number of basic blocks in the loop (including
 the basic blocks of the sub-loops).
-@item @code{depth}: The depth of the loop in the loops tree, i.e., the
-number of super-loops of the loop.
 @item @code{outer}, @code{inner}, @code{next}: The super-loop, the first
 sub-loop, and the sibling of the loop in the loops tree.
 @end itemize
@@ -177,6 +184,8 @@ should not be accessed directly.
 The most important functions to query loop structures are:
 
 @itemize
+@item @code{loop_depth}: The depth of the loop in the loops tree, i.e., the
+number of super-loops of the loop.
 @item @code{flow_loops_dump}: Dumps the information about loops to a
 file.
 @item @code{verify_loop_structure}: Checks consistency of the loop
@@ -249,12 +258,11 @@ one of the edges entering loop header, thus performing either loop
 unrolling or loop peeling.  @code{can_duplicate_loop_p}
 (@code{can_unroll_loop_p} on GIMPLE) must be true for the duplicated
 loop.
-@item @code{loop_version}, @code{tree_ssa_loop_version}: These function
-create a copy of a loop, and a branch before them that selects one of
-them depending on the prescribed condition.  This is useful for
-optimizations that need to verify some assumptions in runtime (one of
-the copies of the loop is usually left unchanged, while the other one is
-transformed in some way).
+@item @code{loop_version}: This function creates a copy of a loop, and
+a branch before them that selects one of them depending on the
+prescribed condition.  This is useful for optimizations that need to
+verify some assumptions in runtime (one of the copies of the loop is
+usually left unchanged, while the other one is transformed in some way).
 @item @code{tree_unroll_loop}: Unrolls the loop, including peeling the
 extra iterations to make the number of iterations divisible by unroll
 factor, updating the exit condition, and removing the exits that now
@@ -467,6 +475,32 @@ The function @code{number_of_cond_exit_executions} can be used to
 determine number of executions of the exit condition of a single-exit
 loop (i.e., the @code{number_of_latch_executions} increased by one).
 
+On GIMPLE, below constraint flags affect semantics of some APIs of number
+of iterations analyzer:
+
+@itemize
+@item @code{LOOP_C_INFINITE}: If this constraint flag is set, the loop
+is known to be infinite.  APIs like @code{number_of_iterations_exit} can
+return false directly without doing any analysis.
+@item @code{LOOP_C_FINITE}: If this constraint flag is set, the loop is
+known to be finite, in other words, loop's number of iterations can be
+computed with @code{assumptions} be true.
+@end itemize
+
+Generally, the constraint flags are set/cleared by consumers which are
+loop optimizers.  It's also the consumers' responsibility to set/clear
+constraints correctly.  Failing to do that might result in hard to track
+down bugs in scev/niter consumers.  One typical use case is vectorizer:
+it drives number of iterations analyzer by setting @code{LOOP_C_FINITE}
+and vectorizes possibly infinite loop by versioning loop with analysis
+result.  In return, constraints set by consumers can also help number of
+iterations analyzer in following optimizers.  For example, @code{niter}
+of a loop versioned under @code{assumptions} is valid unconditionally.
+
+Other constraints may be added in the future, for example, a constraint
+indicating that loops' latch must roll thus @code{may_be_zero} would be
+false unconditionally.
+
 @node Dependency analysis
 @section Data Dependency Analysis
 @cindex Data Dependency Analysis
@@ -533,7 +567,7 @@ relative to @code{p + i}. The access functions of the array are
 @code{@{i_init, + i_step@}_for1} and @code{@{j_init, +, j_step@}_for2}
 relative to @code{a}.
 
-Usually, the object the pointer refers to is either unknown, or we can't
+Usually, the object the pointer refers to is either unknown, or we cannot
 prove that the access is confined to the boundaries of a certain object.
 
 Two data references can be compared only if at least one of these two
@@ -592,64 +626,3 @@ maximum verbosity the details of a data dependence relations array,
 direction vectors for a data dependence relations array, and
 @code{dump_data_references} prints the details of the data references
 contained in a data reference array.
-
-@node Lambda
-@section Linear loop transformations framework
-@cindex Linear loop transformations framework
-
-Lambda is a framework that allows transformations of loops using
-non-singular matrix based transformations of the iteration space and
-loop bounds. This allows compositions of skewing, scaling, interchange,
-and reversal transformations.  These transformations are often used to
-improve cache behavior or remove inner loop dependencies to allow
-parallelization and vectorization to take place.
-
-To perform these transformations, Lambda requires that the loopnest be
-converted into an internal form that can be matrix transformed easily.
-To do this conversion, the function
-@code{gcc_loopnest_to_lambda_loopnest} is provided.  If the loop cannot
-be transformed using lambda, this function will return NULL.
-
-Once a @code{lambda_loopnest} is obtained from the conversion function,
-it can be transformed by using @code{lambda_loopnest_transform}, which
-takes a transformation matrix to apply.  Note that it is up to the
-caller to verify that the transformation matrix is legal to apply to the
-loop (dependence respecting, etc).  Lambda simply applies whatever
-matrix it is told to provide.  It can be extended to make legal matrices
-out of any non-singular matrix, but this is not currently implemented.
-Legality of a matrix for a given loopnest can be verified using
-@code{lambda_transform_legal_p}.
-
-Given a transformed loopnest, conversion back into gcc IR is done by
-@code{lambda_loopnest_to_gcc_loopnest}.  This function will modify the
-loops so that they match the transformed loopnest.
-
-
-@node Omega
-@section Omega a solver for linear programming problems
-@cindex Omega a solver for linear programming problems
-
-The data dependence analysis contains several solvers triggered
-sequentially from the less complex ones to the more sophisticated.
-For ensuring the consistency of the results of these solvers, a data
-dependence check pass has been implemented based on two different
-solvers.  The second method that has been integrated to GCC is based
-on the Omega dependence solver, written in the 1990's by William Pugh
-and David Wonnacott.  Data dependence tests can be formulated using a
-subset of the Presburger arithmetics that can be translated to linear
-constraint systems.  These linear constraint systems can then be
-solved using the Omega solver.
-
-The Omega solver is using Fourier-Motzkin's algorithm for variable
-elimination: a linear constraint system containing @code{n} variables
-is reduced to a linear constraint system with @code{n-1} variables.
-The Omega solver can also be used for solving other problems that can
-be expressed under the form of a system of linear equalities and
-inequalities.  The Omega solver is known to have an exponential worst
-case, also known under the name of ``omega nightmare'' in the
-literature, but in practice, the omega test is known to be efficient
-for the common data dependence tests.
-
-The interface used by the Omega solver for describing the linear
-programming problems is described in @file{omega.h}, and the solver is
-@code{omega_solve_problem}.

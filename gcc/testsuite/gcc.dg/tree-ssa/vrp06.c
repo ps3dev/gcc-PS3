@@ -1,6 +1,9 @@
 /* { dg-do compile } */
-/* { dg-options "-O2 -fdump-tree-vrp1" } */
+/* { dg-options "-O2 -fdisable-tree-evrp -fdump-tree-vrp1" } */
 
+int baz (void);
+
+int
 foo (int i, int j, int a)
 {
   if (i >= 10)
@@ -25,7 +28,6 @@ foo (int i, int j, int a)
   return i + a + j;
 }
 
-/* { dg-final { scan-tree-dump-times "Folding predicate i_.*to 0" 1 "vrp1" } } */
-/* { dg-final { scan-tree-dump-times "Folding predicate j_.*to 1" 1 "vrp1" } } */
-/* { dg-final { scan-tree-dump-times "Folding predicate i_.*to 0" 1 "vrp1" } } */
-/* { dg-final { cleanup-tree-dump "vrp1" } } */
+/* { dg-final { scan-tree-dump-times "Folding predicate \[i|j\]_\[0-9\]+.*0 to 0" 1 "vrp1" } } */
+/* { dg-final { scan-tree-dump-times "Folding predicate \[i|j\]_\[0-9\]+.*0 to 1" 1 "vrp1" } } */
+/* { dg-final { scan-tree-dump-times "Folding predicate i_\[0-9]+.*j_\[0-9\]+.* to 0" 1 "vrp1" } } */

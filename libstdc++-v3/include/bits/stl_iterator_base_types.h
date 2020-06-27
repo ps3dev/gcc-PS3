@@ -1,7 +1,6 @@
 // Types used in iterator implementation -*- C++ -*-
 
-// Copyright (C) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010
-// Free Software Foundation, Inc.
+// Copyright (C) 2001-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -64,8 +63,8 @@
 
 #include <bits/c++config.h>
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
-# include <type_traits>  // For _GLIBCXX_HAS_NESTED_TYPE
+#if __cplusplus >= 201103L
+# include <type_traits>  // For __void_t, is_convertible
 #endif
 
 namespace std _GLIBCXX_VISIBILITY(default)
@@ -138,16 +137,19 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  argument.  Specialized versions for pointers and pointers-to-const
    *  provide tighter, more correct semantics.
   */
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
-
-_GLIBCXX_HAS_NESTED_TYPE(iterator_category)
-
-  template<typename _Iterator,
-	   bool = __has_iterator_category<_Iterator>::value>
+#if __cplusplus >= 201103L
+  // _GLIBCXX_RESOLVE_LIB_DEFECTS
+  // 2408. SFINAE-friendly common_type/iterator_traits is missing in C++14
+  template<typename _Iterator, typename = __void_t<>>
     struct __iterator_traits { };
 
   template<typename _Iterator>
-    struct __iterator_traits<_Iterator, true>
+    struct __iterator_traits<_Iterator,
+			     __void_t<typename _Iterator::iterator_category,
+				      typename _Iterator::value_type,
+				      typename _Iterator::difference_type,
+				      typename _Iterator::pointer,
+				      typename _Iterator::reference>>
     {
       typedef typename _Iterator::iterator_category iterator_category;
       typedef typename _Iterator::value_type        value_type;
@@ -204,6 +206,7 @@ _GLIBCXX_HAS_NESTED_TYPE(iterator_category)
 
   //@}
 
+#if __cplusplus < 201103L
   // If _Iterator has a base returns it otherwise _Iterator is returned
   // untouched
   template<typename _Iterator, bool _HasBase>
@@ -221,6 +224,15 @@ _GLIBCXX_HAS_NESTED_TYPE(iterator_category)
       static iterator_type _S_base(_Iterator __it)
       { return __it.base(); }
     };
+#endif
+
+#if __cplusplus >= 201103L
+  template<typename _InIter>
+    using _RequireInputIter = typename
+      enable_if<is_convertible<typename
+		iterator_traits<_InIter>::iterator_category,
+			       input_iterator_tag>::value>::type;
+#endif
 
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace

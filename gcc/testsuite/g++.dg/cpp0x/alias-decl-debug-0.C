@@ -1,6 +1,6 @@
 // Origin: PR c++/51032
-// { dg-skip-if "No stabs" { mmix-*-* *-*-aix* alpha*-*-* hppa*64*-*-* ia64-*-* *-*-vxworks* } { "*" } { "" } }
-// { dg-options "-std=c++0x -gstabs+" }
+// { dg-do compile { target { c++11 && stabs } } }
+// { dg-options "-gstabs+" }
 
 template <class C>
 struct A {

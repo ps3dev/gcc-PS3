@@ -5,8 +5,7 @@
    non-overloadable operators (like the `?:' ternary operator).
    Written by Mark Mitchell <mark@codesourcery.com>
 
-   Copyright (C) 2000, 2001, 2002, 2003, 2005, 2007, 2008, 2009
-   Free Software Foundation, Inc.
+   Copyright (C) 2000-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -156,3 +155,7 @@ DEF_SIMPLE_OPERATOR ("()", CALL_EXPR, "cl", -1)
 
 /* Variadic templates extension. */
 DEF_SIMPLE_OPERATOR ("...", EXPR_PACK_EXPANSION, "sp", 1)
+DEF_SIMPLE_OPERATOR ("... +", UNARY_LEFT_FOLD_EXPR, "fl", 2)
+DEF_SIMPLE_OPERATOR ("+ ...", UNARY_RIGHT_FOLD_EXPR, "fr", 2)
+DEF_SIMPLE_OPERATOR ("+ ... +", BINARY_LEFT_FOLD_EXPR, "fL", 3)
+DEF_SIMPLE_OPERATOR ("+ ... +", BINARY_RIGHT_FOLD_EXPR, "fR", 3)

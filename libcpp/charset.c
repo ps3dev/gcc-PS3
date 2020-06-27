@@ -1,6 +1,5 @@
 /* CPP Library - charsets
-   Copyright (C) 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2006, 2008, 2009,
-   2010 Free Software Foundation, Inc.
+   Copyright (C) 1998-2017 Free Software Foundation, Inc.
 
    Broken out of c-lex.c Apr 2003, adding valid C99 UCN ranges.
 
@@ -354,7 +353,7 @@ one_utf8_to_utf16 (iconv_t bigend, const uchar **inbufp, size_t *inbytesleftp,
       return EILSEQ;
     }
 
-  if (s < 0xFFFF)
+  if (s <= 0xFFFF)
     {
       if (*outbytesleftp < 2)
 	{
@@ -538,6 +537,7 @@ convert_no_conversion (iconv_t cd ATTRIBUTE_UNUSED,
   if (to->len + flen > to->asize)
     {
       to->asize = to->len + flen;
+      to->asize += to->asize / 4;
       to->text = XRESIZEVEC (uchar, to->text, to->asize);
     }
   memcpy (to->text + to->len, from, flen);
@@ -609,13 +609,13 @@ convert_using_iconv (iconv_t cd, const uchar *from, size_t flen,
 #define APPLY_CONVERSION(CONVERTER, FROM, FLEN, TO) \
    CONVERTER.func (CONVERTER.cd, FROM, FLEN, TO)
 
-struct conversion
+struct cpp_conversion
 {
   const char *pair;
   convert_f func;
   iconv_t fake_cd;
 };
-static const struct conversion conversion_tab[] = {
+static const struct cpp_conversion conversion_tab[] = {
   { "UTF-8/UTF-32LE", convert_utf8_utf32, (iconv_t)0 },
   { "UTF-8/UTF-32BE", convert_utf8_utf32, (iconv_t)1 },
   { "UTF-8/UTF-16LE", convert_utf8_utf16, (iconv_t)0 },
@@ -812,6 +812,51 @@ cpp_host_to_exec_charset (cpp_reader *pfile, cppchar_t c)
 
 
 
+/* cpp_substring_ranges's constructor. */
+
+cpp_substring_ranges::cpp_substring_ranges () :
+  m_ranges (NULL),
+  m_num_ranges (0),
+  m_alloc_ranges (8)
+{
+  m_ranges = XNEWVEC (source_range, m_alloc_ranges);
+}
+
+/* cpp_substring_ranges's destructor. */
+
+cpp_substring_ranges::~cpp_substring_ranges ()
+{
+  free (m_ranges);
+}
+
+/* Add RANGE to the vector of source_range information.  */
+
+void
+cpp_substring_ranges::add_range (source_range range)
+{
+  if (m_num_ranges >= m_alloc_ranges)
+    {
+      m_alloc_ranges *= 2;
+      m_ranges
+	= (source_range *)xrealloc (m_ranges,
+				    sizeof (source_range) * m_alloc_ranges);
+    }
+  m_ranges[m_num_ranges++] = range;
+}
+
+/* Read NUM ranges from LOC_READER, adding them to the vector of source_range
+   information.  */
+
+void
+cpp_substring_ranges::add_n_ranges (int num,
+				    cpp_string_location_reader &loc_reader)
+{
+  for (int i = 0; i < num; i++)
+    add_range (loc_reader.get_next ());
+}
+
+
+
 /* Utility routine that computes a mask of the form 0000...111... with
    WIDTH 1-bits.  */
 static inline size_t
@@ -829,29 +874,32 @@ enum {
   /* Valid in a C99 identifier?  */
   C99 = 1,
   /* Valid in a C99 identifier, but not as the first character?  */
-  DIG = 2,
+  N99 = 2,
   /* Valid in a C++ identifier?  */
   CXX = 4,
+  /* Valid in a C11/C++11 identifier?  */
+  C11 = 8,
+  /* Valid in a C11/C++11 identifier, but not as the first character?  */
+  N11 = 16,
   /* NFC representation is not valid in an identifier?  */
-  CID = 8,
+  CID = 32,
   /* Might be valid NFC form?  */
-  NFC = 16,
+  NFC = 64,
   /* Might be valid NFKC form?  */
-  NKC = 32,
+  NKC = 128,
   /* Certain preceding characters might make it not valid NFC/NKFC form?  */
-  CTX = 64
+  CTX = 256
 };
 
-static const struct {
+struct ucnrange {
   /* Bitmap of flags above.  */
-  unsigned char flags;
+  unsigned short flags;
   /* Combining class of the character.  */
   unsigned char combine;
   /* Last character in the range described by this entry.  */
-  unsigned short end;
-} ucnranges[] = {
-#include "ucnid.h"
+  unsigned int end;
 };
+#include "ucnid.h"
 
 /* Returns 1 if C is valid in an identifier, 2 if C is valid except at
    the start of an identifier, and 0 if C is not valid in an
@@ -865,8 +913,9 @@ ucn_valid_in_identifier (cpp_reader *pfile, cppchar_t c,
 			 struct normalize_state *nst)
 {
   int mn, mx, md;
+  unsigned short valid_flags, invalid_start_flags;
 
-  if (c > 0xFFFF)
+  if (c > 0x10FFFF)
     return 0;
 
   mn = 0;
@@ -882,15 +931,25 @@ ucn_valid_in_identifier (cpp_reader *pfile, cppchar_t c,
 
   /* When -pedantic, we require the character to have been listed by
      the standard for the current language.  Otherwise, we accept the
-     union of the acceptable sets for C++98 and C99.  */
-  if (! (ucnranges[mn].flags & (C99 | CXX)))
+     union of the acceptable sets for all supported language versions.  */
+  valid_flags = C99 | CXX | C11;
+  if (CPP_PEDANTIC (pfile))
+    {
+      if (CPP_OPTION (pfile, c11_identifiers))
+	valid_flags = C11;
+      else if (CPP_OPTION (pfile, c99))
+	valid_flags = C99;
+      else if (CPP_OPTION (pfile, cplusplus))
+	valid_flags = CXX;
+    }
+  if (! (ucnranges[mn].flags & valid_flags))
       return 0;
-
-  if (CPP_PEDANTIC (pfile)
-      && ((CPP_OPTION (pfile, c99) && !(ucnranges[mn].flags & C99))
-	  || (CPP_OPTION (pfile, cplusplus)
-	      && !(ucnranges[mn].flags & CXX))))
-    return 0;
+  if (CPP_OPTION (pfile, c11_identifiers))
+    invalid_start_flags = N11;
+  else if (CPP_OPTION (pfile, c99))
+    invalid_start_flags = N99;
+  else
+    invalid_start_flags = 0;
 
   /* Update NST.  */
   if (ucnranges[mn].combine != 0 && ucnranges[mn].combine < nst->prev_class)
@@ -900,17 +959,6 @@ ucn_valid_in_identifier (cpp_reader *pfile, cppchar_t c,
       bool safe;
       cppchar_t p = nst->previous;
 
-      /* Easy cases from Bengali, Oriya, Tamil, Jannada, and Malayalam.  */
-      if (c == 0x09BE)
-	safe = p != 0x09C7;  /* Use 09CB instead of 09C7 09BE.  */
-      else if (c == 0x0B3E)
-	safe = p != 0x0B47;  /* Use 0B4B instead of 0B47 0B3E.  */
-      else if (c == 0x0BBE)
-	safe = p != 0x0BC6 && p != 0x0BC7;  /* Use 0BCA/0BCB instead.  */
-      else if (c == 0x0CC2)
-	safe = p != 0x0CC6;  /* Use 0CCA instead of 0CC6 0CC2.  */
-      else if (c == 0x0D3E)
-	safe = p != 0x0D46 && p != 0x0D47;  /* Use 0D4A/0D4B instead.  */
       /* For Hangul, characters in the range AC00-D7A3 are NFC/NFKC,
 	 and are combined algorithmically from a sequence of the form
 	 1100-1112 1161-1175 11A8-11C2
@@ -918,20 +966,19 @@ ucn_valid_in_identifier (cpp_reader *pfile, cppchar_t c,
 	 really a valid character).
 	 Unfortunately, C99 allows (only) the NFC form, but C++ allows
 	 only the combining characters.  */
-      else if (c >= 0x1161 && c <= 0x1175)
+      if (c >= 0x1161 && c <= 0x1175)
 	safe = p < 0x1100 || p > 0x1112;
       else if (c >= 0x11A8 && c <= 0x11C2)
 	safe = (p < 0xAC00 || p > 0xD7A3 || (p - 0xAC00) % 28 != 0);
       else
+	safe = check_nfc (pfile, c, p);
+      if (!safe)
 	{
-	  /* Uh-oh, someone updated ucnid.h without updating this code.  */
-	  cpp_error (pfile, CPP_DL_ICE, "Character %x might not be NFKC", c);
-	  safe = true;
+	  if ((c >= 0x1161 && c <= 0x1175) || (c >= 0x11A8 && c <= 0x11C2))
+	    nst->level = MAX (nst->level, normalized_identifier_C);
+	  else
+	    nst->level = normalized_none;
 	}
-      if (!safe && c < 0x1161)
-	nst->level = normalized_none;
-      else if (!safe)
-	nst->level = MAX (nst->level, normalized_identifier_C);
     }
   else if (ucnranges[mn].flags & NKC)
     ;
@@ -941,11 +988,13 @@ ucn_valid_in_identifier (cpp_reader *pfile, cppchar_t c,
     nst->level = MAX (nst->level, normalized_identifier_C);
   else
     nst->level = normalized_none;
-  nst->previous = c;
+  if (ucnranges[mn].combine == 0)
+    nst->previous = c;
   nst->prev_class = ucnranges[mn].combine;
 
-  /* In C99, UCN digits may not begin identifiers.  */
-  if (CPP_OPTION (pfile, c99) && (ucnranges[mn].flags & DIG))
+  /* In C99, UCN digits may not begin identifiers.  In C11 and C++11,
+     UCN combining characters may not begin identifiers.  */
+  if (ucnranges[mn].flags & invalid_start_flags)
     return 2;
 
   return 1;
@@ -968,21 +1017,25 @@ ucn_valid_in_identifier (cpp_reader *pfile, cppchar_t c,
    or 0060 (`), nor one in the range D800 through DFFF inclusive.
 
    *PSTR must be preceded by "\u" or "\U"; it is assumed that the
-   buffer end is delimited by a non-hex digit.  Returns zero if the
-   UCN has not been consumed.
+   buffer end is delimited by a non-hex digit.  Returns false if the
+   UCN has not been consumed, true otherwise.
 
-   Otherwise the nonzero value of the UCN, whether valid or invalid,
-   is returned.  Diagnostics are emitted for invalid values.  PSTR
-   is updated to point one beyond the UCN, or to the syntactically
-   invalid character.
+   The value of the UCN, whether valid or invalid, is returned in *CP.
+   Diagnostics are emitted for invalid values.  PSTR is updated to point
+   one beyond the UCN, or to the syntactically invalid character.
 
    IDENTIFIER_POS is 0 when not in an identifier, 1 for the start of
-   an identifier, or 2 otherwise.  */
+   an identifier, or 2 otherwise.
 
-cppchar_t
+   If LOC_READER is non-NULL, then position information is
+   read from *LOC_READER and CHAR_RANGE->m_finish is updated accordingly.  */
+
+bool
 _cpp_valid_ucn (cpp_reader *pfile, const uchar **pstr,
 		const uchar *limit, int identifier_pos,
-		struct normalize_state *nst)
+		struct normalize_state *nst, cppchar_t *cp,
+		source_range *char_range,
+		cpp_string_location_reader *loc_reader)
 {
   cppchar_t result, c;
   unsigned int length;
@@ -992,6 +1045,10 @@ _cpp_valid_ucn (cpp_reader *pfile, const uchar **pstr,
   if (!CPP_OPTION (pfile, cplusplus) && !CPP_OPTION (pfile, c99))
     cpp_error (pfile, CPP_DL_WARNING,
 	       "universal character names are only valid in C++ and C99");
+  else if (CPP_OPTION (pfile, cpp_warn_c90_c99_compat) > 0
+	   && !CPP_OPTION (pfile, cplusplus))
+    cpp_error (pfile, CPP_DL_WARNING,
+	       "C99's universal character names are incompatible with C90");
   else if (CPP_WTRADITIONAL (pfile) && identifier_pos == 0)
     cpp_warning (pfile, CPP_W_TRADITIONAL,
 	         "the meaning of '\\%c' is different in traditional C",
@@ -1014,6 +1071,11 @@ _cpp_valid_ucn (cpp_reader *pfile, const uchar **pstr,
       if (!ISXDIGIT (c))
 	break;
       str++;
+      if (loc_reader)
+	{
+	  gcc_assert (char_range);
+	  char_range->m_finish = loc_reader->get_next ().m_finish;
+	}
       result = (result << 4) + hex_value (c);
     }
   while (--length && str < limit);
@@ -1022,8 +1084,11 @@ _cpp_valid_ucn (cpp_reader *pfile, const uchar **pstr,
      multiple tokens in identifiers, so we can't give a helpful
      error message in that case.  */
   if (length && identifier_pos)
-    return 0;
-  
+    {
+      *cp = 0;
+      return false;
+    }
+
   *pstr = str;
   if (length)
     {
@@ -1055,7 +1120,7 @@ _cpp_valid_ucn (cpp_reader *pfile, const uchar **pstr,
 	  CPP_OPTION (pfile, warn_dollars) = 0;
 	  cpp_error (pfile, CPP_DL_PEDWARN, "'$' in identifier or number");
 	}
-      NORMALIZE_STATE_UPDATE_IDNUM (nst);
+      NORMALIZE_STATE_UPDATE_IDNUM (nst, result);
     }
   else if (identifier_pos)
     {
@@ -1071,18 +1136,23 @@ _cpp_valid_ucn (cpp_reader *pfile, const uchar **pstr,
 		   (int) (str - base), base);
     }
 
-  if (result == 0)
-    result = 1;
-
-  return result;
+  *cp = result;
+  return true;
 }
 
 /* Convert an UCN, pointed to by FROM, to UTF-8 encoding, then translate
-   it to the execution character set and write the result into TBUF.
-   An advanced pointer is returned.  Issues all relevant diagnostics.  */
+   it to the execution character set and write the result into TBUF,
+   if TBUF is non-NULL.
+   An advanced pointer is returned.  Issues all relevant diagnostics.
+   If LOC_READER is non-NULL, then RANGES must be non-NULL and CHAR_RANGE
+   contains the location of the character so far: location information
+   is read from *LOC_READER, and *RANGES is updated accordingly.  */
 static const uchar *
 convert_ucn (cpp_reader *pfile, const uchar *from, const uchar *limit,
-	     struct _cpp_strbuf *tbuf, struct cset_converter cvt)
+	     struct _cpp_strbuf *tbuf, struct cset_converter cvt,
+	     source_range char_range,
+	     cpp_string_location_reader *loc_reader,
+	     cpp_substring_ranges *ranges)
 {
   cppchar_t ucn;
   uchar buf[6];
@@ -1091,8 +1161,17 @@ convert_ucn (cpp_reader *pfile, const uchar *from, const uchar *limit,
   int rval;
   struct normalize_state nst = INITIAL_NORMALIZE_STATE;
 
+  /* loc_reader and ranges must either be both NULL, or both be non-NULL.  */
+  gcc_assert ((loc_reader != NULL) == (ranges != NULL));
+
   from++;  /* Skip u/U.  */
-  ucn = _cpp_valid_ucn (pfile, &from, limit, 0, &nst);
+
+  if (loc_reader)
+    /* The u/U is part of the spelling of this character.  */
+    char_range.m_finish = loc_reader->get_next ().m_finish;
+
+  _cpp_valid_ucn (pfile, &from, limit, 0, &nst,
+		  &ucn, &char_range, loc_reader);
 
   rval = one_cppchar_to_utf8 (ucn, &bufp, &bytesleft);
   if (rval)
@@ -1101,9 +1180,20 @@ convert_ucn (cpp_reader *pfile, const uchar *from, const uchar *limit,
       cpp_errno (pfile, CPP_DL_ERROR,
 		 "converting UCN to source character set");
     }
-  else if (!APPLY_CONVERSION (cvt, buf, 6 - bytesleft, tbuf))
-    cpp_errno (pfile, CPP_DL_ERROR,
-	       "converting UCN to execution character set");
+  else
+    {
+      if (tbuf)
+	if (!APPLY_CONVERSION (cvt, buf, 6 - bytesleft, tbuf))
+	  cpp_errno (pfile, CPP_DL_ERROR,
+		     "converting UCN to execution character set");
+
+      if (loc_reader)
+	{
+	  int num_encoded_bytes = 6 - bytesleft;
+	  for (int i = 0; i < num_encoded_bytes; i++)
+	    ranges->add_range (char_range);
+	}
+    }
 
   return from;
 }
@@ -1159,31 +1249,48 @@ emit_numeric_escape (cpp_reader *pfile, cppchar_t n,
 }
 
 /* Convert a hexadecimal escape, pointed to by FROM, to the execution
-   character set and write it into the string buffer TBUF.  Returns an
-   advanced pointer, and issues diagnostics as necessary.
+   character set and write it into the string buffer TBUF (if non-NULL).
+   Returns an advanced pointer, and issues diagnostics as necessary.
    No character set translation occurs; this routine always produces the
    execution-set character with numeric value equal to the given hex
-   number.  You can, e.g. generate surrogate pairs this way.  */
+   number.  You can, e.g. generate surrogate pairs this way.
+   If LOC_READER is non-NULL, then RANGES must be non-NULL and CHAR_RANGE
+   contains the location of the character so far: location information
+   is read from *LOC_READER, and *RANGES is updated accordingly.  */
 static const uchar *
 convert_hex (cpp_reader *pfile, const uchar *from, const uchar *limit,
-	     struct _cpp_strbuf *tbuf, struct cset_converter cvt)
+	     struct _cpp_strbuf *tbuf, struct cset_converter cvt,
+	     source_range char_range,
+	     cpp_string_location_reader *loc_reader,
+	     cpp_substring_ranges *ranges)
 {
   cppchar_t c, n = 0, overflow = 0;
   int digits_found = 0;
   size_t width = cvt.width;
   size_t mask = width_to_mask (width);
 
+  /* loc_reader and ranges must either be both NULL, or both be non-NULL.  */
+  gcc_assert ((loc_reader != NULL) == (ranges != NULL));
+
   if (CPP_WTRADITIONAL (pfile))
     cpp_warning (pfile, CPP_W_TRADITIONAL,
 	         "the meaning of '\\x' is different in traditional C");
 
-  from++;  /* Skip 'x'.  */
+  /* Skip 'x'.  */
+  from++;
+
+  /* The 'x' is part of the spelling of this character.  */
+  if (loc_reader)
+    char_range.m_finish = loc_reader->get_next ().m_finish;
+
   while (from < limit)
     {
       c = *from;
       if (! hex_p (c))
 	break;
       from++;
+      if (loc_reader)
+	char_range.m_finish = loc_reader->get_next ().m_finish;
       overflow |= n ^ (n << 4 >> 4);
       n = (n << 4) + hex_value (c);
       digits_found = 1;
@@ -1203,7 +1310,10 @@ convert_hex (cpp_reader *pfile, const uchar *from, const uchar *limit,
       n &= mask;
     }
 
-  emit_numeric_escape (pfile, n, tbuf, cvt);
+  if (tbuf)
+    emit_numeric_escape (pfile, n, tbuf, cvt);
+  if (ranges)
+    ranges->add_range (char_range);
 
   return from;
 }
@@ -1213,10 +1323,16 @@ convert_hex (cpp_reader *pfile, const uchar *from, const uchar *limit,
    advanced pointer, and issues diagnostics as necessary.
    No character set translation occurs; this routine always produces the
    execution-set character with numeric value equal to the given octal
-   number.  */
+   number.
+   If LOC_READER is non-NULL, then RANGES must be non-NULL and CHAR_RANGE
+   contains the location of the character so far: location information
+   is read from *LOC_READER, and *RANGES is updated accordingly.  */
 static const uchar *
 convert_oct (cpp_reader *pfile, const uchar *from, const uchar *limit,
-	     struct _cpp_strbuf *tbuf, struct cset_converter cvt)
+	     struct _cpp_strbuf *tbuf, struct cset_converter cvt,
+	     source_range char_range,
+	     cpp_string_location_reader *loc_reader,
+	     cpp_substring_ranges *ranges)
 {
   size_t count = 0;
   cppchar_t c, n = 0;
@@ -1224,12 +1340,17 @@ convert_oct (cpp_reader *pfile, const uchar *from, const uchar *limit,
   size_t mask = width_to_mask (width);
   bool overflow = false;
 
+  /* loc_reader and ranges must either be both NULL, or both be non-NULL.  */
+  gcc_assert ((loc_reader != NULL) == (ranges != NULL));
+
   while (from < limit && count++ < 3)
     {
       c = *from;
       if (c < '0' || c > '7')
 	break;
       from++;
+      if (loc_reader)
+	char_range.m_finish = loc_reader->get_next ().m_finish;
       overflow |= n ^ (n << 3 >> 3);
       n = (n << 3) + c - '0';
     }
@@ -1241,18 +1362,26 @@ convert_oct (cpp_reader *pfile, const uchar *from, const uchar *limit,
       n &= mask;
     }
 
-  emit_numeric_escape (pfile, n, tbuf, cvt);
+  if (tbuf)
+    emit_numeric_escape (pfile, n, tbuf, cvt);
+  if (ranges)
+    ranges->add_range (char_range);
 
   return from;
 }
 
 /* Convert an escape sequence (pointed to by FROM) to its value on
    the target, and to the execution character set.  Do not scan past
-   LIMIT.  Write the converted value into TBUF.  Returns an advanced
-   pointer.  Handles all relevant diagnostics.  */
+   LIMIT.  Write the converted value into TBUF, if TBUF is non-NULL.
+   Returns an advanced pointer.  Handles all relevant diagnostics.
+   If LOC_READER is non-NULL, then RANGES must be non-NULL: location
+   information is read from *LOC_READER, and *RANGES is updated
+   accordingly.  */
 static const uchar *
 convert_escape (cpp_reader *pfile, const uchar *from, const uchar *limit,
-		struct _cpp_strbuf *tbuf, struct cset_converter cvt)
+		struct _cpp_strbuf *tbuf, struct cset_converter cvt,
+		cpp_string_location_reader *loc_reader,
+		cpp_substring_ranges *ranges)
 {
   /* Values of \a \b \e \f \n \r \t \v respectively.  */
 #if HOST_CHARSET == HOST_CHARSET_ASCII
@@ -1265,20 +1394,28 @@ convert_escape (cpp_reader *pfile, const uchar *from, const uchar *limit,
 
   uchar c;
 
+  /* Record the location of the backslash.  */
+  source_range char_range;
+  if (loc_reader)
+    char_range = loc_reader->get_next ();
+
   c = *from;
   switch (c)
     {
       /* UCNs, hex escapes, and octal escapes are processed separately.  */
     case 'u': case 'U':
-      return convert_ucn (pfile, from, limit, tbuf, cvt);
+      return convert_ucn (pfile, from, limit, tbuf, cvt,
+			  char_range, loc_reader, ranges);
 
     case 'x':
-      return convert_hex (pfile, from, limit, tbuf, cvt);
+      return convert_hex (pfile, from, limit, tbuf, cvt,
+			  char_range, loc_reader, ranges);
       break;
 
     case '0':  case '1':  case '2':  case '3':
     case '4':  case '5':  case '6':  case '7':
-      return convert_oct (pfile, from, limit, tbuf, cvt);
+      return convert_oct (pfile, from, limit, tbuf, cvt,
+			  char_range, loc_reader, ranges);
 
       /* Various letter escapes.  Get the appropriate host-charset
 	 value into C.  */
@@ -1330,10 +1467,17 @@ convert_escape (cpp_reader *pfile, const uchar *from, const uchar *limit,
 	}
     }
 
-  /* Now convert what we have to the execution character set.  */
-  if (!APPLY_CONVERSION (cvt, &c, 1, tbuf))
-    cpp_errno (pfile, CPP_DL_ERROR,
-	       "converting escape sequence to execution character set");
+  if (tbuf)
+    /* Now convert what we have to the execution character set.  */
+    if (!APPLY_CONVERSION (cvt, &c, 1, tbuf))
+      cpp_errno (pfile, CPP_DL_ERROR,
+		 "converting escape sequence to execution character set");
+
+  if (loc_reader)
+    {
+      char_range.m_finish = loc_reader->get_next ().m_finish;
+      ranges->add_range (char_range);
+    }
 
   return from + 1;
 }
@@ -1347,6 +1491,7 @@ converter_for_type (cpp_reader *pfile, enum cpp_ttype type)
     {
     default:
 	return pfile->narrow_cset_desc;
+    case CPP_UTF8CHAR:
     case CPP_UTF8STRING:
 	return pfile->utf8_cset_desc;
     case CPP_CHAR16:
@@ -1365,28 +1510,52 @@ converter_for_type (cpp_reader *pfile, enum cpp_ttype type)
    are to be converted from the source to the execution character set,
    escape sequences translated, and finally all are to be
    concatenated.  WIDE indicates whether or not to produce a wide
-   string.  The result is written into TO.  Returns true for success,
-   false for failure.  */
-bool
-cpp_interpret_string (cpp_reader *pfile, const cpp_string *from, size_t count,
-		      cpp_string *to,  enum cpp_ttype type)
+   string.  If TO is non-NULL, the result is written into TO.
+   If LOC_READERS and OUT are non-NULL, then location information
+   is read from LOC_READERS (which must be an array of length COUNT),
+   and location information is written to *RANGES.
+
+   Returns true for success, false for failure.  */
+
+static bool
+cpp_interpret_string_1 (cpp_reader *pfile, const cpp_string *from, size_t count,
+			cpp_string *to,  enum cpp_ttype type,
+			cpp_string_location_reader *loc_readers,
+			cpp_substring_ranges *out)
 {
   struct _cpp_strbuf tbuf;
   const uchar *p, *base, *limit;
   size_t i;
   struct cset_converter cvt = converter_for_type (pfile, type);
 
-  tbuf.asize = MAX (OUTBUF_BLOCK_SIZE, from->len);
-  tbuf.text = XNEWVEC (uchar, tbuf.asize);
-  tbuf.len = 0;
+  /* loc_readers and out must either be both NULL, or both be non-NULL.  */
+  gcc_assert ((loc_readers != NULL) == (out != NULL));
 
+  if (to)
+    {
+      tbuf.asize = MAX (OUTBUF_BLOCK_SIZE, from->len);
+      tbuf.text = XNEWVEC (uchar, tbuf.asize);
+      tbuf.len = 0;
+    }
+
+  cpp_string_location_reader *loc_reader = NULL;
   for (i = 0; i < count; i++)
     {
+      if (loc_readers)
+	loc_reader = &loc_readers[i];
+
       p = from[i].text;
       if (*p == 'u')
 	{
-	  if (*++p == '8')
-	    p++;
+	  p++;
+	  if (loc_reader)
+	    loc_reader->get_next ();
+	  if (*p == '8')
+	    {
+	      p++;
+	      if (loc_reader)
+		loc_reader->get_next ();
+	    }
 	}
       else if (*p == 'L' || *p == 'U') p++;
       if (*p == 'R')
@@ -1395,23 +1564,64 @@ cpp_interpret_string (cpp_reader *pfile, const cpp_string *from, size_t count,
 
 	  /* Skip over 'R"'.  */
 	  p += 2;
+	  if (loc_reader)
+	    {
+	      loc_reader->get_next ();
+	      loc_reader->get_next ();
+	    }
 	  prefix = p;
 	  while (*p != '(')
-	    p++;
+	    {
+	      p++;
+	      if (loc_reader)
+		loc_reader->get_next ();
+	    }
 	  p++;
+	  if (loc_reader)
+	    loc_reader->get_next ();
 	  limit = from[i].text + from[i].len;
 	  if (limit >= p + (p - prefix) + 1)
 	    limit -= (p - prefix) + 1;
 
 	  /* Raw strings are all normal characters; these can be fed
 	     directly to convert_cset.  */
-	  if (!APPLY_CONVERSION (cvt, p, limit - p, &tbuf))
-	    goto fail;
+	  if (to)
+	    if (!APPLY_CONVERSION (cvt, p, limit - p, &tbuf))
+	      goto fail;
+
+	  if (loc_reader)
+	    {
+	      /* If generating source ranges, assume we have a 1:1
+		 correspondence between bytes in the source encoding and bytes
+		 in the execution encoding (e.g. if we have a UTF-8 to UTF-8
+		 conversion), so that this run of bytes in the source file
+		 corresponds to a run of bytes in the execution string.
+		 This requirement is guaranteed by an early-reject in
+		 cpp_interpret_string_ranges.  */
+	      gcc_assert (cvt.func == convert_no_conversion);
+	      out->add_n_ranges (limit - p, *loc_reader);
+	    }
 
 	  continue;
 	}
 
-      p++; /* Skip leading quote.  */
+      /* If we don't now have a leading quote, something has gone wrong.
+	 This can occur if cpp_interpret_string_ranges is handling a
+	 stringified macro argument, but should not be possible otherwise.  */
+      if (*p != '"' && *p != '\'')
+	{
+	  gcc_assert (out != NULL);
+	  cpp_error (pfile, CPP_DL_ERROR, "missing open quote");
+	  if (to)
+	    free (tbuf.text);
+	  return false;
+	}
+
+      /* Skip leading quote.  */
+      p++;
+      if (loc_reader)
+	loc_reader->get_next ();
+
       limit = from[i].text + from[i].len - 1; /* Skip trailing quote.  */
 
       for (;;)
@@ -1423,27 +1633,135 @@ cpp_interpret_string (cpp_reader *pfile, const cpp_string *from, size_t count,
 	    {
 	      /* We have a run of normal characters; these can be fed
 		 directly to convert_cset.  */
-	      if (!APPLY_CONVERSION (cvt, base, p - base, &tbuf))
-		goto fail;
+	      if (to)
+		if (!APPLY_CONVERSION (cvt, base, p - base, &tbuf))
+		  goto fail;
+	    /* Similar to above: assumes we have a 1:1 correspondence
+	       between bytes in the source encoding and bytes in the
+	       execution encoding.  */
+	      if (loc_reader)
+		{
+		  gcc_assert (cvt.func == convert_no_conversion);
+		  out->add_n_ranges (p - base, *loc_reader);
+		}
 	    }
-	  if (p == limit)
+	  if (p >= limit)
 	    break;
 
-	  p = convert_escape (pfile, p + 1, limit, &tbuf, cvt);
+	  struct _cpp_strbuf *tbuf_ptr = to ? &tbuf : NULL;
+	  p = convert_escape (pfile, p + 1, limit, tbuf_ptr, cvt,
+			      loc_reader, out);
 	}
     }
-  /* NUL-terminate the 'to' buffer and translate it to a cpp_string
-     structure.  */
-  emit_numeric_escape (pfile, 0, &tbuf, cvt);
-  tbuf.text = XRESIZEVEC (uchar, tbuf.text, tbuf.len);
-  to->text = tbuf.text;
-  to->len = tbuf.len;
+
+  if (to)
+    {
+      /* NUL-terminate the 'to' buffer and translate it to a cpp_string
+	 structure.  */
+      emit_numeric_escape (pfile, 0, &tbuf, cvt);
+      tbuf.text = XRESIZEVEC (uchar, tbuf.text, tbuf.len);
+      to->text = tbuf.text;
+      to->len = tbuf.len;
+    }
+  /* Use the location of the trailing quote as the location of the
+     NUL-terminator.  */
+  if (loc_reader)
+    {
+      source_range range = loc_reader->get_next ();
+      out->add_range (range);
+    }
+
   return true;
 
  fail:
   cpp_errno (pfile, CPP_DL_ERROR, "converting to execution character set");
-  free (tbuf.text);
+  if (to)
+    free (tbuf.text);
   return false;
+}
+
+/* FROM is an array of cpp_string structures of length COUNT.  These
+   are to be converted from the source to the execution character set,
+   escape sequences translated, and finally all are to be
+   concatenated.  WIDE indicates whether or not to produce a wide
+   string.  The result is written into TO.  Returns true for success,
+   false for failure.  */
+bool
+cpp_interpret_string (cpp_reader *pfile, const cpp_string *from, size_t count,
+		      cpp_string *to,  enum cpp_ttype type)
+{
+  return cpp_interpret_string_1 (pfile, from, count, to, type, NULL, NULL);
+}
+
+/* A "do nothing" error-handling callback for use by
+   cpp_interpret_string_ranges, so that it can temporarily suppress
+   error-handling.  */
+
+static bool
+noop_error_cb (cpp_reader *, int, int, rich_location *,
+	       const char *, va_list *)
+{
+  /* no-op.  */
+  return true;
+}
+
+/* This function mimics the behavior of cpp_interpret_string, but
+   rather than generating a string in the execution character set,
+   *OUT is written to with the source code ranges of the characters
+   in such a string.
+   FROM and LOC_READERS should both be arrays of length COUNT.
+   Returns NULL for success, or an error message for failure.  */
+
+const char *
+cpp_interpret_string_ranges (cpp_reader *pfile, const cpp_string *from,
+			     cpp_string_location_reader *loc_readers,
+			     size_t count,
+			     cpp_substring_ranges *out,
+			     enum cpp_ttype type)
+{
+  /* There are a couple of cases in the range-handling in
+     cpp_interpret_string_1 that rely on there being a 1:1 correspondence
+     between bytes in the source encoding and bytes in the execution
+     encoding, so that each byte in the execution string can correspond
+     to the location of a byte in the source string.
+
+     This holds for the typical case of a UTF-8 to UTF-8 conversion.
+     Enforce this requirement by only attempting to track substring
+     locations if we have source encoding == execution encoding.
+
+     This is a stronger condition than we need, since we could e.g.
+     have ASCII to EBCDIC (with 1 byte per character before and after),
+     but it seems to be a reasonable restriction.  */
+  struct cset_converter cvt = converter_for_type (pfile, type);
+  if (cvt.func != convert_no_conversion)
+    return "execution character set != source character set";
+
+  /* For on-demand strings we have already lexed the strings, so there
+     should be no errors.  However, if we have bogus source location
+     data (or stringified macro arguments), the attempt to lex the
+     strings could fail with an error.  Temporarily install an
+     error-handler to catch the error, so that it can lead to this call
+     failing, rather than being emitted as a user-visible diagnostic.
+     If an error does occur, we should see it via the return value of
+     cpp_interpret_string_1.  */
+  bool (*saved_error_handler) (cpp_reader *, int, int, rich_location *,
+			       const char *, va_list *)
+    ATTRIBUTE_FPTR_PRINTF(5,0);
+
+  saved_error_handler = pfile->cb.error;
+  pfile->cb.error = noop_error_cb;
+
+  bool result = cpp_interpret_string_1 (pfile, from, count, NULL, type,
+					loc_readers, out);
+
+  /* Restore the saved error-handler.  */
+  pfile->cb.error = saved_error_handler;
+
+  if (!result)
+    return "cpp_interpret_string_1 failed";
+
+  /* Success.  */
+  return NULL;
 }
 
 /* Subroutine of do_line and do_linemarker.  Convert escape sequences
@@ -1603,17 +1921,25 @@ cpp_interpret_charconst (cpp_reader *pfile, const cpp_token *token,
 			 unsigned int *pchars_seen, int *unsignedp)
 {
   cpp_string str = { 0, 0 };
-  bool wide = (token->type != CPP_CHAR);
+  bool wide = (token->type != CPP_CHAR && token->type != CPP_UTF8CHAR);
+  int u8 = 2 * int(token->type == CPP_UTF8CHAR);
   cppchar_t result;
 
-  /* an empty constant will appear as L'', u'', U'' or '' */
-  if (token->val.str.len == (size_t) (2 + wide))
+  /* An empty constant will appear as L'', u'', U'', u8'', or '' */
+  if (token->val.str.len == (size_t) (2 + wide + u8))
     {
       cpp_error (pfile, CPP_DL_ERROR, "empty character constant");
+      *pchars_seen = 0;
+      *unsignedp = 0;
       return 0;
     }
-  else if (!cpp_interpret_string (pfile, &token->val.str, 1, &str, token->type))
-    return 0;
+  else if (!cpp_interpret_string (pfile, &token->val.str, 1, &str,
+				  token->type))
+    {
+      *pchars_seen = 0;
+      *unsignedp = 0;
+      return 0;
+    }
 
   if (wide)
     result = wide_str_to_charconst (pfile, str, pchars_seen, unsignedp,
@@ -1729,9 +2055,15 @@ _cpp_convert_input (cpp_reader *pfile, const char *input_charset,
     iconv_close (input_cset.cd);
 
   /* Resize buffer if we allocated substantially too much, or if we
-     haven't enough space for the \n-terminator.  */
-  if (to.len + 4096 < to.asize || to.len >= to.asize)
-    to.text = XRESIZEVEC (uchar, to.text, to.len + 1);
+     haven't enough space for the \n-terminator or following
+     15 bytes of padding (used to quiet warnings from valgrind or
+     Address Sanitizer, when the optimized lexer accesses aligned
+     16-byte memory chunks, including the bytes after the malloced,
+     area, and stops lexing on '\n').  */
+  if (to.len + 4096 < to.asize || to.len + 16 > to.asize)
+    to.text = XRESIZEVEC (uchar, to.text, to.len + 16);
+
+  memset (to.text + to.len, '\0', 16);
 
   /* If the file is using old-school Mac line endings (\r only),
      terminate with another \r, not an \n, so that we do not mistake
@@ -1794,4 +2126,40 @@ _cpp_default_encoding (void)
     current_encoding = SOURCE_CHARSET;
 
   return current_encoding;
+}
+
+/* Implementation of class cpp_string_location_reader.  */
+
+/* Constructor for cpp_string_location_reader.  */
+
+cpp_string_location_reader::
+cpp_string_location_reader (source_location src_loc,
+			    line_maps *line_table)
+: m_line_table (line_table)
+{
+  src_loc = get_range_from_loc (line_table, src_loc).m_start;
+
+  /* SRC_LOC might be a macro location.  It only makes sense to do
+     column-by-column calculations on ordinary maps, so get the
+     corresponding location in an ordinary map.  */
+  m_loc
+    = linemap_resolve_location (line_table, src_loc,
+				LRK_SPELLING_LOCATION, NULL);
+
+  const line_map_ordinary *map
+    = linemap_check_ordinary (linemap_lookup (line_table, m_loc));
+  m_offset_per_column = (1 << map->m_range_bits);
+}
+
+/* Get the range of the next source byte.  */
+
+source_range
+cpp_string_location_reader::get_next ()
+{
+  source_range result;
+  result.m_start = m_loc;
+  result.m_finish = m_loc;
+  if (m_loc <= LINE_MAP_MAX_LOCATION_WITH_COLS)
+    m_loc += m_offset_per_column;
+  return result;
 }

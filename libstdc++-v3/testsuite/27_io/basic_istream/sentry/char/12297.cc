@@ -1,4 +1,4 @@
-// Copyright (C) 2003, 2009 Free Software Foundation, Inc.
+// Copyright (C) 2003-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -17,6 +17,9 @@
 
 
 // 27.6.1.1.2 class basic_istream::sentry
+
+// The library throws the new definition of std::ios::failure
+// { dg-options "-D_GLIBCXX_USE_CXX11_ABI=1" }
 
 #include <sstream>
 #include <testsuite_hooks.h>

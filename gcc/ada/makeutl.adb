@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2004-2012, Free Software Foundation, Inc.         --
+--          Copyright (C) 2004-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -24,11 +24,11 @@
 ------------------------------------------------------------------------------
 
 with ALI;      use ALI;
+with Atree;    use Atree;
 with Debug;
 with Err_Vars; use Err_Vars;
 with Errutil;
 with Fname;
-with Hostparm;
 with Osint;    use Osint;
 with Output;   use Output;
 with Opt;      use Opt;
@@ -138,6 +138,57 @@ package body Makeutl is
          Linker_Options_Buffer (Last_Linker_Option) := new String'(Option);
       end if;
    end Add_Linker_Option;
+
+   -------------------
+   -- Absolute_Path --
+   -------------------
+
+   function Absolute_Path
+     (Path    : Path_Name_Type;
+      Project : Project_Id) return String
+   is
+   begin
+      Get_Name_String (Path);
+
+      declare
+         Path_Name : constant String := Name_Buffer (1 .. Name_Len);
+
+      begin
+         if Is_Absolute_Path (Path_Name) then
+            return Path_Name;
+
+         else
+            declare
+               Parent_Directory : constant String :=
+                 Get_Name_String
+                   (Project.Directory.Display_Name);
+
+            begin
+               return Parent_Directory & Path_Name;
+            end;
+         end if;
+      end;
+   end Absolute_Path;
+
+   ----------------------------
+   -- Aggregate_Libraries_In --
+   ----------------------------
+
+   function Aggregate_Libraries_In (Tree : Project_Tree_Ref) return Boolean is
+      List : Project_List;
+
+   begin
+      List := Tree.Projects;
+      while List /= null loop
+         if List.Project.Qualifier = Aggregate_Library then
+            return True;
+         end if;
+
+         List := List.Next;
+      end loop;
+
+      return False;
+   end Aggregate_Libraries_In;
 
    -------------------------
    -- Base_Name_Index_For --
@@ -257,15 +308,27 @@ package body Makeutl is
                      if Replacement /= No_File then
                         if Verbose_Mode then
                            Write_Line
-                             ("source file" &
-                              Get_Name_String (SD.Sfile) &
-                              " has been replaced by " &
-                              Get_Name_String (Replacement));
+                             ("source file"
+                              & Get_Name_String (SD.Sfile)
+                              & " has been replaced by "
+                              & Get_Name_String (Replacement));
                         end if;
 
                         return No_Name;
                      end if;
                   end;
+               end if;
+
+               --  Check that a dependent source for a unit that is from a
+               --  project is indeed a source of this unit.
+
+               Unit_Name := SD.Unit_Name;
+
+               if Unit_Name /= No_Name
+                 and then not Fname.Is_Internal_File_Name (SD.Sfile)
+                 and then File_Not_A_Source_Of (Tree, Unit_Name, SD.Sfile)
+               then
+                  return No_Name;
                end if;
 
             else
@@ -337,6 +400,14 @@ package body Makeutl is
       Status : Boolean;
       --  For call to Close
 
+      Iter : Source_Iterator := For_Each_Source
+                                  (In_Tree           => Project_Tree,
+                                   Language          => Name_Ada,
+                                   Encapsulated_Libs => False,
+                                   Locally_Removed   => False);
+
+      Source : Prj.Source_Id;
+
    begin
       Tempdir.Create_Temp_File (Mapping_FD, Mapping_Path);
       Record_Temp_File (Project_Tree.Shared, Mapping_Path);
@@ -344,57 +415,66 @@ package body Makeutl is
       if Mapping_FD /= Invalid_FD then
          OK := True;
 
-         --  Traverse all units
+         loop
+            Source := Element (Iter);
+            exit when Source = No_Source;
 
-         Unit := Units_Htable.Get_First (Project_Tree.Units_HT);
-         while Unit /= No_Unit_Index loop
-            if Unit.Name /= No_Name then
+            Unit := Source.Unit;
 
-               --  If there is a body, put it in the mapping
+            if Source.Replaced_By /= No_Source
+              or else Unit = No_Unit_Index
+              or else Unit.Name = No_Name
+            then
+               ALI_Name := No_File;
 
-               if Unit.File_Names (Impl) /= No_Source
-                 and then Unit.File_Names (Impl).Project /= No_Project
-               then
-                  Get_Name_String (Unit.Name);
-                  Add_Str_To_Name_Buffer ("%b");
-                  ALI_Unit := Name_Find;
-                  ALI_Name :=
-                    Lib_File_Name (Unit.File_Names (Impl).Display_File);
-                  ALI_Project := Unit.File_Names (Impl).Project;
+            --  If this is a body, put it in the mapping
 
-                  --  Otherwise, if there is a spec, put it in the mapping
+            elsif Source.Kind = Impl
+              and then Unit.File_Names (Impl) /= No_Source
+              and then Unit.File_Names (Impl).Project /= No_Project
+            then
+               Get_Name_String (Unit.Name);
+               Add_Str_To_Name_Buffer ("%b");
+               ALI_Unit := Name_Find;
+               ALI_Name :=
+                 Lib_File_Name (Unit.File_Names (Impl).Display_File);
+               ALI_Project := Unit.File_Names (Impl).Project;
 
-               elsif Unit.File_Names (Spec) /= No_Source
-                 and then Unit.File_Names (Spec).Project /= No_Project
-               then
-                  Get_Name_String (Unit.Name);
-                  Add_Str_To_Name_Buffer ("%s");
-                  ALI_Unit := Name_Find;
-                  ALI_Name :=
-                    Lib_File_Name (Unit.File_Names (Spec).Display_File);
-                  ALI_Project := Unit.File_Names (Spec).Project;
+            --  Otherwise, if this is a spec and there is no body, put it in
+            --  the mapping.
 
-               else
-                  ALI_Name := No_File;
-               end if;
+            elsif Source.Kind = Spec
+              and then Unit.File_Names (Impl) = No_Source
+              and then Unit.File_Names (Spec) /= No_Source
+              and then Unit.File_Names (Spec).Project /= No_Project
+            then
+               Get_Name_String (Unit.Name);
+               Add_Str_To_Name_Buffer ("%s");
+               ALI_Unit := Name_Find;
+               ALI_Name :=
+                 Lib_File_Name (Unit.File_Names (Spec).Display_File);
+               ALI_Project := Unit.File_Names (Spec).Project;
 
-               --  If we have something to put in the mapping then do it now.
-               --  However, if the project is extended, we don't put anything
-               --  in the mapping file, since we don't know where the ALI file
-               --  is: it might be in the extended project object directory as
-               --  well as in the extending project object directory.
+            else
+               ALI_Name := No_File;
+            end if;
 
-               if ALI_Name /= No_File
-                 and then ALI_Project.Extended_By = No_Project
-                 and then ALI_Project.Extends = No_Project
-               then
-                  --  First check if the ALI file exists. If it does not, do
-                  --  not put the unit in the mapping file.
+            --  If we have something to put in the mapping then do it now. If
+            --  the project is extended, look for the ALI file in the project,
+            --  then in the extending projects in order, and use the last one
+            --  found.
 
-                  declare
-                     ALI : constant String := Get_Name_String (ALI_Name);
+            if ALI_Name /= No_File then
 
-                  begin
+               --  Look in the project and the projects that are extending it
+               --  to find the real ALI file.
+
+               declare
+                  ALI      : constant String := Get_Name_String (ALI_Name);
+                  ALI_Path : Name_Id         := No_Name;
+
+               begin
+                  loop
                      --  For library projects, use the library ALI directory,
                      --  for other projects, use the object directory.
 
@@ -407,63 +487,63 @@ package body Makeutl is
                      end if;
 
                      Add_Str_To_Name_Buffer (ALI);
+
+                     if Is_Regular_File (Name_Buffer (1 .. Name_Len)) then
+                        ALI_Path := Name_Find;
+                     end if;
+
+                     ALI_Project := ALI_Project.Extended_By;
+                     exit when ALI_Project = No_Project;
+                  end loop;
+
+                  if ALI_Path /= No_Name then
+
+                     --  First line is the unit name
+
+                     Get_Name_String (ALI_Unit);
                      Add_Char_To_Name_Buffer (ASCII.LF);
+                     Bytes :=
+                       Write
+                         (Mapping_FD,
+                          Name_Buffer (1)'Address,
+                          Name_Len);
+                     OK := Bytes = Name_Len;
 
-                     declare
-                        ALI_Path_Name : constant String :=
-                                          Name_Buffer (1 .. Name_Len);
+                     exit when not OK;
 
-                     begin
-                        if Is_Regular_File
-                             (ALI_Path_Name (1 .. ALI_Path_Name'Last - 1))
-                        then
-                           --  First line is the unit name
+                     --  Second line is the ALI file name
 
-                           Get_Name_String (ALI_Unit);
-                           Add_Char_To_Name_Buffer (ASCII.LF);
-                           Bytes :=
-                             Write
-                               (Mapping_FD,
-                                Name_Buffer (1)'Address,
-                                Name_Len);
-                           OK := Bytes = Name_Len;
+                     Get_Name_String (ALI_Name);
+                     Add_Char_To_Name_Buffer (ASCII.LF);
+                     Bytes :=
+                       Write
+                         (Mapping_FD,
+                          Name_Buffer (1)'Address,
+                          Name_Len);
+                     OK := (Bytes = Name_Len);
 
-                           exit when not OK;
+                     exit when not OK;
 
-                           --  Second line it the ALI file name
+                     --  Third line is the ALI path name
 
-                           Get_Name_String (ALI_Name);
-                           Add_Char_To_Name_Buffer (ASCII.LF);
-                           Bytes :=
-                             Write
-                               (Mapping_FD,
-                                Name_Buffer (1)'Address,
-                                Name_Len);
-                           OK := (Bytes = Name_Len);
+                     Get_Name_String (ALI_Path);
+                     Add_Char_To_Name_Buffer (ASCII.LF);
+                     Bytes :=
+                       Write
+                         (Mapping_FD,
+                          Name_Buffer (1)'Address,
+                          Name_Len);
+                     OK := (Bytes = Name_Len);
 
-                           exit when not OK;
+                     --  If OK is False, it means we were unable to write a
+                     --  line. No point in continuing with the other units.
 
-                           --  Third line it the ALI path name
-
-                           Bytes :=
-                             Write
-                               (Mapping_FD,
-                                ALI_Path_Name (1)'Address,
-                                ALI_Path_Name'Length);
-                           OK := (Bytes = ALI_Path_Name'Length);
-
-                           --  If OK is False, it means we were unable to
-                           --  write a line. No point in continuing with the
-                           --  other units.
-
-                           exit when not OK;
-                        end if;
-                     end;
-                  end;
-               end if;
+                     exit when not OK;
+                  end if;
+               end;
             end if;
 
-            Unit := Units_Htable.Get_Next (Project_Tree.Units_HT);
+            Next (Iter);
          end loop;
 
          Close (Mapping_FD, Status);
@@ -506,6 +586,108 @@ package body Makeutl is
       Add_Str_To_Name_Buffer (Name);
       return Name_Find;
    end Create_Name;
+
+   ---------------------------
+   -- Ensure_Absolute_Path --
+   ---------------------------
+
+   procedure Ensure_Absolute_Path
+     (Switch               : in out String_Access;
+      Parent               : String;
+      Do_Fail              : Fail_Proc;
+      For_Gnatbind         : Boolean := False;
+      Including_Non_Switch : Boolean := True;
+      Including_RTS        : Boolean := False)
+   is
+   begin
+      if Switch /= null then
+         declare
+            Sw    : String (1 .. Switch'Length);
+            Start : Positive;
+
+         begin
+            Sw := Switch.all;
+
+            if Sw (1) = '-' then
+               if Sw'Length >= 3
+                 and then (Sw (2) = 'I'
+                            or else (not For_Gnatbind
+                                      and then (Sw (2) = 'L'
+                                                 or else
+                                                Sw (2) = 'A')))
+               then
+                  Start := 3;
+
+                  if Sw = "-I-" then
+                     return;
+                  end if;
+
+               elsif Sw'Length >= 4
+                 and then
+                   (Sw (2 .. 3) = "aL" or else
+                    Sw (2 .. 3) = "aO" or else
+                    Sw (2 .. 3) = "aI"
+                      or else (For_Gnatbind and then Sw (2 .. 3) = "A="))
+               then
+                  Start := 4;
+
+               elsif Including_RTS
+                 and then Sw'Length >= 7
+                 and then Sw (2 .. 6) = "-RTS="
+               then
+                  Start := 7;
+
+               else
+                  return;
+               end if;
+
+               --  Because relative path arguments to --RTS= may be relative to
+               --  the search directory prefix, those relative path arguments
+               --  are converted only when they include directory information.
+
+               if not Is_Absolute_Path (Sw (Start .. Sw'Last)) then
+                  if Parent'Length = 0 then
+                     Do_Fail
+                       ("relative search path switches ("""
+                        & Sw
+                        & """) are not allowed");
+
+                  elsif Including_RTS then
+                     for J in Start .. Sw'Last loop
+                        if Sw (J) = Directory_Separator then
+                           Switch :=
+                             new String'
+                               (Sw (1 .. Start - 1)
+                                & Parent
+                                & Directory_Separator
+                                & Sw (Start .. Sw'Last));
+                           return;
+                        end if;
+                     end loop;
+
+                  else
+                     Switch :=
+                       new String'
+                         (Sw (1 .. Start - 1)
+                          & Parent
+                          & Directory_Separator
+                          & Sw (Start .. Sw'Last));
+                  end if;
+               end if;
+
+            elsif Including_Non_Switch then
+               if not Is_Absolute_Path (Sw) then
+                  if Parent'Length = 0 then
+                     Do_Fail
+                       ("relative paths (""" & Sw & """) are not allowed");
+                  else
+                     Switch := new String'(Parent & Directory_Separator & Sw);
+                  end if;
+               end if;
+            end if;
+         end;
+      end if;
+   end Ensure_Absolute_Path;
 
    ----------------------------
    -- Executable_Prefix_Path --
@@ -557,12 +739,6 @@ package body Makeutl is
    --  Beginning of Executable_Prefix_Path
 
    begin
-      --  For VMS, the path returned is always /gnu/
-
-      if Hostparm.OpenVMS then
-         return "/gnu/";
-      end if;
-
       --  First determine if a path prefix was placed in front of the
       --  executable name.
 
@@ -601,7 +777,7 @@ package body Makeutl is
       Flush_Messages : Boolean := True)
    is
    begin
-      if Flush_Messages then
+      if Flush_Messages and not No_Exit_Message then
          if Total_Errors_Detected /= 0 or else Warnings_Detected /= 0 then
             Errutil.Finalize;
          end if;
@@ -630,8 +806,13 @@ package body Makeutl is
 
       if S'Length > 0 then
          if Exit_Code /= E_Success then
-            Osint.Fail (S);
-         else
+            if No_Exit_Message then
+               Osint.Exit_Program (E_Fatal);
+            else
+               Osint.Fail (S);
+            end if;
+
+         elsif not No_Exit_Message then
             Write_Str (S);
          end if;
       end if;
@@ -716,7 +897,9 @@ package body Makeutl is
          Add_It : Boolean := True;
 
       begin
-         if Value /= No_Path then
+         if Value /= No_Path
+           and then Is_Directory (Get_Name_String (Value))
+         then
             for Index in 1 .. Directories.Last loop
                if Directories.Table (Index) = Value then
                   Add_It := False;
@@ -1103,56 +1286,56 @@ package body Makeutl is
          Obj_Proj := Source.Project;
 
          while Obj_Proj /= No_Project loop
-            declare
-               Dir  : constant String :=
-                        Get_Name_String
-                          (Obj_Proj.Object_Directory.Display_Name);
+            if Obj_Proj.Object_Directory /= No_Path_Information then
+               declare
+                  Dir : constant String :=
+                    Get_Name_String (Obj_Proj.Object_Directory.Display_Name);
 
-               Object_Path : constant String :=
-                               Normalize_Pathname
-                                 (Name          =>
-                                    Get_Name_String (Source.Object),
-                                  Resolve_Links => Opt.Follow_Links_For_Files,
-                                  Directory     => Dir);
+                  Object_Path : constant String :=
+                    Normalize_Pathname
+                      (Name          => Get_Name_String (Source.Object),
+                       Resolve_Links => Opt.Follow_Links_For_Files,
+                       Directory     => Dir);
 
-               Obj_Path : constant Path_Name_Type := Create_Name (Object_Path);
-               Stamp    : Time_Stamp_Type := Empty_Time_Stamp;
+                  Obj_Path : constant Path_Name_Type :=
+                    Create_Name (Object_Path);
 
-            begin
-               --  For specs, we do not check object files if there is a body.
-               --  This saves a system call. On the other hand, we do need to
-               --  know the object_path, in case the user has passed the .ads
-               --  on the command line to compile the spec only.
+                  Stamp : Time_Stamp_Type := Empty_Time_Stamp;
 
-               if Source.Kind /= Spec
-                 or else Source.Unit = No_Unit_Index
-                 or else Source.Unit.File_Names (Impl) = No_Source
-               then
-                  Stamp := File_Stamp (Obj_Path);
-               end if;
+               begin
+                  --  For specs, we do not check object files if there is a
+                  --  body. This saves a system call. On the other hand, we do
+                  --  need to know the object_path, in case the user has passed
+                  --  the .ads on the command line to compile the spec only.
 
-               if Stamp /= Empty_Time_Stamp
-                 or else (Obj_Proj.Extended_By = No_Project
-                          and then Source.Object_Project = No_Project)
-               then
-                  Set_Object_Project (Dir, Obj_Proj, Obj_Path, Stamp);
-               end if;
+                  if Source.Kind /= Spec
+                    or else Source.Unit = No_Unit_Index
+                    or else Source.Unit.File_Names (Impl) = No_Source
+                  then
+                     Stamp := File_Stamp (Obj_Path);
+                  end if;
 
-               Obj_Proj := Obj_Proj.Extended_By;
-            end;
+                  if Stamp /= Empty_Time_Stamp
+                    or else (Obj_Proj.Extended_By = No_Project
+                              and then Source.Object_Project = No_Project)
+                  then
+                     Set_Object_Project (Dir, Obj_Proj, Obj_Path, Stamp);
+                  end if;
+               end;
+            end if;
+
+            Obj_Proj := Obj_Proj.Extended_By;
          end loop;
 
       elsif Source.Language.Config.Dependency_Kind = Makefile then
          declare
             Object_Dir : constant String :=
-                           Get_Name_String
-                             (Source.Project.Object_Directory.Display_Name);
+              Get_Name_String (Source.Project.Object_Directory.Display_Name);
             Dep_Path   : constant String :=
-                           Normalize_Pathname
-                             (Name        => Get_Name_String (Source.Dep_Name),
-                              Resolve_Links =>
-                                Opt.Follow_Links_For_Files,
-                              Directory     => Object_Dir);
+              Normalize_Pathname
+                (Name          => Get_Name_String (Source.Dep_Name),
+                 Resolve_Links => Opt.Follow_Links_For_Files,
+                 Directory     => Object_Dir);
          begin
             Source.Dep_Path := Create_Name (Dep_Path);
             Source.Dep_TS   := Osint.Unknown_Attributes;
@@ -1170,8 +1353,8 @@ package body Makeutl is
      (Env  : Prj.Tree.Environment;
       Argv : String) return Boolean
    is
-      Start     : Positive := 3;
-      Finish    : Natural := Argv'Last;
+      Start  : Positive := 3;
+      Finish : Natural := Argv'Last;
 
       pragma Assert (Argv'First = 1);
       pragma Assert (Argv (1 .. 2) = "-X");
@@ -1249,8 +1432,6 @@ package body Makeutl is
          In_Tree : Project_Tree_Ref;
          Dummy   : in out Boolean)
       is
-         pragma Unreferenced (Dummy);
-
          Linker_Package : Package_Id;
          Options        : Variable_Value;
 
@@ -1316,11 +1497,12 @@ package body Makeutl is
                   --  Object files and -L switches specified with relative
                   --  paths must be converted to absolute paths.
 
-                  Test_If_Relative_Path
-                    (Switch  => Linker_Options_Buffer (Last_Linker_Option),
-                     Parent  => Dir_Path,
-                     Do_Fail => Do_Fail,
-                     Including_L_Switch => True);
+                  Ensure_Absolute_Path
+                    (Switch       =>
+                       Linker_Options_Buffer (Last_Linker_Option),
+                     Parent       => Dir_Path,
+                     Do_Fail      => Do_Fail,
+                     For_Gnatbind => False);
                end if;
 
                Options := In_Tree.Shared.String_Elements.Table (Options).Next;
@@ -1500,9 +1682,11 @@ package body Makeutl is
                      end if;
                   end if;
 
-               elsif Source.Kind = Spec then
-                  --  A spec needs to be taken into account unless there is
-                  --  also a body. So we delay the decision for them.
+               elsif Source.Kind = Spec
+                 and then Source.Language.Config.Kind = Unit_Based
+               then
+                  --  An Ada spec needs to be taken into account unless there
+                  --  is also a body. So we delay the decision for them.
 
                   Get_Name_String (Source.File);
 
@@ -1556,7 +1740,7 @@ package body Makeutl is
                --  no need to process them in turn.
 
                J := Names.Last;
-               loop
+               Main_Loop : loop
                   declare
                      File        : Main_Info       := Names.Table (J);
                      Main_Id     : File_Name_Type  := File.File;
@@ -1622,16 +1806,53 @@ package body Makeutl is
                         --  search for the base name though, and if needed
                         --  check later that we found the correct file.
 
-                        Source := Find_Source
-                          (In_Tree          => File.Tree,
-                           Project          => File.Project,
-                           Base_Name        => Main_Id,
-                           Index            => File.Index,
-                           In_Imported_Only => True);
+                        declare
+                           Sources : constant Source_Ids :=
+                                       Find_All_Sources
+                                         (In_Tree          => File.Tree,
+                                          Project          => File.Project,
+                                          Base_Name        => Main_Id,
+                                          Index            => File.Index,
+                                          In_Imported_Only => True);
+
+                        begin
+                           if Is_Absolute then
+                              for J in Sources'Range loop
+                                 if File_Name_Type (Sources (J).Path.Name) =
+                                                                    File.File
+                                 then
+                                    Source := Sources (J);
+                                    exit;
+                                 end if;
+                              end loop;
+
+                           elsif Sources'Length > 1 then
+
+                              --  This is only allowed if the units are from
+                              --  the same multi-unit source file.
+
+                              Source := Sources (1);
+
+                              for J in 2 .. Sources'Last loop
+                                 if Sources (J).Path /= Source.Path
+                                   or else Sources (J).Index = Source.Index
+                                 then
+                                    Error_Msg_File_1 := Main_Id;
+                                    Prj.Err.Error_Msg
+                                      (Flags, "several main sources {",
+                                       No_Location, File.Project);
+                                    exit Main_Loop;
+                                 end if;
+                              end loop;
+
+                           elsif Sources'Length = 1 then
+                              Source := Sources (Sources'First);
+                           end if;
+                        end;
 
                         if Source = No_Source then
                            Source := Find_File_Add_Extension
-                             (Tree, Get_Name_String (Main_Id));
+                                       (File.Tree, Get_Name_String (Main_Id));
                         end if;
 
                         if Is_Absolute
@@ -1698,17 +1919,17 @@ package body Makeutl is
                            --  reported later.
 
                            Error_Msg_File_1 := Main_Id;
-                           Error_Msg_Name_1 := Root_Project.Name;
+                           Error_Msg_Name_1 := File.Project.Name;
                            Prj.Err.Error_Msg
                              (Flags, "{ is not a source of project %%",
-                              File.Location, Project);
+                              File.Location, File.Project);
                         end if;
                      end if;
                   end;
 
                   J := J - 1;
-                  exit when J < Names.First;
-               end loop;
+                  exit Main_Loop when J < Names.First;
+               end loop Main_Loop;
             end if;
 
             if Total_Errors_Detected > 0 then
@@ -1786,8 +2007,8 @@ package body Makeutl is
                      if Project.Library then
                         Fail_Program
                           (Tree,
-                           "cannot specify a main program " &
-                           "for a library project file");
+                           "cannot specify a main program "
+                           & "for a library project file");
                      end if;
 
                      Add_Main (Name     => Get_Name_String (Element.Value),
@@ -1905,8 +2126,8 @@ package body Makeutl is
             if Names.Last = 0 then
                Fail_Program
                  (Project_Tree,
-                  "cannot specify a multi-unit index but no main " &
-                  "on the command line");
+                  "cannot specify a multi-unit index but no main "
+                  & "on the command line");
 
             elsif Names.Last > 1 then
                Fail_Program
@@ -1934,106 +2155,6 @@ package body Makeutl is
          return Path_Name;
       end if;
    end Path_Or_File_Name;
-
-   ---------------------------
-   -- Test_If_Relative_Path --
-   ---------------------------
-
-   procedure Test_If_Relative_Path
-     (Switch               : in out String_Access;
-      Parent               : String;
-      Do_Fail              : Fail_Proc;
-      Including_L_Switch   : Boolean := True;
-      Including_Non_Switch : Boolean := True;
-      Including_RTS        : Boolean := False)
-   is
-   begin
-      if Switch /= null then
-         declare
-            Sw    : String (1 .. Switch'Length);
-            Start : Positive;
-
-         begin
-            Sw := Switch.all;
-
-            if Sw (1) = '-' then
-               if Sw'Length >= 3
-                 and then (Sw (2) = 'A'
-                            or else Sw (2) = 'I'
-                            or else (Including_L_Switch and then Sw (2) = 'L'))
-               then
-                  Start := 3;
-
-                  if Sw = "-I-" then
-                     return;
-                  end if;
-
-               elsif Sw'Length >= 4
-                 and then (Sw (2 .. 3) = "aL"
-                             or else
-                           Sw (2 .. 3) = "aO"
-                             or else
-                           Sw (2 .. 3) = "aI")
-               then
-                  Start := 4;
-
-               elsif Including_RTS
-                 and then Sw'Length >= 7
-                 and then Sw (2 .. 6) = "-RTS="
-               then
-                  Start := 7;
-
-               else
-                  return;
-               end if;
-
-               --  Because relative path arguments to --RTS= may be relative to
-               --  the search directory prefix, those relative path arguments
-               --  are converted only when they include directory information.
-
-               if not Is_Absolute_Path (Sw (Start .. Sw'Last)) then
-                  if Parent'Length = 0 then
-                     Do_Fail
-                       ("relative search path switches ("""
-                        & Sw
-                        & """) are not allowed");
-
-                  elsif Including_RTS then
-                     for J in Start .. Sw'Last loop
-                        if Sw (J) = Directory_Separator then
-                           Switch :=
-                             new String'
-                               (Sw (1 .. Start - 1) &
-                                Parent &
-                                Directory_Separator &
-                                Sw (Start .. Sw'Last));
-                           return;
-                        end if;
-                     end loop;
-
-                  else
-                     Switch :=
-                       new String'
-                         (Sw (1 .. Start - 1) &
-                          Parent &
-                          Directory_Separator &
-                          Sw (Start .. Sw'Last));
-                  end if;
-               end if;
-
-            elsif Including_Non_Switch then
-               if not Is_Absolute_Path (Sw) then
-                  if Parent'Length = 0 then
-                     Do_Fail
-                       ("relative paths (""" & Sw & """) are not allowed");
-                  else
-                     Switch := new String'(Parent & Directory_Separator & Sw);
-                  end if;
-               end if;
-            end if;
-         end;
-      end if;
-   end Test_If_Relative_Path;
 
    -------------------
    -- Unit_Index_Of --
@@ -2254,13 +2375,15 @@ package body Makeutl is
       begin
          case S.Format is
             when Format_Gprbuild =>
-               return not Busy_Obj_Dirs.Get
-                 (S.Id.Project.Object_Directory.Name);
+               return
+                 not Busy_Obj_Dirs.Get
+                       (S.Id.Project.Object_Directory.Name);
 
             when Format_Gnatmake =>
-               return S.Project = No_Project
-                 or else
-                   not Busy_Obj_Dirs.Get (S.Project.Object_Directory.Name);
+               return
+                 S.Project = No_Project
+                   or else not Busy_Obj_Dirs.Get
+                                 (S.Project.Object_Directory.Name);
          end case;
       end Available_Obj_Dir;
 
@@ -2401,10 +2524,11 @@ package body Makeutl is
 
             for J in 1 .. Q.Last loop
                case Q.Table (J).Info.Format is
-               when Format_Gprbuild =>
-                  Q.Table (J).Info.Id.In_The_Queue := False;
-               when Format_Gnatmake =>
-                  null;
+                  when Format_Gprbuild =>
+                     Q.Table (J).Info.Id.In_The_Queue := False;
+
+                  when Format_Gnatmake =>
+                     null;
                end case;
             end loop;
 
@@ -2429,6 +2553,27 @@ package body Makeutl is
 
          if Was_Processed (Source) then
             return False;
+         end if;
+
+         --  For gprbuild, check if a source has already been inserted in the
+         --  queue from the same project in a different project tree.
+
+         if Source.Format = Format_Gprbuild then
+            for J in 1 .. Q.Last loop
+               if Source.Id.Path.Name = Q.Table (J).Info.Id.Path.Name
+                 and then Source.Id.Index = Q.Table (J).Info.Id.Index
+                 and then
+                   Ultimate_Extending_Project_Of (Source.Id.Project).Path.Name
+                     =
+                   Ultimate_Extending_Project_Of (Q.Table (J).Info.Id.Project).
+                                                                     Path.Name
+               then
+                  --  No need to insert this source in the queue, but still
+                  --  return True as we may need to insert its roots.
+
+                  return True;
+               end if;
+            end loop;
          end if;
 
          if Current_Verbosity = High then
@@ -2478,7 +2623,6 @@ package body Makeutl is
          Iter         : Source_Iterator;
 
          Dummy : Boolean;
-         pragma Unreferenced (Dummy);
 
       begin
          if not Insert_No_Roots (Source) then
@@ -2598,14 +2742,15 @@ package body Makeutl is
 
                      if Root_Found then
                         case Root_Source.Kind is
-                        when Impl =>
-                           null;
+                           when Impl =>
+                              null;
 
-                        when Spec =>
-                           Root_Found := Other_Part (Root_Source) = No_Source;
+                           when Spec =>
+                              Root_Found :=
+                                Other_Part (Root_Source) = No_Source;
 
-                        when Sep =>
-                           Root_Found := False;
+                           when Sep =>
+                              Root_Found := False;
                         end case;
                      end if;
 
@@ -2614,9 +2759,10 @@ package body Makeutl is
                         Debug_Output
                           ("   -> ", Name_Id (Root_Source.Display_File));
                         Dummy := Queue.Insert_No_Roots
-                          (Source => (Format => Format_Gprbuild,
-                                      Tree   => Source.Tree,
-                                      Id     => Root_Source));
+                          (Source => (Format  => Format_Gprbuild,
+                                      Tree    => Source.Tree,
+                                      Id      => Root_Source,
+                                      Closure => False));
 
                         Initialize_Source_Record (Root_Source);
 
@@ -2668,7 +2814,6 @@ package body Makeutl is
          With_Roots : Boolean := False)
       is
          Discard : Boolean;
-         pragma Unreferenced (Discard);
       begin
          Discard := Insert (Source, With_Roots);
       end Insert;
@@ -2745,6 +2890,7 @@ package body Makeutl is
             case Q.Table (Rank).Info.Format is
                when Format_Gprbuild =>
                   return Q.Table (Rank).Info.Id.File;
+
                when Format_Gnatmake =>
                   return Q.Table (Rank).Info.File;
             end case;
@@ -2772,31 +2918,39 @@ package body Makeutl is
          All_Projects   : Boolean;
          Unique_Compile : Boolean)
       is
-         procedure Do_Insert (Project : Project_Id; Tree : Project_Tree_Ref);
+
+         procedure Do_Insert
+           (Project : Project_Id;
+            Tree    : Project_Tree_Ref;
+            Context : Project_Context);
+         --  Local procedures must be commented ???
 
          ---------------
          -- Do_Insert --
          ---------------
 
-         procedure Do_Insert (Project : Project_Id; Tree : Project_Tree_Ref) is
+         procedure Do_Insert
+           (Project : Project_Id;
+            Tree    : Project_Tree_Ref;
+            Context : Project_Context)
+         is
             Unit_Based : constant Boolean :=
                            Unique_Compile
                              or else not Builder_Data (Tree).Closure_Needed;
-            --  When Unit_Based is True, put in the queue all compilable
-            --  sources including the unit based (Ada) one. When Unit_Based is
-            --  False, put the Ada sources only when they are in a library
-            --  project.
+            --  When Unit_Based is True, we enqueue all compilable sources
+            --  including the unit based (Ada) one. When Unit_Based is False,
+            --  put the Ada sources only when they are in a library project.
 
-            Iter   : Source_Iterator;
-            Source : Prj.Source_Id;
+            Iter    : Source_Iterator;
+            Source  : Prj.Source_Id;
+            OK      : Boolean;
+            Closure : Boolean;
 
          begin
             --  Nothing to do when "-u" was specified and some files were
             --  specified on the command line
 
-            if Unique_Compile
-              and then Mains.Number_Of_Mains (Tree) > 0
-            then
+            if Unique_Compile and then Mains.Number_Of_Mains (Tree) > 0 then
                return;
             end if;
 
@@ -2807,16 +2961,13 @@ package body Makeutl is
 
                if Is_Allowed_Language (Source.Language.Name)
                  and then Is_Compilable (Source)
-                 and then
-                   (All_Projects
-                     or else Is_Extending (Project, Source.Project))
+                 and then (All_Projects
+                            or else Is_Extending (Project, Source.Project))
                  and then not Source.Locally_Removed
                  and then Source.Replaced_By = No_Source
-                 and then
-                   (not Source.Project.Externally_Built
-                     or else
-                       (Is_Extending (Project, Source.Project)
-                         and then not Project.Externally_Built))
+                 and then (not Source.Project.Externally_Built
+                            or else (Is_Extending (Project, Source.Project)
+                                      and then not Project.Externally_Built))
                  and then Source.Kind /= Sep
                  and then Source.Path /= No_Path_Information
                then
@@ -2829,13 +2980,55 @@ package body Makeutl is
                   then
                      if (Unit_Based
                           or else Source.Unit = No_Unit_Index
-                          or else Source.Project.Library)
+                          or else Source.Project.Library
+                          or else Context.In_Aggregate_Lib
+                          or else Project.Qualifier = Aggregate_Library)
                        and then not Is_Subunit (Source)
                      then
-                        Queue.Insert
-                          (Source => (Format => Format_Gprbuild,
-                                      Tree   => Tree,
-                                      Id     => Source));
+                        OK := True;
+                        Closure := False;
+
+                        if Source.Unit /= No_Unit_Index
+                          and then
+                            (Source.Project.Library
+                              or else Project.Qualifier = Aggregate_Library
+                              or else Context.In_Aggregate_Lib)
+                          and then Source.Project.Standalone_Library /= No
+                        then
+                           --  Check if the unit is in the interface
+
+                           OK := False;
+
+                           declare
+                              List    : String_List_Id;
+                              Element : String_Element;
+
+                           begin
+                              List := Source.Project.Lib_Interface_ALIs;
+                              while List /= Nil_String loop
+                                 Element :=
+                                   Project_Tree.Shared.String_Elements.Table
+                                     (List);
+
+                                 if Element.Value = Name_Id (Source.Dep_Name)
+                                 then
+                                    OK := True;
+                                    Closure := True;
+                                    exit;
+                                 end if;
+
+                                 List := Element.Next;
+                              end loop;
+                           end;
+                        end if;
+
+                        if OK then
+                           Queue.Insert
+                             (Source => (Format  => Format_Gprbuild,
+                                         Tree    => Tree,
+                                         Id      => Source,
+                                         Closure => Closure));
+                        end if;
                      end if;
                   end if;
                end if;
@@ -2844,7 +3037,8 @@ package body Makeutl is
             end loop;
          end Do_Insert;
 
-         procedure Insert_All is new For_Project_And_Aggregated (Do_Insert);
+         procedure Insert_All is
+           new For_Project_And_Aggregated_Context (Do_Insert);
 
       begin
          Insert_All (Project, Project_Tree);
@@ -2925,9 +3119,10 @@ package body Makeutl is
                                or else Src_Id.Project.Library_Kind = Static)
                   then
                      Queue.Insert
-                       (Source => (Format => Format_Gprbuild,
-                                   Tree   => Project_Tree,
-                                   Id     => Src_Id));
+                       (Source => (Format  => Format_Gprbuild,
+                                   Tree    => Project_Tree,
+                                   Id      => Src_Id,
+                                   Closure => True));
                   end if;
                end if;
             end loop;
@@ -3012,7 +3207,10 @@ package body Makeutl is
             Data.Need_Linking     := False;
 
          else
-            Data.Closure_Needed   := Has_Mains;
+            Data.Closure_Needed   :=
+              Has_Mains
+                or else (Root_Project.Library
+                          and then Root_Project.Standalone_Library /= No);
             Data.Need_Compilation := All_Phases or Option_Compile_Only;
             Data.Need_Binding     := All_Phases or Option_Bind_Only;
             Data.Need_Linking     := (All_Phases or Option_Link_Only)
@@ -3022,10 +3220,10 @@ package body Makeutl is
          if Current_Verbosity = High then
             Debug_Output ("compilation phases: "
                           & " compile=" & Data.Need_Compilation'Img
-                          & " bind=" & Data.Need_Binding'Img
-                          & " link=" & Data.Need_Linking'Img
+                          & " bind="    & Data.Need_Binding'Img
+                          & " link="    & Data.Need_Linking'Img
                           & " closure=" & Data.Closure_Needed'Img
-                          & " mains=" & Data.Number_Of_Mains'Img,
+                          & " mains="   & Data.Number_Of_Mains'Img,
                           Project.Name);
          end if;
       end Do_Compute;
@@ -3042,7 +3240,7 @@ package body Makeutl is
 
    procedure Compute_Builder_Switches
      (Project_Tree        : Project_Tree_Ref;
-      Root_Environment    : in out Prj.Tree.Environment;
+      Env                 : in out Prj.Tree.Environment;
       Main_Project        : Project_Id;
       Only_For_Lang       : Name_Id := No_Name)
    is
@@ -3181,14 +3379,13 @@ package body Makeutl is
            and then Default_Switches_Array /= No_Array
          then
             Prj.Err.Error_Msg
-              (Root_Environment.Flags,
-               "Default_Switches forbidden in presence of " &
-               "Global_Compilation_Switches. Use Switches instead.",
+              (Env.Flags,
+               "Default_Switches forbidden in presence of "
+               & "Global_Compilation_Switches. Use Switches instead.",
                Project_Tree.Shared.Arrays.Table
                  (Default_Switches_Array).Location);
             Fail_Program
-              (Project_Tree,
-               "*** illegal combination of Builder attributes");
+              (Project_Tree, "*** illegal combination of Builder attributes");
          end if;
 
          if Lang /= No_Name then
@@ -3301,15 +3498,15 @@ package body Makeutl is
                      Name_Len := Name_Len + Name_Len;
 
                      Prj.Err.Error_Msg
-                       (Root_Environment.Flags,
-                        '"' & Name_Buffer (1 .. Name_Len) &
-                        """ is not a builder switch. Consider moving " &
-                        "it to Global_Compilation_Switches.",
+                       (Env.Flags,
+                        '"' & Name_Buffer (1 .. Name_Len)
+                        & """ is not a builder switch. Consider moving "
+                        & "it to Global_Compilation_Switches.",
                         Element.Location);
                      Fail_Program
                        (Project_Tree,
-                        "*** illegal switch """ &
-                        Get_Name_String (Element.Value) & '"');
+                        "*** illegal switch """
+                        & Get_Name_String (Element.Value) & '"');
                   end if;
                end if;
 

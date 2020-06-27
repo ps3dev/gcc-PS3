@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1995-2009, Free Software Foundation, Inc.         --
+--          Copyright (C) 1995-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -29,7 +29,7 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
---  Version used on all VxWorks, Nucleus, and RTX RTSS targets
+--  Version used on all VxWorks targets
 
 package body System.Parameters is
 
@@ -57,7 +57,12 @@ package body System.Parameters is
       pragma Import (C, Default_Stack_Size, "__gl_default_stack_size");
    begin
       if Default_Stack_Size = -1 then
-         return 20 * 1024;
+         if Stack_Check_Limits then
+            return 32 * 1024;
+            --  Extra stack to allow for 12K exception area.
+         else
+            return 20 * 1024;
+         end if;
       else
          return Size_Type (Default_Stack_Size);
       end if;

@@ -1,4 +1,4 @@
-;; Copyright (C) 2004, 2005, 2006, 2007 Free Software Foundation, Inc.
+;; Copyright (C) 2004-2017 Free Software Foundation, Inc.
 ;;
 ;; This file is part of GCC.
 ;;
@@ -108,7 +108,7 @@
 
 (define_insn_reservation "ir_sb1_unknown" 1
   (and (eq_attr "cpu" "sb1,sb1a")
-       (eq_attr "type" "unknown,multi"))
+       (eq_attr "type" "unknown,multi,atomic,syncloop"))
   "sb1_ls0+sb1_ls1+sb1_ex0+sb1_ex1+sb1_fp0+sb1_fp1")
 
 ;; predicted taken branch causes 2 cycle ifetch bubble.  predicted not
@@ -216,7 +216,7 @@
   "ir_sb1_load,ir_sb1a_load,ir_sb1_fpload,ir_sb1_fpload_32bitfp,
    ir_sb1_fpidxload,ir_sb1_fpidxload_32bitfp"
   "ir_sb1_store,ir_sb1_fpstore,ir_sb1_fpidxstore"
-  "mips_store_data_bypass_p")
+  "!mips_store_data_bypass_p")
 
 ;; On SB-1, simple alu instructions can execute on the LS1 unit.
 
@@ -289,27 +289,25 @@
 (define_bypass 5
   "ir_sb1a_simple_alu,ir_sb1_alu,ir_sb1_alu_0,ir_sb1_mfhi,ir_sb1_mflo"
   "ir_sb1_store,ir_sb1_fpstore,ir_sb1_fpidxstore"
-  "mips_store_data_bypass_p")
+  "!mips_store_data_bypass_p")
 
 ;; mf{hi,lo} is 1 cycle.  
 
 (define_insn_reservation "ir_sb1_mfhi" 1
   (and (eq_attr "cpu" "sb1,sb1a")
-       (and (eq_attr "type" "mfhilo")
-	    (not (match_operand 1 "lo_operand"))))
+       (eq_attr "type" "mfhi"))
   "sb1_ex1")
 
 (define_insn_reservation "ir_sb1_mflo" 1
   (and (eq_attr "cpu" "sb1,sb1a")
-       (and (eq_attr "type" "mfhilo")
-	    (match_operand 1 "lo_operand")))
+       (eq_attr "type" "mflo"))
   "sb1_ex1")
 
 ;; mt{hi,lo} to mul/div is 4 cycles.
 
 (define_insn_reservation "ir_sb1_mthilo" 4
   (and (eq_attr "cpu" "sb1,sb1a")
-       (eq_attr "type" "mthilo"))
+       (eq_attr "type" "mthi,mtlo"))
   "sb1_ex1")
 
 ;; mt{hi,lo} to mf{hi,lo} is 3 cycles.
@@ -353,7 +351,7 @@
 (define_bypass 7
   "ir_sb1_mulsi,ir_sb1_muldi"
   "ir_sb1_store,ir_sb1_fpstore,ir_sb1_fpidxstore"
-  "mips_store_data_bypass_p")
+  "!mips_store_data_bypass_p")
 
 ;; The divide unit is not pipelined.  Divide busy is asserted in the 4th
 ;; cycle, and then deasserted on the latency cycle.  So only one divide at

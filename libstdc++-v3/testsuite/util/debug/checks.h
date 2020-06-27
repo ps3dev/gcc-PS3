@@ -1,4 +1,4 @@
-// Copyright (C) 2010, 2011 Free Software Foundation, Inc.
+// Copyright (C) 2010-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -53,13 +53,26 @@ namespace __gnu_test
       }
     };
 
+  template<>
+    struct generate_unique<bool>
+    {
+      typedef bool value_type;
+
+      value_type build()
+      {
+	static value_type _S_;
+	_S_ = !_S_;
+	return _S_;
+      }
+    };
+
   template<typename _Tp1, typename _Tp2>
     struct generate_unique<std::pair<_Tp1, _Tp2> >
     {
       typedef _Tp1 first_type;
       typedef _Tp2 second_type;
       typedef std::pair<_Tp1, _Tp2> pair_type;
-      
+
       pair_type build()
       {
 	static first_type _S_1;
@@ -75,8 +88,6 @@ namespace __gnu_test
     void
     check_assign1()
     {
-      bool test __attribute__((unused)) = true;
-
       typedef _Tp cont_type;
       typedef typename cont_type::value_type cont_val_type;
       typedef typename CopyableValueType<cont_val_type>::value_type val_type;
@@ -105,8 +116,6 @@ namespace __gnu_test
     void
     check_assign2()
     {
-      bool test __attribute__((unused)) = true;
-
       typedef _Tp cont_type;
       typedef typename cont_type::value_type cont_val_type;
       typedef typename CopyableValueType<cont_val_type>::value_type val_type;
@@ -129,13 +138,11 @@ namespace __gnu_test
       c2.assign(last, first); // Expected failure
     }
 
-  // Check that invalid range of debug !random debug iterators is detected
+  // Check that invalid range of debug not random iterators is detected
   template<typename _Tp>
     void
     check_assign3()
     {
-      bool test __attribute__((unused)) = true;
-
       typedef _Tp cont_type;
       typedef typename cont_type::value_type cont_val_type;
       typedef typename CopyableValueType<cont_val_type>::value_type val_type;
@@ -163,8 +170,6 @@ namespace __gnu_test
     void
     check_construct1()
     {
-      bool test __attribute__((unused)) = true;
-
       typedef _Tp cont_type;
       typedef typename cont_type::value_type cont_val_type;
       typedef typename CopyableValueType<cont_val_type>::value_type val_type;
@@ -179,19 +184,15 @@ namespace __gnu_test
 
       val_type *first = &v.front() + 1;
       val_type *last = first + 2;
-      cont_type c1(first, last);
-      VERIFY(c1.size() == 2);
 
-      cont_type c2(last, first); // Expected failure
-    } 
+      cont_type c(last, first); // Expected failure
+    }
 
   // Check that invalid range of debug random iterators is detected
   template<typename _Tp>
     void
     check_construct2()
     {
-      bool test __attribute__((unused)) = true;
-
       typedef _Tp cont_type;
       typedef typename cont_type::value_type cont_val_type;
       typedef typename CopyableValueType<cont_val_type>::value_type val_type;
@@ -206,10 +207,8 @@ namespace __gnu_test
 
       typename vector_type::iterator first = v.begin() + 1;
       typename vector_type::iterator last = first + 2;
-      cont_type c1(first, last);
-      VERIFY(c1.size() == 2);
 
-      cont_type c2(last, first); // Expected failure
+      cont_type c(last, first); // Expected failure
     }
 
   // Check that invalid range of debug not random iterators is detected
@@ -217,8 +216,6 @@ namespace __gnu_test
     void
     check_construct3()
     {
-      bool test __attribute__((unused)) = true;
-
       typedef _Tp cont_type;
       typedef typename cont_type::value_type cont_val_type;
       typedef typename CopyableValueType<cont_val_type>::value_type val_type;
@@ -233,10 +230,8 @@ namespace __gnu_test
 
       typename list_type::iterator first = l.begin(); ++first;
       typename list_type::iterator last = first; ++last; ++last;
-      cont_type c1(first, last);
-      VERIFY(c1.size() == 2);
 
-      cont_type c2(last, first); // Expected failure
+      cont_type c(last, first); // Expected failure
     }
 
   template <typename _Cont>
@@ -293,8 +288,6 @@ namespace __gnu_test
     void
     check_insert1()
     {
-      bool test __attribute__((unused)) = true;
-
       typedef _Tp cont_type;
       typedef typename cont_type::value_type cont_val_type;
       typedef typename CopyableValueType<cont_val_type>::value_type val_type;
@@ -322,8 +315,6 @@ namespace __gnu_test
     void
     check_insert2()
     {
-      bool test __attribute__((unused)) = true;
-
       typedef _Tp cont_type;
       typedef typename cont_type::value_type cont_val_type;
       typedef typename CopyableValueType<cont_val_type>::value_type val_type;
@@ -351,8 +342,6 @@ namespace __gnu_test
     void
     check_insert3()
     {
-      bool test __attribute__((unused)) = true;
-
       typedef _Tp cont_type;
       typedef typename cont_type::value_type cont_val_type;
       typedef typename CopyableValueType<cont_val_type>::value_type val_type;
@@ -377,10 +366,34 @@ namespace __gnu_test
     }
 
   template<typename _Tp>
+    void
+    check_insert4()
+    {
+      typedef _Tp cont_type;
+      typedef typename cont_type::value_type cont_val_type;
+      typedef typename CopyableValueType<cont_val_type>::value_type val_type;
+      typedef std::list<val_type> list_type;
+
+      generate_unique<val_type> gu;
+
+      list_type l;
+      for (int i = 0; i != 5; ++i)
+        l.push_back(gu.build());
+      VERIFY(l.size() == 5);
+
+      typename list_type::iterator first = l.begin(); ++first;
+      typename list_type::iterator last = first; ++last; ++last;
+
+      cont_type c1;
+      InsertRangeHelper<cont_type>::Insert(c1, l.begin(), l.end());
+      VERIFY(c1.size() == 5);
+
+      c1.insert(c1.begin(), c1.begin(), c1.end()); // Expected failure.
+    }
+
+  template<typename _Tp>
     void use_invalid_iterator()
     {
-      bool test __attribute__((unused)) = true;
-
       typedef _Tp cont_type;
       typedef typename cont_type::value_type cont_val_type;
       typedef typename CopyableValueType<cont_val_type>::value_type val_type;

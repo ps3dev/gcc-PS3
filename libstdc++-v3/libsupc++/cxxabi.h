@@ -1,7 +1,6 @@
 // ABI Support -*- C++ -*-
 
-// Copyright (C) 2000, 2002, 2003, 2004, 2006, 2007, 2009, 2010, 2011
-// Free Software Foundation, Inc.
+// Copyright (C) 2000-2017 Free Software Foundation, Inc.
 //
 // This file is part of GCC.
 //
@@ -50,10 +49,7 @@
 #include <bits/c++config.h>
 #include <bits/cxxabi_tweaks.h>
 #include <bits/cxxabi_forced.h>
-
-#ifndef _GLIBCXX_CDTOR_CALLABI
-#define _GLIBCXX_CDTOR_CALLABI
-#endif
+#include <bits/cxxabi_init_exception.h>
 
 #ifdef __cplusplus
 namespace __cxxabiv1
@@ -134,6 +130,10 @@ namespace __cxxabiv1
   int
   __cxa_finalize(void*);
 
+  // TLS destruction.
+  int
+  __cxa_thread_atexit(void (*)(void*), void*, void *) _GLIBCXX_NOTHROW;
+
   // Pure virtual functions.
   void
   __cxa_pure_virtual(void) __attribute__ ((__noreturn__));
@@ -141,13 +141,15 @@ namespace __cxxabiv1
   void
   __cxa_deleted_virtual(void) __attribute__ ((__noreturn__));
 
-  // Exception handling auxillary.
+  // Exception handling auxiliary.
   void 
   __cxa_bad_cast() __attribute__((__noreturn__));
 
   void 
   __cxa_bad_typeid() __attribute__((__noreturn__));
 
+  void
+  __cxa_throw_bad_array_new_length() __attribute__((__noreturn__));
 
   /**
    *  @brief Demangling routine.
@@ -276,7 +278,9 @@ namespace __cxxabiv1
 	__volatile_mask = 0x2,
 	__restrict_mask = 0x4,
 	__incomplete_mask = 0x8,
-	__incomplete_class_mask = 0x10
+	__incomplete_class_mask = 0x10,
+	__transaction_safe_mask = 0x20,
+	__noexcept_mask = 0x40
       };
 
   protected:
@@ -294,6 +298,14 @@ namespace __cxxabiv1
     __pointer_catch(const __pbase_type_info* __thr_type, void** __thr_obj,
 		    unsigned __outer) const;
   };
+
+  inline bool __pbase_type_info::
+  __pointer_catch (const __pbase_type_info *thrown_type,
+		   void **thr_obj,
+		   unsigned outer) const
+  {
+    return __pointee->__do_catch (thrown_type->__pointee, thr_obj, outer + 2);
+  }
 
   // Type information for simple pointers.
   class __pointer_type_info : public __pbase_type_info
@@ -352,7 +364,11 @@ namespace __cxxabiv1
   {
   public:
     const __class_type_info* 	__base_type;  // Base class type.
+#ifdef _GLIBCXX_LLP64
+    long long			__offset_flags;  // Offset and info.
+#else
     long 			__offset_flags;  // Offset and info.
+#endif
 
     enum __offset_flags_masks
       {
@@ -589,10 +605,6 @@ namespace __cxxabiv1
 
   __cxa_eh_globals*
   __cxa_get_globals_fast() _GLIBCXX_NOTHROW __attribute__ ((__const__));
-
-  // Allocate memory for the primary exception plus the thrown object.
-  void*
-  __cxa_allocate_exception(size_t) _GLIBCXX_NOTHROW;
 
   // Free the space allocated for the primary exception.
   void 

@@ -6,7 +6,7 @@
  *                                                                          *
  *                          C Implementation File                           *
  *                                                                          *
- *          Copyright (C) 2003-2010, Free Software Foundation, Inc.         *
+ *          Copyright (C) 2003-2015, Free Software Foundation, Inc.         *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -31,40 +31,17 @@
 
 /*  This file provides a portable binding to the sockets API                */
 
+/* Ensure access to errno is thread safe.  */
+#define _REENTRANT
+#define _THREAD_SAFE
+
 #include "gsocket.h"
 
-#ifdef VMS
-/*
- * For VMS, gsocket.h can't include sockets-related DEC C header files
- * when building the runtime (because these files are in a DEC C text library
- * (DECC$RTLDEF.TLB) not accessible to GCC). So, we generate a separate header
- * file along with s-oscons.ads and include it here.
- */
-# include "s-oscons.h"
-
-/*
- * We also need the declaration of struct hostent/servent, which s-oscons
- * can't provide, so we copy it manually here. This needs to be kept in synch
- * with the definition of that structure in the DEC C headers, which
- * hopefully won't change frequently.
- */
-typedef char *__netdb_char_ptr __attribute__ (( mode (SI) ));
-typedef __netdb_char_ptr *__netdb_char_ptr_ptr __attribute__ (( mode (SI) ));
-
-struct hostent {
-  __netdb_char_ptr     h_name;
-  __netdb_char_ptr_ptr h_aliases;
-  int                  h_addrtype;
-  int                  h_length;
-  __netdb_char_ptr_ptr h_addr_list;
-};
-
-struct servent {
-  __netdb_char_ptr     s_name;
-  __netdb_char_ptr_ptr s_aliases;
-  int                  s_port;
-  __netdb_char_ptr     s_proto;
-};
+#if defined (__FreeBSD__) || defined (__DragonFly__) \
+ || defined (__NetBSD__) || defined (__OpenBSD__)
+typedef unsigned int IOCTL_Req_T;
+#else
+typedef int IOCTL_Req_T;
 #endif
 
 #if defined(HAVE_SOCKETS)
@@ -98,7 +75,7 @@ extern fd_set *__gnat_new_socket_set (fd_set *);
 extern void __gnat_remove_socket_from_set (fd_set *, int);
 extern void __gnat_reset_socket_set (fd_set *);
 extern int  __gnat_get_h_errno (void);
-extern int  __gnat_socket_ioctl (int, int, int *);
+extern int  __gnat_socket_ioctl (int, IOCTL_Req_T, int *);
 
 extern char * __gnat_servent_s_name (struct servent *);
 extern char * __gnat_servent_s_alias (struct servent *, int index);
@@ -134,7 +111,7 @@ __gnat_disable_all_sigpipes (void)
 #endif
 }
 
-#if defined (_WIN32) || defined (__vxworks) || defined (VMS)
+#if defined (_WIN32) || defined (__vxworks)
 /*
  * Signalling FDs operations are implemented in Ada for these platforms
  * (see subunit GNAT.Sockets.Thin.Signalling_Fds).
@@ -208,7 +185,7 @@ __gnat_gethostbyname (const char *name,
   struct hostent *rh;
   int ri;
 
-#if defined(__linux__) || defined(__GLIBC__)
+#if defined(__linux__) || defined(__GLIBC__) || defined(__rtems__)
   (void) gethostbyname_r (name, ret, buf, buflen, &rh, h_errnop);
 #else
   rh = gethostbyname_r (name, ret, buf, buflen, h_errnop);
@@ -225,7 +202,7 @@ __gnat_gethostbyaddr (const char *addr, int len, int type,
   struct hostent *rh;
   int ri;
 
-#if defined(__linux__) || defined(__GLIBC__)
+#if defined(__linux__) || defined(__GLIBC__) || defined(__rtems__)
   (void) gethostbyaddr_r (addr, len, type, ret, buf, buflen, &rh, h_errnop);
 #else
   rh = gethostbyaddr_r (addr, len, type, ret, buf, buflen, h_errnop);
@@ -501,15 +478,6 @@ __gnat_get_h_errno (void) {
       return -1;
   }
 
-#elif defined (VMS)
-  /* h_errno is defined as follows in OpenVMS' version of <netdb.h>.
-   * However this header file is not available when building the GNAT
-   * runtime library using GCC, so we are hardcoding the definition
-   * directly. Note that the returned address is thread-specific.
-   */
-  extern int *decc$h_errno_get_addr ();
-  return *decc$h_errno_get_addr ();
-
 #elif defined (__rtems__)
   /* At this stage in the tool build, no networking .h files are available.
    * Newlib does not provide networking .h files and RTEMS is not built yet.
@@ -526,7 +494,7 @@ __gnat_get_h_errno (void) {
 /* Wrapper for ioctl(2), which is a variadic function */
 
 int
-__gnat_socket_ioctl (int fd, int req, int *arg) {
+__gnat_socket_ioctl (int fd, IOCTL_Req_T req, int *arg) {
 #if defined (_WIN32)
   return ioctlsocket (fd, req, arg);
 #elif defined (__APPLE__)
@@ -541,11 +509,6 @@ __gnat_socket_ioctl (int fd, int req, int *arg) {
 }
 
 #ifndef HAVE_INET_PTON
-
-#ifdef VMS
-# define in_addr_t int
-# define inet_addr decc$inet_addr
-#endif
 
 int
 __gnat_inet_pton (int af, const char *src, void *dst) {
@@ -584,7 +547,7 @@ __gnat_inet_pton (int af, const char *src, void *dst) {
   }
   return (rc == 0);
 
-#elif defined (__hpux__) || defined (VMS)
+#elif defined (__hpux__)
   in_addr_t addr;
   int rc = -1;
 
@@ -685,6 +648,4 @@ __gnat_servent_s_proto (struct servent * s)
   return s->s_proto;
 }
 
-#else
-# warning Sockets are not supported on this platform
 #endif /* defined(HAVE_SOCKETS) */

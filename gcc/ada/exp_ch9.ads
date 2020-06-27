@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -55,11 +55,6 @@ package Exp_Ch9 is
    --  interface, ensure that the designated type has a _master and generate
    --  a renaming of the said master to service the access type.
 
-   function Build_Entry_Names (Conc_Typ : Entity_Id) return Node_Id;
-   --  Create the statements which populate the entry names array of a task or
-   --  protected type. The statements are wrapped inside a block due to a local
-   --  declaration.
-
    procedure Build_Master_Entity (Obj_Or_Typ : Entity_Id);
    --  Given the name of an object or a type which is either a task, contains
    --  tasks or designates tasks, create a _master in the appropriate scope
@@ -85,6 +80,8 @@ package Exp_Ch9 is
    --  needed, but in fact, in Ada 2005 the subprogram may be used in a call-
    --  back, and therefore a protected version of the operation must be
    --  generated as well.
+   --
+   --  Possibly factor this with Exp_Dist.Copy_Specification ???
 
    function Build_Protected_Sub_Specification
      (N        : Node_Id;
@@ -106,6 +103,16 @@ package Exp_Ch9 is
    --  subprogram, and Rec is the record corresponding to the protected object.
    --  External is False if the call is to another protected subprogram within
    --  the same object.
+
+   procedure Build_Protected_Subprogram_Call_Cleanup
+     (Op_Spec   : Node_Id;
+      Conc_Typ  : Node_Id;
+      Loc       : Source_Ptr;
+      Stmts     : List_Id);
+   --  Append to Stmts the cleanups after a call to a protected subprogram
+   --  whose specification is Op_Spec. Conc_Typ is the concurrent type and Loc
+   --  the sloc for appended statements. The cleanup will either unlock the
+   --  protected object or serve pending entries.
 
    procedure Build_Task_Activation_Call (N : Node_Id);
    --  This procedure is called for constructs that can be task activators,
@@ -156,7 +163,8 @@ package Exp_Ch9 is
    --  allocated aggregates with default initialized components. Init_Stmts
    --  contains the list of statements required to initialize the allocated
    --  aggregate. It replaces the call to Init (Args) done by
-   --  Build_Task_Allocate_Block.
+   --  Build_Task_Allocate_Block. Also used to expand allocators containing
+   --  build-in-place function calls.
 
    function Build_Wrapper_Spec
      (Subp_Id : Entity_Id;
@@ -248,12 +256,13 @@ package Exp_Ch9 is
    --  allows these two nodes to be found from the type, without benefit of
    --  further attributes, using Corresponding_Record.
 
-   procedure Expand_N_Requeue_Statement          (N : Node_Id);
-   procedure Expand_N_Selective_Accept           (N : Node_Id);
-   procedure Expand_N_Single_Task_Declaration    (N : Node_Id);
-   procedure Expand_N_Task_Body                  (N : Node_Id);
-   procedure Expand_N_Task_Type_Declaration      (N : Node_Id);
-   procedure Expand_N_Timed_Entry_Call           (N : Node_Id);
+   procedure Expand_N_Requeue_Statement            (N : Node_Id);
+   procedure Expand_N_Selective_Accept             (N : Node_Id);
+   procedure Expand_N_Single_Protected_Declaration (N : Node_Id);
+   procedure Expand_N_Single_Task_Declaration      (N : Node_Id);
+   procedure Expand_N_Task_Body                    (N : Node_Id);
+   procedure Expand_N_Task_Type_Declaration        (N : Node_Id);
+   procedure Expand_N_Timed_Entry_Call             (N : Node_Id);
 
    procedure Expand_Protected_Body_Declarations
      (N       : Node_Id;
@@ -264,7 +273,7 @@ package Exp_Ch9 is
    --  is the entity for the corresponding protected type declaration.
 
    function External_Subprogram (E : Entity_Id) return Entity_Id;
-   --  return the external version of a protected operation, which locks
+   --  Return the external version of a protected operation, which locks
    --  the object before invoking the internal protected subprogram body.
 
    function Find_Master_Scope (E : Entity_Id) return Entity_Id;

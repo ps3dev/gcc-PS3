@@ -6,12 +6,19 @@
 Package gob manages streams of gobs - binary values exchanged between an
 Encoder (transmitter) and a Decoder (receiver).  A typical use is transporting
 arguments and results of remote procedure calls (RPCs) such as those provided by
-package "rpc".
+package "net/rpc".
+
+The implementation compiles a custom codec for each data type in the stream and
+is most efficient when a single Encoder is used to transmit a stream of values,
+amortizing the cost of compilation.
+
+Basics
 
 A stream of gobs is self-describing.  Each data item in the stream is preceded by
 a specification of its type, expressed in terms of a small set of predefined
 types.  Pointers are not transmitted, but the things they point to are
-transmitted; that is, the values are flattened.  Recursive types work fine, but
+transmitted; that is, the values are flattened. Nil pointers are not permitted,
+as they have no value. Recursive types work fine, but
 recursive values (data with cycles) are problematic.  This may change.
 
 To use gobs, create an Encoder and present it with a series of data items as
@@ -19,6 +26,8 @@ values or addresses that can be dereferenced to values.  The Encoder makes sure
 all type information is sent before it is needed.  At the receive side, a
 Decoder retrieves values from the encoded stream and unpacks them into local
 variables.
+
+Types and Values
 
 The source and destination values/types need not correspond exactly.  For structs,
 fields (identified by name) that are in the source but absent from the receiving
@@ -67,17 +76,35 @@ point values may be received into any floating point variable.  However,
 the destination variable must be able to represent the value or the decode
 operation will fail.
 
-Structs, arrays and slices are also supported.  Strings and arrays of bytes are
-supported with a special, efficient representation (see below).  When a slice is
-decoded, if the existing slice has capacity the slice will be extended in place;
-if not, a new array is allocated.  Regardless, the length of the resulting slice
-reports the number of elements decoded.
+Structs, arrays and slices are also supported. Structs encode and decode only
+exported fields. Strings and arrays of bytes are supported with a special,
+efficient representation (see below). When a slice is decoded, if the existing
+slice has capacity the slice will be extended in place; if not, a new array is
+allocated. Regardless, the length of the resulting slice reports the number of
+elements decoded.
 
-Functions and channels cannot be sent in a gob.  Attempting
-to encode a value that contains one will fail.
+In general, if allocation is required, the decoder will allocate memory. If not,
+it will update the destination variables with values read from the stream. It does
+not initialize them first, so if the destination is a compound value such as a
+map, struct, or slice, the decoded values will be merged elementwise into the
+existing variables.
 
-The rest of this comment documents the encoding, details that are not important
-for most users.  Details are presented bottom-up.
+Functions and channels will not be sent in a gob. Attempting to encode such a value
+at the top level will fail. A struct field of chan or func type is treated exactly
+like an unexported field and is ignored.
+
+Gob can encode a value of any type implementing the GobEncoder or
+encoding.BinaryMarshaler interfaces by calling the corresponding method,
+in that order of preference.
+
+Gob can decode a value of any type implementing the GobDecoder or
+encoding.BinaryUnmarshaler interfaces by calling the corresponding method,
+again in that order of preference.
+
+Encoding Details
+
+This section documents the encoding, details that are not important for most
+users. Details are presented bottom-up.
 
 An unsigned integer is sent one of two ways.  If it is less than 128, it is sent
 as a byte with that value.  Otherwise it is sent as a minimal-length big-endian
@@ -91,11 +118,11 @@ A signed integer, i, is encoded within an unsigned integer, u.  Within u, bits 1
 upward contain the value; bit 0 says whether they should be complemented upon
 receipt.  The encode algorithm looks like this:
 
-	uint u;
+	var u uint
 	if i < 0 {
-		u = (^i << 1) | 1	// complement i, bit 0 is 1
+		u = (^uint(i) << 1) | 1 // complement i, bit 0 is 1
 	} else {
-		u = (i << 1)	// do not complement i, bit 0 is 0
+		u = (uint(i) << 1) // do not complement i, bit 0 is 0
 	}
 	encodeUnsigned(u)
 
@@ -116,23 +143,26 @@ uninterpreted bytes of the value.
 All other slices and arrays are sent as an unsigned count followed by that many
 elements using the standard gob encoding for their type, recursively.
 
-Maps are sent as an unsigned count followed by that man key, element
-pairs. Empty but non-nil maps are sent, so if the sender has allocated
-a map, the receiver will allocate a map even no elements are
-transmitted.
+Maps are sent as an unsigned count followed by that many key, element
+pairs. Empty but non-nil maps are sent, so if the receiver has not allocated
+one already, one will always be allocated on receipt unless the transmitted map
+is nil and not at the top level.
+
+In slices and arrays, as well as maps, all elements, even zero-valued elements,
+are transmitted, even if all the elements are zero.
 
 Structs are sent as a sequence of (field number, field value) pairs.  The field
 value is sent using the standard gob encoding for its type, recursively.  If a
-field has the zero value for its type, it is omitted from the transmission.  The
-field number is defined by the type of the encoded struct: the first field of the
-encoded type is field 0, the second is field 1, etc.  When encoding a value, the
-field numbers are delta encoded for efficiency and the fields are always sent in
-order of increasing field number; the deltas are therefore unsigned.  The
-initialization for the delta encoding sets the field number to -1, so an unsigned
-integer field 0 with value 7 is transmitted as unsigned delta = 1, unsigned value
-= 7 or (01 07).  Finally, after all the fields have been sent a terminating mark
-denotes the end of the struct.  That mark is a delta=0 value, which has
-representation (00).
+field has the zero value for its type (except for arrays; see above), it is omitted
+from the transmission.  The field number is defined by the type of the encoded
+struct: the first field of the encoded type is field 0, the second is field 1,
+etc.  When encoding a value, the field numbers are delta encoded for efficiency
+and the fields are always sent in order of increasing field number; the deltas are
+therefore unsigned.  The initialization for the delta encoding sets the field
+number to -1, so an unsigned integer field 0 with value 7 is transmitted as unsigned
+delta = 1, unsigned value = 7 or (01 07).  Finally, after all the fields have been
+sent a terminating mark denotes the end of the struct.  That mark is a delta=0
+value, which has representation (00).
 
 Interface types are not checked for compatibility; all interface types are
 treated, for transmission, as members of a single "interface" type, analogous to
@@ -225,8 +255,14 @@ In summary, a gob stream looks like
 where * signifies zero or more repetitions and the type id of a value must
 be predefined or be defined before the value in the stream.
 
+Compatibility: Any future changes to the package will endeavor to maintain
+compatibility with streams encoded using previous versions.  That is, any released
+version of this package should be able to decode data written with any previously
+released version, subject to issues such as security fixes. See the Go compatibility
+document for background: https://golang.org/doc/go1compat
+
 See "Gobs of data" for a design discussion of the gob wire format:
-http://blog.golang.org/2011/03/gobs-of-data.html
+https://blog.golang.org/gobs-of-data
 */
 package gob
 
@@ -328,7 +364,7 @@ reserved).
 	01	// Add 1 to get field number 0: field[1].name
 	01	// 1 byte
 	59	// structType.field[1].name = "Y"
-	01	// Add 1 to get field number 1: field[0].id
+	01	// Add 1 to get field number 1: field[1].id
 	04	// struct.Type.field[1].typeId is 2 (signed int).
 	00	// End of structType.field[1]; end of structType.field.
 	00	// end of wireType.structType structure

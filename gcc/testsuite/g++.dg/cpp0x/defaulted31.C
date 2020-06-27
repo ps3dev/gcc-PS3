@@ -1,10 +1,10 @@
 // PR c++/39164
-// { dg-options -std=c++0x }
+// { dg-do compile { target c++11 } }
 
 struct A
 {
-  A() { }			// { dg-error "defined" }
-  ~A() = default;		// { dg-error "defaulted" }
+  A() { }			// { dg-message "defined" }
+  ~A() = default;		// { dg-message "defaulted" }
 };
 
 A::A() = default;		// { dg-error "redefinition" }

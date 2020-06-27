@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1999-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1999-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -39,6 +39,10 @@ with GNAT.OS_Lib;               use GNAT.OS_Lib;
 
 package body GNAT.Command_Line is
 
+   --  General note: this entire body could use much more commenting. There
+   --  are large sections of uncommented code throughout, and many formal
+   --  parameters of local subprograms are not documented at all ???
+
    package CL renames Ada.Command_Line;
 
    type Switch_Parameter_Type is
@@ -52,10 +56,16 @@ package body GNAT.Command_Line is
      (Variable : out Parameter_Type;
       Arg_Num  : Positive;
       First    : Positive;
-      Last     : Positive;
+      Last     : Natural;
       Extra    : Character := ASCII.NUL);
    pragma Inline (Set_Parameter);
    --  Set the parameter that will be returned by Parameter below
+   --
+   --  Extra is a character that needs to be added when reporting Full_Switch.
+   --  (it will in general be the switch character, for instance '-').
+   --  Otherwise, Full_Switch will report 'f' instead of '-f'. In particular,
+   --  it needs to be set when reporting an invalid switch or handling '*'.
+   --
    --  Parameters need to be defined ???
 
    function Goto_Next_Argument_In_Section (Parser : Opt_Parser) return Boolean;
@@ -95,9 +105,9 @@ package body GNAT.Command_Line is
       Index_In_Switches : out Integer;
       Switch_Length     : out Integer;
       Param             : out Switch_Parameter_Type);
-   --  Return the Longest switch from Switches that at least partially
-   --  partially Arg. Index_In_Switches is set to 0 if none matches.
-   --  What are other parameters??? in particular Param is not always set???
+   --  Return the Longest switch from Switches that at least partially matches
+   --  Arg. Index_In_Switches is set to 0 if none matches. What are other
+   --  parameters??? in particular Param is not always set???
 
    procedure Unchecked_Free is new Ada.Unchecked_Deallocation
      (Argument_List, Argument_List_Access);
@@ -128,7 +138,8 @@ package body GNAT.Command_Line is
       Switch      : String := "";
       Long_Switch : String := "";
       Help        : String := "";
-      Section     : String := "");
+      Section     : String := "";
+      Argument    : String := "ARG");
    --  Initialize [Def] with the contents of the other parameters.
    --  This also checks consistency of the switch parameters, and will raise
    --  Invalid_Switch if they do not match.
@@ -438,21 +449,16 @@ package body GNAT.Command_Line is
          declare
             Arg   : constant String :=
                       Argument (Parser, Parser.Current_Argument - 1);
-            Index : Positive;
-
          begin
-            Index := Arg'First;
-            while Index <= Arg'Last loop
+            for Index in Arg'Range loop
                if Arg (Index) = '*'
                  or else Arg (Index) = '?'
                  or else Arg (Index) = '['
                then
                   Parser.In_Expansion := True;
                   Start_Expansion (Parser.Expansion_It, Arg);
-                  return Get_Argument (Do_Expansion);
+                  return Get_Argument (Do_Expansion, Parser);
                end if;
-
-               Index := Index + 1;
             end loop;
          end;
       end if;
@@ -477,18 +483,22 @@ package body GNAT.Command_Line is
       end if;
 
       case Switch (Switch'Last) is
-         when ':'    =>
+         when ':' =>
             Parameter_Type := Parameter_With_Optional_Space;
             Switch_Last    := Switch'Last - 1;
-         when '='    =>
+
+         when '=' =>
             Parameter_Type := Parameter_With_Space_Or_Equal;
             Switch_Last    := Switch'Last - 1;
-         when '!'    =>
+
+         when '!' =>
             Parameter_Type := Parameter_No_Space;
             Switch_Last    := Switch'Last - 1;
-         when '?'    =>
+
+         when '?' =>
             Parameter_Type := Parameter_Optional;
             Switch_Last    := Switch'Last - 1;
+
          when others =>
             Parameter_Type := Parameter_None;
             Switch_Last    := Switch'Last;
@@ -550,6 +560,10 @@ package body GNAT.Command_Line is
            and then Switches (Index .. Last) =
                       Arg (Arg'First .. Arg'First + Last - Index)
            and then Last - Index + 1 > Switch_Length
+           and then
+             (P /= Parameter_With_Space_Or_Equal
+               or else Arg'Last = Arg'First + Last - Index
+               or else Arg (Arg'First + Last - Index + 1) = '=')
          then
             Param             := P;
             Index_In_Switches := Index;
@@ -578,7 +592,6 @@ package body GNAT.Command_Line is
       Parser      : Opt_Parser := Command_Line_Parser) return Character
    is
       Dummy : Boolean;
-      pragma Unreferenced (Dummy);
 
    begin
       <<Restart>>
@@ -612,7 +625,7 @@ package body GNAT.Command_Line is
          --  If we are on a new item, test if this might be a switch
 
          if Parser.Current_Index = Arg'First then
-            if Arg (Arg'First) /= Parser.Switch_Character then
+            if Arg = "" or else Arg (Arg'First) /= Parser.Switch_Character then
 
                --  If it isn't a switch, return it immediately. We also know it
                --  isn't the parameter to a previous switch, since that has
@@ -662,17 +675,45 @@ package body GNAT.Command_Line is
 
          if Index_Switches = 0 then
 
-            --  Depending on the value of Concatenate, the full switch is
-            --  a single character or the rest of the argument.
+            --  Find the current switch that we did not recognize. This is in
+            --  fact difficult because Getopt does not know explicitly about
+            --  short and long switches. Ideally, we would want the following
+            --  behavior:
 
-            End_Index :=
-              (if Concatenate then Parser.Current_Index else Arg'Last);
+            --      * for short switches, with Concatenate:
+            --        if -a is not recognized, and the command line has -daf
+            --        we should report the invalid switch as "-a".
 
-            if Switches (Switches'First) = '*' then
+            --      * for short switches, wihtout Concatenate:
+            --        we should report the invalid switch as "-daf".
 
-               --  Always prepend the switch character, so that users know that
-               --  this comes from a switch on the command line. This is
-               --  especially important when Concatenate is False, since
+            --      * for long switches:
+            --        if the commadn line is "--long" we should report --long
+            --        as unrecongized.
+
+            --  Unfortunately, the fact that long switches start with a
+            --  duplicate switch character is just a convention (so we could
+            --  have a long switch "-long" for instance). We'll still rely on
+            --  this convention here to try and get as helpful an error message
+            --  as possible.
+
+            --  Long switch case (starting with double switch character)
+
+            if Arg (Arg'First + 1) = Parser.Switch_Character then
+               End_Index := Arg'Last;
+
+            --  Short switch case
+
+            else
+               End_Index :=
+                 (if Concatenate then Parser.Current_Index else Arg'Last);
+            end if;
+
+            if Switches /= "" and then Switches (Switches'First) = '*' then
+
+               --  Always prepend the switch character, so that users know
+               --  that this comes from a switch on the command line. This
+               --  is especially important when Concatenate is False, since
                --  otherwise the current argument first character is lost.
 
                if Parser.Section (Parser.Current_Argument) = 0 then
@@ -695,11 +736,21 @@ package body GNAT.Command_Line is
                end if;
             end if;
 
-            Set_Parameter
-              (Parser.The_Switch,
-               Arg_Num => Parser.Current_Argument,
-               First   => Parser.Current_Index,
-               Last    => End_Index);
+            if Parser.Current_Index = Arg'First then
+               Set_Parameter
+                 (Parser.The_Switch,
+                  Arg_Num => Parser.Current_Argument,
+                  First   => Parser.Current_Index,
+                  Last    => End_Index);
+            else
+               Set_Parameter
+                 (Parser.The_Switch,
+                  Arg_Num => Parser.Current_Argument,
+                  First   => Parser.Current_Index,
+                  Last    => End_Index,
+                  Extra   => Parser.Switch_Character);
+            end if;
+
             Parser.Current_Index := End_Index + 1;
 
             raise Invalid_Switch;
@@ -761,7 +812,7 @@ package body GNAT.Command_Line is
                      raise Invalid_Parameter;
                   end if;
 
-               --  If the switch is of the form <switch> xxx
+               --  Case of switch of the form <switch> xxx
 
                elsif Parser.Current_Argument < Parser.Arg_Count
                  and then Parser.Section (Parser.Current_Argument + 1) /= 0
@@ -829,7 +880,8 @@ package body GNAT.Command_Line is
                     (Parser.The_Switch,
                      Arg_Num => Parser.Current_Argument,
                      First   => Parser.Current_Index,
-                     Last    => Arg'Last);
+                     Last    => Arg'Last,
+                     Extra   => Parser.Switch_Character);
                   Parser.Current_Index := Arg'Last + 1;
                   raise Invalid_Switch;
                end if;
@@ -1013,7 +1065,9 @@ package body GNAT.Command_Line is
          Section_Num := Section_Num + 1;
 
          for Index in 1 .. Parser.Arg_Count loop
-            if Argument (Parser, Index)(1) = Parser.Switch_Character
+            pragma Assert (Argument (Parser, Index)'First = 1);
+            if Argument (Parser, Index) /= ""
+              and then Argument (Parser, Index)(1) = Parser.Switch_Character
               and then
                 Argument (Parser, Index) = Parser.Switch_Character &
                                              Section_Delimiters
@@ -1079,7 +1133,7 @@ package body GNAT.Command_Line is
      (Variable : out Parameter_Type;
       Arg_Num  : Positive;
       First    : Positive;
-      Last     : Positive;
+      Last     : Natural;
       Extra    : Character := ASCII.NUL)
    is
    begin
@@ -1169,9 +1223,7 @@ package body GNAT.Command_Line is
       procedure Unchecked_Free is new
         Ada.Unchecked_Deallocation (Opt_Parser_Data, Opt_Parser);
    begin
-      if Parser /= null
-        and then Parser /= Command_Line_Parser
-      then
+      if Parser /= null and then Parser /= Command_Line_Parser then
          Free (Parser.Arguments);
          Unchecked_Free (Parser);
       end if;
@@ -1188,6 +1240,7 @@ package body GNAT.Command_Line is
       Section  : String := "")
    is
       Def    : Alias_Definition;
+
    begin
       if Config = null then
          Config := new Command_Line_Configuration_Record;
@@ -1254,8 +1307,9 @@ package body GNAT.Command_Line is
    -- Add --
    ---------
 
-   procedure Add (Def : in out Alias_Definitions_List;
-                  Alias : Alias_Definition)
+   procedure Add
+     (Def   : in out Alias_Definitions_List;
+      Alias : Alias_Definition)
    is
       procedure Unchecked_Free is new
         Ada.Unchecked_Deallocation
@@ -1280,11 +1334,12 @@ package body GNAT.Command_Line is
    ---------------------------
 
    procedure Initialize_Switch_Def
-     (Def : out Switch_Definition;
+     (Def         : out Switch_Definition;
       Switch      : String := "";
       Long_Switch : String := "";
       Help        : String := "";
-      Section     : String := "")
+      Section     : String := "";
+      Argument    : String := "ARG")
    is
       P1, P2       : Switch_Parameter_Type := Parameter_None;
       Last1, Last2 : Integer;
@@ -1316,6 +1371,10 @@ package body GNAT.Command_Line is
          Def.Section := new String'(Section);
       end if;
 
+      if Argument /= "ARG" then
+         Def.Argument := new String'(Argument);
+      end if;
+
       if Help /= "" then
          Def.Help := new String'(Help);
       end if;
@@ -1330,12 +1389,14 @@ package body GNAT.Command_Line is
       Switch      : String := "";
       Long_Switch : String := "";
       Help        : String := "";
-      Section     : String := "")
+      Section     : String := "";
+      Argument    : String := "ARG")
    is
       Def : Switch_Definition;
    begin
       if Switch /= "" or else Long_Switch /= "" then
-         Initialize_Switch_Def (Def, Switch, Long_Switch, Help, Section);
+         Initialize_Switch_Def
+           (Def, Switch, Long_Switch, Help, Section, Argument);
          Add (Config, Def);
       end if;
    end Define_Switch;
@@ -1375,12 +1436,14 @@ package body GNAT.Command_Line is
       Help        : String := "";
       Section     : String := "";
       Initial     : Integer := 0;
-      Default     : Integer := 1)
+      Default     : Integer := 1;
+      Argument    : String := "ARG")
    is
       Def : Switch_Definition (Switch_Integer);
    begin
       if Switch /= "" or else Long_Switch /= "" then
-         Initialize_Switch_Def (Def, Switch, Long_Switch, Help, Section);
+         Initialize_Switch_Def
+           (Def, Switch, Long_Switch, Help, Section, Argument);
          Def.Integer_Output  := Output.all'Unchecked_Access;
          Def.Integer_Default := Default;
          Def.Integer_Initial := Initial;
@@ -1398,12 +1461,14 @@ package body GNAT.Command_Line is
       Switch      : String := "";
       Long_Switch : String := "";
       Help        : String := "";
-      Section     : String := "")
+      Section     : String := "";
+      Argument    : String := "ARG")
    is
       Def : Switch_Definition (Switch_String);
    begin
       if Switch /= "" or else Long_Switch /= "" then
-         Initialize_Switch_Def (Def, Switch, Long_Switch, Help, Section);
+         Initialize_Switch_Def
+           (Def, Switch, Long_Switch, Help, Section, Argument);
          Def.String_Output  := Output.all'Unchecked_Access;
          Add (Config, Def);
       end if;
@@ -1499,7 +1564,7 @@ package body GNAT.Command_Line is
 
       Foreach (Config, Section => Section);
 
-      --  Adding relevant aliases
+      --  Add relevant aliases
 
       if Config.Aliases /= null then
          for A in Config.Aliases'Range loop
@@ -1573,8 +1638,8 @@ package body GNAT.Command_Line is
       function Real_Full_Switch
         (S      : Character;
          Parser : Opt_Parser) return String;
-      --  Ensure that the returned switch value contains the
-      --  Switch_Char prefix if needed.
+      --  Ensure that the returned switch value contains the Switch_Char prefix
+      --  if needed.
 
       ----------------------
       -- Real_Full_Switch --
@@ -1620,7 +1685,13 @@ package body GNAT.Command_Line is
                   --  the argument. In the second case, the switch matches "*",
                   --  and is then decomposed below.
 
-                  S := Getopt (Switches    => "*",
+                  --  Note: When a Command_Line object is associated with a
+                  --  Command_Line_Config (which is mostly the case for tools
+                  --  that let users choose the command line before spawning
+                  --  other tools, for instance IDEs), the configuration of
+                  --  the switches must be taken from the Command_Line_Config.
+
+                  S := Getopt (Switches    => "* " & Get_Switches (Cmd.Config),
                                Concatenate => False,
                                Parser      => Parser);
 
@@ -2001,7 +2072,9 @@ package body GNAT.Command_Line is
                   Found_In_Config := True;
                   return False;
 
-               when Parameter_No_Space | Parameter_Optional =>
+               when Parameter_No_Space
+                  | Parameter_Optional
+               =>
                   Callback (Switch (Switch'First .. Last),
                             "", Switch (Param .. Switch'Last), Index);
                   Found_In_Config := True;
@@ -2453,13 +2526,12 @@ package body GNAT.Command_Line is
                    ((Cmd.Params (C) = null and then Param = "")
                       or else
                         (Cmd.Params (C) /= null
-                           and then
 
-                           --  Ignore the separator stored in Parameter
+                          --  Ignore the separator stored in Parameter
 
+                          and then
                              Cmd.Params (C) (Cmd.Params (C)'First + 1
-                                             .. Cmd.Params (C)'Last) =
-                           Param))
+                                             .. Cmd.Params (C)'Last) = Param))
                then
                   Remove (Cmd.Expanded, C);
                   Remove (Cmd.Params, C);
@@ -2538,9 +2610,7 @@ package body GNAT.Command_Line is
    --  Start of processing for Group_Switches
 
    begin
-      if Cmd.Config = null
-        or else Cmd.Config.Prefixes = null
-      then
+      if Cmd.Config = null or else Cmd.Config.Prefixes = null then
          return;
       end if;
 
@@ -2626,10 +2696,9 @@ package body GNAT.Command_Line is
       First : Natural;
 
       procedure Check_Cb (Switch, Separator, Param : String; Index : Integer);
-      --  Checks whether the command line contains [Switch].
-      --  Sets the global variable [Found] appropriately.
-      --  This will be called for each simple switch that make up an alias, to
-      --  know whether the alias should be applied.
+      --  Checks whether the command line contains [Switch]. Sets the global
+      --  variable [Found] appropriately. This is called for each simple switch
+      --  that make up an alias, to know whether the alias should be applied.
 
       procedure Remove_Cb (Switch, Separator, Param : String; Index : Integer);
       --  Remove the simple switch [Switch] from the command line, since it is
@@ -2696,9 +2765,7 @@ package body GNAT.Command_Line is
    --  Start of processing for Alias_Switches
 
    begin
-      if Cmd.Config = null
-        or else Cmd.Config.Aliases = null
-      then
+      if Cmd.Config = null or else Cmd.Config.Aliases = null then
          return;
       end if;
 
@@ -3014,6 +3081,7 @@ package body GNAT.Command_Line is
                Free (Config.Switches (S).Long_Switch);
                Free (Config.Switches (S).Help);
                Free (Config.Switches (S).Section);
+               Free (Config.Switches (S).Argument);
             end loop;
 
             Unchecked_Free (Config.Switches);
@@ -3067,7 +3135,7 @@ package body GNAT.Command_Line is
 
    procedure Display_Help (Config : Command_Line_Configuration) is
       function Switch_Name
-        (Def : Switch_Definition;
+        (Def     : Switch_Definition;
          Section : String) return String;
       --  Return the "-short, --long=ARG" string for Def.
       --  Returns "" if the switch is not in the section.
@@ -3092,16 +3160,18 @@ package body GNAT.Command_Line is
 
          New_Line;
 
-         if Section /= "" then
+         if Section /= "" and then Config.Switches /= null then
             Put_Line ("Switches after " & Section);
          end if;
 
          --  Compute size of the switches column
 
-         for S in Config.Switches'Range loop
-            Max_Len := Natural'Max
-              (Max_Len, Switch_Name (Config.Switches (S), Section)'Length);
-         end loop;
+         if Config.Switches /= null then
+            for S in Config.Switches'Range loop
+               Max_Len := Natural'Max
+                 (Max_Len, Switch_Name (Config.Switches (S), Section)'Length);
+            end loop;
+         end if;
 
          if Config.Aliases /= null then
             for A in Config.Aliases'Range loop
@@ -3114,25 +3184,27 @@ package body GNAT.Command_Line is
 
          --  Display the switches
 
-         for S in Config.Switches'Range loop
-            declare
-               N : constant String :=
-                     Switch_Name (Config.Switches (S), Section);
+         if Config.Switches /= null then
+            for S in Config.Switches'Range loop
+               declare
+                  N : constant String :=
+                    Switch_Name (Config.Switches (S), Section);
 
-            begin
-               if N /= "" then
-                  Put (" ");
-                  Put (N);
-                  Put ((1 .. Max_Len - N'Length + 1 => ' '));
+               begin
+                  if N /= "" then
+                     Put (" ");
+                     Put (N);
+                     Put ((1 .. Max_Len - N'Length + 1 => ' '));
 
-                  if Config.Switches (S).Help /= null then
-                     Put (Config.Switches (S).Help.all);
+                     if Config.Switches (S).Help /= null then
+                        Put (Config.Switches (S).Help.all);
+                     end if;
+
+                     New_Line;
                   end if;
-
-                  New_Line;
-               end if;
-            end;
-         end loop;
+               end;
+            end loop;
+         end if;
 
          --  Display the aliases
 
@@ -3182,7 +3254,7 @@ package body GNAT.Command_Line is
       -----------------
 
       function Switch_Name
-        (Def : Switch_Definition;
+        (Def     : Switch_Definition;
          Section : String) return String
       is
          use Ada.Strings.Unbounded;
@@ -3206,17 +3278,33 @@ package body GNAT.Command_Line is
                   Decompose_Switch (Def.Long_Switch.all, P2, Last2);
                   Append (Result, ", "
                           & Def.Long_Switch (Def.Long_Switch'First .. Last2));
-                  Append (Result, Param_Name (P2, "ARG"));
+
+                  if Def.Argument = null then
+                     Append (Result, Param_Name (P2, "ARG"));
+                  else
+                     Append (Result, Param_Name (P2, Def.Argument.all));
+                  end if;
 
                else
-                  Append (Result, Param_Name (P1, "ARG"));
+                  if Def.Argument = null then
+                     Append (Result, Param_Name (P1, "ARG"));
+                  else
+                     Append (Result, Param_Name (P1, Def.Argument.all));
+                  end if;
                end if;
 
-            else  --  Long_Switch necessarily not null
+            --  Def.Switch is null (Long_Switch must be non-null)
+
+            else
                Decompose_Switch (Def.Long_Switch.all, P2, Last2);
                Append (Result,
                        Def.Long_Switch (Def.Long_Switch'First .. Last2));
-               Append (Result, Param_Name (P2, "ARG"));
+
+               if Def.Argument = null then
+                  Append (Result, Param_Name (P2, "ARG"));
+               else
+                  Append (Result, Param_Name (P2, Def.Argument.all));
+               end if;
             end if;
          end if;
 
@@ -3325,7 +3413,6 @@ package body GNAT.Command_Line is
                   Config.Switches (Index).String_Output.all :=
                     new String'(Parameter);
                   return;
-
             end case;
          end if;
 
@@ -3379,23 +3466,27 @@ package body GNAT.Command_Line is
 
       --  Initialize output values for automatically handled switches
 
-      for S in Config.Switches'Range loop
-         case Config.Switches (S).Typ is
-            when Switch_Untyped =>
-               null;   --  Nothing to do
+      if Config.Switches /= null then
+         for S in Config.Switches'Range loop
+            case Config.Switches (S).Typ is
+               when Switch_Untyped =>
+                  null;   --  Nothing to do
 
-            when Switch_Boolean =>
-               Config.Switches (S).Boolean_Output.all :=
-                 not Config.Switches (S).Boolean_Value;
+               when Switch_Boolean =>
+                  Config.Switches (S).Boolean_Output.all :=
+                    not Config.Switches (S).Boolean_Value;
 
-            when Switch_Integer =>
-               Config.Switches (S).Integer_Output.all :=
-                 Config.Switches (S).Integer_Initial;
+               when Switch_Integer =>
+                  Config.Switches (S).Integer_Output.all :=
+                    Config.Switches (S).Integer_Initial;
 
-            when Switch_String =>
-               Config.Switches (S).String_Output.all := new String'("");
-         end case;
-      end loop;
+               when Switch_String =>
+                  if Config.Switches (S).String_Output.all = null then
+                     Config.Switches (S).String_Output.all := new String'("");
+                  end if;
+            end case;
+         end loop;
+      end if;
 
       --  For all sections, and all switches within those sections
 
@@ -3458,12 +3549,9 @@ package body GNAT.Command_Line is
          Put_Line (Standard_Error,
                    Base_Name (Ada.Command_Line.Command_Name)
                    & ": unrecognized option '"
-                   & Parser.Switch_Character & Full_Switch (Parser)
+                   & Full_Switch (Parser)
                    & "'");
-         Put_Line (Standard_Error,
-                   "Try `"
-                   & Base_Name (Ada.Command_Line.Command_Name)
-                   & " --help` for more information.");
+         Try_Help;
 
          raise;
 
@@ -3513,5 +3601,20 @@ package body GNAT.Command_Line is
          Next (Iter);
       end loop;
    end Build;
+
+   --------------
+   -- Try_Help --
+   --------------
+
+   --  Note: Any change to the message displayed should also be done in
+   --  gnatbind.adb that does not use this interface.
+
+   procedure Try_Help is
+   begin
+      Put_Line
+        (Standard_Error,
+         "try """ & Base_Name (Ada.Command_Line.Command_Name)
+         & " --help"" for more information.");
+   end Try_Help;
 
 end GNAT.Command_Line;

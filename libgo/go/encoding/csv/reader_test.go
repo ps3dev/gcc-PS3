@@ -5,6 +5,7 @@
 package csv
 
 import (
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -81,6 +82,15 @@ field"`,
 	{
 		Name:  "BlankLine",
 		Input: "a,b,c\n\nd,e,f\n\n",
+		Output: [][]string{
+			{"a", "b", "c"},
+			{"d", "e", "f"},
+		},
+	},
+	{
+		Name:               "BlankLineFieldCount",
+		Input:              "a,b,c\n\nd,e,f\n\n",
+		UseFieldsPerRecord: true,
 		Output: [][]string{
 			{"a", "b", "c"},
 			{"d", "e", "f"},
@@ -171,32 +181,32 @@ field"`,
 		Output: [][]string{{"a", "b", "c"}, {"d", "e"}},
 	},
 	{
-		Name:  "BadTrailingCommaEOF",
-		Input: "a,b,c,",
-		Error: "extra delimiter at end of line", Line: 1, Column: 5,
+		Name:   "TrailingCommaEOF",
+		Input:  "a,b,c,",
+		Output: [][]string{{"a", "b", "c", ""}},
 	},
 	{
-		Name:  "BadTrailingCommaEOL",
-		Input: "a,b,c,\n",
-		Error: "extra delimiter at end of line", Line: 1, Column: 5,
+		Name:   "TrailingCommaEOL",
+		Input:  "a,b,c,\n",
+		Output: [][]string{{"a", "b", "c", ""}},
 	},
 	{
-		Name:             "BadTrailingCommaSpaceEOF",
+		Name:             "TrailingCommaSpaceEOF",
 		TrimLeadingSpace: true,
 		Input:            "a,b,c, ",
-		Error:            "extra delimiter at end of line", Line: 1, Column: 5,
+		Output:           [][]string{{"a", "b", "c", ""}},
 	},
 	{
-		Name:             "BadTrailingCommaSpaceEOL",
+		Name:             "TrailingCommaSpaceEOL",
 		TrimLeadingSpace: true,
 		Input:            "a,b,c, \n",
-		Error:            "extra delimiter at end of line", Line: 1, Column: 5,
+		Output:           [][]string{{"a", "b", "c", ""}},
 	},
 	{
-		Name:             "BadTrailingCommaLine3",
+		Name:             "TrailingCommaLine3",
 		TrimLeadingSpace: true,
 		Input:            "a,b,c\nd,e,f\ng,hi,",
-		Error:            "extra delimiter at end of line", Line: 3, Column: 4,
+		Output:           [][]string{{"a", "b", "c"}, {"d", "e", "f"}, {"g", "hi", ""}},
 	},
 	{
 		Name:   "NotTrailingComma3",
@@ -231,7 +241,7 @@ x,,,
 		},
 	},
 	{
-		Name:             "Issue 2366",
+		Name:             "TrailingCommaIneffective1",
 		TrailingComma:    true,
 		TrimLeadingSpace: true,
 		Input:            "a,b,\nc,d,e",
@@ -241,11 +251,14 @@ x,,,
 		},
 	},
 	{
-		Name:             "Issue 2366a",
+		Name:             "TrailingCommaIneffective2",
 		TrailingComma:    false,
 		TrimLeadingSpace: true,
 		Input:            "a,b,\nc,d,e",
-		Error:            "extra delimiter at end of line",
+		Output: [][]string{
+			{"a", "b", ""},
+			{"c", "d", "e"},
+		},
 	},
 }
 
@@ -278,4 +291,81 @@ func TestRead(t *testing.T) {
 			t.Errorf("%s: out=%q want %q", tt.Name, out, tt.Output)
 		}
 	}
+}
+
+// nTimes is an io.Reader which yields the string s n times.
+type nTimes struct {
+	s   string
+	n   int
+	off int
+}
+
+func (r *nTimes) Read(p []byte) (n int, err error) {
+	for {
+		if r.n <= 0 || r.s == "" {
+			return n, io.EOF
+		}
+		n0 := copy(p, r.s[r.off:])
+		p = p[n0:]
+		n += n0
+		r.off += n0
+		if r.off == len(r.s) {
+			r.off = 0
+			r.n--
+		}
+		if len(p) == 0 {
+			return
+		}
+	}
+}
+
+// benchmarkRead measures reading the provided CSV rows data.
+// initReader, if non-nil, modifies the Reader before it's used.
+func benchmarkRead(b *testing.B, initReader func(*Reader), rows string) {
+	b.ReportAllocs()
+	r := NewReader(&nTimes{s: rows, n: b.N})
+	if initReader != nil {
+		initReader(r)
+	}
+	for {
+		_, err := r.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+const benchmarkCSVData = `x,y,z,w
+x,y,z,
+x,y,,
+x,,,
+,,,
+"x","y","z","w"
+"x","y","z",""
+"x","y","",""
+"x","","",""
+"","","",""
+`
+
+func BenchmarkRead(b *testing.B) {
+	benchmarkRead(b, nil, benchmarkCSVData)
+}
+
+func BenchmarkReadWithFieldsPerRecord(b *testing.B) {
+	benchmarkRead(b, func(r *Reader) { r.FieldsPerRecord = 4 }, benchmarkCSVData)
+}
+
+func BenchmarkReadWithoutFieldsPerRecord(b *testing.B) {
+	benchmarkRead(b, func(r *Reader) { r.FieldsPerRecord = -1 }, benchmarkCSVData)
+}
+
+func BenchmarkReadLargeFields(b *testing.B) {
+	benchmarkRead(b, nil, strings.Repeat(`xxxxxxxxxxxxxxxx,yyyyyyyyyyyyyyyy,zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz,wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww,vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+xxxxxxxxxxxxxxxxxxxxxxxx,yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy,zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz,wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww,vvvv
+,,zzzz,wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww,vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx,yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy,zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz,wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww,vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+`, 3))
 }

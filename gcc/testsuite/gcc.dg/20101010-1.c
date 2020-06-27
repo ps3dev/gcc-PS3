@@ -1,5 +1,9 @@
 /* { dg-do compile } */
 /* { dg-options "-O2 -fno-crossjumping" } */
+/* { dg-require-effective-target alloca } */
+
+int bar1 ();
+int bar2 ();
 
 int foo (void)
 {

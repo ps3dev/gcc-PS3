@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2009, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -172,6 +172,7 @@ package body Table is
 
       procedure Reallocate is
          New_Size   : Memory.size_t;
+         New_Length : Long_Long_Integer;
 
       begin
          if Max < Last_Val then
@@ -186,11 +187,14 @@ package body Table is
             --  the increment value or 10, which ever is larger (the reason
             --  for the use of 10 here is to ensure that the table does really
             --  increase in size (which would not be the case for a table of
-            --  length 10 increased by 3% for instance).
+            --  length 10 increased by 3% for instance). Do the intermediate
+            --  calculation in Long_Long_Integer to avoid overflow.
 
             while Max < Last_Val loop
-               Length := Int'Max (Length * (100 + Table_Increment) / 100,
-                                  Length + 10);
+               New_Length :=
+                 Long_Long_Integer (Length) *
+                    (100 + Long_Long_Integer (Table_Increment)) / 100;
+               Length := Int'Max (Int (New_Length), Length + 10);
                Max := Min + Length - 1;
             end loop;
 
@@ -203,9 +207,11 @@ package body Table is
             end if;
          end if;
 
+         --  Do the intermediate calculation in size_t to avoid signed overflow
+
          New_Size :=
-           Memory.size_t ((Max - Min + 1) *
-                          (Table_Type'Component_Size / Storage_Unit));
+           Memory.size_t (Max - Min + 1) *
+                                    (Table_Type'Component_Size / Storage_Unit);
 
          if Table = null then
             Table := To_Pointer (Alloc (New_Size));
@@ -223,7 +229,6 @@ package body Table is
             Set_Standard_Output;
             raise Unrecoverable_Error;
          end if;
-
       end Reallocate;
 
       -------------
@@ -231,9 +236,36 @@ package body Table is
       -------------
 
       procedure Release is
+         Extra_Length : Int;
+         Size         : Memory.size_t;
+
       begin
          Length := Last_Val - Int (Table_Low_Bound) + 1;
-         Max    := Last_Val;
+         Size   := Memory.size_t (Length) *
+                     (Table_Type'Component_Size / Storage_Unit);
+
+         --  If the size of the table exceeds the release threshold then leave
+         --  space to store as many extra elements as 0.1% of the table length.
+
+         if Release_Threshold > 0
+           and then Size > Memory.size_t (Release_Threshold)
+         then
+            Extra_Length := Length / 1000;
+            Length := Length + Extra_Length;
+            Max    := Int (Table_Low_Bound) + Length - 1;
+
+            if Debug_Flag_D then
+               Write_Str ("--> Release_Threshold reached (length=");
+               Write_Int (Int (Size));
+               Write_Str ("): leaving room space for ");
+               Write_Int (Extra_Length);
+               Write_Str (" components");
+               Write_Eol;
+            end if;
+         else
+            Max := Last_Val;
+         end if;
+
          Reallocate;
       end Release;
 
@@ -395,7 +427,11 @@ package body Table is
          Tree_Read_Data
            (Tree_Get_Table_Address,
              (Last_Val - Int (First) + 1) *
-               Table_Type'Component_Size / Storage_Unit);
+
+               --  Note the importance of parenthesizing the following division
+               --  to avoid the possibility of intermediate overflow.
+
+               (Table_Type'Component_Size / Storage_Unit));
       end Tree_Read;
 
       ----------------
@@ -411,7 +447,7 @@ package body Table is
          Tree_Write_Data
            (Tree_Get_Table_Address,
             (Last_Val - Int (First) + 1) *
-              Table_Type'Component_Size / Storage_Unit);
+              (Table_Type'Component_Size / Storage_Unit));
       end Tree_Write;
 
    begin

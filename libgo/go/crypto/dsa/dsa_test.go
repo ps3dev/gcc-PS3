@@ -63,13 +63,22 @@ func testParameterGeneration(t *testing.T, sizes ParameterSizes, L, N int) {
 }
 
 func TestParameterGeneration(t *testing.T) {
-	// This test is too slow to run all the time.
-	return
+	if testing.Short() {
+		t.Skip("skipping parameter generation test in short mode")
+	}
 
 	testParameterGeneration(t, L1024N160, 1024, 160)
 	testParameterGeneration(t, L2048N224, 2048, 224)
 	testParameterGeneration(t, L2048N256, 2048, 256)
 	testParameterGeneration(t, L3072N256, 3072, 256)
+}
+
+func fromHex(s string) *big.Int {
+	result, ok := new(big.Int).SetString(s, 16)
+	if !ok {
+		panic(s)
+	}
+	return result
 }
 
 func TestSignAndVerify(t *testing.T) {
@@ -81,4 +90,34 @@ func TestSignAndVerify(t *testing.T) {
 	priv.X, _ = new(big.Int).SetString("5078D4D29795CBE76D3AACFE48C9AF0BCDBEE91A", 16)
 
 	testSignAndVerify(t, 0, &priv)
+}
+
+func TestSigningWithDegenerateKeys(t *testing.T) {
+	// Signing with degenerate private keys should not cause an infinite
+	// loop.
+	badKeys := []struct {
+		p, q, g, y, x string
+	}{
+		{"00", "01", "00", "00", "00"},
+		{"01", "ff", "00", "00", "00"},
+	}
+
+	for i, test := range badKeys {
+		priv := PrivateKey{
+			PublicKey: PublicKey{
+				Parameters: Parameters{
+					P: fromHex(test.p),
+					Q: fromHex(test.q),
+					G: fromHex(test.g),
+				},
+				Y: fromHex(test.y),
+			},
+			X: fromHex(test.x),
+		}
+
+		hashed := []byte("testing")
+		if _, _, err := Sign(rand.Reader, &priv, hashed); err == nil {
+			t.Errorf("#%d: unexpected success", i)
+		}
+	}
 }

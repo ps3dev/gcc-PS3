@@ -6,7 +6,7 @@
 --                                                                          --
 --                                  B o d y                                 --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNARL is free software; you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -33,27 +33,12 @@ pragma Polling (Off);
 --  Turn off polling, we do not want ATC polling to take place during tasking
 --  operations. It causes infinite loops and other problems.
 
-with Ada.Unchecked_Deallocation;
-
 with System.Task_Primitives.Operations;
 with System.Storage_Elements;
 
 package body System.Tasking is
 
    package STPO renames System.Task_Primitives.Operations;
-
-   ----------------------------
-   -- Free_Entry_Names_Array --
-   ----------------------------
-
-   procedure Free_Entry_Names_Array (Obj : in out Entry_Names_Array) is
-      procedure Free_String is new
-        Ada.Unchecked_Deallocation (String, String_Access);
-   begin
-      for Index in Obj'Range loop
-         Free_String (Obj (Index));
-      end loop;
-   end Free_Entry_Names_Array;
 
    ---------------------
    -- Detect_Blocking --
@@ -69,6 +54,15 @@ package body System.Tasking is
    begin
       return GL_Detect_Blocking = 1;
    end Detect_Blocking;
+
+   -----------------------
+   -- Number_Of_Entries --
+   -----------------------
+
+   function Number_Of_Entries (Self_Id : Task_Id) return Entry_Index is
+   begin
+      return Entry_Index (Self_Id.Entry_Num);
+   end Number_Of_Entries;
 
    ----------
    -- Self --
@@ -92,18 +86,19 @@ package body System.Tasking is
    ---------------------
 
    procedure Initialize_ATCB
-     (Self_ID          : Task_Id;
-      Task_Entry_Point : Task_Procedure_Access;
-      Task_Arg         : System.Address;
-      Parent           : Task_Id;
-      Elaborated       : Access_Boolean;
-      Base_Priority    : System.Any_Priority;
-      Base_CPU         : System.Multiprocessors.CPU_Range;
-      Domain           : Dispatching_Domain_Access;
-      Task_Info        : System.Task_Info.Task_Info_Type;
-      Stack_Size       : System.Parameters.Size_Type;
-      T                : Task_Id;
-      Success          : out Boolean)
+     (Self_ID              : Task_Id;
+      Task_Entry_Point     : Task_Procedure_Access;
+      Task_Arg             : System.Address;
+      Parent               : Task_Id;
+      Elaborated           : Access_Boolean;
+      Base_Priority        : System.Any_Priority;
+      Base_CPU             : System.Multiprocessors.CPU_Range;
+      Domain               : Dispatching_Domain_Access;
+      Task_Info            : System.Task_Info.Task_Info_Type;
+      Stack_Size           : System.Parameters.Size_Type;
+      Secondary_Stack_Size : System.Parameters.Size_Type;
+      T                    : Task_Id;
+      Success              : out Boolean)
    is
    begin
       T.Common.State := Unactivated;
@@ -116,13 +111,27 @@ package body System.Tasking is
          return;
       end if;
 
-      --  Wouldn't the following be better done using an assignment of an
-      --  aggregate so that we could be sure no components were forgotten???
+      --  Note that use of an aggregate here for this assignment
+      --  would be illegal, because Common_ATCB is limited because
+      --  Task_Primitives.Private_Data is limited.
 
       T.Common.Parent                   := Parent;
       T.Common.Base_Priority            := Base_Priority;
       T.Common.Base_CPU                 := Base_CPU;
-      T.Common.Domain                   := Domain;
+
+      --  The Domain defaults to that of the activator. But that can be null in
+      --  the case of foreign threads (see Register_Foreign_Thread), in which
+      --  case we default to the System_Domain.
+
+      if Domain /= null then
+         T.Common.Domain := Domain;
+      elsif Self_ID.Common.Domain /= null then
+         T.Common.Domain := Self_ID.Common.Domain;
+      else
+         T.Common.Domain := System_Domain;
+      end if;
+      pragma Assert (T.Common.Domain /= null);
+
       T.Common.Current_Priority         := 0;
       T.Common.Protected_Action_Nesting := 0;
       T.Common.Call                     := null;
@@ -137,6 +146,8 @@ package body System.Tasking is
       T.Common.Fall_Back_Handler        := null;
       T.Common.Specific_Handler         := null;
       T.Common.Debug_Events             := (others => False);
+      T.Common.Task_Image_Len           := 0;
+      T.Common.Secondary_Stack_Size     := Secondary_Stack_Size;
 
       if T.Common.Parent = null then
 
@@ -210,18 +221,6 @@ package body System.Tasking is
          then System.Multiprocessors.Not_A_Specific_CPU
          else System.Multiprocessors.CPU_Range (Main_CPU));
 
-      T := STPO.New_ATCB (0);
-      Initialize_ATCB
-        (null, null, Null_Address, Null_Task, null, Base_Priority, Base_CPU,
-         null, Task_Info.Unspecified_Task_Info, 0, T, Success);
-      pragma Assert (Success);
-
-      STPO.Initialize (T);
-      STPO.Set_Priority (T, T.Common.Base_Priority);
-      T.Common.State := Runnable;
-      T.Common.Task_Image_Len := Main_Task_Image'Length;
-      T.Common.Task_Image (Main_Task_Image'Range) := Main_Task_Image;
-
       --  At program start-up the environment task is allocated to the default
       --  system dispatching domain.
       --  Make sure that the processors which are not available are not taken
@@ -233,7 +232,28 @@ package body System.Tasking is
           (Multiprocessors.CPU'First .. Multiprocessors.Number_Of_CPUs =>
              True);
 
-      T.Common.Domain := System_Domain;
+      T := STPO.New_ATCB (0);
+      Initialize_ATCB
+        (Self_ID              => null,
+         Task_Entry_Point     => null,
+         Task_Arg             => Null_Address,
+         Parent               => Null_Task,
+         Elaborated           => null,
+         Base_Priority        => Base_Priority,
+         Base_CPU             => Base_CPU,
+         Domain               => System_Domain,
+         Task_Info            => Task_Info.Unspecified_Task_Info,
+         Stack_Size           => 0,
+         Secondary_Stack_Size => Parameters.Unspecified_Size,
+         T                    => T,
+         Success              => Success);
+      pragma Assert (Success);
+
+      STPO.Initialize (T);
+      STPO.Set_Priority (T, T.Common.Base_Priority);
+      T.Common.State := Runnable;
+      T.Common.Task_Image_Len := Main_Task_Image'Length;
+      T.Common.Task_Image (Main_Task_Image'Range) := Main_Task_Image;
 
       Dispatching_Domain_Tasks :=
         new Array_Allocated_Tasks'
@@ -255,5 +275,4 @@ package body System.Tasking is
 
       T.Entry_Calls (1).Self := T;
    end Initialize;
-
 end System.Tasking;

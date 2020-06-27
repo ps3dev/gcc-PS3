@@ -1,6 +1,5 @@
 /* Definitions of target machine for GNU compiler for TILEPro.
-   Copyright (C) 2011, 2012
-   Free Software Foundation, Inc.
+   Copyright (C) 2011-2017 Free Software Foundation, Inc.
    Contributed by Walter Lee (walt@tilera.com)
 
    This file is part of GCC.
@@ -222,11 +221,12 @@ enum reg_class
 
 /* Stack layout; function entry, exit and calling.  */
 
-#define STACK_GROWS_DOWNWARD
+#define STACK_GROWS_DOWNWARD 1
 #define FRAME_GROWS_DOWNWARD 1
 #define STARTING_FRAME_OFFSET 0
 
-#define DYNAMIC_CHAIN_ADDRESS(FRAME) plus_constant ((FRAME), UNITS_PER_WORD)
+#define DYNAMIC_CHAIN_ADDRESS(FRAME) \
+  plus_constant (Pmode, (FRAME), UNITS_PER_WORD)
 
 #define FIRST_PARM_OFFSET(FNDECL) 0
 
@@ -267,6 +267,8 @@ enum reg_class
 
 #define INITIAL_ELIMINATION_OFFSET(FROM, TO, OFFSET) \
   ((OFFSET) = tilepro_initial_elimination_offset((FROM),(TO)))
+
+#define PROFILE_BEFORE_PROLOGUE 1
 
 #define FUNCTION_PROFILER(FILE, LABELNO) \
   tilepro_function_profiler (FILE, LABELNO)
@@ -329,7 +331,7 @@ enum reg_class
 #define CLEAR_RATIO(speed) ((speed) ? 15 : TILEPRO_CALL_RATIO)
 #define SET_RATIO(speed) ((speed) ? 15 : TILEPRO_CALL_RATIO)
 
-#define WORD_REGISTER_OPERATIONS
+#define WORD_REGISTER_OPERATIONS 1
 
 #define LOAD_EXTEND_OP(MODE) ZERO_EXTEND
 
@@ -344,7 +346,7 @@ enum reg_class
 
 #define SHIFT_COUNT_TRUNCATED 1
 
-#define SHORT_IMMEDIATES_SIGN_EXTEND
+#define SHORT_IMMEDIATES_SIGN_EXTEND 1
 
 #define TRULY_NOOP_TRUNCATION(OUTPREC, INPREC) 1
 

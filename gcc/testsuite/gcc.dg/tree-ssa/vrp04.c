@@ -1,6 +1,7 @@
 /* { dg-do compile } */
-/* { dg-options "-O2 -fdump-tree-vrp1" } */
+/* { dg-options "-O2 -fno-tree-fre -fdump-tree-vrp1" } */
 
+int
 foo (int a, int b)
 {
   if (a == b)
@@ -9,5 +10,4 @@ foo (int a, int b)
       return a + b;
 }
 
-/* { dg-final { scan-tree-dump-times "Folding predicate a_.*to 1" 1 "vrp1" } } */
-/* { dg-final { cleanup-tree-dump "vrp1" } } */
+/* { dg-final { scan-tree-dump-times "if" 1 "vrp1" } } */

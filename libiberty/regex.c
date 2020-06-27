@@ -3,8 +3,7 @@
    (Implements POSIX draft P1003.2/D11.2, except for some of the
    internationalization features.)
 
-   Copyright (C) 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001,
-   2002, 2005, 2010 Free Software Foundation, Inc.
+   Copyright (C) 1993-2017 Free Software Foundation, Inc.
    This file is part of the GNU C Library.
 
    The GNU C Library is free software; you can redistribute it and/or
@@ -46,9 +45,11 @@
 
 # if defined STDC_HEADERS && !defined emacs
 #  include <stddef.h>
+#  define PTR_INT_TYPE ptrdiff_t
 # else
 /* We need this for `regex.h', and perhaps for the Emacs include files.  */
 #  include <sys/types.h>
+#  define PTR_INT_TYPE long
 # endif
 
 # define WIDE_CHAR_SUPPORT (HAVE_WCTYPE_H && HAVE_WCHAR_H && HAVE_BTOWC)
@@ -149,7 +150,7 @@ char *realloc ();
 #    include <string.h>
 #    ifndef bzero
 #     ifndef _LIBC
-#      define bzero(s, n)	(memset (s, '\0', n), (s))
+#      define bzero(s, n)	((void) memset (s, '\0', n))
 #     else
 #      define bzero(s, n)	__bzero (s, n)
 #     endif
@@ -683,7 +684,7 @@ typedef enum
 #  define EXTRACT_NUMBER(destination, source)				\
   do {									\
     (destination) = *(source) & 0377;					\
-    (destination) += SIGN_EXTEND_CHAR (*((source) + 1)) << 8;		\
+    (destination) += ((unsigned) SIGN_EXTEND_CHAR (*((source) + 1))) << 8; \
   } while (0)
 # endif
 
@@ -2045,7 +2046,7 @@ static reg_errcode_t byte_compile_range (unsigned int range_start,
     /* How many characters the new buffer can have?  */			\
     wchar_count = bufp->allocated / sizeof(UCHAR_T);			\
     if (wchar_count == 0) wchar_count = 1;				\
-    /* Truncate the buffer to CHAR_T align.  */			\
+    /* Truncate the buffer to CHAR_T align.  */				\
     bufp->allocated = wchar_count * sizeof(UCHAR_T);			\
     RETALLOC (COMPILED_BUFFER_VAR, wchar_count, UCHAR_T);		\
     bufp->buffer = (char*)COMPILED_BUFFER_VAR;				\
@@ -2054,7 +2055,7 @@ static reg_errcode_t byte_compile_range (unsigned int range_start,
     /* If the buffer moved, move all the pointers into it.  */		\
     if (old_buffer != COMPILED_BUFFER_VAR)				\
       {									\
-	int incr = COMPILED_BUFFER_VAR - old_buffer;			\
+	PTR_INT_TYPE incr = COMPILED_BUFFER_VAR - old_buffer;		\
 	MOVE_BUFFER_POINTER (b);					\
 	MOVE_BUFFER_POINTER (begalt);					\
 	if (fixup_alt_jump)						\
@@ -2082,7 +2083,7 @@ static reg_errcode_t byte_compile_range (unsigned int range_start,
     /* If the buffer moved, move all the pointers into it.  */		\
     if (old_buffer != COMPILED_BUFFER_VAR)				\
       {									\
-	int incr = COMPILED_BUFFER_VAR - old_buffer;			\
+	PTR_INT_TYPE incr = COMPILED_BUFFER_VAR - old_buffer;		\
 	MOVE_BUFFER_POINTER (b);					\
 	MOVE_BUFFER_POINTER (begalt);					\
 	if (fixup_alt_jump)						\
@@ -2491,6 +2492,7 @@ PREFIX(regex_compile) (const char *ARG_PREFIX(pattern),
           if ((syntax & RE_BK_PLUS_QM)
               || (syntax & RE_LIMITED_OPS))
             goto normal_char;
+	  /* Fall through.  */
         handle_plus:
         case '*':
           /* If there is no previous pattern... */
@@ -3394,7 +3396,7 @@ PREFIX(regex_compile) (const char *ARG_PREFIX(pattern),
 			       class.  */
 			    PATFETCH (c);
 
-			    /* Now we have to go throught the whole table
+			    /* Now we have to go through the whole table
 			       and find all characters which have the same
 			       first level weight.
 
@@ -6695,6 +6697,7 @@ byte_re_match_2_internal (struct re_pattern_buffer *bufp,
                 {
                   case jump_n:
 		    is_a_jump_n = true;
+		    /* Fall through.  */
                   case pop_failure_jump:
 		  case maybe_pop_jump:
 		  case jump:
@@ -7123,7 +7126,7 @@ byte_re_match_2_internal (struct re_pattern_buffer *bufp,
               DEBUG_PRINT1 ("  Match => jump.\n");
 	      goto unconditional_jump;
 	    }
-        /* Note fall through.  */
+        /* Fall through.  */
 
 
 	/* The end of a simple repeat has a pop_failure_jump back to
@@ -7148,7 +7151,7 @@ byte_re_match_2_internal (struct re_pattern_buffer *bufp,
                                dummy_low_reg, dummy_high_reg,
                                reg_dummy, reg_dummy, reg_info_dummy);
           }
-	  /* Note fall through.  */
+	  /* Fall through.  */
 
 	unconditional_jump:
 #ifdef _LIBC
@@ -7451,6 +7454,7 @@ byte_re_match_2_internal (struct re_pattern_buffer *bufp,
                 {
                 case jump_n:
                   is_a_jump_n = true;
+		  /* Fall through.  */
                 case maybe_pop_jump:
                 case pop_failure_jump:
                 case jump:
@@ -7716,6 +7720,7 @@ PREFIX(common_op_match_null_string_p) (UCHAR_T **p, UCHAR_T *end,
 
     case set_number_at:
       p1 += 2 * OFFSET_ADDRESS_SIZE;
+      return false;
 
     default:
       /* All other opcodes mean we cannot match the empty string.  */
@@ -8091,12 +8096,12 @@ regerror (int errcode, const regex_t *preg ATTRIBUTE_UNUSED,
 #if defined HAVE_MEMPCPY || defined _LIBC
 	  *((char *) mempcpy (errbuf, msg, errbuf_size - 1)) = '\0';
 #else
-          memcpy (errbuf, msg, errbuf_size - 1);
+          (void) memcpy (errbuf, msg, errbuf_size - 1);
           errbuf[errbuf_size - 1] = 0;
 #endif
         }
       else
-        memcpy (errbuf, msg, msg_size);
+        (void) memcpy (errbuf, msg, msg_size);
     }
 
   return msg_size;

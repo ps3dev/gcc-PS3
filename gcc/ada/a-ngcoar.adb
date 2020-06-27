@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---            Copyright (C) 2006-2011, Free Software Foundation, Inc.       --
+--            Copyright (C) 2006-2016, Free Software Foundation, Inc.       --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -30,7 +30,6 @@
 ------------------------------------------------------------------------------
 
 with System.Generic_Array_Operations; use System.Generic_Array_Operations;
-with Ada.Numerics; use Ada.Numerics;
 
 package body Ada.Numerics.Generic_Complex_Arrays is
 
@@ -694,11 +693,11 @@ package body Ada.Numerics.Generic_Complex_Arrays is
       -- Solve --
       -----------
 
-      function Solve is
-         new Matrix_Vector_Solution (Complex, Complex_Vector, Complex_Matrix);
+      function Solve is new Matrix_Vector_Solution
+        (Complex, (0.0, 0.0), Complex_Vector, Complex_Matrix);
 
-      function Solve is
-         new Matrix_Matrix_Solution (Complex, Complex_Matrix);
+      function Solve is new Matrix_Matrix_Solution
+        (Complex, (0.0, 0.0), Complex_Matrix);
 
       -----------------
       -- Unit_Matrix --
@@ -1073,7 +1072,7 @@ package body Ada.Numerics.Generic_Complex_Arrays is
          for K in 1 .. N loop
             declare
                C : constant Complex :=
-                     (A (A'First (1) + (J - 1), A'First (2) + (K - 1)));
+                 (A (A'First (1) + (J - 1), A'First (2) + (K - 1)));
             begin
                M (J, K) := Re (C);
                M (J + N, K + N) := Re (C);
@@ -1120,7 +1119,7 @@ package body Ada.Numerics.Generic_Complex_Arrays is
          for K in 1 .. N loop
             declare
                C : constant Complex :=
-                     (A (A'First (1) + (J - 1), A'First (2) + (K - 1)));
+                 (A (A'First (1) + (J - 1), A'First (2) + (K - 1)));
             begin
                M (J, K) := Re (C);
                M (J + N, K + N) := Re (C);

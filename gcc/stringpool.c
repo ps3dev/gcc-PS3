@@ -1,6 +1,5 @@
 /* String pool for GCC.
-   Copyright (C) 2000, 2001, 2002, 2003, 2004, 2005, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2000-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -29,11 +28,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "ggc.h"
-#include "ggc-internal.h"
 #include "tree.h"
-#include "symtab.h"
-#include "cpplib.h"
 
 /* The "" allocated string.  */
 const char empty_string[] = "";
@@ -49,7 +44,7 @@ static const char digit_vector[] = {
 
 struct ht *ident_hash;
 
-static hashnode alloc_node (hash_table *);
+static hashnode alloc_node (cpp_hash_table *);
 static int mark_ident (struct cpp_reader *, hashnode, const void *);
 
 static void *
@@ -62,6 +57,11 @@ stringpool_ggc_alloc (size_t x)
 void
 init_stringpool (void)
 {
+  /* Clean up if we're called more than once.
+     (We can't make this idempotent since identifiers contain state) */
+  if (ident_hash)
+    ht_destroy (ident_hash);
+
   /* Create with 16K (2^14) entries.  */
   ident_hash = ht_create (14);
   ident_hash->alloc_node = alloc_node;
@@ -70,7 +70,7 @@ init_stringpool (void)
 
 /* Allocate a hash node.  */
 static hashnode
-alloc_node (hash_table *table ATTRIBUTE_UNUSED)
+alloc_node (cpp_hash_table *table ATTRIBUTE_UNUSED)
 {
   return GCC_IDENT_TO_HT_IDENT (make_node (IDENTIFIER_NODE));
 }
@@ -80,7 +80,7 @@ alloc_node (hash_table *table ATTRIBUTE_UNUSED)
    nul-terminated string, and the length is calculated using strlen.  */
 
 const char *
-ggc_alloc_string_stat (const char *contents, int length MEM_STAT_DECL)
+ggc_alloc_string (const char *contents, int length MEM_STAT_DECL)
 {
   char *result;
 
@@ -92,7 +92,7 @@ ggc_alloc_string_stat (const char *contents, int length MEM_STAT_DECL)
   if (length == 1 && ISDIGIT (contents[0]))
     return digit_string (contents[0] - '0');
 
-  result = (char *) ggc_alloc_atomic_stat (length + 1 PASS_MEM_STAT);
+  result = (char *) ggc_internal_cleared_alloc (length + 1 PASS_MEM_STAT);
   memcpy (result, contents, length);
   result[length] = '\0';
   return (const char *) result;
@@ -208,7 +208,33 @@ void
 gt_pch_n_S (const void *x)
 {
   gt_pch_note_object (CONST_CAST (void *, x), CONST_CAST (void *, x),
-		      &gt_pch_p_S, gt_types_enum_last);
+		      &gt_pch_p_S);
+}
+
+
+/* User-callable entry point for marking string X.  */
+
+void
+gt_pch_nx (const char *& x)
+{
+  gt_pch_n_S (x);
+}
+
+void
+gt_pch_nx (unsigned char *& x)
+{
+  gt_pch_n_S (x);
+}
+
+void
+gt_pch_nx (unsigned char& x ATTRIBUTE_UNUSED)
+{
+}
+
+void
+gt_pch_nx (unsigned char *x, gt_pointer_operator op, void *cookie)
+{
+  op (x, cookie);
 }
 
 /* Handle saving and restoring the string pool for PCH.  */
@@ -233,10 +259,10 @@ static GTY(()) struct string_pool_data * spd;
 void
 gt_pch_save_stringpool (void)
 {
-  spd = ggc_alloc_string_pool_data ();
+  spd = ggc_alloc<string_pool_data> ();
   spd->nslots = ident_hash->nslots;
   spd->nelements = ident_hash->nelements;
-  spd->entries = ggc_alloc_vec_ht_identifier_ptr (spd->nslots);
+  spd->entries = ggc_vec_alloc<ht_identifier_ptr> (spd->nslots);
   memcpy (spd->entries, ident_hash->entries,
 	  spd->nslots * sizeof (spd->entries[0]));
 }

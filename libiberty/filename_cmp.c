@@ -1,6 +1,6 @@
 /* File name comparison routine.
 
-   Copyright (C) 2007 Free Software Foundation, Inc.
+   Copyright (C) 2007-2017 Free Software Foundation, Inc.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -24,8 +24,13 @@
 #include <string.h>
 #endif
 
+#ifdef HAVE_STDLIB_H
+#include <stdlib.h>
+#endif
+
 #include "filenames.h"
 #include "safe-ctype.h"
+#include "libiberty.h"
 
 /*
 
@@ -140,4 +145,77 @@ filename_ncmp (const char *s1, const char *s2, size_t n)
   }
   return 0;
 #endif
+}
+
+/*
+
+@deftypefn Extension hashval_t filename_hash (const void *@var{s})
+
+Return the hash value for file name @var{s} that will be compared
+using filename_cmp.
+This function is for use with hashtab.c hash tables.
+
+@end deftypefn
+
+*/
+
+hashval_t
+filename_hash (const void *s)
+{
+  /* The cast is for -Wc++-compat.  */
+  const unsigned char *str = (const unsigned char *) s;
+  hashval_t r = 0;
+  unsigned char c;
+
+  while ((c = *str++) != 0)
+    {
+      if (c == '\\')
+	c = '/';
+      c = TOLOWER (c);
+      r = r * 67 + c - 113;
+    }
+
+  return r;
+}
+
+/*
+
+@deftypefn Extension int filename_eq (const void *@var{s1}, const void *@var{s2})
+
+Return non-zero if file names @var{s1} and @var{s2} are equivalent.
+This function is for use with hashtab.c hash tables.
+
+@end deftypefn
+
+*/
+
+int
+filename_eq (const void *s1, const void *s2)
+{
+  /* The casts are for -Wc++-compat.  */
+  return filename_cmp ((const char *) s1, (const char *) s2) == 0;
+}
+
+/*
+
+@deftypefn Extension int canonical_filename_eq (const char *@var{a}, const char *@var{b})
+
+Return non-zero if file names @var{a} and @var{b} are equivalent.
+This function compares the canonical versions of the filenames as returned by
+@code{lrealpath()}, so that so that different file names pointing to the same
+underlying file are treated as being identical.
+
+@end deftypefn
+
+*/
+
+int
+canonical_filename_eq (const char * a, const char * b)
+{
+  char * ca = lrealpath(a);
+  char * cb = lrealpath(b);
+  int res = filename_eq (ca, cb);
+  free (ca);
+  free (cb);
+  return res;
 }

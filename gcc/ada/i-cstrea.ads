@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1995-2010, Free Software Foundation, Inc.         --
+--          Copyright (C) 1995-2014, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -42,6 +42,8 @@ package Interfaces.C_Streams is
    subtype int is System.CRTL.int;
    subtype long is System.CRTL.long;
    subtype size_t is System.CRTL.size_t;
+   subtype ssize_t is System.CRTL.ssize_t;
+   subtype int64 is System.CRTL.int64;
    subtype voids is System.Address;
 
    NULL_Stream : constant FILEs;
@@ -107,8 +109,7 @@ package Interfaces.C_Streams is
      (filename : chars;
       mode     : chars;
       encoding : System.CRTL.Filename_Encoding := System.CRTL.UTF8)
-      return FILEs
-     renames System.CRTL.fopen;
+     return FILEs renames System.CRTL.fopen;
    --  Note: to maintain target independence, use text_translation_required,
    --  a boolean variable defined in sysdep.c to deal with the target
    --  dependent text translation requirement. If this variable is set,
@@ -117,6 +118,9 @@ package Interfaces.C_Streams is
 
    function fputc (C : int; stream : FILEs) return int
      renames System.CRTL.fputc;
+
+   function fputwc (C : int; stream : FILEs) return int
+     renames System.CRTL.fputwc;
 
    function fputs (Strng : chars; Stream : FILEs) return int
      renames System.CRTL.fputs;
@@ -144,8 +148,7 @@ package Interfaces.C_Streams is
       mode     : chars;
       stream   : FILEs;
       encoding : System.CRTL.Filename_Encoding := System.CRTL.UTF8)
-      return FILEs
-     renames System.CRTL.freopen;
+     return FILEs renames System.CRTL.freopen;
 
    function fseek
      (stream : FILEs;
@@ -153,8 +156,17 @@ package Interfaces.C_Streams is
       origin : int) return int
      renames System.CRTL.fseek;
 
+   function fseek64
+     (stream : FILEs;
+      offset : int64;
+      origin : int) return int
+     renames System.CRTL.fseek64;
+
    function ftell (stream : FILEs) return long
      renames System.CRTL.ftell;
+
+   function ftell64 (stream : FILEs) return int64
+     renames System.CRTL.ftell64;
 
    function fwrite
      (buffer : voids;
@@ -175,7 +187,7 @@ package Interfaces.C_Streams is
       mode   : int;
       size   : size_t) return int;
 
-   procedure tmpnam (string : chars) renames System.CRTL.tmpnam;
+   procedure tmpnam (str : chars) renames System.CRTL.tmpnam;
    --  The parameter must be a pointer to a string buffer of at least L_tmpnam
    --  bytes (the call with a null parameter is not supported). The returned
    --  value, which is just a copy of the input argument, is discarded.
@@ -208,13 +220,40 @@ package Interfaces.C_Streams is
    -- Control of Text/Binary Mode --
    ---------------------------------
 
-   --  If text_translation_required is true, then the following functions may
-   --  be used to dynamically switch a file from binary to text mode or vice
-   --  versa. These functions have no effect if text_translation_required is
-   --  false (i.e. in normal unix mode). Use fileno to get a stream handle.
-
    procedure set_binary_mode (handle : int);
    procedure set_text_mode   (handle : int);
+   --  If text_translation_required is true, then these two functions may
+   --  be used to dynamically switch a file from binary to text mode or vice
+   --  versa. These functions have no effect if text_translation_required is
+   --  false (e.g. in normal unix mode). Use fileno to get a stream handle.
+
+   type Content_Encoding is (None, Default_Text, Text, U8text, Wtext, U16text);
+   for Content_Encoding use (0,    1,            2,    3,      4,     5);
+   pragma Convention (C, Content_Encoding);
+   --  Content_Encoding describes the text encoding for file content:
+   --    None         : No text encoding, this file is treated as a binary file
+   --    Default_Text : A text file but not from Text_Translation form string
+   --                   In this mode we are eventually using the system-wide
+   --                   translation if activated.
+   --    Text         : Text encoding activated
+   --    Wtext        : Unicode mode
+   --    U16text      : Unicode UTF-16 encoding
+   --    U8text       : Unicode UTF-8 encoding
+   --
+   --  This encoding is system dependent and only used on Windows systems.
+   --
+   --  Note that modifications to Content_Encoding must be synchronized with
+   --  sysdep.c:__gnat_set_mode.
+
+   subtype Text_Content_Encoding
+     is Content_Encoding range Default_Text .. U16text;
+
+   subtype Non_Default_Text_Content_Encoding
+     is Content_Encoding range Text .. U16text;
+
+   procedure set_mode (handle : int; Mode : Content_Encoding);
+   --  As above but can set the handle to any mode. On Windows this can be used
+   --  to have proper 16-bit wide-string output on the console for example.
 
    ----------------------------
    -- Full Path Name support --
@@ -228,9 +267,10 @@ package Interfaces.C_Streams is
    --  pass an actual parameter for buffer that is big enough for any full
    --  path name. Use max_path_len given below as the size of buffer.
 
-   max_path_len : Integer;
-   --  Maximum length of an allowable full path name on the system,
-   --  including a terminating NUL character.
+   max_path_len : constant Integer;
+   --  Maximum length of an allowable full path name on the system,including a
+   --  terminating NUL character. Declared as a constant to allow references
+   --  from other preelaborated GNAT library packages.
 
 private
    --  The following functions are specialized in the body depending on the
@@ -245,6 +285,7 @@ private
 
    pragma Import (C, set_binary_mode, "__gnat_set_binary_mode");
    pragma Import (C, set_text_mode, "__gnat_set_text_mode");
+   pragma Import (C, set_mode, "__gnat_set_mode");
 
    pragma Import (C, max_path_len, "__gnat_max_path_len");
    pragma Import (C, full_name, "__gnat_full_name");

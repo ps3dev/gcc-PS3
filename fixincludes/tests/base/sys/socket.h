@@ -9,6 +9,18 @@
 
 
 
+#if defined( AIX_EXTERNCPP1_CHECK )
+#ifdef __cplusplus
+extern "C++" {
+#endif  /* AIX_EXTERNCPP1_CHECK */
+
+
+#if defined( AIX_EXTERNCPP2_CHECK )
+} /* extern "C++" */
+#else  /* __cplusplus */
+#endif  /* AIX_EXTERNCPP2_CHECK */
+
+
 #if defined( HPUX11_EXTERN_SENDFILE_CHECK )
 #ifndef _APP32_64BIT_OFF_T
    extern sbsize_t sendfile __((int, int, off_t, bsize_t,
@@ -25,13 +37,3 @@
 #endif
 
 #endif  /* HPUX11_EXTERN_SENDPATH_CHECK */
-
-
-#if defined( IRIX_SOCKLEN_T_CHECK )
-#define _SOCKLEN_T
-#if _NO_XOPEN4 && _NO_XOPEN5
-typedef int socklen_t;
-#else
-typedef u_int32_t socklen_t;
-#endif /* _NO_XOPEN4 && _NO_XOPEN5 */
-#endif  /* IRIX_SOCKLEN_T_CHECK */

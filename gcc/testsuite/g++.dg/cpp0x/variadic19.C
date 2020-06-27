@@ -1,10 +1,10 @@
-// { dg-options "-std=gnu++0x" }
+// { dg-do compile { target c++11 } }
 template<typename... Args>
 struct tuple {
   static const int value = 0;
 };
 
-template<typename T, template<class T> class... Metafunctions>
+template<typename T, template<class U> class... Metafunctions>
 struct tuple<Metafunctions<T>...> {
   static const int value = 1;
 };

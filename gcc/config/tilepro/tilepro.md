@@ -1,6 +1,5 @@
 ;; Machine description for Tilera TILEPro chip for GCC.
-;; Copyright (C) 2011, 2012
-;; Free Software Foundation, Inc.
+;; Copyright (C) 2011-2017 Free Software Foundation, Inc.
 ;; Contributed by Walter Lee (walt@tilera.com)
 ;;
 ;; This file is part of GCC.
@@ -796,7 +795,7 @@
 
 (define_expand "ctzdi2"
   [(set (match_operand:DI 0 "register_operand" "")
-	(ctz:DI (match_operand:DI 1 "reg_or_0_operand" "")))]
+	(ctz:DI (match_operand:DI 1 "register_operand" "")))]
   ""
 {
   rtx lo, hi, ctz_lo, ctz_hi, ctz_hi_plus_32, result;
@@ -824,7 +823,7 @@
 
 (define_expand "clzdi2"
   [(set (match_operand:DI 0 "register_operand" "")
-	(clz:DI (match_operand:DI 1 "reg_or_0_operand" "")))]
+	(clz:DI (match_operand:DI 1 "register_operand" "")))]
   ""
 {
   rtx lo, hi, clz_lo, clz_hi, clz_lo_plus_32, result;
@@ -852,7 +851,7 @@
 
 (define_expand "ffsdi2"
   [(set (match_operand:DI 0 "register_operand" "")
-	(ffs:DI (match_operand:DI 1 "reg_or_0_operand" "")))]
+	(ffs:DI (match_operand:DI 1 "register_operand" "")))]
   ""
 {
   rtx lo, hi, ctz_lo, ctz_hi, ctz_hi_plus_32, ctz, ctz_plus_1,ctz_cond;
@@ -1319,10 +1318,7 @@
 ;; generate.
 (define_expand "doloop_end"
   [(use (match_operand 0 "" ""))    ;; loop pseudo
-   (use (match_operand 1 "" ""))    ;; iterations; zero if unknown
-   (use (match_operand 2 "" ""))    ;; max iterations
-   (use (match_operand 3 "" ""))    ;; loop level
-   (use (match_operand 4 "" ""))]   ;; label
+   (use (match_operand 1 "" ""))]   ;; label
    ""
 {
   if (optimize > 0)
@@ -1331,9 +1327,6 @@
      rtx bcomp;
      rtx loc_ref;
 
-     /* only do inner loop  */
-     if (INTVAL (operands[3]) > 1)
-       FAIL;
      /* only deal with loop counters in SImode  */
      if (GET_MODE (operands[0]) != SImode)
        FAIL;
@@ -1342,8 +1335,8 @@
 
      emit_move_insn (s0, gen_rtx_PLUS (SImode, s0, GEN_INT (-1)));
      bcomp = gen_rtx_NE(SImode, s0, const0_rtx);
-     loc_ref = gen_rtx_LABEL_REF (VOIDmode, operands [4]);
-     emit_jump_insn (gen_rtx_SET (VOIDmode, pc_rtx,
+     loc_ref = gen_rtx_LABEL_REF (VOIDmode, operands [1]);
+     emit_jump_insn (gen_rtx_SET (pc_rtx,
                                   gen_rtx_IF_THEN_ELSE (VOIDmode, bcomp,
                                                         loc_ref, pc_rtx)));
      DONE;
@@ -1523,7 +1516,7 @@
 {
   int i;
 
-  emit_call_insn (GEN_CALL (operands[0], const0_rtx, NULL, const0_rtx));
+  emit_call_insn (gen_call (operands[0], const0_rtx));
 
   for (i = 0; i < XVECLEN (operands[2], 0); i++)
     {
@@ -1584,6 +1577,12 @@
   ""
   "nop"
   [(set_attr "type" "Y01")])
+
+(define_insn "trap"
+  [(trap_if (const_int 1) (const_int 0))]
+  ""
+  "raise; moveli zero, 6"
+  [(set_attr "type" "cannot_bundle")])
 
 
 ;;
@@ -3748,7 +3747,7 @@
   rtx ssp_addr = gen_rtx_PLUS (Pmode, tp, GEN_INT (TARGET_THREAD_SSP_OFFSET));
   rtx ssp = gen_reg_rtx (Pmode);
   
-  emit_insn (gen_rtx_SET (VOIDmode, ssp, ssp_addr));
+  emit_insn (gen_rtx_SET (ssp, ssp_addr));
 
   operands[1] = gen_rtx_MEM (Pmode, ssp);
 #endif
@@ -3783,7 +3782,7 @@
   rtx ssp_addr = gen_rtx_PLUS (Pmode, tp, GEN_INT (TARGET_THREAD_SSP_OFFSET));
   rtx ssp = gen_reg_rtx (Pmode);
   
-  emit_insn (gen_rtx_SET (VOIDmode, ssp, ssp_addr));
+  emit_insn (gen_rtx_SET (ssp, ssp_addr));
 
   operands[1] = gen_rtx_MEM (Pmode, ssp);
 #endif
@@ -3797,7 +3796,7 @@
 
   loc_ref = gen_rtx_LABEL_REF (VOIDmode, operands[2]);
 
-  emit_jump_insn (gen_rtx_SET (VOIDmode, pc_rtx,
+  emit_jump_insn (gen_rtx_SET (pc_rtx,
 			       gen_rtx_IF_THEN_ELSE (VOIDmode, bcomp,
 						     loc_ref, pc_rtx)));
 

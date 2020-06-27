@@ -1,6 +1,6 @@
 // 2004-11-29  Paolo Carlini  <pcarlini@suse.de>
 
-// Copyright (C) 2004, 2009 Free Software Foundation
+// Copyright (C) 2004-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -19,6 +19,12 @@
 
 // 21.3.3 string capacity
 
+// { dg-options "-DMAX_SIZE=16" { target simulator } }
+
+#ifndef MAX_SIZE
+#define MAX_SIZE 20
+#endif
+
 #include <string>
 #include <testsuite_hooks.h>
 
@@ -26,15 +32,17 @@
 void test01()
 {
   using namespace std;
-  bool test __attribute__((unused)) = true;
 
   typedef wstring::size_type size_type;
 
-  // Our current implementation provides exact shrink-to-size
-  // and shrink-to-fit (in the future, maybe this will change
-  // for short strings).
+#if _GLIBCXX_USE_CXX11_ABI
+  // Can't shrink below small string size.
+  const size_type minsize = wstring().capacity() + 1;
+#else
+  // Exact shrink-to-size and shrink-to-fit
   const size_type minsize = 2 << 0;
-  const size_type maxsize = 2 << 20;
+#endif
+  const size_type maxsize = 2 << MAX_SIZE;
   for (size_type i = minsize; i <= maxsize; i *= 2)
     {
       wstring str(i, L'x');

@@ -17,6 +17,8 @@ struct rtx_def
   enum rtx_code code:16;
 };
 
+extern void blah (rtx *);
+
 int
 nonlocal_mentioned_p (x)
      rtx x;
@@ -40,4 +42,3 @@ nonlocal_mentioned_p (x)
 /* There should be no IF conditionals.  */
 /* { dg-final { scan-tree-dump-times "if " 0 "dom2"} } */
                                                                                 
-/* { dg-final { cleanup-tree-dump "dom2" } } */

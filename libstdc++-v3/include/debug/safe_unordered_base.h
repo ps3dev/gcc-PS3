@@ -1,6 +1,6 @@
 // Safe container/iterator base implementation  -*- C++ -*-
 
-// Copyright (C) 2011 Free Software Foundation, Inc.
+// Copyright (C) 2011-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -71,35 +71,32 @@ namespace __gnu_debug
 			      bool __constant)
     { this->_M_attach(__x._M_sequence, __constant); }
 
-    _Safe_local_iterator_base&
-    operator=(const _Safe_local_iterator_base&);
-
-    explicit
-    _Safe_local_iterator_base(const _Safe_local_iterator_base&);
-
     ~_Safe_local_iterator_base() { this->_M_detach(); }
 
     _Safe_unordered_container_base*
-    _M_get_container() const _GLIBCXX_NOEXCEPT;
+    _M_get_container() const noexcept;
 
-  public:
     /** Attaches this iterator to the given container, detaching it
      *	from whatever container it was attached to originally. If the
      *	new container is the NULL pointer, the iterator is left
      *	unattached.
      */
-    void _M_attach(_Safe_sequence_base* __seq, bool __constant);
+    void
+    _M_attach(_Safe_sequence_base* __seq, bool __constant);
 
     /** Likewise, but not thread-safe. */
-    void _M_attach_single(_Safe_sequence_base* __seq, bool __constant) throw ();
+    void
+    _M_attach_single(_Safe_sequence_base* __seq, bool __constant) throw ();
 
     /** Detach the iterator for whatever container it is attached to,
      *	if any.
     */
-    void _M_detach();
+    void
+    _M_detach();
 
     /** Likewise, but not thread-safe. */
-    void _M_detach_single() throw ();
+    void
+    _M_detach_single() throw ();
   };
 
   /**
@@ -122,7 +119,9 @@ namespace __gnu_debug
    */
   class _Safe_unordered_container_base : public _Safe_sequence_base
   {
+    friend class _Safe_local_iterator_base;
     typedef _Safe_sequence_base _Base;
+
   public:
     /// The list of mutable local iterators that reference this container
     _Safe_iterator_base* _M_local_iterators;
@@ -132,13 +131,24 @@ namespace __gnu_debug
 
   protected:
     // Initialize with a version number of 1 and no iterators
-    _Safe_unordered_container_base()
-    : _M_local_iterators(0), _M_const_local_iterators(0)
+    _Safe_unordered_container_base() noexcept
+    : _M_local_iterators(nullptr), _M_const_local_iterators(nullptr)
     { }
+
+    // Copy constructor does not copy iterators.
+    _Safe_unordered_container_base(const _Safe_unordered_container_base&)
+    noexcept
+    : _Safe_unordered_container_base() { }
+
+    // When moved unordered containers iterators are swapped.
+    _Safe_unordered_container_base(_Safe_unordered_container_base&& __x)
+    noexcept
+    : _Safe_unordered_container_base()
+    { this->_M_swap(__x); }
 
     /** Notify all iterators that reference this container that the
 	container is being destroyed. */
-    ~_Safe_unordered_container_base()
+    ~_Safe_unordered_container_base() noexcept
     { this->_M_detach_all(); }
 
     /** Detach all iterators, leaving them singular. */
@@ -151,9 +161,9 @@ namespace __gnu_debug
      *  one container now reference the other container.
      */
     void
-    _M_swap(_Safe_unordered_container_base& __x);
+    _M_swap(_Safe_unordered_container_base& __x) noexcept;
 
-  public:
+  private:
     /** Attach an iterator to this container. */
     void
     _M_attach_local(_Safe_iterator_base* __it, bool __constant);

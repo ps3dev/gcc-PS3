@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2009, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -65,6 +65,13 @@ package body System.Val_Uns is
       --  Digit value
 
    begin
+      --  We do not tolerate strings with Str'Last = Positive'Last
+
+      if Str'Last = Positive'Last then
+         raise Program_Error with
+           "string upper bound is Positive'Last, not supported";
+      end if;
+
       P := Ptr.all;
       Uval := Character'Pos (Str (P)) - Character'Pos ('0');
       P := P + 1;
@@ -119,9 +126,10 @@ package body System.Val_Uns is
 
       Ptr.all := P;
 
-      --  Deal with based case
+      --  Deal with based case. We recognize either the standard '#' or the
+      --  allowed alternative replacement ':' (see RM J.2(3)).
 
-      if P < Max and then (Str (P) = ':' or else Str (P) = '#') then
+      if P < Max and then (Str (P) = '#' or else Str (P) = ':') then
          Base_Char := Str (P);
          P := P + 1;
          Base := Uval;
@@ -134,7 +142,7 @@ package body System.Val_Uns is
 
          if Base not in 2 .. 16 then
             Overflow := True;
-            Base :=  16;
+            Base := 16;
          end if;
 
          --  Scan out based integer
@@ -205,7 +213,7 @@ package body System.Val_Uns is
 
                if P > Max then
                   Ptr.all := P;
-                  raise Constraint_Error;
+                  Bad_Value (Str);
                end if;
 
                --  If terminating base character, we are done with loop
@@ -254,7 +262,7 @@ package body System.Val_Uns is
       --  Return result, dealing with sign and overflow
 
       if Overflow then
-         raise Constraint_Error;
+         Bad_Value (Str);
       else
          return Uval;
       end if;
@@ -277,7 +285,7 @@ package body System.Val_Uns is
 
       if Str (Ptr.all) not in '0' .. '9' then
          Ptr.all := Start;
-         raise Constraint_Error;
+         Bad_Value (Str);
       end if;
 
       return Scan_Raw_Unsigned (Str, Ptr, Max);
@@ -288,12 +296,30 @@ package body System.Val_Uns is
    --------------------
 
    function Value_Unsigned (Str : String) return Unsigned is
-      V : Unsigned;
-      P : aliased Integer := Str'First;
    begin
-      V := Scan_Unsigned (Str, P'Access, Str'Last);
-      Scan_Trailing_Blanks (Str, P);
-      return V;
+      --  We have to special case Str'Last = Positive'Last because the normal
+      --  circuit ends up setting P to Str'Last + 1 which is out of bounds. We
+      --  deal with this by converting to a subtype which fixes the bounds.
+
+      if Str'Last = Positive'Last then
+         declare
+            subtype NT is String (1 .. Str'Length);
+         begin
+            return Value_Unsigned (NT (Str));
+         end;
+
+      --  Normal case where Str'Last < Positive'Last
+
+      else
+         declare
+            V : Unsigned;
+            P : aliased Integer := Str'First;
+         begin
+            V := Scan_Unsigned (Str, P'Access, Str'Last);
+            Scan_Trailing_Blanks (Str, P);
+            return V;
+         end;
+      end if;
    end Value_Unsigned;
 
 end System.Val_Uns;

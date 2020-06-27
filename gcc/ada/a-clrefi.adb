@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2007-2009, Free Software Foundation, Inc.         --
+--          Copyright (C) 2007-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -29,7 +29,7 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-pragma Compiler_Unit;
+pragma Compiler_Unit_Warning;
 
 with Ada.Unchecked_Deallocation;
 
@@ -87,7 +87,7 @@ package body Ada.Command_Line.Response_File is
          if Last_Arg = Arguments'Last then
             declare
                New_Arguments : constant Argument_List_Access :=
-                                 new Argument_List (1 .. Arguments'Last * 2);
+                 new Argument_List (1 .. Arguments'Last * 2);
             begin
                New_Arguments (Arguments'Range) := Arguments.all;
                Arguments.all := (others => null);
@@ -217,7 +217,7 @@ package body Ada.Command_Line.Response_File is
             end loop;
          end Get_Line;
 
-      --  Start or Recurse
+      --  Start of processing for Recurse
 
       begin
          Last_Arg := 0;
@@ -421,10 +421,9 @@ package body Ada.Command_Line.Response_File is
 
                      declare
                         Inc_File_Name     : constant String :=
-                                              Arguments (Arg)
-                                              (2 .. Arguments (Arg)'Last);
+                          Arguments (Arg) (2 .. Arguments (Arg)'Last);
                         Current_Arguments : constant Argument_List :=
-                                              Arguments (1 .. Last_Arg);
+                          Arguments (1 .. Last_Arg);
                      begin
                         Recurse (Inc_File_Name);
 
@@ -433,10 +432,10 @@ package body Ada.Command_Line.Response_File is
 
                         declare
                            New_Arguments : constant Argument_List :=
-                                             Arguments (1 .. Last_Arg);
+                             Arguments (1 .. Last_Arg);
                            New_Last_Arg  : constant Positive :=
-                                             Current_Arguments'Length +
-                                             New_Arguments'Length - 1;
+                             Current_Arguments'Length +
+                             New_Arguments'Length - 1;
 
                         begin
                            --  Grow Arguments if it is not large enough
@@ -492,7 +491,7 @@ package body Ada.Command_Line.Response_File is
             raise;
       end Recurse;
 
-   --  Start of Arguments_From
+   --  Start of processing for Arguments_From
 
    begin
       --  The job is done by procedure Recurse

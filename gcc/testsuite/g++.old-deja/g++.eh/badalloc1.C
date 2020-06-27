@@ -3,7 +3,7 @@
 // itself call malloc(), and will fail if there is no more
 // memory available.
 // { dg-do run { xfail { { xstormy16-*-* *-*-darwin[3-7]* } || vxworks_rtp } } }
-// Copyright (C) 2000, 2002, 2003, 2010 Free Software Foundation, Inc.
+// Copyright (C) 2000, 2002, 2003, 2010, 2012, 2014 Free Software Foundation, Inc.
 // Contributed by Nathan Sidwell 6 June 2000 <nathan@codesourcery.com>
 
 // Check we can throw a bad_alloc exception when malloc dies.
@@ -12,18 +12,24 @@ typedef __SIZE_TYPE__ size_t;
 extern "C" void abort();
 extern "C" void *memcpy(void *, const void *, size_t);
 
+// libstdc++ requires a large initialization time allocation for the
+// emergency EH allocation pool.  Add that to the arena size.
+
 // Assume that STACK_SIZE defined implies a system that does not have a
 // large data space either, and additionally that we're not linking against
 // a shared libstdc++ (which requires quite a bit more initialization space).
 #ifdef STACK_SIZE
-const int arena_size = 256;
+const int arena_size = 256 + 8 * 128;
 #else
-#if defined(__FreeBSD__) || defined(__sun__) || defined(__hpux__) || defined(__osf__)
-// FreeBSD, Solaris, HP-UX and Tru64 UNIX with threads require even more
-// space at initialization time.  FreeBSD 5 now requires over 131072 bytes.
-const int arena_size = 262144;
+#if defined(__FreeBSD__) || defined(__sun__) || defined(__hpux__)
+// FreeBSD, Solaris and HP-UX require even more space at initialization time.
+// FreeBSD 5 now requires over 131072 bytes.
+const int arena_size = 262144 + 72 * 1024;
 #else
-const int arena_size = 32768;
+// Because pointers make up the bulk of our exception-initialization
+// allocations, we scale by the pointer size from the original
+// 32-bit-systems-based estimate.
+const int arena_size = 32768 * ((sizeof (void *) + 3)/4) + 72 * 1024;
 #endif
 #endif
 
@@ -87,19 +93,28 @@ extern "C" void *realloc (void *p, size_t size)
   return r;
 }
 
-void fn_throw() throw(int)
+void fn_throw()
+#if __cplusplus <= 201402L
+throw(int)			// { dg-warning "deprecated" "" { target { c++11 && { ! c++1z } } } }
+#endif
 {
   throw 1;
 }
 
-void fn_rethrow() throw(int)
+void fn_rethrow()
+#if __cplusplus <= 201402L
+throw(int)			// { dg-warning "deprecated" "" { target { c++11 && { ! c++1z } } } }
+#endif
 {
   try{fn_throw();}
   catch(int a){
     throw;}
 }
 
-void fn_catchthrow() throw(int)
+void fn_catchthrow()
+#if __cplusplus <= 201402L
+throw(int)			// { dg-warning "deprecated" "" { target { c++11 && { ! c++1z } } } }
+#endif
 {
   try{fn_throw();}
   catch(int a){

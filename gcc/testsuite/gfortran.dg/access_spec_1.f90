@@ -1,4 +1,5 @@
 ! { dg-do compile }
+! { dg-require-visibility "" }
 ! PR fortran/31472
 ! Access specifications: Valid Fortran 2003 code
 module mod
@@ -15,4 +16,3 @@ module mod
     integer, private :: z  ! Fortran 2003
   end type
 end module
-! { dg-final { cleanup-modules "mod" } }

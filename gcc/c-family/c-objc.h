@@ -1,7 +1,5 @@
 /* Definitions of Objective-C front-end entry points used for C and C++.
-   Copyright (C) 1987, 1993, 1994, 1995, 1997, 1998,
-   1999, 2000, 2001, 2002, 2003, 2004, 2005, 2007, 2008, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 1987-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -23,12 +21,12 @@ along with GCC; see the file COPYING3.  If not see
 #define GCC_C_COMMON_OBJC_H
 
 /* ObjC ivar visibility types.  */
-typedef enum objc_ivar_visibility_kind {
+enum GTY(()) objc_ivar_visibility_kind {
   OBJC_IVAR_VIS_PROTECTED = 0,
   OBJC_IVAR_VIS_PUBLIC    = 1,
   OBJC_IVAR_VIS_PRIVATE   = 2,
   OBJC_IVAR_VIS_PACKAGE   = 3
-} objc_ivar_visibility_kind;
+};
 
 /* Objective-C / Objective-C++ entry points.  */
 

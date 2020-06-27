@@ -6,5 +6,5 @@ namespace N {
 }
 
 namespace K {
-  template <> void N::S<char>::f() {} // { dg-error "namespace|definition" }
+  template <> void N::S<char>::f() {} // { dg-error "namespace" }
 }

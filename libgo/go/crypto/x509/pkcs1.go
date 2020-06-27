@@ -24,7 +24,7 @@ type pkcs1PrivateKey struct {
 	Dq   *big.Int `asn1:"optional"`
 	Qinv *big.Int `asn1:"optional"`
 
-	AdditionalPrimes []pkcs1AdditionalRSAPrime `asn1:"optional"`
+	AdditionalPrimes []pkcs1AdditionalRSAPrime `asn1:"optional,omitempty"`
 }
 
 type pkcs1AdditionalRSAPrime struct {
@@ -36,15 +36,14 @@ type pkcs1AdditionalRSAPrime struct {
 }
 
 // ParsePKCS1PrivateKey returns an RSA private key from its ASN.1 PKCS#1 DER encoded form.
-func ParsePKCS1PrivateKey(der []byte) (key *rsa.PrivateKey, err error) {
+func ParsePKCS1PrivateKey(der []byte) (*rsa.PrivateKey, error) {
 	var priv pkcs1PrivateKey
 	rest, err := asn1.Unmarshal(der, &priv)
 	if len(rest) > 0 {
-		err = asn1.SyntaxError{Msg: "trailing data"}
-		return
+		return nil, asn1.SyntaxError{Msg: "trailing data"}
 	}
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	if priv.Version > 1 {
@@ -52,10 +51,10 @@ func ParsePKCS1PrivateKey(der []byte) (key *rsa.PrivateKey, err error) {
 	}
 
 	if priv.N.Sign() <= 0 || priv.D.Sign() <= 0 || priv.P.Sign() <= 0 || priv.Q.Sign() <= 0 {
-		return nil, errors.New("private key contains zero or negative value")
+		return nil, errors.New("x509: private key contains zero or negative value")
 	}
 
-	key = new(rsa.PrivateKey)
+	key := new(rsa.PrivateKey)
 	key.PublicKey = rsa.PublicKey{
 		E: priv.E,
 		N: priv.N,
@@ -67,7 +66,7 @@ func ParsePKCS1PrivateKey(der []byte) (key *rsa.PrivateKey, err error) {
 	key.Primes[1] = priv.Q
 	for i, a := range priv.AdditionalPrimes {
 		if a.Prime.Sign() <= 0 {
-			return nil, errors.New("private key contains zero or negative prime")
+			return nil, errors.New("x509: private key contains zero or negative prime")
 		}
 		key.Primes[i+2] = a.Prime
 		// We ignore the other two values because rsa will calculate
@@ -80,7 +79,7 @@ func ParsePKCS1PrivateKey(der []byte) (key *rsa.PrivateKey, err error) {
 	}
 	key.Precompute()
 
-	return
+	return key, nil
 }
 
 // MarshalPKCS1PrivateKey converts a private key to ASN.1 DER encoded form.

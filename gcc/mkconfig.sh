@@ -1,7 +1,6 @@
 #! /bin/sh
 
-# Copyright (C) 2001, 2002, 2006, 2007, 2010, 2011
-# Free Software Foundation, Inc.
+# Copyright (C) 2001-2017 Free Software Foundation, Inc.
 # This file is part of GCC.
 
 # GCC is free software; you can redistribute it and/or modify
@@ -97,6 +96,12 @@ case $output in
         cat >> ${output}T <<EOF
 #if defined IN_GCC && !defined GENERATOR_FILE && !defined USED_FOR_TARGET
 # include "insn-flags.h"
+#endif
+#if defined IN_GCC && !defined GENERATOR_FILE
+# include "insn-modes.h"
+#endif
+#if defined IN_GCC && defined GENERATOR_FILE && !defined BITS_PER_UNIT
+#include "machmode.h"
 #endif
 EOF
     ;;

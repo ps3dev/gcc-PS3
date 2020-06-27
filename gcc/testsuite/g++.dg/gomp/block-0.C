@@ -22,12 +22,13 @@ void foo()
     bar ();
   #pragma omp parallel sections
     {
-      bar ();
-      bar ();
+      {
+	bar ();
+	bar ();
+      }
     #pragma omp section
       bar ();
     }
 }
 
 // { dg-final { scan-tree-dump-times "terminate" 10 "omplower" } }
-// { dg-final { cleanup-tree-dump "omplower" } }

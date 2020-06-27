@@ -1,7 +1,6 @@
 // Specific definitions for generic platforms  -*- C++ -*-
 
-// Copyright (C) 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008,
-// 2009, 2010, 2011  Free Software Foundation, Inc.
+// Copyright (C) 2000-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -71,5 +70,12 @@
 #if defined (__i386__)
 #define _GLIBCXX_CDTOR_CALLABI __thiscall
 #endif
+
+#ifdef __x86_64__
+#define _GLIBCXX_LLP64 1
+#endif
+
+// See libstdc++/59807
+#define _GTHREAD_USE_MUTEX_INIT_FUNC 1
 
 #endif

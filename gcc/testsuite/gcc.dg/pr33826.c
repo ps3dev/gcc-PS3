@@ -5,6 +5,10 @@
 /* { dg-require-effective-target nonpic } */
 /* { dg-options "-O1 -fdump-tree-local-pure-const1 -fdump-ipa-pure-const" } */
 
+int recurse1 (int);
+int recurse2b (int);
+int norecurse1b (int);
+
 int recurese1 (int i)
 {
   return recurse1 (i+1);
@@ -44,5 +48,3 @@ int norecurse1b (int i)
 /* { dg-final { scan-ipa-dump-not "found to be const: recurse1" "pure-const" } } */
 /* { dg-final { scan-ipa-dump-not "found to be const: recurse2a" "pure-const" } } */
 /* { dg-final { scan-ipa-dump-not "found to be const: recurse2b" "pure-const" } } */
-/* { dg-final { cleanup-ipa-dump "pure-const" } } */
-/* { dg-final { cleanup-tree-dump "local-pure-const1" } } */

@@ -1,5 +1,5 @@
 /* ARM EABI compliant unwinding routines.
-   Copyright (C) 2004, 2005, 2009 Free Software Foundation, Inc.
+   Copyright (C) 2004-2017 Free Software Foundation, Inc.
    Contributed by Paul Brook
 
    This file is free software; you can redistribute it and/or modify it
@@ -53,16 +53,6 @@ struct vfpv3_regs
   _uw64 d[16];
 };
 
-struct fpa_reg
-{
-  _uw w[3];
-};
-
-struct fpa_regs
-{
-  struct fpa_reg f[8];
-};
-
 struct wmmxd_regs
 {
   _uw64 wd[16];
@@ -90,7 +80,6 @@ typedef struct
   _uw prev_sp; /* Only valid during forced unwinding.  */
   struct vfp_regs vfp;
   struct vfpv3_regs vfp_regs_16_to_31;
-  struct fpa_regs fpa;
   struct wmmxd_regs wmmxd;
   struct wmmxc_regs wmmxc;
 } phase1_vrs;
@@ -181,7 +170,6 @@ _Unwind_VRS_Result _Unwind_VRS_Get (_Unwind_Context *context,
       return _UVRSR_OK;
 
     case _UVRSC_VFP:
-    case _UVRSC_FPA:
     case _UVRSC_WMMXD:
     case _UVRSC_WMMXC:
       return _UVRSR_NOT_IMPLEMENTED;
@@ -213,7 +201,6 @@ _Unwind_VRS_Result _Unwind_VRS_Set (_Unwind_Context *context,
       return _UVRSR_OK;
 
     case _UVRSC_VFP:
-    case _UVRSC_FPA:
     case _UVRSC_WMMXD:
     case _UVRSC_WMMXC:
       return _UVRSR_NOT_IMPLEMENTED;
@@ -380,9 +367,6 @@ _Unwind_VRS_Result _Unwind_VRS_Pop (_Unwind_Context *context,
       }
       return _UVRSR_OK;
 
-    case _UVRSC_FPA:
-      return _UVRSR_NOT_IMPLEMENTED;
-
     case _UVRSC_WMMXD:
       {
 	_uw start = discriminator >> 16;
@@ -525,3 +509,25 @@ __aeabi_unwind_cpp_pr2 (_Unwind_State state,
 {
   return __gnu_unwind_pr_common (state, ucbp, context, 2);
 }
+
+#ifdef __FreeBSD__
+/* FreeBSD expects these to be functions */
+inline _Unwind_Ptr
+_Unwind_GetIP (struct _Unwind_Context *context)
+{
+  return _Unwind_GetGR (context, 15) & ~(_Unwind_Word)1;
+}
+
+inline _Unwind_Ptr
+_Unwind_GetIPInfo (struct _Unwind_Context *context, int *ip_before_insn)
+{
+  *ip_before_insn = 0;
+  return _Unwind_GetIP (context);
+}
+
+inline void
+_Unwind_SetIP (struct _Unwind_Context *context, _Unwind_Ptr val)
+{
+  _Unwind_SetGR (context, 15, val | (_Unwind_GetGR (context, 15) & 1));
+}
+#endif

@@ -1,7 +1,7 @@
 /* Routines for saving various data types to a file stream.  This deals
    with various data types like strings, integers, enums, etc.
 
-   Copyright 2011 Free Software Foundation, Inc.
+   Copyright (C) 2011-2017 Free Software Foundation, Inc.
    Contributed by Diego Novillo <dnovillo@google.com>
 
 This file is part of GCC.
@@ -23,7 +23,54 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
+#include "backend.h"
+#include "tree.h"
+#include "gimple.h"
+#include "cgraph.h"
 #include "data-streamer.h"
+
+
+/* Adds a new block to output stream OBS.  */
+
+void
+lto_append_block (struct lto_output_stream *obs)
+{
+  struct lto_char_ptr_base *new_block;
+
+  gcc_assert (obs->left_in_block == 0);
+
+  if (obs->first_block == NULL)
+    {
+      /* This is the first time the stream has been written
+	 into.  */
+      obs->block_size = 1024;
+      new_block = (struct lto_char_ptr_base*) xmalloc (obs->block_size);
+      obs->first_block = new_block;
+    }
+  else
+    {
+      struct lto_char_ptr_base *tptr;
+      /* Get a new block that is twice as big as the last block
+	 and link it into the list.  */
+      obs->block_size *= 2;
+      new_block = (struct lto_char_ptr_base*) xmalloc (obs->block_size);
+      /* The first bytes of the block are reserved as a pointer to
+	 the next block.  Set the chain of the full block to the
+	 pointer to the new block.  */
+      tptr = obs->current_block;
+      tptr->ptr = (char *) new_block;
+    }
+
+  /* Set the place for the next char at the first position after the
+     chain to the next block.  */
+  obs->current_pointer
+    = ((char *) new_block) + sizeof (struct lto_char_ptr_base);
+  obs->current_block = new_block;
+  /* Null out the newly allocated block's pointer to the next block.  */
+  new_block->ptr = NULL;
+  obs->left_in_block = obs->block_size - sizeof (struct lto_char_ptr_base);
+}
+
 
 /* Return index used to reference STRING of LEN characters in the string table
    in OB.  The string might or might not include a trailing '\0'.
@@ -31,7 +78,7 @@ along with GCC; see the file COPYING3.  If not see
    When PERSISTENT is set, the string S is supposed to not change during
    duration of the OB and thus OB can keep pointer into it.  */
 
-unsigned
+static unsigned
 streamer_string_index (struct output_block *ob, const char *s, unsigned int len,
 		       bool persistent)
 {
@@ -42,8 +89,7 @@ streamer_string_index (struct output_block *ob, const char *s, unsigned int len,
   s_slot.len = len;
   s_slot.slot_num = 0;
 
-  slot = (struct string_slot **) htab_find_slot (ob->string_hash_table,
-						 &s_slot, INSERT);
+  slot = ob->string_hash_table->find_slot (&s_slot, INSERT);
   if (*slot == NULL)
     {
       struct lto_output_stream *string_stream = ob->string_stream;
@@ -65,7 +111,7 @@ streamer_string_index (struct output_block *ob, const char *s, unsigned int len,
       new_slot->slot_num = start;
       *slot = new_slot;
       streamer_write_uhwi_stream (string_stream, len);
-      lto_output_data_stream (string_stream, string, len);
+      streamer_write_data_stream (string_stream, string, len);
       return start + 1;
     }
   else
@@ -115,6 +161,39 @@ streamer_write_string (struct output_block *ob,
 }
 
 
+/* Output STRING of LEN characters to the string table in OB.  Then
+   put the index into BP.
+   When PERSISTENT is set, the string S is supposed to not change during
+   duration of the OB and thus OB can keep pointer into it.  */
+
+void
+bp_pack_string_with_length (struct output_block *ob, struct bitpack_d *bp,
+			    const char *s, unsigned int len, bool persistent)
+{
+  unsigned index = 0;
+  if (s)
+    index = streamer_string_index (ob, s, len, persistent);
+  bp_pack_var_len_unsigned (bp, index);
+}
+
+
+/* Output the '\0' terminated STRING to the string
+   table in OB.  Then put the index onto the bitpack BP.
+   When PERSISTENT is set, the string S is supposed to not change during
+   duration of the OB and thus OB can keep pointer into it.  */
+
+void
+bp_pack_string (struct output_block *ob, struct bitpack_d *bp,
+		const char *s, bool persistent)
+{
+  unsigned index = 0;
+  if (s)
+    index = streamer_string_index (ob, s, strlen (s) + 1, persistent);
+  bp_pack_var_len_unsigned (bp, index);
+}
+
+
+
 /* Write a zero to the output stream.  */
 
 void
@@ -141,6 +220,13 @@ streamer_write_hwi (struct output_block *ob, HOST_WIDE_INT work)
   streamer_write_hwi_stream (ob->main_stream, work);
 }
 
+/* Write a gcov counter value WORK to OB->main_stream.  */
+
+void
+streamer_write_gcov_count (struct output_block *ob, gcov_type work)
+{
+  streamer_write_gcov_count_stream (ob->main_stream, work);
+}
 
 /* Write an unsigned HOST_WIDE_INT value WORK to OBS.  */
 
@@ -148,6 +234,11 @@ void
 streamer_write_uhwi_stream (struct lto_output_stream *obs,
                             unsigned HOST_WIDE_INT work)
 {
+  if (obs->left_in_block == 0)
+    lto_append_block (obs);
+  char *current_pointer = obs->current_pointer;
+  unsigned int left_in_block = obs->left_in_block;
+  unsigned int size = 0;
   do
     {
       unsigned int byte = (work & 0x7f);
@@ -156,9 +247,34 @@ streamer_write_uhwi_stream (struct lto_output_stream *obs,
 	/* More bytes to follow.  */
 	byte |= 0x80;
 
-      streamer_write_char_stream (obs, byte);
+      *(current_pointer++) = byte;
+      left_in_block--;
+      size++;
     }
-  while (work != 0);
+  while (work != 0 && left_in_block > 0);
+  if (work != 0)
+    {
+      obs->left_in_block = 0;
+      lto_append_block (obs);
+      current_pointer = obs->current_pointer;
+      left_in_block = obs->left_in_block;
+      do
+	{
+	  unsigned int byte = (work & 0x7f);
+	  work >>= 7;
+	  if (work != 0)
+	    /* More bytes to follow.  */
+	    byte |= 0x80;
+
+	  *(current_pointer++) = byte;
+	  left_in_block--;
+	  size++;
+	}
+      while (work != 0);
+    }
+  obs->current_pointer = current_pointer;
+  obs->left_in_block = left_in_block;
+  obs->total_size += size;
 }
 
 
@@ -167,19 +283,121 @@ streamer_write_uhwi_stream (struct lto_output_stream *obs,
 void
 streamer_write_hwi_stream (struct lto_output_stream *obs, HOST_WIDE_INT work)
 {
-  int more, byte;
-
+  if (obs->left_in_block == 0)
+    lto_append_block (obs);
+  char *current_pointer = obs->current_pointer;
+  unsigned int left_in_block = obs->left_in_block;
+  unsigned int size = 0;
+  bool more;
   do
     {
-      byte = (work & 0x7f);
-      /* arithmetic shift */
-      work >>= 7;
-      more = !((work == 0 && (byte & 0x40) == 0)
-	       || (work == -1 && (byte & 0x40) != 0));
+      unsigned int byte = (work & 0x7f);
+      /* If the lower 7-bits are sign-extended 0 or -1 we are finished.  */
+      work >>= 6;
+      more = !(work == 0 || work == -1);
       if (more)
-	byte |= 0x80;
+	{
+	  /* More bits to follow.  */
+	  work >>= 1;
+	  byte |= 0x80;
+	}
 
-      streamer_write_char_stream (obs, byte);
+      *(current_pointer++) = byte;
+      left_in_block--;
+      size++;
     }
-  while (more);
+  while (more && left_in_block > 0);
+  if (more)
+    {
+      obs->left_in_block = 0;
+      lto_append_block (obs);
+      current_pointer = obs->current_pointer;
+      left_in_block = obs->left_in_block;
+      do
+	{
+	  unsigned int byte = (work & 0x7f);
+	  work >>= 6;
+	  more = !(work == 0 || work == -1);
+	  if (more)
+	    {
+	      work >>= 1;
+	      byte |= 0x80;
+	    }
+
+	  *(current_pointer++) = byte;
+	  left_in_block--;
+	  size++;
+	}
+      while (more);
+    }
+  obs->current_pointer = current_pointer;
+  obs->left_in_block = left_in_block;
+  obs->total_size += size;
 }
+
+/* Write a GCOV counter value WORK to OBS.  */
+
+void
+streamer_write_gcov_count_stream (struct lto_output_stream *obs, gcov_type work)
+{
+  gcc_assert ((HOST_WIDE_INT) work == work);
+  streamer_write_hwi_stream (obs, work);
+}
+
+/* Write raw DATA of length LEN to the output block OB.  */
+
+void
+streamer_write_data_stream (struct lto_output_stream *obs, const void *data,
+			    size_t len)
+{
+  while (len)
+    {
+      size_t copy;
+
+      /* No space left.  */
+      if (obs->left_in_block == 0)
+	lto_append_block (obs);
+
+      /* Determine how many bytes to copy in this loop.  */
+      if (len <= obs->left_in_block)
+	copy = len;
+      else
+	copy = obs->left_in_block;
+
+      /* Copy the data and do bookkeeping.  */
+      memcpy (obs->current_pointer, data, copy);
+      obs->current_pointer += copy;
+      obs->total_size += copy;
+      obs->left_in_block -= copy;
+      data = (const char *) data + copy;
+      len -= copy;
+    }
+}
+
+/* Emit the physical representation of wide_int VAL to output block OB.  */
+
+void
+streamer_write_wide_int (struct output_block *ob, const wide_int &val)
+{
+  int len = val.get_len ();
+
+  streamer_write_uhwi (ob, val.get_precision ());
+  streamer_write_uhwi (ob, len);
+  for (int i = 0; i < len; i++)
+    streamer_write_hwi (ob, val.elt (i));
+}
+
+/* Emit the physical representation of widest_int W to output block OB.  */
+
+void
+streamer_write_widest_int (struct output_block *ob,
+			   const widest_int &w)
+{
+  int len = w.get_len ();
+
+  streamer_write_uhwi (ob, w.get_precision ());
+  streamer_write_uhwi (ob, len);
+  for (int i = 0; i < len; i++)
+    streamer_write_hwi (ob, w.elt (i));
+}
+

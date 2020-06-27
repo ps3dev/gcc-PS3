@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2009, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -29,15 +29,11 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-with Hostparm;
-
 procedure Krunch
   (Buffer        : in out String;
    Len           : in out Natural;
    Maxlen        : Natural;
-   No_Predef     : Boolean;
-   VMS_On_Target : Boolean := False)
-
+   No_Predef     : Boolean)
 is
    pragma Assert (Buffer'First = 1);
    --  This is a documented requirement; the assert turns off index warnings
@@ -99,7 +95,24 @@ begin
       Startloc := 3;
       Buffer (2 .. Len - 9) := Buffer (11 .. Len);
       Curlen := Len - 9;
-      Krlen  := 8;
+
+      --  Only fully krunch historical units. For new units, simply use
+      --  the 'i-' prefix instead of 'interfaces-'. Packages Interfaces.C
+      --  and Interfaces.Cobol are already in the right form. Package
+      --  Interfaces.Definitions is krunched for backward compatibility.
+
+      if        (Curlen >  3 and then Buffer (3 ..  4) = "c-")
+        or else (Curlen >  3 and then Buffer (3 ..  4) = "c_")
+        or else (Curlen = 13 and then Buffer (3 .. 13) = "definitions")
+        or else (Curlen =  9 and then Buffer (3 ..  9) = "fortran")
+        or else (Curlen = 16 and then Buffer (3 .. 16) = "packed_decimal")
+        or else (Curlen >  8 and then Buffer (3 ..  9) = "vxworks")
+        or else (Curlen >  5 and then Buffer (3 ..  6) = "java")
+      then
+         Krlen := 8;
+      else
+         Krlen := Maxlen;
+      end if;
 
    --  For the renamings in the obsolescent section, we also force krunching
    --  to 8 characters, but no other special processing is required here.
@@ -120,36 +133,15 @@ begin
    --  Special case of a child unit whose parent unit is a single letter that
    --  is A, G, I, or S. In order to prevent confusion with krunched names
    --  of predefined units use a tilde rather than a minus as the second
-   --  character of the file name.  On VMS a tilde is an illegal character
-   --  in a file name, two consecutive underlines ("__") are used instead.
+   --  character of the file name.
 
    elsif Len > 1
      and then Buffer (2) = '-'
      and then (B1 = 'a' or else B1 = 'g' or else B1 = 'i' or else B1 = 's')
      and then Len <= Maxlen
    then
-      --  When VMS is the host, it is always also the target
-
-      if Hostparm.OpenVMS or else VMS_On_Target then
-         Len := Len + 1;
-         Buffer (4 .. Len) := Buffer (3 .. Len - 1);
-         Buffer (2) := '_';
-         Buffer (3) := '_';
-      else
-         Buffer (2) := '~';
-      end if;
-
-      if Len <= Maxlen then
-         return;
-
-      else
-         --  Case of VMS when the buffer had exactly the length Maxlen and now
-         --  has the length Maxlen + 1: krunching after "__" is needed.
-
-         Startloc := 4;
-         Curlen   := Len;
-         Krlen    := Maxlen;
-      end if;
+      Buffer (2) := '~';
+      return;
 
    --  Normal case, not a predefined file
 
@@ -261,5 +253,4 @@ begin
    end loop;
 
    return;
-
 end Krunch;

@@ -6,7 +6,7 @@
 # The resulting file can be used with test result comparison scripts for
 # results from tests that were run in parallel.  See usage() below.
 
-# Copyright (C) 2008, 2009, 2010 Free Software Foundation
+# Copyright (C) 2008, 2009, 2010, 2012 Free Software Foundation
 # Contributed by Janis Johnson <janis187@us.ibm.com>
 #
 # This file is part of GCC.
@@ -27,6 +27,15 @@
 # Boston, MA 02110-1301, USA.
 
 PROGNAME=dg-extract-results.sh
+
+# Try to use the python version if possible, since it tends to be faster.
+PYTHON_VER=`echo "$0" | sed 's/sh$/py/'`
+if test "$PYTHON_VER" != "$0" &&
+   test -f "$PYTHON_VER" &&
+   python -c 'import sys, getopt, re, io, datetime, operator; sys.exit (0 if sys.version_info >= (2, 6) else 1)' \
+     > /dev/null 2> /dev/null; then
+  exec python $PYTHON_VER "$@"
+fi
 
 usage() {
   cat <<EOF >&2
@@ -118,13 +127,28 @@ do
 done
 test $ERROR -eq 0 || exit 1
 
+# Test if grep supports the '--text' option
+
+GREP=grep
+
+if echo -e '\x00foo\x00' | $GREP --text foo > /dev/null 2>&1 ; then
+  GREP="grep --text"
+else
+  # Our grep does not recognize the '--text' option.  We have to
+  # treat our files in order to remove any non-printable character.
+  for file in $SUM_FILES ; do
+    mv $file ${file}.orig
+    cat -v ${file}.orig > $file
+  done
+fi
+
 if [ -z "$TOOL" ]; then
   # If no tool was specified, all specified summary files must be for
   # the same tool.
 
-  CNT=`grep '=== .* tests ===' $SUM_FILES | $AWK '{ print $3 }' | sort -u | wc -l`
+  CNT=`$GREP '=== .* tests ===' $SUM_FILES | $AWK '{ print $3 }' | sort -u | wc -l`
   if [ $CNT -eq 1 ]; then
-    TOOL=`grep '=== .* tests ===' $FIRST_SUM | $AWK '{ print $2 }'`
+    TOOL=`$GREP '=== .* tests ===' $FIRST_SUM | $AWK '{ print $2 }'`
   else
     msg "${PROGNAME}: sum files are for multiple tools, specify a tool"
     msg ""
@@ -135,7 +159,7 @@ else
   # Ignore the specified summary files that are not for this tool.  This
   # should keep the relevant files in the same order.
 
-  SUM_FILES=`grep -l "=== $TOOL" $SUM_FILES`
+  SUM_FILES=`$GREP -l "=== $TOOL" $SUM_FILES`
   if test -z "$SUM_FILES" ; then
     msg "${PROGNAME}: none of the specified files are results for $TOOL"
     exit 1
@@ -224,7 +248,7 @@ else
   VARIANTS=""
   for VAR in $VARS
   do
-    grep "Running target $VAR" $SUM_FILES > /dev/null && VARIANTS="$VARIANTS $VAR"
+    $GREP "Running target $VAR" $SUM_FILES > /dev/null && VARIANTS="$VARIANTS $VAR"
   done
 fi
 
@@ -288,7 +312,7 @@ BEGIN {
 /^Using / {
   if (variant == curvar && print_using) { print; next }
 }
-/^Running / {
+/^Running .*\\.exp \\.\\.\\./ {
   print_using=0
   if (variant == curvar) {
     if (need_close) close(curfile)
@@ -345,15 +369,18 @@ EOF
 BEGIN {
   variant="$VAR"
   tool="$TOOL"
-  passcnt=0; failcnt=0; untstcnt=0; xpasscnt=0; xfailcnt=0; unsupcnt=0; unrescnt=0;
+  passcnt=0; failcnt=0; untstcnt=0; xpasscnt=0; xfailcnt=0; kpasscnt=0; kfailcnt=0; unsupcnt=0; unrescnt=0; dgerrorcnt=0;
   curvar=""; insummary=0
 }
 /^Running target /		{ curvar = \$3; next }
+/^ERROR: \(DejaGnu\)/		{ if (variant == curvar) dgerrorcnt += 1 }
 /^# of /			{ if (variant == curvar) insummary = 1 }
 /^# of expected passes/		{ if (insummary == 1) passcnt += \$5; next; }
 /^# of unexpected successes/	{ if (insummary == 1) xpasscnt += \$5; next; }
 /^# of unexpected failures/	{ if (insummary == 1) failcnt += \$5; next; }
 /^# of expected failures/	{ if (insummary == 1) xfailcnt += \$5; next; }
+/^# of unknown successes/	{ if (insummary == 1) kpasscnt += \$5; next; }
+/^# of known failures/		{ if (insummary == 1) kfailcnt += \$5; next; }
 /^# of untested testcases/	{ if (insummary == 1) untstcnt += \$5; next; }
 /^# of unresolved testcases/	{ if (insummary == 1) unrescnt += \$5; next; }
 /^# of unsupported tests/	{ if (insummary == 1) unsupcnt += \$5; next; }
@@ -364,10 +391,13 @@ BEGIN {
 { next }
 END {
   printf ("\t\t=== %s Summary for %s ===\n\n", tool, variant)
+  if (dgerrorcnt != 0) printf ("# of DejaGnu errors\t\t%d\n", dgerrorcnt)
   if (passcnt != 0) printf ("# of expected passes\t\t%d\n", passcnt)
   if (failcnt != 0) printf ("# of unexpected failures\t%d\n", failcnt)
   if (xpasscnt != 0) printf ("# of unexpected successes\t%d\n", xpasscnt)
   if (xfailcnt != 0) printf ("# of expected failures\t\t%d\n", xfailcnt)
+  if (kpasscnt != 0) printf ("# of unknown successes\t\t%d\n", kpasscnt)
+  if (kfailcnt != 0) printf ("# of known failures\t\t%d\n", kfailcnt)
   if (untstcnt != 0) printf ("# of untested testcases\t\t%d\n", untstcnt)
   if (unrescnt != 0) printf ("# of unresolved testcases\t%d\n", unrescnt)
   if (unsupcnt != 0) printf ("# of unsupported tests\t\t%d\n", unsupcnt)
@@ -391,21 +421,27 @@ TOTAL_AWK=${TMP}/total.awk
 cat << EOF > $TOTAL_AWK
 BEGIN {
   tool="$TOOL"
-  passcnt=0; failcnt=0; untstcnt=0; xpasscnt=0; xfailcnt=0; unsupcnt=0; unrescnt=0
+  passcnt=0; failcnt=0; untstcnt=0; xpasscnt=0; xfailcnt=0; kfailcnt=0; unsupcnt=0; unrescnt=0; dgerrorcnt=0
 }
+/^# of DejaGnu errors/		{ dgerrorcnt += \$5 }
 /^# of expected passes/		{ passcnt += \$5 }
 /^# of unexpected failures/	{ failcnt += \$5 }
 /^# of unexpected successes/	{ xpasscnt += \$5 }
 /^# of expected failures/	{ xfailcnt += \$5 }
+/^# of unknown successes/	{ kpasscnt += \$5 }
+/^# of known failures/		{ kfailcnt += \$5 }
 /^# of untested testcases/	{ untstcnt += \$5 }
 /^# of unresolved testcases/	{ unrescnt += \$5 }
 /^# of unsupported tests/	{ unsupcnt += \$5 }
 END {
   printf ("\n\t\t=== %s Summary ===\n\n", tool)
+  if (dgerrorcnt != 0) printf ("# of DejaGnu errors\t\t%d\n", dgerrorcnt)
   if (passcnt != 0) printf ("# of expected passes\t\t%d\n", passcnt)
   if (failcnt != 0) printf ("# of unexpected failures\t%d\n", failcnt)
   if (xpasscnt != 0) printf ("# of unexpected successes\t%d\n", xpasscnt)
   if (xfailcnt != 0) printf ("# of expected failures\t\t%d\n", xfailcnt)
+  if (kpasscnt != 0) printf ("# of unknown successes\t\t%d\n", kpasscnt)
+  if (kfailcnt != 0) printf ("# of known failures\t\t%d\n", kfailcnt)
   if (untstcnt != 0) printf ("# of untested testcases\t\t%d\n", untstcnt)
   if (unrescnt != 0) printf ("# of unresolved testcases\t%d\n", unrescnt)
   if (unsupcnt != 0) printf ("# of unsupported tests\t\t%d\n", unsupcnt)
@@ -418,6 +454,6 @@ cat ${TMP}/var-* | $AWK -f $TOTAL_AWK
 # This is ugly, but if there's version output from the compiler under test
 # at the end of the file, we want it.  The other thing that might be there
 # is the final summary counts.
-tail -2 $FIRST_SUM | grep '^#' > /dev/null || tail -2 $FIRST_SUM
+tail -2 $FIRST_SUM | $GREP '^#' > /dev/null || tail -2 $FIRST_SUM
 
 exit 0

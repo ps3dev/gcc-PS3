@@ -1,4 +1,4 @@
-/* { dg-options "-O2 -fdump-tree-optimized" } */
+/* { dg-options "-O2 -fdump-tree-optimized -fgnu89-inline" } */
 int a;
 int b[100];
 void abort (void);
@@ -21,10 +21,11 @@ hot_function ()
       abort ();
 }
 
+int
 main ()
 {
   int i;
-  for (i = 0; i < 100; i++)
+  for (i = 0; i < 1000000; i++)
     {
       if (a)
         cold_function ();
@@ -36,7 +37,6 @@ main ()
 
 /* cold function should be inlined, while hot function should not.  
    Look for "cold_function () [tail call];" call statement not for the
-   declaration or other apperances of the string in dump.  */
+   declaration or other appearances of the string in dump.  */
 /* { dg-final-use { scan-tree-dump "cold_function ..;" "optimized"} } */
 /* { dg-final-use { scan-tree-dump-not "hot_function ..;" "optimized"} } */
-/* { dg-final-use { cleanup-tree-dump "optimized" } } */

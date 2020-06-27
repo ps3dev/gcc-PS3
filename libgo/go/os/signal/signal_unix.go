@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build darwin freebsd linux netbsd openbsd windows
+// +build darwin dragonfly freebsd linux nacl netbsd openbsd solaris windows
 
 package signal
 
@@ -11,8 +11,10 @@ import (
 	"syscall"
 )
 
-// In assembly.
+// Defined by the runtime package.
+func signal_disable(uint32)
 func signal_enable(uint32)
+func signal_ignore(uint32)
 func signal_recv() uint32
 
 func loop() {
@@ -26,13 +28,31 @@ func init() {
 	go loop()
 }
 
-func enableSignal(sig os.Signal) {
+const (
+	numSig = 65 // max across all systems
+)
+
+func signum(sig os.Signal) int {
 	switch sig := sig.(type) {
-	case nil:
-		signal_enable(^uint32(0))
 	case syscall.Signal:
-		signal_enable(uint32(sig))
+		i := int(sig)
+		if i < 0 || i >= numSig {
+			return -1
+		}
+		return i
 	default:
-		// Can ignore: this signal (whatever it is) will never come in.
+		return -1
 	}
+}
+
+func enableSignal(sig int) {
+	signal_enable(uint32(sig))
+}
+
+func disableSignal(sig int) {
+	signal_disable(uint32(sig))
+}
+
+func ignoreSignal(sig int) {
+	signal_ignore(uint32(sig))
 }

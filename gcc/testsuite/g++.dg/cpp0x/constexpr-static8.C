@@ -1,7 +1,8 @@
 // PR c++/50258
-// { dg-options "-std=c++0x -fpermissive" }
+// { dg-do compile { target c++11 } }
+// { dg-options "-fpermissive" }
 
 struct Foo {
-  static const double d = 3.14; // { dg-warning "constexpr" }
+  static const double d = 3.14; // { dg-warning "23:'constexpr' needed" }
 };
-const double Foo::d;            // { dg-warning "constexpr" }
+const double Foo::d;

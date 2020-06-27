@@ -1,8 +1,6 @@
 // Raw memory manipulators -*- C++ -*-
 
-// Copyright (C) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008,
-// 2009, 2010, 2011
-// Free Software Foundation, Inc.
+// Copyright (C) 2001-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -58,6 +56,14 @@
 #ifndef _STL_UNINITIALIZED_H
 #define _STL_UNINITIALIZED_H 1
 
+#if __cplusplus > 201402L
+#include <utility>
+#endif
+
+#if __cplusplus >= 201103L
+#include <type_traits>
+#endif
+
 namespace std _GLIBCXX_VISIBILITY(default)
 {
 _GLIBCXX_BEGIN_NAMESPACE_VERSION
@@ -73,7 +79,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  _ForwardIterator __cur = __result;
 	  __try
 	    {
-	      for (; __first != __last; ++__first, ++__cur)
+	      for (; __first != __last; ++__first, (void)++__cur)
 		std::_Construct(std::__addressof(*__cur), *__first);
 	      return __cur;
 	    }
@@ -113,9 +119,18 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	_ValueType1;
       typedef typename iterator_traits<_ForwardIterator>::value_type
 	_ValueType2;
+#if __cplusplus < 201103L
+      const bool __assignable = true;
+#else
+      // trivial types can have deleted assignment
+      typedef typename iterator_traits<_InputIterator>::reference _RefType1;
+      typedef typename iterator_traits<_ForwardIterator>::reference _RefType2;
+      const bool __assignable = is_assignable<_RefType2, _RefType1>::value;
+#endif
 
-      return std::__uninitialized_copy<(__is_trivial(_ValueType1)
-					&& __is_trivial(_ValueType2))>::
+      return std::__uninitialized_copy<__is_trivial(_ValueType1)
+				       && __is_trivial(_ValueType2)
+				       && __assignable>::
 	__uninit_copy(__first, __last, __result);
     }
 
@@ -168,8 +183,14 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     {
       typedef typename iterator_traits<_ForwardIterator>::value_type
 	_ValueType;
+#if __cplusplus < 201103L
+      const bool __assignable = true;
+#else
+      // trivial types can have deleted assignment
+      const bool __assignable = is_copy_assignable<_ValueType>::value;
+#endif
 
-      std::__uninitialized_fill<__is_trivial(_ValueType)>::
+      std::__uninitialized_fill<__is_trivial(_ValueType) && __assignable>::
 	__uninit_fill(__first, __last, __x);
     }
 
@@ -178,7 +199,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     struct __uninitialized_fill_n
     {
       template<typename _ForwardIterator, typename _Size, typename _Tp>
-        static void
+        static _ForwardIterator
         __uninit_fill_n(_ForwardIterator __first, _Size __n,
 			const _Tp& __x)
         {
@@ -187,6 +208,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	    {
 	      for (; __n > 0; --__n, ++__cur)
 		std::_Construct(std::__addressof(*__cur), __x);
+	      return __cur;
 	    }
 	  __catch(...)
 	    {
@@ -200,12 +222,14 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     struct __uninitialized_fill_n<true>
     {
       template<typename _ForwardIterator, typename _Size, typename _Tp>
-        static void
+        static _ForwardIterator
         __uninit_fill_n(_ForwardIterator __first, _Size __n,
 			const _Tp& __x)
-        { std::fill_n(__first, __n, __x); }
+        { return std::fill_n(__first, __n, __x); }
     };
 
+   // _GLIBCXX_RESOLVE_LIB_DEFECTS
+   // DR 1339. uninitialized_fill_n should return the end of its range
   /**
    *  @brief Copies the value x into the range [first,first+n).
    *  @param  __first  An input iterator.
@@ -216,13 +240,18 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  Like fill_n(), but does not require an initialized output range.
   */
   template<typename _ForwardIterator, typename _Size, typename _Tp>
-    inline void
+    inline _ForwardIterator
     uninitialized_fill_n(_ForwardIterator __first, _Size __n, const _Tp& __x)
     {
       typedef typename iterator_traits<_ForwardIterator>::value_type
 	_ValueType;
-
-      std::__uninitialized_fill_n<__is_trivial(_ValueType)>::
+#if __cplusplus < 201103L
+      const bool __assignable = true;
+#else
+      // trivial types can have deleted assignment
+      const bool __assignable = is_copy_assignable<_ValueType>::value;
+#endif
+      return __uninitialized_fill_n<__is_trivial(_ValueType) && __assignable>::
 	__uninit_fill_n(__first, __n, __x);
     }
 
@@ -242,7 +271,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       __try
 	{
 	  typedef __gnu_cxx::__alloc_traits<_Allocator> __traits;
-	  for (; __first != __last; ++__first, ++__cur)
+	  for (; __first != __last; ++__first, (void)++__cur)
 	    __traits::construct(__alloc, std::__addressof(*__cur), *__first);
 	  return __cur;
 	}
@@ -310,7 +339,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   template<typename _ForwardIterator, typename _Size, typename _Tp,
 	   typename _Allocator>
-    void
+    _ForwardIterator
     __uninitialized_fill_n_a(_ForwardIterator __first, _Size __n, 
 			     const _Tp& __x, _Allocator& __alloc)
     {
@@ -320,6 +349,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  typedef __gnu_cxx::__alloc_traits<_Allocator> __traits;
 	  for (; __n > 0; --__n, ++__cur)
 	    __traits::construct(__alloc, std::__addressof(*__cur), __x);
+	  return __cur;
 	}
       __catch(...)
 	{
@@ -330,10 +360,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   template<typename _ForwardIterator, typename _Size, typename _Tp,
 	   typename _Tp2>
-    inline void
+    inline _ForwardIterator
     __uninitialized_fill_n_a(_ForwardIterator __first, _Size __n, 
 			     const _Tp& __x, allocator<_Tp2>&)
-    { std::uninitialized_fill_n(__first, __n, __x); }
+    { return std::uninitialized_fill_n(__first, __n, __x); }
 
 
   // Extensions: __uninitialized_copy_move, __uninitialized_move_copy,
@@ -444,7 +474,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	}
     }
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#if __cplusplus >= 201103L
   // Extensions: __uninitialized_default, __uninitialized_default_n,
   // __uninitialized_default_a, __uninitialized_default_n_a.
 
@@ -487,7 +517,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     struct __uninitialized_default_n_1
     {
       template<typename _ForwardIterator, typename _Size>
-        static void
+        static _ForwardIterator
         __uninit_default_n(_ForwardIterator __first, _Size __n)
         {
 	  _ForwardIterator __cur = __first;
@@ -495,6 +525,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	    {
 	      for (; __n > 0; --__n, ++__cur)
 		std::_Construct(std::__addressof(*__cur));
+	      return __cur;
 	    }
 	  __catch(...)
 	    {
@@ -508,13 +539,13 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     struct __uninitialized_default_n_1<true>
     {
       template<typename _ForwardIterator, typename _Size>
-        static void
+        static _ForwardIterator
         __uninit_default_n(_ForwardIterator __first, _Size __n)
         {
 	  typedef typename iterator_traits<_ForwardIterator>::value_type
 	    _ValueType;
 
-	  std::fill_n(__first, __n, _ValueType());
+	  return std::fill_n(__first, __n, _ValueType());
 	}
     };
 
@@ -528,21 +559,27 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     {
       typedef typename iterator_traits<_ForwardIterator>::value_type
 	_ValueType;
+      // trivial types can have deleted assignment
+      const bool __assignable = is_copy_assignable<_ValueType>::value;
 
-      std::__uninitialized_default_1<__is_trivial(_ValueType)>::
+      std::__uninitialized_default_1<__is_trivial(_ValueType)
+				     && __assignable>::
 	__uninit_default(__first, __last);
     }
 
   // __uninitialized_default_n
   // Fills [first, first + n) with n default constructed value_type(s).
   template<typename _ForwardIterator, typename _Size>
-    inline void
+    inline _ForwardIterator
     __uninitialized_default_n(_ForwardIterator __first, _Size __n)
     {
       typedef typename iterator_traits<_ForwardIterator>::value_type
 	_ValueType;
+      // trivial types can have deleted assignment
+      const bool __assignable = is_copy_assignable<_ValueType>::value;
 
-      std::__uninitialized_default_n_1<__is_trivial(_ValueType)>::
+      return __uninitialized_default_n_1<__is_trivial(_ValueType)
+				       && __assignable>::
 	__uninit_default_n(__first, __n);
     }
 
@@ -582,7 +619,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   // Fills [first, first + n) with n default constructed value_types(s),
   // constructed with the allocator alloc.
   template<typename _ForwardIterator, typename _Size, typename _Allocator>
-    void
+    _ForwardIterator
     __uninitialized_default_n_a(_ForwardIterator __first, _Size __n, 
 				_Allocator& __alloc)
     {
@@ -592,6 +629,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  typedef __gnu_cxx::__alloc_traits<_Allocator> __traits;
 	  for (; __n > 0; --__n, ++__cur)
 	    __traits::construct(__alloc, std::__addressof(*__cur));
+	  return __cur;
 	}
       __catch(...)
 	{
@@ -601,11 +639,104 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     }
 
   template<typename _ForwardIterator, typename _Size, typename _Tp>
-    inline void
+    inline _ForwardIterator
     __uninitialized_default_n_a(_ForwardIterator __first, _Size __n, 
 				allocator<_Tp>&)
-    { std::__uninitialized_default_n(__first, __n); }
+    { return std::__uninitialized_default_n(__first, __n); }
 
+  template<bool _TrivialValueType>
+    struct __uninitialized_default_novalue_1
+    {
+      template<typename _ForwardIterator>
+	static void
+	__uninit_default_novalue(_ForwardIterator __first,
+				 _ForwardIterator __last)
+	{
+	  _ForwardIterator __cur = __first;
+	  __try
+	    {
+	      for (; __cur != __last; ++__cur)
+		std::_Construct_novalue(std::__addressof(*__cur));
+	    }
+	  __catch(...)
+	    {
+	      std::_Destroy(__first, __cur);
+	      __throw_exception_again;
+	    }
+	}
+    };
+
+  template<>
+    struct __uninitialized_default_novalue_1<true>
+    {
+      template<typename _ForwardIterator>
+        static void
+        __uninit_default_novalue(_ForwardIterator __first,
+				 _ForwardIterator __last)
+	{
+	}
+    };
+
+  template<bool _TrivialValueType>
+    struct __uninitialized_default_novalue_n_1
+    {
+      template<typename _ForwardIterator, typename _Size>
+	static _ForwardIterator
+	__uninit_default_novalue_n(_ForwardIterator __first, _Size __n)
+	{
+	  _ForwardIterator __cur = __first;
+	  __try
+	    {
+	      for (; __n > 0; --__n, ++__cur)
+		std::_Construct_novalue(std::__addressof(*__cur));
+	      return __cur;
+	    }
+	  __catch(...)
+	    {
+	      std::_Destroy(__first, __cur);
+	      __throw_exception_again;
+	    }
+	}
+    };
+
+  template<>
+    struct __uninitialized_default_novalue_n_1<true>
+    {
+      template<typename _ForwardIterator, typename _Size>
+	static _ForwardIterator
+	__uninit_default_novalue_n(_ForwardIterator __first, _Size __n)
+	{ return std::next(__first, __n); }
+    };
+
+  // __uninitialized_default_novalue
+  // Fills [first, last) with std::distance(first, last) default-initialized
+  // value_types(s).
+  template<typename _ForwardIterator>
+    inline void
+    __uninitialized_default_novalue(_ForwardIterator __first,
+				    _ForwardIterator __last)
+    {
+      typedef typename iterator_traits<_ForwardIterator>::value_type
+	_ValueType;
+
+      std::__uninitialized_default_novalue_1<
+	is_trivially_default_constructible<_ValueType>::value>::
+	__uninit_default_novalue(__first, __last);
+    }
+
+  // __uninitialized_default_n
+  // Fills [first, first + n) with n default-initialized value_type(s).
+  template<typename _ForwardIterator, typename _Size>
+    inline _ForwardIterator
+    __uninitialized_default_novalue_n(_ForwardIterator __first, _Size __n)
+    {
+      typedef typename iterator_traits<_ForwardIterator>::value_type
+	_ValueType;
+
+      return __uninitialized_default_novalue_n_1<
+	is_trivially_default_constructible<_ValueType>::value>::
+	__uninit_default_novalue_n(__first, __n);
+    }
 
   template<typename _InputIterator, typename _Size,
 	   typename _ForwardIterator>
@@ -635,6 +766,38 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 			   random_access_iterator_tag)
     { return std::uninitialized_copy(__first, __first + __n, __result); }
 
+  template<typename _InputIterator, typename _Size,
+	   typename _ForwardIterator>
+    pair<_InputIterator, _ForwardIterator>
+    __uninitialized_copy_n_pair(_InputIterator __first, _Size __n,
+			   _ForwardIterator __result, input_iterator_tag)
+    {
+      _ForwardIterator __cur = __result;
+      __try
+	{
+	  for (; __n > 0; --__n, ++__first, ++__cur)
+	    std::_Construct(std::__addressof(*__cur), *__first);
+	  return {__first, __cur};
+	}
+      __catch(...)
+	{
+	  std::_Destroy(__result, __cur);
+	  __throw_exception_again;
+	}
+    }
+
+  template<typename _RandomAccessIterator, typename _Size,
+	   typename _ForwardIterator>
+    inline pair<_RandomAccessIterator, _ForwardIterator>
+    __uninitialized_copy_n_pair(_RandomAccessIterator __first, _Size __n,
+			   _ForwardIterator __result,
+			   random_access_iterator_tag)
+    {
+      auto __second_res = uninitialized_copy(__first, __first + __n, __result);
+      auto __first_res = std::next(__first, __n);
+      return {__first_res, __second_res};
+    }
+
   /**
    *  @brief Copies the range [first,first+n) into result.
    *  @param  __first  An input iterator.
@@ -650,6 +813,70 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 			 _ForwardIterator __result)
     { return std::__uninitialized_copy_n(__first, __n, __result,
 					 std::__iterator_category(__first)); }
+
+  template<typename _InputIterator, typename _Size, typename _ForwardIterator>
+    inline pair<_InputIterator, _ForwardIterator>
+    __uninitialized_copy_n_pair(_InputIterator __first, _Size __n,
+			      _ForwardIterator __result)
+    {
+      return
+	std::__uninitialized_copy_n_pair(__first, __n, __result,
+					 std::__iterator_category(__first));
+    }
+
+#endif
+
+#if __cplusplus > 201402L
+  template <typename _ForwardIterator>
+    inline void
+    uninitialized_default_construct(_ForwardIterator __first,
+				    _ForwardIterator __last)
+    {
+      __uninitialized_default_novalue(__first, __last);
+    }
+
+  template <typename _ForwardIterator, typename _Size>
+    inline _ForwardIterator
+    uninitialized_default_construct_n(_ForwardIterator __first, _Size __count)
+    {
+      return __uninitialized_default_novalue_n(__first, __count);
+    }
+
+  template <typename _ForwardIterator>
+    inline void
+    uninitialized_value_construct(_ForwardIterator __first,
+				  _ForwardIterator __last)
+    {
+      return __uninitialized_default(__first, __last);
+    }
+
+  template <typename _ForwardIterator, typename _Size>
+    inline _ForwardIterator
+    uninitialized_value_construct_n(_ForwardIterator __first, _Size __count)
+    {
+      return __uninitialized_default_n(__first, __count);
+    }
+
+  template <typename _InputIterator, typename _ForwardIterator>
+    inline _ForwardIterator
+    uninitialized_move(_InputIterator __first, _InputIterator __last,
+		       _ForwardIterator __result)
+    {
+      return std::uninitialized_copy
+	(_GLIBCXX_MAKE_MOVE_ITERATOR(__first),
+	 _GLIBCXX_MAKE_MOVE_ITERATOR(__last), __result);
+    }
+
+  template <typename _InputIterator, typename _Size, typename _ForwardIterator>
+    inline pair<_InputIterator, _ForwardIterator>
+    uninitialized_move_n(_InputIterator __first, _Size __count,
+			 _ForwardIterator __result)
+    {
+      auto __res = std::__uninitialized_copy_n_pair
+	(_GLIBCXX_MAKE_MOVE_ITERATOR(__first),
+	 __count, __result);
+      return {__res.first.base(), __res.second};
+    }
 #endif
 
 _GLIBCXX_END_NAMESPACE_VERSION

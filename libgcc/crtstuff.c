@@ -1,8 +1,6 @@
 /* Specialized bits of code needed to support construction and
    destruction of file-scope objects in C++ code.
-   Copyright (C) 1991, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001
-   2002, 2003, 2004, 2005, 2006, 2007, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 1991-2017 Free Software Foundation, Inc.
    Contributed by Ron Guilmette (rfg@monkeys.com).
 
 This file is part of GCC.
@@ -54,6 +52,7 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
    identified the set of defines that need to go into auto-target.h,
    this will have to do.  */
 #include "auto-host.h"
+#undef caddr_t
 #undef pid_t
 #undef rlim_t
 #undef ssize_t
@@ -77,15 +76,20 @@ call_ ## FUNC (void)					\
   asm (SECTION_OP);					\
   FUNC ();						\
   FORCE_CODE_SECTION_ALIGN				\
-  asm (TEXT_SECTION_ASM_OP);				\
+  asm (__LIBGCC_TEXT_SECTION_ASM_OP__);				\
 }
 #endif
 
+#if defined(TARGET_DL_ITERATE_PHDR) && \
+   (defined(__DragonFly__) || defined(__FreeBSD__) || defined(__NetBSD__))
+#define BSD_DL_ITERATE_PHDR_AVAILABLE
+#endif
+ 
 #if defined(OBJECT_FORMAT_ELF) \
     && !defined(OBJECT_FORMAT_FLAT) \
     && defined(HAVE_LD_EH_FRAME_HDR) \
     && !defined(inhibit_libc) && !defined(CRTSTUFFT_O) \
-    && defined(__FreeBSD__) && __FreeBSD__ >= 7
+    && defined(BSD_DL_ITERATE_PHDR_AVAILABLE)
 #include <link.h>
 # define USE_PT_GNU_EH_FRAME
 #endif
@@ -113,10 +117,30 @@ call_ ## FUNC (void)					\
 #  define USE_PT_GNU_EH_FRAME
 # endif
 #endif
-#if defined(EH_FRAME_SECTION_NAME) && !defined(USE_PT_GNU_EH_FRAME)
+
+#if defined(OBJECT_FORMAT_ELF) \
+    && !defined(OBJECT_FORMAT_FLAT) \
+    && defined(HAVE_LD_EH_FRAME_HDR) \
+    && !defined(CRTSTUFFT_O) \
+    && defined(inhibit_libc) \
+    && (defined(__GLIBC__) || defined(__gnu_linux__) || defined(__GNU__))
+/* On systems using glibc, an inhibit_libc build of libgcc is only
+   part of a bootstrap process.  Build the same crt*.o as would be
+   built with headers present, so that it is not necessary to build
+   glibc more than once for the bootstrap to converge.  */
+# define USE_PT_GNU_EH_FRAME
+#endif
+
+#ifdef USE_EH_FRAME_REGISTRY_ALWAYS
+# ifndef __LIBGCC_EH_FRAME_SECTION_NAME__
+#  error "Can't use explicit exception-frame-registration without __LIBGCC_EH_FRAME_SECTION_NAME__"
+# endif
+#endif
+#if defined(__LIBGCC_EH_FRAME_SECTION_NAME__) && (!defined(USE_PT_GNU_EH_FRAME) || defined(USE_EH_FRAME_REGISTRY_ALWAYS))
 # define USE_EH_FRAME_REGISTRY
 #endif
-#if defined(EH_FRAME_SECTION_NAME) && EH_TABLES_CAN_BE_READ_ONLY
+#if defined(__LIBGCC_EH_FRAME_SECTION_NAME__) \
+    && __LIBGCC_EH_TABLES_CAN_BE_READ_ONLY__
 # define EH_FRAME_SECTION_CONST const
 #else
 # define EH_FRAME_SECTION_CONST
@@ -206,11 +230,11 @@ typedef void (*func_ptr) (void);
    does not start with a count of elements.  */
 #ifdef CTOR_LIST_BEGIN
 CTOR_LIST_BEGIN;
-#elif defined(CTORS_SECTION_ASM_OP)
+#elif defined(__LIBGCC_CTORS_SECTION_ASM_OP__)
 /* Hack: force cc1 to switch to .data section early, so that assembling
    __CTOR_LIST__ does not undo our behind-the-back change to .ctors.  */
 static func_ptr force_to_data[1] __attribute__ ((__used__)) = { };
-asm (CTORS_SECTION_ASM_OP);
+asm (__LIBGCC_CTORS_SECTION_ASM_OP__);
 STATIC func_ptr __CTOR_LIST__[1]
   __attribute__ ((__used__, aligned(sizeof(func_ptr))))
   = { (func_ptr) (-1) };
@@ -222,8 +246,8 @@ STATIC func_ptr __CTOR_LIST__[1]
 
 #ifdef DTOR_LIST_BEGIN
 DTOR_LIST_BEGIN;
-#elif defined(DTORS_SECTION_ASM_OP)
-asm (DTORS_SECTION_ASM_OP);
+#elif defined(__LIBGCC_DTORS_SECTION_ASM_OP__)
+asm (__LIBGCC_DTORS_SECTION_ASM_OP__);
 STATIC func_ptr __DTOR_LIST__[1]
   __attribute__ ((aligned(sizeof(func_ptr))))
   = { (func_ptr) (-1) };
@@ -238,17 +262,9 @@ STATIC func_ptr __DTOR_LIST__[1]
 /* Stick a label at the beginning of the frame unwind info so we can register
    and deregister it with the exception handling library code.  */
 STATIC EH_FRAME_SECTION_CONST char __EH_FRAME_BEGIN__[]
-     __attribute__((section(EH_FRAME_SECTION_NAME), aligned(4)))
+     __attribute__((section(__LIBGCC_EH_FRAME_SECTION_NAME__), aligned(4)))
      = { };
 #endif /* USE_EH_FRAME_REGISTRY */
-
-#ifdef JCR_SECTION_NAME
-/* Stick a label at the beginning of the java class registration info
-   so we can register them properly.  */
-STATIC void *__JCR_LIST__[]
-  __attribute__ ((used, section(JCR_SECTION_NAME), aligned(sizeof(void*))))
-  = { };
-#endif /* JCR_SECTION_NAME */
 
 #if USE_TM_CLONE_REGISTRY
 STATIC func_ptr __TMC_LIST__[]
@@ -264,7 +280,10 @@ deregister_tm_clones (void)
   void (*fn) (void *);
 
 #ifdef HAVE_GAS_HIDDEN
-  if (__TMC_END__ - __TMC_LIST__ == 0)
+  func_ptr *end = __TMC_END__;
+  // Do not optimize the comparison to false.
+  __asm ("" : "+g" (end));
+  if (__TMC_LIST__ == end)
     return;
 #else
   if (__TMC_LIST__[0] == NULL)
@@ -284,7 +303,10 @@ register_tm_clones (void)
   size_t size;
 
 #ifdef HAVE_GAS_HIDDEN
-  size = (__TMC_END__ - __TMC_LIST__) / 2;
+  func_ptr *end = __TMC_END__;
+  // Do not optimize the comparison to false.
+  __asm ("" : "+g" (end));
+  size = (end - __TMC_LIST__) / 2;
 #else
   for (size = 0; __TMC_LIST__[size * 2] != NULL; size++)
     continue;
@@ -299,7 +321,8 @@ register_tm_clones (void)
 }
 #endif /* USE_TM_CLONE_REGISTRY */
 
-#if defined(INIT_SECTION_ASM_OP) || defined(INIT_ARRAY_SECTION_ASM_OP)
+#if defined(__LIBGCC_INIT_SECTION_ASM_OP__) \
+    || defined(__LIBGCC_INIT_ARRAY_SECTION_ASM_OP__)
 
 #ifdef OBJECT_FORMAT_ELF
 
@@ -367,13 +390,11 @@ __do_global_dtors_aux (void)
     extern func_ptr __DTOR_END__[] __attribute__((visibility ("hidden")));
     static size_t dtor_idx;
     const size_t max_idx = __DTOR_END__ - __DTOR_LIST__ - 1;
-    func_ptr f;
+    func_ptr *dtor_list;
 
+    __asm ("" : "=g" (dtor_list) : "0" (__DTOR_LIST__));
     while (dtor_idx < max_idx)
-      {
-	f = __DTOR_LIST__[++dtor_idx];
-	f ();
-      }
+      dtor_list[++dtor_idx] ();
   }
 #else /* !defined (FINI_ARRAY_SECTION_ASM_OP) */
   {
@@ -420,11 +441,11 @@ __do_global_dtors_aux_1 (void)
 {
   atexit (__do_global_dtors_aux);
 }
-CRT_CALL_STATIC_FUNCTION (INIT_SECTION_ASM_OP, __do_global_dtors_aux_1)
+CRT_CALL_STATIC_FUNCTION (__LIBGCC_INIT_SECTION_ASM_OP__,
+			  __do_global_dtors_aux_1)
 #endif
 
 #if defined(USE_EH_FRAME_REGISTRY) \
-    || defined(JCR_SECTION_NAME) \
     || defined(USE_TM_CLONE_REGISTRY)
 /* Stick a call to __register_frame_info into the .init section.  For some
    reason calls with no arguments work more reliably in .init, so stick the
@@ -447,29 +468,19 @@ frame_dummy (void)
 #endif /* CRT_GET_RFIB_DATA */
 #endif /* USE_EH_FRAME_REGISTRY */
 
-#ifdef JCR_SECTION_NAME
-  if (__JCR_LIST__[0])
-    {
-      void (*register_classes) (void *) = _Jv_RegisterClasses;
-      __asm ("" : "+r" (register_classes));
-      if (register_classes)
-	register_classes (__JCR_LIST__);
-    }
-#endif /* JCR_SECTION_NAME */
-
 #if USE_TM_CLONE_REGISTRY
   register_tm_clones ();
 #endif /* USE_TM_CLONE_REGISTRY */
 }
 
-#ifdef INIT_SECTION_ASM_OP
-CRT_CALL_STATIC_FUNCTION (INIT_SECTION_ASM_OP, frame_dummy)
-#else /* defined(INIT_SECTION_ASM_OP) */
+#ifdef __LIBGCC_INIT_SECTION_ASM_OP__
+CRT_CALL_STATIC_FUNCTION (__LIBGCC_INIT_SECTION_ASM_OP__, frame_dummy)
+#else /* defined(__LIBGCC_INIT_SECTION_ASM_OP__) */
 static func_ptr __frame_dummy_init_array_entry[]
   __attribute__ ((__used__, section(".init_array"), aligned(sizeof(func_ptr))))
   = { frame_dummy };
-#endif /* !defined(INIT_SECTION_ASM_OP) */
-#endif /* USE_EH_FRAME_REGISTRY || JCR_SECTION_NAME || USE_TM_CLONE_REGISTRY */
+#endif /* !defined(__LIBGCC_INIT_SECTION_ASM_OP__) */
+#endif /* USE_EH_FRAME_REGISTRY || USE_TM_CLONE_REGISTRY */
 
 #else  /* OBJECT_FORMAT_ELF */
 
@@ -493,7 +504,7 @@ __do_global_ctors (void)
 #endif
 }
 
-asm (INIT_SECTION_ASM_OP);	/* cc1 doesn't know that we are switching! */
+asm (__LIBGCC_INIT_SECTION_ASM_OP__);	/* cc1 doesn't know that we are switching! */
 
 /* A routine to invoke all of the global constructors upon entry to the
    program.  We put this into the .init section (for systems that have
@@ -504,14 +515,14 @@ static void __attribute__((used))
 __do_global_ctors_aux (void)	/* prologue goes in .init section */
 {
   FORCE_CODE_SECTION_ALIGN	/* explicit align before switch to .text */
-  asm (TEXT_SECTION_ASM_OP);	/* don't put epilogue and body in .init */
+  asm (__LIBGCC_TEXT_SECTION_ASM_OP__);	/* don't put epilogue and body in .init */
   DO_GLOBAL_CTORS_BODY;
   atexit (__do_global_dtors);
 }
 
 #endif /* OBJECT_FORMAT_ELF */
 
-#elif defined(HAS_INIT_SECTION) /* ! INIT_SECTION_ASM_OP */
+#elif defined(HAS_INIT_SECTION) /* ! __LIBGCC_INIT_SECTION_ASM_OP__ */
 
 extern void __do_global_dtors (void);
 
@@ -537,7 +548,6 @@ __do_global_dtors (void)
 }
 
 #if defined(USE_EH_FRAME_REGISTRY) \
-    || defined(JCR_SECTION_NAME) \
     || defined(USE_TM_CLONE_REGISTRY)
 /* A helper function for __do_global_ctors, which is in crtend.o.  Here
    in crtbegin.o, we can reference a couple of symbols not visible there.
@@ -552,23 +562,13 @@ __do_global_ctors_1(void)
     __register_frame_info (__EH_FRAME_BEGIN__, &object);
 #endif
 
-#ifdef JCR_SECTION_NAME
-  if (__JCR_LIST__[0])
-    {
-      void (*register_classes) (void *) = _Jv_RegisterClasses;
-      __asm ("" : "+r" (register_classes));
-      if (register_classes)
-	register_classes (__JCR_LIST__);
-    }
-#endif
-
 #if USE_TM_CLONE_REGISTRY
   register_tm_clones ();
 #endif /* USE_TM_CLONE_REGISTRY */
 }
-#endif /* USE_EH_FRAME_REGISTRY || JCR_SECTION_NAME || USE_TM_CLONE_REGISTRY */
+#endif /* USE_EH_FRAME_REGISTRY || USE_TM_CLONE_REGISTRY */
 
-#else /* ! INIT_SECTION_ASM_OP && ! HAS_INIT_SECTION */
+#else /* ! __LIBGCC_INIT_SECTION_ASM_OP__ && ! HAS_INIT_SECTION */
 #error "What are you doing with crtstuff.c, then?"
 #endif
 
@@ -585,11 +585,11 @@ __do_global_ctors_1(void)
 
 #ifdef CTOR_LIST_END
 CTOR_LIST_END;
-#elif defined(CTORS_SECTION_ASM_OP)
+#elif defined(__LIBGCC_CTORS_SECTION_ASM_OP__)
 /* Hack: force cc1 to switch to .data section early, so that assembling
    __CTOR_LIST__ does not undo our behind-the-back change to .ctors.  */
 static func_ptr force_to_data[1] __attribute__ ((__used__)) = { };
-asm (CTORS_SECTION_ASM_OP);
+asm (__LIBGCC_CTORS_SECTION_ASM_OP__);
 STATIC func_ptr __CTOR_END__[1]
   __attribute__((aligned(sizeof(func_ptr))))
   = { (func_ptr) 0 };
@@ -602,18 +602,18 @@ STATIC func_ptr __CTOR_END__[1]
 #ifdef DTOR_LIST_END
 DTOR_LIST_END;
 #elif defined(HIDDEN_DTOR_LIST_END)
-#ifdef DTORS_SECTION_ASM_OP
-asm (DTORS_SECTION_ASM_OP);
+#ifdef __LIBGCC_DTORS_SECTION_ASM_OP__
+asm (__LIBGCC_DTORS_SECTION_ASM_OP__);
 #endif
 func_ptr __DTOR_END__[1]
   __attribute__ ((used,
-#ifndef DTORS_SECTION_ASM_OP
+#ifndef __LIBGCC_DTORS_SECTION_ASM_OP__
 		  section(".dtors"),
 #endif
 		  aligned(sizeof(func_ptr)), visibility ("hidden")))
   = { (func_ptr) 0 };
-#elif defined(DTORS_SECTION_ASM_OP)
-asm (DTORS_SECTION_ASM_OP);
+#elif defined(__LIBGCC_DTORS_SECTION_ASM_OP__)
+asm (__LIBGCC_DTORS_SECTION_ASM_OP__);
 STATIC func_ptr __DTOR_END__[1]
   __attribute__ ((used, aligned(sizeof(func_ptr))))
   = { (func_ptr) 0 };
@@ -624,7 +624,7 @@ STATIC func_ptr __DTOR_END__[1]
 #endif
 #endif /* USE_INITFINI_ARRAY */
 
-#ifdef EH_FRAME_SECTION_NAME
+#ifdef __LIBGCC_EH_FRAME_SECTION_NAME__
 /* Terminate the frame unwind info section with a 4byte 0 as a sentinel;
    this would be the 'length' field in a real FDE.  */
 # if __INT_MAX__ == 2147483647
@@ -637,18 +637,10 @@ typedef short int32;
 #  error "Missing a 4 byte integer"
 # endif
 STATIC EH_FRAME_SECTION_CONST int32 __FRAME_END__[]
-     __attribute__ ((used, section(EH_FRAME_SECTION_NAME),
+     __attribute__ ((used, section(__LIBGCC_EH_FRAME_SECTION_NAME__),
 		     aligned(sizeof(int32))))
      = { 0 };
-#endif /* EH_FRAME_SECTION_NAME */
-
-#ifdef JCR_SECTION_NAME
-/* Null terminate the .jcr section array.  */
-STATIC void *__JCR_END__[1]
-   __attribute__ ((used, section(JCR_SECTION_NAME),
-		   aligned(sizeof(void *))))
-   = { 0 };
-#endif /* JCR_SECTION_NAME */
+#endif /* __LIBGCC_EH_FRAME_SECTION_NAME__ */
 
 #if USE_TM_CLONE_REGISTRY
 # ifndef HAVE_GAS_HIDDEN
@@ -663,11 +655,11 @@ func_ptr __TMC_END__[]
 # endif
 #endif /* USE_TM_CLONE_REGISTRY */
 
-#ifdef INIT_ARRAY_SECTION_ASM_OP
+#ifdef __LIBGCC_INIT_ARRAY_SECTION_ASM_OP__
 
 /* If we are using .init_array, there is nothing to do.  */
 
-#elif defined(INIT_SECTION_ASM_OP)
+#elif defined(__LIBGCC_INIT_SECTION_ASM_OP__)
 
 #ifdef OBJECT_FORMAT_ELF
 static void __attribute__((used))
@@ -679,7 +671,7 @@ __do_global_ctors_aux (void)
 }
 
 /* Stick a call to __do_global_ctors_aux into the .init section.  */
-CRT_CALL_STATIC_FUNCTION (INIT_SECTION_ASM_OP, __do_global_ctors_aux)
+CRT_CALL_STATIC_FUNCTION (__LIBGCC_INIT_SECTION_ASM_OP__, __do_global_ctors_aux)
 #else  /* OBJECT_FORMAT_ELF */
 
 /* Stick the real initialization code, followed by a normal sort of
@@ -706,17 +698,17 @@ CRT_CALL_STATIC_FUNCTION (INIT_SECTION_ASM_OP, __do_global_ctors_aux)
 static void
 __do_global_ctors_aux (void)	/* prologue goes in .text section */
 {
-  asm (INIT_SECTION_ASM_OP);
+  asm (__LIBGCC_INIT_SECTION_ASM_OP__);
   DO_GLOBAL_CTORS_BODY;
   atexit (__do_global_dtors);
 }				/* epilogue and body go in .init section */
 
 FORCE_CODE_SECTION_ALIGN
-asm (TEXT_SECTION_ASM_OP);
+asm (__LIBGCC_TEXT_SECTION_ASM_OP__);
 
 #endif /* OBJECT_FORMAT_ELF */
 
-#elif defined(HAS_INIT_SECTION) /* ! INIT_SECTION_ASM_OP */
+#elif defined(HAS_INIT_SECTION) /* ! __LIBGCC_INIT_SECTION_ASM_OP__ */
 
 extern void __do_global_ctors (void);
 
@@ -728,7 +720,6 @@ __do_global_ctors (void)
 {
   func_ptr *p;
 #if defined(USE_EH_FRAME_REGISTRY) \
-    || defined(JCR_SECTION_NAME) \
     || defined(USE_TM_CLONE_REGISTRY)
   __do_global_ctors_1();
 #endif
@@ -736,7 +727,7 @@ __do_global_ctors (void)
     (*p) ();
 }
 
-#else /* ! INIT_SECTION_ASM_OP && ! HAS_INIT_SECTION */
+#else /* ! __LIBGCC_INIT_SECTION_ASM_OP__ && ! HAS_INIT_SECTION */
 #error "What are you doing with crtstuff.c, then?"
 #endif
 

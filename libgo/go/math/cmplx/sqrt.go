@@ -40,10 +40,10 @@ import "math"
 //                       1/2
 // Im w  =  [ (r - x)/2 ]   .
 //
-// Cancellation error in r-x or r+x is avoided by using the
+// Cancelation error in r-x or r+x is avoided by using the
 // identity  2 Re w Im w  =  y.
 //
-// Note that -w is also a square root of z.  The root chosen
+// Note that -w is also a square root of z. The root chosen
 // is always in the right half plane and Im w has the same sign as y.
 //
 // ACCURACY:
@@ -54,6 +54,7 @@ import "math"
 //    IEEE      -10,+10   1,000,000     2.9e-16     6.1e-17
 
 // Sqrt returns the square root of x.
+// The result r is chosen so that real(r) ≥ 0 and imag(r) has the same sign as imag(x).
 func Sqrt(x complex128) complex128 {
 	if imag(x) == 0 {
 		if real(x) == 0 {

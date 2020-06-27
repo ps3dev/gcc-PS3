@@ -1,6 +1,7 @@
 /* { dg-do compile } */
 /* { dg-require-effective-target vect_int } */
 typedef unsigned char uint8_t;
+int
 vsad16_c (void *c, uint8_t * s1, uint8_t * s2, int stride, int h)
 {
   int score = 0;
@@ -13,4 +14,3 @@ vsad16_c (void *c, uint8_t * s1, uint8_t * s2, int stride, int h)
 }
 
 /* { dg-final { scan-tree-dump-times "vectorized 1 loops" 1 "vect" { target vect_condition } } } */
-/* { dg-final { cleanup-tree-dump "vect" } } */

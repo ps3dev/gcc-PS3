@@ -1,6 +1,5 @@
 /* Common hooks for ATMEL AVR.
-   Copyright (C) 1998, 1999, 2000, 2001, 2002, 2004, 2005, 2006, 2007, 2008,
-   2009, 2010, 2011 Free Software Foundation, Inc.
+   Copyright (C) 1998-2017 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -29,6 +28,9 @@
 static const struct default_options avr_option_optimization_table[] =
   {
     { OPT_LEVELS_1_PLUS, OPT_fomit_frame_pointer, NULL, 1 },
+    // The only effect of -fcaller-saves might be that it triggers
+    // a frame without need when it tries to be smart around calls.
+    { OPT_LEVELS_ALL, OPT_fcaller_saves, NULL, 0 },
     { OPT_LEVELS_NONE, 0, NULL, 0 }
   };
 

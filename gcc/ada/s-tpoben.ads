@@ -6,7 +6,7 @@
 --                                                                          --
 --                                  S p e c                                 --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNARL is free software; you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -50,35 +50,44 @@ package System.Tasking.Protected_Objects.Entries is
 
    subtype Positive_Protected_Entry_Index is
      Protected_Entry_Index range  1 .. Protected_Entry_Index'Last;
+   --  Index of the entry (and in some cases of the queue)
 
    type Find_Body_Index_Access is access
      function
        (O : System.Address;
         E : Protected_Entry_Index)
         return Protected_Entry_Index;
+   --  Convert a queue index to an entry index (an entry family has one entry
+   --  index for several queue indexes).
 
    type Protected_Entry_Body_Array is
      array (Positive_Protected_Entry_Index range <>) of Entry_Body;
-   --  This is an array of the executable code for all entry bodies of
-   --  a protected type.
+   --  Contains executable code for all entry bodies of a protected type
 
-   type Protected_Entry_Body_Access is access all Protected_Entry_Body_Array;
+   type Protected_Entry_Body_Access is
+     access constant Protected_Entry_Body_Array;
 
    type Protected_Entry_Queue_Array is
      array (Protected_Entry_Index range <>) of Entry_Queue;
 
-   --  This type contains the GNARL state of a protected object. The
-   --  application-defined portion of the state (i.e. private objects)
-   --  is maintained by the compiler-generated code.
-   --  note that there is a simplified version of this type declared in
-   --  System.Tasking.PO_Simple that handle the simple case (no entries).
+   type Protected_Entry_Queue_Max_Array is
+     array (Positive_Protected_Entry_Index range <>) of Natural;
+
+   type Protected_Entry_Queue_Max_Access is
+     access constant Protected_Entry_Queue_Max_Array;
+
+   --  The following type contains the GNARL state of a protected object.
+   --  The application-defined portion of the state (i.e. private objects)
+   --  is maintained by the compiler-generated code. Note that there is a
+   --  simplified version of this type declared in System.Tasking.PO_Simple
+   --  that handle the simple case (no entries).
 
    type Protection_Entries (Num_Entries : Protected_Entry_Index) is new
      Ada.Finalization.Limited_Controlled
    with record
-      L                 : aliased Task_Primitives.Lock;
-      --  The underlying lock associated with a Protection_Entries.
-      --  Note that you should never (un)lock Object.L directly, but instead
+      L : aliased Task_Primitives.Lock;
+      --  The underlying lock associated with a Protection_Entries. Note
+      --  that you should never (un)lock Object.L directly, but instead
       --  use Lock_Entries/Unlock_Entries.
 
       Compiler_Info : System.Address;
@@ -134,16 +143,16 @@ package System.Tasking.Protected_Objects.Entries is
       --  A function which maps the entry index in a call (which denotes the
       --  queue of the proper entry) into the body of the entry.
 
-      Entry_Queues : Protected_Entry_Queue_Array (1 .. Num_Entries);
+      Entry_Queue_Maxes : Protected_Entry_Queue_Max_Access;
+      --  Access to an array of naturals representing the max value for each
+      --  entry's queue length. A value of 0 signifies no max.
 
-      Entry_Names : Entry_Names_Array_Access := null;
-      --  An array of string names which denotes entry [family member] names.
-      --  The structure is indexed by protected entry index and contains Num_
-      --  Entries components.
+      Entry_Queues : Protected_Entry_Queue_Array (1 .. Num_Entries);
+      --  Action and barrier subprograms for the protected type.
    end record;
 
-   --  No default initial values for this type, since call records
-   --  will need to be re-initialized before every use.
+   --  No default initial values for this type, since call records will need to
+   --  be re-initialized before every use.
 
    type Protection_Entries_Access is access all Protection_Entries'Class;
    --  See comments in s-tassta.adb about the implicit call to Current_Master
@@ -170,9 +179,9 @@ package System.Tasking.Protected_Objects.Entries is
      (Object            : Protection_Entries_Access;
       Ceiling_Priority  : Integer;
       Compiler_Info     : System.Address;
+      Entry_Queue_Maxes : Protected_Entry_Queue_Max_Access;
       Entry_Bodies      : Protected_Entry_Body_Access;
-      Find_Body_Index   : Find_Body_Index_Access;
-      Build_Entry_Names : Boolean);
+      Find_Body_Index   : Find_Body_Index_Access);
    --  Initialize the Object parameter so that it can be used by the runtime
    --  to keep track of the runtime state of a protected object.
 
@@ -201,17 +210,14 @@ package System.Tasking.Protected_Objects.Entries is
    --  possible future use. At the current time, everyone uses Lock for both
    --  read and write locks.
 
+   function Number_Of_Entries
+     (Object : Protection_Entries_Access) return Entry_Index;
+   --  Return the number of entries of a protected object
+
    procedure Set_Ceiling
      (Object : Protection_Entries_Access;
       Prio   : System.Any_Priority);
    --  Sets the new ceiling priority of the protected object
-
-   procedure Set_Entry_Name
-     (Object : Protection_Entries'Class;
-      Pos    : Protected_Entry_Index;
-      Val    : String_Access);
-   --  This is called by the compiler to map a string which denotes an entry
-   --  name to a protected entry index.
 
    procedure Unlock_Entries (Object : Protection_Entries_Access);
    --  Relinquish ownership of the lock for the object represented by the

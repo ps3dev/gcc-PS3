@@ -1,7 +1,6 @@
 // Debugging iterator implementation (out of line) -*- C++ -*-
 
-// Copyright (C) 2003, 2004, 2005, 2006, 2007, 2009, 2010, 2011
-// Free Software Foundation, Inc.
+// Copyright (C) 2003-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -37,27 +36,24 @@ namespace __gnu_debug
     _Safe_iterator<_Iterator, _Sequence>::
     _M_can_advance(const difference_type& __n) const
     {
-      typedef typename _Sequence::const_iterator const_debug_iterator;
-      typedef typename const_debug_iterator::iterator_type const_iterator;
-
       if (this->_M_singular())
 	return false;
+
       if (__n == 0)
 	return true;
+
       if (__n < 0)
 	{
-	  const_iterator __begin = _M_get_sequence()->_M_base().begin();
 	  std::pair<difference_type, _Distance_precision> __dist =
-	    __get_distance(__begin, base());
+	    __get_distance_from_begin(*this);
 	  bool __ok =  ((__dist.second == __dp_exact && __dist.first >= -__n)
 			|| (__dist.second != __dp_exact && __dist.first > 0));
 	  return __ok;
 	}
       else
 	{
-	  const_iterator __end = _M_get_sequence()->_M_base().end();
 	  std::pair<difference_type, _Distance_precision> __dist =
-	    __get_distance(base(), __end);
+	    __get_distance_to_end(*this);
 	  bool __ok = ((__dist.second == __dp_exact && __dist.first >= __n)
 		       || (__dist.second != __dp_exact && __dist.first > 0));
 	  return __ok;
@@ -65,19 +61,19 @@ namespace __gnu_debug
     }
 
   template<typename _Iterator, typename _Sequence>
-    template<typename _Other>
-      bool
-      _Safe_iterator<_Iterator, _Sequence>::
-      _M_valid_range(const _Safe_iterator<_Other, _Sequence>& __rhs) const
-      {
-	if (!_M_can_compare(__rhs))
-	  return false;
+    bool
+    _Safe_iterator<_Iterator, _Sequence>::
+    _M_valid_range(const _Safe_iterator& __rhs,
+		   std::pair<difference_type, _Distance_precision>& __dist,
+		   bool __check_dereferenceable) const
+    {
+      if (!_M_can_compare(__rhs))
+	return false;
 
-	/* Determine if we can order the iterators without the help of
-	   the container */
-	std::pair<difference_type, _Distance_precision> __dist =
-	  __get_distance(base(), __rhs.base());
-	switch (__dist.second) {
+      /* Determine iterators order */
+      __dist = __get_distance(*this, __rhs);
+      switch (__dist.second)
+	{
 	case __dp_equality:
 	  if (__dist.first == 0)
 	    return true;
@@ -85,22 +81,15 @@ namespace __gnu_debug
 
 	case __dp_sign:
 	case __dp_exact:
-	  return __dist.first >= 0;
+	  // If range is not empty first iterator must be dereferenceable.
+	  if (__dist.first > 0)
+	    return !__check_dereferenceable || _M_dereferenceable();
+	  return __dist.first == 0;
 	}
 
-	/* We can only test for equality, but check if one of the
-	   iterators is at an extreme. */
-	/* Optim for classic [begin, it) or [it, end) ranges, limit checks
-	 * when code is valid. */
-	if (_M_is_begin() || __rhs._M_is_end())
-	  return true;
-	if (_M_is_end() || __rhs._M_is_begin())
-	  return false;
-
-	// Assume that this is a valid range; we can't check anything else
-	return true;
-      }
+      // Assume that this is a valid range; we can't check anything else.
+      return true;
+    }
 } // namespace __gnu_debug
 
 #endif
-

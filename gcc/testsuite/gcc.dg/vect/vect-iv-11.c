@@ -3,7 +3,8 @@
 #include <stdarg.h>
 #include "tree-vect.h"
 
-int main1 (int len)
+int __attribute__((noinline,noclone))
+main1 (int len)
 {  
   int s = 0;
   int i = len;
@@ -28,4 +29,3 @@ int main (void)
 } 
 
 /* { dg-final { scan-tree-dump-times "vectorized 1 loops" 1 "vect" } } */
-/* { dg-final { cleanup-tree-dump "vect" } } */

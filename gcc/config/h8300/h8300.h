@@ -1,8 +1,6 @@
 /* Definitions of target machine for GNU compiler.
    Renesas H8/300 (generic)
-   Copyright (C) 1992, 1993, 1994, 1995, 1996, 1996, 1997, 1998, 1999,
-   2000, 2001, 2002, 2003, 2004, 2005, 2007, 2008, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 1992-2017 Free Software Foundation, Inc.
    Contributed by Steve Chamberlain (sac@cygnus.com),
    Jim Wilson (wilson@cygnus.com), and Doug Evans (dje@cygnus.com).
 
@@ -41,17 +39,7 @@ extern const char * const *h8_reg_names;
 #define TARGET_CPU_CPP_BUILTINS()			\
   do							\
     {							\
-      if (TARGET_H8300H)				\
-	{						\
-	  builtin_define ("__H8300H__");		\
-	  builtin_assert ("cpu=h8300h");		\
-	  builtin_assert ("machine=h8300h");		\
-	  if (TARGET_NORMAL_MODE)			\
-	    {						\
-	      builtin_define ("__NORMAL_MODE__");	\
-	    }						\
-	}						\
-      else if (TARGET_H8300SX)				\
+      if (TARGET_H8300SX)				\
 	{						\
 	  builtin_define ("__H8300SX__");		\
 	  if (TARGET_NORMAL_MODE)			\
@@ -64,6 +52,16 @@ extern const char * const *h8_reg_names;
 	  builtin_define ("__H8300S__");		\
 	  builtin_assert ("cpu=h8300s");		\
 	  builtin_assert ("machine=h8300s");		\
+	  if (TARGET_NORMAL_MODE)			\
+	    {						\
+	      builtin_define ("__NORMAL_MODE__");	\
+	    }						\
+	}						\
+      else if (TARGET_H8300H)				\
+	{						\
+	  builtin_define ("__H8300H__");		\
+	  builtin_assert ("cpu=h8300h");		\
+	  builtin_assert ("machine=h8300h");		\
 	  if (TARGET_NORMAL_MODE)			\
 	    {						\
 	      builtin_define ("__NORMAL_MODE__");	\
@@ -138,7 +136,7 @@ extern const char * const *h8_reg_names;
    Calls through a register are cheaper than calls to named
    functions; however, the register pressure this causes makes
    CSEing of function addresses generally a lose.  */
-#define NO_FUNCTION_CSE
+#define NO_FUNCTION_CSE 1
 
 /* Target machine storage layout */
 
@@ -362,7 +360,7 @@ enum reg_class {
 /* Define this if pushing a word on the stack
    makes the stack pointer a smaller address.  */
 
-#define STACK_GROWS_DOWNWARD
+#define STACK_GROWS_DOWNWARD 1
 
 /* Define this to nonzero if the nominal address of the stack frame
    is at the high-address end of the local variables;
@@ -498,7 +496,8 @@ struct cum_arg
    They give nonzero only if REGNO is a hard reg of the suitable class
    or a pseudo reg currently allocated to a suitable hard reg.
    Since they use reg_renumber, they are safe only once reg_renumber
-   has been allocated, which happens in local-alloc.c.  */
+   has been allocated, which happens in reginfo.c during register
+   allocation.  */
 
 #define REGNO_OK_FOR_INDEX_P(regno) 0
 
@@ -565,10 +564,6 @@ struct cum_arg
    On the H8/300, sign extension is expensive, so we'll say that chars
    are unsigned.  */
 #define DEFAULT_SIGNED_CHAR 0
-
-/* This flag, if defined, says the same insns that convert to a signed fixnum
-   also convert validly to an unsigned one.  */
-#define FIXUNS_TRUNC_LIKE_FIX_TRUNC
 
 /* Max number of bytes we can move from memory to memory
    in one reasonably fast instruction.  */

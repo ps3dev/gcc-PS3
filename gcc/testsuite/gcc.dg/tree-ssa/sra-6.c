@@ -11,6 +11,7 @@ typedef struct teststruct
   int i2;
 } teststruct;
 
+void link_error (void);
 
 void cow (int i)
 {
@@ -33,8 +34,6 @@ void cow (int i)
 /* { dg-final { scan-tree-dump "expr = b.i1"  "esra"} } */
 /* { dg-final { scan-tree-dump "expr = c.d"  "esra"} } */
 /* { dg-final { scan-tree-dump "expr = c.i1"  "esra"} } */
-/* { dg-final { cleanup-tree-dump "esra" } } */
 
 /* There should be no reference to link_error.  */
 /* { dg-final { scan-tree-dump-times "link_error" 0 "optimized"} } */
-/* { dg-final { cleanup-tree-dump "optimized" } } */

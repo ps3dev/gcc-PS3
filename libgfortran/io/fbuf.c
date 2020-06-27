@@ -1,4 +1,4 @@
-/* Copyright (C) 2008, 2009, 2010 Free Software Foundation, Inc.
+/* Copyright (C) 2008-2017 Free Software Foundation, Inc.
    Contributed by Janne Blomqvist
 
 This file is part of the GNU Fortran runtime library (libgfortran).
@@ -27,27 +27,26 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #include "fbuf.h"
 #include "unix.h"
 #include <string.h>
-#include <stdlib.h>
 
 
 //#define FBUF_DEBUG
 
 
 void
-fbuf_init (gfc_unit * u, int len)
+fbuf_init (gfc_unit *u, int len)
 {
   if (len == 0)
     len = 512;			/* Default size.  */
 
-  u->fbuf = get_mem (sizeof (struct fbuf));
-  u->fbuf->buf = get_mem (len);
+  u->fbuf = xmalloc (sizeof (struct fbuf));
+  u->fbuf->buf = xmalloc (len);
   u->fbuf->len = len;
   u->fbuf->act = u->fbuf->pos = 0;
 }
 
 
 void
-fbuf_destroy (gfc_unit * u)
+fbuf_destroy (gfc_unit *u)
 {
   if (u->fbuf == NULL)
     return;
@@ -59,7 +58,7 @@ fbuf_destroy (gfc_unit * u)
 
 static void
 #ifdef FBUF_DEBUG
-fbuf_debug (gfc_unit * u, const char * format, ...)
+fbuf_debug (gfc_unit *u, const char *format, ...)
 {
   va_list args;
   va_start(args, format);
@@ -74,8 +73,8 @@ fbuf_debug (gfc_unit * u, const char * format, ...)
   fprintf (stderr, "''\n");
 }
 #else
-fbuf_debug (gfc_unit * u __attribute__ ((unused)),
-            const char * format __attribute__ ((unused)),
+fbuf_debug (gfc_unit *u __attribute__ ((unused)),
+            const char *format __attribute__ ((unused)),
             ...) {}
 #endif
 
@@ -86,7 +85,7 @@ fbuf_debug (gfc_unit * u __attribute__ ((unused)),
    modified.  */
 
 int
-fbuf_reset (gfc_unit * u)
+fbuf_reset (gfc_unit *u)
 {
   int seekval = 0;
 
@@ -112,7 +111,7 @@ fbuf_reset (gfc_unit * u)
    reallocating if necessary.  */
 
 char *
-fbuf_alloc (gfc_unit * u, int len)
+fbuf_alloc (gfc_unit *u, int len)
 {
   int newlen;
   char *dest;
@@ -120,11 +119,8 @@ fbuf_alloc (gfc_unit * u, int len)
   if (u->fbuf->pos + len > u->fbuf->len)
     {
       /* Round up to nearest multiple of the current buffer length.  */
-      newlen = ((u->fbuf->pos + len) / u->fbuf->len + 1) * u->fbuf->len;
-      dest = realloc (u->fbuf->buf, newlen);
-      if (dest == NULL)
-	return NULL;
-      u->fbuf->buf = dest;
+      newlen = ((u->fbuf->pos + len) / u->fbuf->len + 1) *u->fbuf->len;
+      u->fbuf->buf = xrealloc (u->fbuf->buf, newlen);
       u->fbuf->len = newlen;
     }
 
@@ -140,7 +136,7 @@ fbuf_alloc (gfc_unit * u, int len)
    mode. Return value is 0 for success, -1 on failure.  */
 
 int
-fbuf_flush (gfc_unit * u, unit_mode mode)
+fbuf_flush (gfc_unit *u, unit_mode mode)
 {
   int nwritten;
 
@@ -174,8 +170,44 @@ fbuf_flush (gfc_unit * u, unit_mode mode)
 }
 
 
+/* The mode argument is LIST_WRITING for write mode and LIST_READING for
+   read.  This should only be used for list directed  I/O.
+   Return value is 0 for success, -1 on failure.  */
+
 int
-fbuf_seek (gfc_unit * u, int off, int whence)
+fbuf_flush_list (gfc_unit *u, unit_mode mode)
+{
+  int nwritten;
+
+  if (!u->fbuf)
+    return 0;
+
+  if (u->fbuf->pos < 524288) /* Upper limit for list writing.  */
+    return 0;
+
+  fbuf_debug (u, "fbuf_flush_list with mode %d: ", mode);
+
+  if (mode == LIST_WRITING)
+    {
+      nwritten = swrite (u->s, u->fbuf->buf, u->fbuf->pos);
+      if (nwritten < 0)
+	return -1;
+    }
+
+  /* Salvage remaining bytes for both reading and writing.  */ 
+  if (u->fbuf->act > u->fbuf->pos)
+    memmove (u->fbuf->buf, u->fbuf->buf + u->fbuf->pos, 
+             u->fbuf->act - u->fbuf->pos);
+
+  u->fbuf->act -= u->fbuf->pos;
+  u->fbuf->pos = 0;
+
+  return 0;
+}
+
+
+int
+fbuf_seek (gfc_unit *u, int off, int whence)
 {
   if (!u->fbuf)
     return -1;
@@ -216,7 +248,7 @@ fbuf_seek (gfc_unit * u, int off, int whence)
    of bytes actually processed. */
 
 char *
-fbuf_read (gfc_unit * u, int * len)
+fbuf_read (gfc_unit *u, int *len)
 {
   char *ptr;
   int oldact, oldpos;
@@ -247,7 +279,7 @@ fbuf_read (gfc_unit * u, int * len)
    reading. Never call this function directly.  */
 
 int
-fbuf_getc_refill (gfc_unit * u)
+fbuf_getc_refill (gfc_unit *u)
 {
   int nread;
   char *p;

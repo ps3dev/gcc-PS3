@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2009, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -29,10 +29,13 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
+with Namet;  use Namet;
 with System; use System;
 with Types;  use Types;
 
 package Stringt is
+   pragma Elaborate_Body;
+   --  This is to make sure Null_String_Id is properly initialized
 
 --  This package contains routines for handling the strings table which is
 --  used to store string constants encountered in the source, and also those
@@ -48,6 +51,9 @@ package Stringt is
 --  value for two identical strings stored separately and also cannot count on
 --  the two Id values being different.
 
+   Null_String_Id : String_Id;
+   --  Gets set to a null string with length zero
+
    --------------------------------------
    -- String Table Access Subprograms --
    --------------------------------------
@@ -61,6 +67,15 @@ package Stringt is
 
    procedure Unlock;
    --  Unlock internal tables, in case back end needs to modify them
+
+   procedure Mark;
+   --  Take a snapshot of the internal tables. Used in conjunction with Release
+   --  when computing temporary string values that need not be preserved.
+
+   procedure Release;
+   --  Restore the internal tables to the situation when Mark was last called.
+   --  If Release is called with no prior call to Mark, the entire string table
+   --  is cleared to its initial (empty) setting.
 
    procedure Start_String;
    --  Sets up for storing a new string in the table. To store a string, a
@@ -109,18 +124,20 @@ package Stringt is
    --  Error if any characters are out of Character range. Does not attempt
    --  to do any encoding of any characters.
 
+   procedure Append (Buf : in out Bounded_String; S : String_Id);
+   --  Append characters of given string to Buf. Error if any characters are
+   --  out of Character range. Does not attempt to do any encoding of any
+   --  characters.
+
    procedure Add_String_To_Name_Buffer (S : String_Id);
-   --  Append characters of given string to Name_Buffer, updating Name_Len.
-   --  Error if any characters are out of Character range. Does not attempt
-   --  to do any encoding of any characters.
+   --  Same as Append (Global_Name_Buffer, S)
 
    function String_Chars_Address return System.Address;
    --  Return address of String_Chars table (used by Back_End call to Gigi)
 
-   function String_From_Name_Buffer return String_Id;
-   --  Given a name stored in Namet.Name_Buffer (length in Namet.Name_Len),
-   --  returns a string of the corresponding value. The value in Name_Buffer
-   --  is unchanged, and the cases of letters are unchanged.
+   function String_From_Name_Buffer
+     (Buf : Bounded_String := Global_Name_Buffer) return String_Id;
+   --  Given a name stored in Buf, returns a string of the corresponding value.
 
    function Strings_Address return System.Address;
    --  Return address of Strings table (used by Back_End call to Gigi)

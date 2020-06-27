@@ -1,8 +1,7 @@
 /* Scan linker error messages for missing template instantiations and provide
    them.
 
-   Copyright (C) 1995, 1998, 1999, 2000, 2001, 2003, 2004, 2005, 2007, 2008,
-   2009, 2010, 2011 Free Software Foundation, Inc.
+   Copyright (C) 1995-2017 Free Software Foundation, Inc.
    Contributed by Jason Merrill (jason@cygnus.com).
 
 This file is part of GCC.
@@ -27,12 +26,11 @@ along with GCC; see the file COPYING3.  If not see
 #include "tm.h"
 #include "intl.h"
 #include "obstack.h"
-#include "hashtab.h"
 #include "demangle.h"
 #include "collect2.h"
+#include "collect-utils.h"
 #include "filenames.h"
 #include "diagnostic-core.h"
-#include "vec.h"
 
 /* TARGET_64BIT may be defined to use driver specific functionality. */
 #undef TARGET_64BIT
@@ -69,13 +67,11 @@ typedef struct file_hash_entry
 } file;
 
 typedef const char *str;
-DEF_VEC_P(str);
-DEF_VEC_ALLOC_P(str,heap);
 
 typedef struct demangled_hash_entry
 {
   const char *key;
-  VEC(str,heap) *mangled;
+  vec<str> mangled;
 } demangled;
 
 /* Hash and comparison functions for these hash tables.  */
@@ -107,8 +103,6 @@ static void symbol_push (symbol *);
 static symbol * symbol_pop (void);
 static void file_push (file *);
 static file * file_pop (void);
-static void tlink_init (void);
-static int tlink_execute (const char *, char **, const char *, const char *);
 static char * frob_extension (const char *, const char *);
 static char * obstack_fgets (FILE *, struct obstack *);
 static char * tfgets (FILE *);
@@ -278,7 +272,7 @@ tlink_init (void)
   else
     {
       tlink_verbose = 1;
-      if (vflag)
+      if (verbose)
 	tlink_verbose = 2;
       if (debug)
 	tlink_verbose = 3;
@@ -289,11 +283,12 @@ tlink_init (void)
 
 static int
 tlink_execute (const char *prog, char **argv, const char *outname,
-	       const char *errname)
+	       const char *errname, bool use_atfile)
 {
   struct pex_obj *pex;
 
-  pex = collect_execute (prog, argv, outname, errname, PEX_LAST | PEX_SEARCH);
+  pex = collect_execute (prog, argv, outname, errname,
+			 PEX_LAST | PEX_SEARCH, use_atfile);
   return collect_wait (prog, pex);
 }
 
@@ -489,9 +484,9 @@ recompile_files (void)
 	 the new file name already exists.  Therefore, we explicitly
 	 remove the old file first.  */
       if (remove (f->key) == -1)
-	fatal_error ("removing .rpo file: %m");
+	fatal_error (input_location, "removing .rpo file: %m");
       if (rename (outname, f->key) == -1)
-	fatal_error ("renaming .rpo file: %m");
+	fatal_error (input_location, "renaming .rpo file: %m");
 
       if (!f->args)
 	{
@@ -548,7 +543,7 @@ recompile_files (void)
 	fprintf (stderr, _("collect: recompiling %s\n"), f->main);
 
       if (chdir (f->dir) != 0
-	  || tlink_execute (c_file_name, argv, NULL, NULL) != 0
+	  || tlink_execute (c_file_name, argv, NULL, NULL, false) != 0
 	  || chdir (initial_cwd) != 0)
 	return 0;
 
@@ -609,7 +604,7 @@ demangle_new_symbols (void)
 	continue;
 
       dem = demangled_hash_lookup (p, true);
-      VEC_safe_push (str, heap, dem->mangled, sym->key);
+      dem->mangled.safe_push (sym->key);
     }
 }
 
@@ -771,13 +766,13 @@ scan_linker_output (const char *fname)
 	     constructor or destructor, there can be several mangled names
 	     that match it, so choose or unchoose all of them.  If some are
 	     chosen and some not, leave the later ones that don't match
-	     alone for now; either this will cause the link to suceed, or
+	     alone for now; either this will cause the link to succeed, or
 	     on the next attempt we will switch all of them the other way
 	     and that will cause it to succeed.  */
 	  int chosen = 0;
-	  int len = VEC_length (str, dem->mangled);
+	  int len = dem->mangled.length ();
 	  ok = true;
-	  FOR_EACH_VEC_ELT (str, dem->mangled, ix, s)
+	  FOR_EACH_VEC_ELT (dem->mangled, ix, s)
 	    {
 	      sym = symbol_hash_lookup (s, false);
 	      if (ix == 0)
@@ -820,23 +815,24 @@ scan_linker_output (const char *fname)
 void
 do_tlink (char **ld_argv, char **object_lst ATTRIBUTE_UNUSED)
 {
-  int exit = tlink_execute ("ld", ld_argv, ldout, lderrout);
+  int ret = tlink_execute ("ld", ld_argv, ldout, lderrout,
+			   HAVE_GNU_LD && at_file_supplied);
 
   tlink_init ();
 
-  if (exit)
+  if (ret)
     {
       int i = 0;
 
       /* Until collect does a better job of figuring out which are object
 	 files, assume that everything on the command line could be.  */
       if (read_repo_files (ld_argv))
-	while (exit && i++ < MAX_ITERATIONS)
+	while (ret && i++ < MAX_ITERATIONS)
 	  {
 	    if (tlink_verbose >= 3)
 	      {
-		dump_file (ldout, stdout);
-		dump_file (lderrout, stderr);
+		dump_ld_file (ldout, stdout);
+		dump_ld_file (lderrout, stderr);
 	      }
 	    demangle_new_symbols ();
 	    if (! scan_linker_output (ldout)
@@ -846,17 +842,24 @@ do_tlink (char **ld_argv, char **object_lst ATTRIBUTE_UNUSED)
 	      break;
 	    if (tlink_verbose)
 	      fprintf (stderr, _("collect: relinking\n"));
-	    exit = tlink_execute ("ld", ld_argv, ldout, lderrout);
+	    ret = tlink_execute ("ld", ld_argv, ldout, lderrout,
+				 HAVE_GNU_LD && at_file_supplied);
 	  }
     }
 
-  dump_file (ldout, stdout);
+  dump_ld_file (ldout, stdout);
   unlink (ldout);
-  dump_file (lderrout, stderr);
+  dump_ld_file (lderrout, stderr);
   unlink (lderrout);
-  if (exit)
+  if (ret)
     {
-      error ("ld returned %d exit status", exit);
-      collect_exit (exit);
+      error ("ld returned %d exit status", ret);
+      exit (ret);
+    }
+  else
+    {
+      /* We have just successfully produced an output file, so assume that we
+	 may unlink it if need be for now on.  */ 
+      may_unlink_output_file = true;
     }
 }

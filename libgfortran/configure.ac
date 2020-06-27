@@ -139,12 +139,13 @@ AM_PROG_CC_C_O
 # Add -Wall -fno-repack-arrays -fno-underscoring if we are using GCC.
 if test "x$GCC" = "xyes"; then
   AM_FCFLAGS="-I . -Wall -Werror -fimplicit-none -fno-repack-arrays -fno-underscoring"
-  ## We like to use C99 routines when available.  This makes sure that
+  ## We like to use C11 and C99 routines when available.  This makes
+  ## sure that
   ## __STDC_VERSION__ is set such that libc includes make them available.
-  AM_CFLAGS="-std=gnu99 -Wall -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wextra -Wwrite-strings"
+  AM_CFLAGS="-std=gnu11 -Wall -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wextra -Wwrite-strings -Werror=implicit-function-declaration -Werror=vla"
   ## Compile the following tests with the same system header contents
   ## that we'll encounter when compiling our own source files.
-  CFLAGS="-std=gnu99 $CFLAGS"
+  CFLAGS="-std=gnu11 $CFLAGS"
 fi
 AC_SUBST(AM_FCFLAGS)
 AC_SUBST(AM_CFLAGS)
@@ -157,7 +158,7 @@ AS_HELP_STRING([--disable-symvers],
   [disable symbol versioning for libgfortran]),
 gfortran_use_symver=$enableval,
 gfortran_use_symver=yes)
-if test "x$gfortran_use_symver" = xyes; then
+if test "x$gfortran_use_symver" != xno; then
   save_LDFLAGS="$LDFLAGS"
   LDFLAGS="$LDFLAGS -fPIC -shared -Wl,--version-script,./conftest.map"
   cat > conftest.map <<EOF
@@ -188,6 +189,18 @@ AM_CONDITIONAL(LIBGFOR_USE_SYMVER, [test "x$gfortran_use_symver" != xno])
 AM_CONDITIONAL(LIBGFOR_USE_SYMVER_GNU, [test "x$gfortran_use_symver" = xgnu])
 AM_CONDITIONAL(LIBGFOR_USE_SYMVER_SUN, [test "x$gfortran_use_symver" = xsun])
 
+# For GPU offloading, not everything in libfortran can be supported.
+# Currently, the only target that has this problem is nvptx.  The
+# following is a (partial) list of features that are unsupportable on
+# this particular target:
+# * Constructors
+# * alloca
+# * C library support for I/O, with printf as the one notable exception
+# * C library support for other features such as signal, environment
+#   variables, time functions
+
+AM_CONDITIONAL(LIBGFOR_MINIMAL, [test "x${target_cpu}" = xnvptx])
+
 # Figure out whether the compiler supports "-ffunction-sections -fdata-sections",
 # similarly to how libstdc++ does it
 ac_test_CFLAGS="${CFLAGS+set}"
@@ -208,6 +221,9 @@ if test x"$ac_fdsections" = x"yes"; then
 fi
 AC_MSG_RESULT($ac_fdsections)
 AC_SUBST(SECTION_FLAGS)
+
+# Check linker hardware capability support.
+GCC_CHECK_LINKER_HWCAP
 
 # Find other programs we need.
 AC_CHECK_TOOL(AS, as)
@@ -254,206 +270,231 @@ AC_CHECK_TYPES([ptrdiff_t])
 # check header files (we assume C89 is available, so don't check for that)
 AC_CHECK_HEADERS_ONCE(unistd.h sys/time.h sys/times.h sys/resource.h \
 sys/types.h sys/stat.h sys/wait.h floatingpoint.h ieeefp.h fenv.h fptrap.h \
-pwd.h complex.h) 
+fpxcp.h pwd.h complex.h xlocale.h)
 
 GCC_HEADER_STDINT(gstdint.h)
 
 AC_CHECK_MEMBERS([struct stat.st_blksize, struct stat.st_blocks, struct stat.st_rdev])
 
+case "${host}--x${with_newlib}" in
+  mips*--xyes)
+    hardwire_newlib=1;;
+  nvptx*--xyes)
+    hardwire_newlib=1;;
+esac
+
 # Check for library functions.
-AC_CHECK_FUNCS_ONCE(getrusage times mkstemp strtof strtold snprintf \
-ftruncate chsize chdir getlogin gethostname kill link symlink sleep ttyname \
-alarm access fork execl wait setmode execve pipe dup2 close \
-strcasestr getrlimit gettimeofday stat fstat lstat getpwuid vsnprintf dup \
-getcwd localtime_r gmtime_r strerror_r getpwuid_r ttyname_r clock_gettime \
-readlink getgid getpid getppid getuid geteuid umask)
+if test "${hardwire_newlib:-0}" -eq 1; then
+   # We are being configured with a cross compiler.  AC_REPLACE_FUNCS
+   # may not work correctly, because the compiler may not be able to
+   # link executables.
+   AC_DEFINE(HAVE_MKSTEMP, 1, [Define if you have mkstemp.])
+   AC_DEFINE(HAVE_STRTOF, 1, [Define if you have strtof.])
+   AC_DEFINE(HAVE_SNPRINTF, 1, [Define if you have snprintf.])
+   AC_DEFINE(HAVE_VSNPRINTF, 1, [Define if you have vsnprintf.])
+   AC_DEFINE(HAVE_LOCALTIME_R, 1, [Define if you have localtime_r.])
+   AC_DEFINE(HAVE_GMTIME_R, 1, [Define if you have gmtime_r.])
+   AC_DEFINE(HAVE_STRNLEN, 1, [Define if you have strnlen.])
+   AC_DEFINE(HAVE_STRNDUP, 1, [Define if you have strndup.])
+
+   # At some point, we should differentiate between architectures
+   # like x86, which have long double versions, and alpha/powerpc/etc.,
+   # which don't. For the time being, punt.
+   if test x"long_double_math_on_this_cpu" = x"yes"; then
+     AC_DEFINE(HAVE_STRTOLD, 1, [Define if you have strtold.])
+   fi
+else
+   AC_CHECK_FUNCS_ONCE(getrusage times mkstemp strtof strtold snprintf \
+   ftruncate chsize chdir getlogin gethostname kill link symlink sleep ttyname \
+   alarm access fork setmode fcntl \
+   gettimeofday stat fstat lstat getpwuid vsnprintf dup \
+   getcwd localtime_r gmtime_r getpwuid_r ttyname_r clock_gettime \
+   getgid getpid getuid geteuid umask getegid \
+   secure_getenv __secure_getenv mkostemp strnlen strndup newlocale \
+   freelocale uselocale strerror_l)
+fi
+
+# Check strerror_r, cannot be above as versions with two and three arguments exist
+LIBGFOR_CHECK_STRERROR_R
 
 # Check for C99 (and other IEEE) math functions
-AC_CHECK_LIB([m],[acosf],[AC_DEFINE([HAVE_ACOSF],[1],[libm includes acosf])])
-AC_CHECK_LIB([m],[acos],[AC_DEFINE([HAVE_ACOS],[1],[libm includes acos])])
-AC_CHECK_LIB([m],[acosl],[AC_DEFINE([HAVE_ACOSL],[1],[libm includes acosl])])
-AC_CHECK_LIB([m],[acoshf],[AC_DEFINE([HAVE_ACOSHF],[1],[libm includes acoshf])])
-AC_CHECK_LIB([m],[acosh],[AC_DEFINE([HAVE_ACOSH],[1],[libm includes acosh])])
-AC_CHECK_LIB([m],[acoshl],[AC_DEFINE([HAVE_ACOSHL],[1],[libm includes acoshl])])
-AC_CHECK_LIB([m],[asinf],[AC_DEFINE([HAVE_ASINF],[1],[libm includes asinf])])
-AC_CHECK_LIB([m],[asin],[AC_DEFINE([HAVE_ASIN],[1],[libm includes asin])])
-AC_CHECK_LIB([m],[asinl],[AC_DEFINE([HAVE_ASINL],[1],[libm includes asinl])])
-AC_CHECK_LIB([m],[asinhf],[AC_DEFINE([HAVE_ASINHF],[1],[libm includes asinhf])])
-AC_CHECK_LIB([m],[asinh],[AC_DEFINE([HAVE_ASINH],[1],[libm includes asinh])])
-AC_CHECK_LIB([m],[asinhl],[AC_DEFINE([HAVE_ASINHL],[1],[libm includes asinhl])])
-AC_CHECK_LIB([m],[atan2f],[AC_DEFINE([HAVE_ATAN2F],[1],[libm includes atan2f])])
-AC_CHECK_LIB([m],[atan2],[AC_DEFINE([HAVE_ATAN2],[1],[libm includes atan2])])
-AC_CHECK_LIB([m],[atan2l],[AC_DEFINE([HAVE_ATAN2L],[1],[libm includes atan2l])])
-AC_CHECK_LIB([m],[atanf],[AC_DEFINE([HAVE_ATANF],[1],[libm includes atanf])])
-AC_CHECK_LIB([m],[atan],[AC_DEFINE([HAVE_ATAN],[1],[libm includes atan])])
-AC_CHECK_LIB([m],[atanl],[AC_DEFINE([HAVE_ATANL],[1],[libm includes atanl])])
-AC_CHECK_LIB([m],[atanhf],[AC_DEFINE([HAVE_ATANHF],[1],[libm includes atanhf])])
-AC_CHECK_LIB([m],[atanh],[AC_DEFINE([HAVE_ATANH],[1],[libm includes atanh])])
-AC_CHECK_LIB([m],[atanhl],[AC_DEFINE([HAVE_ATANHL],[1],[libm includes atanhl])])
-AC_CHECK_LIB([m],[cargf],[AC_DEFINE([HAVE_CARGF],[1],[libm includes cargf])])
-AC_CHECK_LIB([m],[carg],[AC_DEFINE([HAVE_CARG],[1],[libm includes carg])])
-AC_CHECK_LIB([m],[cargl],[AC_DEFINE([HAVE_CARGL],[1],[libm includes cargl])])
-AC_CHECK_LIB([m],[ceilf],[AC_DEFINE([HAVE_CEILF],[1],[libm includes ceilf])])
-AC_CHECK_LIB([m],[ceil],[AC_DEFINE([HAVE_CEIL],[1],[libm includes ceil])])
-AC_CHECK_LIB([m],[ceill],[AC_DEFINE([HAVE_CEILL],[1],[libm includes ceill])])
-AC_CHECK_LIB([m],[copysignf],[AC_DEFINE([HAVE_COPYSIGNF],[1],[libm includes copysignf])])
-AC_CHECK_LIB([m],[copysign],[AC_DEFINE([HAVE_COPYSIGN],[1],[libm includes copysign])])
-AC_CHECK_LIB([m],[copysignl],[AC_DEFINE([HAVE_COPYSIGNL],[1],[libm includes copysignl])])
-AC_CHECK_LIB([m],[cosf],[AC_DEFINE([HAVE_COSF],[1],[libm includes cosf])])
-AC_CHECK_LIB([m],[cos],[AC_DEFINE([HAVE_COS],[1],[libm includes cos])])
-AC_CHECK_LIB([m],[cosl],[AC_DEFINE([HAVE_COSL],[1],[libm includes cosl])])
-AC_CHECK_LIB([m],[ccosf],[AC_DEFINE([HAVE_CCOSF],[1],[libm includes ccosf])])
-AC_CHECK_LIB([m],[ccos],[AC_DEFINE([HAVE_CCOS],[1],[libm includes ccos])])
-AC_CHECK_LIB([m],[ccosl],[AC_DEFINE([HAVE_CCOSL],[1],[libm includes ccosl])])
-AC_CHECK_LIB([m],[coshf],[AC_DEFINE([HAVE_COSHF],[1],[libm includes coshf])])
-AC_CHECK_LIB([m],[cosh],[AC_DEFINE([HAVE_COSH],[1],[libm includes cosh])])
-AC_CHECK_LIB([m],[coshl],[AC_DEFINE([HAVE_COSHL],[1],[libm includes coshl])])
-AC_CHECK_LIB([m],[ccoshf],[AC_DEFINE([HAVE_CCOSHF],[1],[libm includes ccoshf])])
-AC_CHECK_LIB([m],[ccosh],[AC_DEFINE([HAVE_CCOSH],[1],[libm includes ccosh])])
-AC_CHECK_LIB([m],[ccoshl],[AC_DEFINE([HAVE_CCOSHL],[1],[libm includes ccoshl])])
-AC_CHECK_LIB([m],[expf],[AC_DEFINE([HAVE_EXPF],[1],[libm includes expf])])
-AC_CHECK_LIB([m],[exp],[AC_DEFINE([HAVE_EXP],[1],[libm includes exp])])
-AC_CHECK_LIB([m],[expl],[AC_DEFINE([HAVE_EXPL],[1],[libm includes expl])])
-AC_CHECK_LIB([m],[cexpf],[AC_DEFINE([HAVE_CEXPF],[1],[libm includes cexpf])])
-AC_CHECK_LIB([m],[cexp],[AC_DEFINE([HAVE_CEXP],[1],[libm includes cexp])])
-AC_CHECK_LIB([m],[cexpl],[AC_DEFINE([HAVE_CEXPL],[1],[libm includes cexpl])])
-AC_CHECK_LIB([m],[fabsf],[AC_DEFINE([HAVE_FABSF],[1],[libm includes fabsf])])
-AC_CHECK_LIB([m],[fabs],[AC_DEFINE([HAVE_FABS],[1],[libm includes fabs])])
-AC_CHECK_LIB([m],[fabsl],[AC_DEFINE([HAVE_FABSL],[1],[libm includes fabsl])])
-AC_CHECK_LIB([m],[cabsf],[AC_DEFINE([HAVE_CABSF],[1],[libm includes cabsf])])
-AC_CHECK_LIB([m],[cabs],[AC_DEFINE([HAVE_CABS],[1],[libm includes cabs])])
-AC_CHECK_LIB([m],[cabsl],[AC_DEFINE([HAVE_CABSL],[1],[libm includes cabsl])])
-AC_CHECK_LIB([m],[floorf],[AC_DEFINE([HAVE_FLOORF],[1],[libm includes floorf])])
-AC_CHECK_LIB([m],[floor],[AC_DEFINE([HAVE_FLOOR],[1],[libm includes floor])])
-AC_CHECK_LIB([m],[floorl],[AC_DEFINE([HAVE_FLOORL],[1],[libm includes floorl])])
-AC_CHECK_LIB([m],[fmodf],[AC_DEFINE([HAVE_FMODF],[1],[libm includes fmodf])])
-AC_CHECK_LIB([m],[fmod],[AC_DEFINE([HAVE_FMOD],[1],[libm includes fmod])])
-AC_CHECK_LIB([m],[fmodl],[AC_DEFINE([HAVE_FMODL],[1],[libm includes fmodl])])
-AC_CHECK_LIB([m],[frexpf],[AC_DEFINE([HAVE_FREXPF],[1],[libm includes frexpf])])
-AC_CHECK_LIB([m],[frexp],[AC_DEFINE([HAVE_FREXP],[1],[libm includes frexp])])
-AC_CHECK_LIB([m],[frexpl],[AC_DEFINE([HAVE_FREXPL],[1],[libm includes frexpl])])
-AC_CHECK_LIB([m],[hypotf],[AC_DEFINE([HAVE_HYPOTF],[1],[libm includes hypotf])])
-AC_CHECK_LIB([m],[hypot],[AC_DEFINE([HAVE_HYPOT],[1],[libm includes hypot])])
-AC_CHECK_LIB([m],[hypotl],[AC_DEFINE([HAVE_HYPOTL],[1],[libm includes hypotl])])
-AC_CHECK_LIB([m],[ldexpf],[AC_DEFINE([HAVE_LDEXPF],[1],[libm includes ldexpf])])
-AC_CHECK_LIB([m],[ldexp],[AC_DEFINE([HAVE_LDEXP],[1],[libm includes ldexp])])
-AC_CHECK_LIB([m],[ldexpl],[AC_DEFINE([HAVE_LDEXPL],[1],[libm includes ldexpl])])
-AC_CHECK_LIB([m],[logf],[AC_DEFINE([HAVE_LOGF],[1],[libm includes logf])])
-AC_CHECK_LIB([m],[log],[AC_DEFINE([HAVE_LOG],[1],[libm includes log])])
-AC_CHECK_LIB([m],[logl],[AC_DEFINE([HAVE_LOGL],[1],[libm includes logl])])
-AC_CHECK_LIB([m],[clogf],[AC_DEFINE([HAVE_CLOGF],[1],[libm includes clogf])])
-AC_CHECK_LIB([m],[clog],[AC_DEFINE([HAVE_CLOG],[1],[libm includes clog])])
-AC_CHECK_LIB([m],[clogl],[AC_DEFINE([HAVE_CLOGL],[1],[libm includes clogl])])
-AC_CHECK_LIB([m],[log10f],[AC_DEFINE([HAVE_LOG10F],[1],[libm includes log10f])])
-AC_CHECK_LIB([m],[log10],[AC_DEFINE([HAVE_LOG10],[1],[libm includes log10])])
-AC_CHECK_LIB([m],[log10l],[AC_DEFINE([HAVE_LOG10L],[1],[libm includes log10l])])
-AC_CHECK_LIB([m],[clog10f],[AC_DEFINE([HAVE_CLOG10F],[1],[libm includes clog10f])])
-AC_CHECK_LIB([m],[clog10],[AC_DEFINE([HAVE_CLOG10],[1],[libm includes clog10])])
-AC_CHECK_LIB([m],[clog10l],[AC_DEFINE([HAVE_CLOG10L],[1],[libm includes clog10l])])
-AC_CHECK_LIB([m],[nextafterf],[AC_DEFINE([HAVE_NEXTAFTERF],[1],[libm includes nextafterf])])
-AC_CHECK_LIB([m],[nextafter],[AC_DEFINE([HAVE_NEXTAFTER],[1],[libm includes nextafter])])
-AC_CHECK_LIB([m],[nextafterl],[AC_DEFINE([HAVE_NEXTAFTERL],[1],[libm includes nextafterl])])
-AC_CHECK_LIB([m],[powf],[AC_DEFINE([HAVE_POWF],[1],[libm includes powf])])
-AC_CHECK_LIB([m],[pow],[AC_DEFINE([HAVE_POW],[1],[libm includes pow])])
-AC_CHECK_LIB([m],[powl],[AC_DEFINE([HAVE_POWL],[1],[libm includes powl])])
-AC_CHECK_LIB([m],[cpowf],[AC_DEFINE([HAVE_CPOWF],[1],[libm includes cpowf])])
-AC_CHECK_LIB([m],[cpow],[AC_DEFINE([HAVE_CPOW],[1],[libm includes cpow])])
-AC_CHECK_LIB([m],[cpowl],[AC_DEFINE([HAVE_CPOWL],[1],[libm includes cpowl])])
-AC_CHECK_LIB([m],[roundf],[AC_DEFINE([HAVE_ROUNDF],[1],[libm includes roundf])])
-AC_CHECK_LIB([m],[round],[AC_DEFINE([HAVE_ROUND],[1],[libm includes round])])
-AC_CHECK_LIB([m],[roundl],[AC_DEFINE([HAVE_ROUNDL],[1],[libm includes roundl])])
-AC_CHECK_LIB([m],[lroundf],[AC_DEFINE([HAVE_LROUNDF],[1],[libm includes lroundf])])
-AC_CHECK_LIB([m],[lround],[AC_DEFINE([HAVE_LROUND],[1],[libm includes lround])])
-AC_CHECK_LIB([m],[lroundl],[AC_DEFINE([HAVE_LROUNDL],[1],[libm includes lroundl])])
-AC_CHECK_LIB([m],[llroundf],[AC_DEFINE([HAVE_LLROUNDF],[1],[libm includes llroundf])])
-AC_CHECK_LIB([m],[llround],[AC_DEFINE([HAVE_LLROUND],[1],[libm includes llround])])
-AC_CHECK_LIB([m],[llroundl],[AC_DEFINE([HAVE_LLROUNDL],[1],[libm includes llroundl])])
-AC_CHECK_LIB([m],[scalbnf],[AC_DEFINE([HAVE_SCALBNF],[1],[libm includes scalbnf])])
-AC_CHECK_LIB([m],[scalbn],[AC_DEFINE([HAVE_SCALBN],[1],[libm includes scalbn])])
-AC_CHECK_LIB([m],[scalbnl],[AC_DEFINE([HAVE_SCALBNL],[1],[libm includes scalbnl])])
-AC_CHECK_LIB([m],[sinf],[AC_DEFINE([HAVE_SINF],[1],[libm includes sinf])])
-AC_CHECK_LIB([m],[sin],[AC_DEFINE([HAVE_SIN],[1],[libm includes sin])])
-AC_CHECK_LIB([m],[sinl],[AC_DEFINE([HAVE_SINL],[1],[libm includes sinl])])
-AC_CHECK_LIB([m],[csinf],[AC_DEFINE([HAVE_CSINF],[1],[libm includes csinf])])
-AC_CHECK_LIB([m],[csin],[AC_DEFINE([HAVE_CSIN],[1],[libm includes csin])])
-AC_CHECK_LIB([m],[csinl],[AC_DEFINE([HAVE_CSINL],[1],[libm includes csinl])])
-AC_CHECK_LIB([m],[sinhf],[AC_DEFINE([HAVE_SINHF],[1],[libm includes sinhf])])
-AC_CHECK_LIB([m],[sinh],[AC_DEFINE([HAVE_SINH],[1],[libm includes sinh])])
-AC_CHECK_LIB([m],[sinhl],[AC_DEFINE([HAVE_SINHL],[1],[libm includes sinhl])])
-AC_CHECK_LIB([m],[csinhf],[AC_DEFINE([HAVE_CSINHF],[1],[libm includes csinhf])])
-AC_CHECK_LIB([m],[csinh],[AC_DEFINE([HAVE_CSINH],[1],[libm includes csinh])])
-AC_CHECK_LIB([m],[csinhl],[AC_DEFINE([HAVE_CSINHL],[1],[libm includes csinhl])])
-AC_CHECK_LIB([m],[sqrtf],[AC_DEFINE([HAVE_SQRTF],[1],[libm includes sqrtf])])
-AC_CHECK_LIB([m],[sqrt],[AC_DEFINE([HAVE_SQRT],[1],[libm includes sqrt])])
-AC_CHECK_LIB([m],[sqrtl],[AC_DEFINE([HAVE_SQRTL],[1],[libm includes sqrtl])])
-AC_CHECK_LIB([m],[csqrtf],[AC_DEFINE([HAVE_CSQRTF],[1],[libm includes csqrtf])])
-AC_CHECK_LIB([m],[csqrt],[AC_DEFINE([HAVE_CSQRT],[1],[libm includes csqrt])])
-AC_CHECK_LIB([m],[csqrtl],[AC_DEFINE([HAVE_CSQRTL],[1],[libm includes csqrtl])])
-AC_CHECK_LIB([m],[tanf],[AC_DEFINE([HAVE_TANF],[1],[libm includes tanf])])
-AC_CHECK_LIB([m],[tan],[AC_DEFINE([HAVE_TAN],[1],[libm includes tan])])
-AC_CHECK_LIB([m],[tanl],[AC_DEFINE([HAVE_TANL],[1],[libm includes tanl])])
-AC_CHECK_LIB([m],[ctanf],[AC_DEFINE([HAVE_CTANF],[1],[libm includes ctanf])])
-AC_CHECK_LIB([m],[ctan],[AC_DEFINE([HAVE_CTAN],[1],[libm includes ctan])])
-AC_CHECK_LIB([m],[ctanl],[AC_DEFINE([HAVE_CTANL],[1],[libm includes ctanl])])
-AC_CHECK_LIB([m],[tanhf],[AC_DEFINE([HAVE_TANHF],[1],[libm includes tanhf])])
-AC_CHECK_LIB([m],[tanh],[AC_DEFINE([HAVE_TANH],[1],[libm includes tanh])])
-AC_CHECK_LIB([m],[tanhl],[AC_DEFINE([HAVE_TANHL],[1],[libm includes tanhl])])
-AC_CHECK_LIB([m],[ctanhf],[AC_DEFINE([HAVE_CTANHF],[1],[libm includes ctanhf])])
-AC_CHECK_LIB([m],[ctanh],[AC_DEFINE([HAVE_CTANH],[1],[libm includes ctanh])])
-AC_CHECK_LIB([m],[ctanhl],[AC_DEFINE([HAVE_CTANHL],[1],[libm includes ctanhl])])
-AC_CHECK_LIB([m],[truncf],[AC_DEFINE([HAVE_TRUNCF],[1],[libm includes truncf])])
-AC_CHECK_LIB([m],[trunc],[AC_DEFINE([HAVE_TRUNC],[1],[libm includes trunc])])
-AC_CHECK_LIB([m],[truncl],[AC_DEFINE([HAVE_TRUNCL],[1],[libm includes truncl])])
-AC_CHECK_LIB([m],[erff],[AC_DEFINE([HAVE_ERFF],[1],[libm includes erff])])
-AC_CHECK_LIB([m],[erf],[AC_DEFINE([HAVE_ERF],[1],[libm includes erf])])
-AC_CHECK_LIB([m],[erfl],[AC_DEFINE([HAVE_ERFL],[1],[libm includes erfl])])
-AC_CHECK_LIB([m],[erfcf],[AC_DEFINE([HAVE_ERFCF],[1],[libm includes erfcf])])
-AC_CHECK_LIB([m],[erfc],[AC_DEFINE([HAVE_ERFC],[1],[libm includes erfc])])
-AC_CHECK_LIB([m],[erfcl],[AC_DEFINE([HAVE_ERFCL],[1],[libm includes erfcl])])
-AC_CHECK_LIB([m],[j0f],[AC_DEFINE([HAVE_J0F],[1],[libm includes j0f])])
-AC_CHECK_LIB([m],[j0],[AC_DEFINE([HAVE_J0],[1],[libm includes j0])])
-AC_CHECK_LIB([m],[j0l],[AC_DEFINE([HAVE_J0L],[1],[libm includes j0l])])
-AC_CHECK_LIB([m],[j1f],[AC_DEFINE([HAVE_J1F],[1],[libm includes j1f])])
-AC_CHECK_LIB([m],[j1],[AC_DEFINE([HAVE_J1],[1],[libm includes j1])])
-AC_CHECK_LIB([m],[j1l],[AC_DEFINE([HAVE_J1L],[1],[libm includes j1l])])
-AC_CHECK_LIB([m],[jnf],[AC_DEFINE([HAVE_JNF],[1],[libm includes jnf])])
-AC_CHECK_LIB([m],[jn],[AC_DEFINE([HAVE_JN],[1],[libm includes jn])])
-AC_CHECK_LIB([m],[jnl],[AC_DEFINE([HAVE_JNL],[1],[libm includes jnl])])
-AC_CHECK_LIB([m],[y0f],[AC_DEFINE([HAVE_Y0F],[1],[libm includes y0f])])
-AC_CHECK_LIB([m],[y0],[AC_DEFINE([HAVE_Y0],[1],[libm includes y0])])
-AC_CHECK_LIB([m],[y0l],[AC_DEFINE([HAVE_Y0L],[1],[libm includes y0l])])
-AC_CHECK_LIB([m],[y1f],[AC_DEFINE([HAVE_Y1F],[1],[libm includes y1f])])
-AC_CHECK_LIB([m],[y1],[AC_DEFINE([HAVE_Y1],[1],[libm includes y1])])
-AC_CHECK_LIB([m],[y1l],[AC_DEFINE([HAVE_Y1L],[1],[libm includes y1l])])
-AC_CHECK_LIB([m],[ynf],[AC_DEFINE([HAVE_YNF],[1],[libm includes ynf])])
-AC_CHECK_LIB([m],[yn],[AC_DEFINE([HAVE_YN],[1],[libm includes yn])])
-AC_CHECK_LIB([m],[ynl],[AC_DEFINE([HAVE_YNL],[1],[libm includes ynl])])
-AC_CHECK_LIB([m],[tgamma],[AC_DEFINE([HAVE_TGAMMA],[1],[libm includes tgamma])])
-AC_CHECK_LIB([m],[tgammaf],[AC_DEFINE([HAVE_TGAMMAF],[1],[libm includes tgammaf])])
-AC_CHECK_LIB([m],[tgammal],[AC_DEFINE([HAVE_TGAMMAL],[1],[libm includes tgammal])])
-AC_CHECK_LIB([m],[lgamma],[AC_DEFINE([HAVE_LGAMMA],[1],[libm includes lgamma])])
-AC_CHECK_LIB([m],[lgammaf],[AC_DEFINE([HAVE_LGAMMAF],[1],[libm includes lgammaf])])
-AC_CHECK_LIB([m],[lgammal],[AC_DEFINE([HAVE_LGAMMAL],[1],[libm includes lgammal])])
+GCC_CHECK_MATH_FUNC([acosf])
+GCC_CHECK_MATH_FUNC([acos])
+GCC_CHECK_MATH_FUNC([acosl])
+GCC_CHECK_MATH_FUNC([acoshf])
+GCC_CHECK_MATH_FUNC([acosh])
+GCC_CHECK_MATH_FUNC([acoshl])
+GCC_CHECK_MATH_FUNC([asinf])
+GCC_CHECK_MATH_FUNC([asin])
+GCC_CHECK_MATH_FUNC([asinl])
+GCC_CHECK_MATH_FUNC([asinhf])
+GCC_CHECK_MATH_FUNC([asinh])
+GCC_CHECK_MATH_FUNC([asinhl])
+GCC_CHECK_MATH_FUNC([atan2f])
+GCC_CHECK_MATH_FUNC([atan2])
+GCC_CHECK_MATH_FUNC([atan2l])
+GCC_CHECK_MATH_FUNC([atanf])
+GCC_CHECK_MATH_FUNC([atan])
+GCC_CHECK_MATH_FUNC([atanl])
+GCC_CHECK_MATH_FUNC([atanhf])
+GCC_CHECK_MATH_FUNC([atanh])
+GCC_CHECK_MATH_FUNC([atanhl])
+GCC_CHECK_MATH_FUNC([cargf])
+GCC_CHECK_MATH_FUNC([carg])
+GCC_CHECK_MATH_FUNC([cargl])
+GCC_CHECK_MATH_FUNC([ceilf])
+GCC_CHECK_MATH_FUNC([ceil])
+GCC_CHECK_MATH_FUNC([ceill])
+GCC_CHECK_MATH_FUNC([copysignf])
+GCC_CHECK_MATH_FUNC([copysign])
+GCC_CHECK_MATH_FUNC([copysignl])
+GCC_CHECK_MATH_FUNC([cosf])
+GCC_CHECK_MATH_FUNC([cos])
+GCC_CHECK_MATH_FUNC([cosl])
+GCC_CHECK_MATH_FUNC([ccosf])
+GCC_CHECK_MATH_FUNC([ccos])
+GCC_CHECK_MATH_FUNC([ccosl])
+GCC_CHECK_MATH_FUNC([coshf])
+GCC_CHECK_MATH_FUNC([cosh])
+GCC_CHECK_MATH_FUNC([coshl])
+GCC_CHECK_MATH_FUNC([ccoshf])
+GCC_CHECK_MATH_FUNC([ccosh])
+GCC_CHECK_MATH_FUNC([ccoshl])
+GCC_CHECK_MATH_FUNC([expf])
+GCC_CHECK_MATH_FUNC([exp])
+GCC_CHECK_MATH_FUNC([expl])
+GCC_CHECK_MATH_FUNC([cexpf])
+GCC_CHECK_MATH_FUNC([cexp])
+GCC_CHECK_MATH_FUNC([cexpl])
+GCC_CHECK_MATH_FUNC([fabsf])
+GCC_CHECK_MATH_FUNC([fabs])
+GCC_CHECK_MATH_FUNC([fabsl])
+GCC_CHECK_MATH_FUNC([cabsf])
+GCC_CHECK_MATH_FUNC([cabs])
+GCC_CHECK_MATH_FUNC([cabsl])
+GCC_CHECK_MATH_FUNC([floorf])
+GCC_CHECK_MATH_FUNC([floor])
+GCC_CHECK_MATH_FUNC([floorl])
+GCC_CHECK_MATH_FUNC([fmodf])
+GCC_CHECK_MATH_FUNC([fmod])
+GCC_CHECK_MATH_FUNC([fmodl])
+GCC_CHECK_MATH_FUNC([frexpf])
+GCC_CHECK_MATH_FUNC([frexp])
+GCC_CHECK_MATH_FUNC([frexpl])
+GCC_CHECK_MATH_FUNC([hypotf])
+GCC_CHECK_MATH_FUNC([hypot])
+GCC_CHECK_MATH_FUNC([hypotl])
+GCC_CHECK_MATH_FUNC([ldexpf])
+GCC_CHECK_MATH_FUNC([ldexp])
+GCC_CHECK_MATH_FUNC([ldexpl])
+GCC_CHECK_MATH_FUNC([logf])
+GCC_CHECK_MATH_FUNC([log])
+GCC_CHECK_MATH_FUNC([logl])
+GCC_CHECK_MATH_FUNC([clogf])
+GCC_CHECK_MATH_FUNC([clog])
+GCC_CHECK_MATH_FUNC([clogl])
+GCC_CHECK_MATH_FUNC([log10f])
+GCC_CHECK_MATH_FUNC([log10])
+GCC_CHECK_MATH_FUNC([log10l])
+GCC_CHECK_MATH_FUNC([clog10f])
+GCC_CHECK_MATH_FUNC([clog10])
+GCC_CHECK_MATH_FUNC([clog10l])
+GCC_CHECK_MATH_FUNC([nextafterf])
+GCC_CHECK_MATH_FUNC([nextafter])
+GCC_CHECK_MATH_FUNC([nextafterl])
+GCC_CHECK_MATH_FUNC([powf])
+GCC_CHECK_MATH_FUNC([pow])
+GCC_CHECK_MATH_FUNC([cpowf])
+GCC_CHECK_MATH_FUNC([cpow])
+GCC_CHECK_MATH_FUNC([cpowl])
+GCC_CHECK_MATH_FUNC([roundf])
+GCC_CHECK_MATH_FUNC([round])
+GCC_CHECK_MATH_FUNC([roundl])
+GCC_CHECK_MATH_FUNC([lroundf])
+GCC_CHECK_MATH_FUNC([lround])
+GCC_CHECK_MATH_FUNC([lroundl])
+GCC_CHECK_MATH_FUNC([llroundf])
+GCC_CHECK_MATH_FUNC([llround])
+GCC_CHECK_MATH_FUNC([llroundl])
+GCC_CHECK_MATH_FUNC([scalbnf])
+GCC_CHECK_MATH_FUNC([scalbn])
+GCC_CHECK_MATH_FUNC([scalbnl])
+GCC_CHECK_MATH_FUNC([sinf])
+GCC_CHECK_MATH_FUNC([sin])
+GCC_CHECK_MATH_FUNC([sinl])
+GCC_CHECK_MATH_FUNC([csinf])
+GCC_CHECK_MATH_FUNC([csin])
+GCC_CHECK_MATH_FUNC([csinl])
+GCC_CHECK_MATH_FUNC([sinhf])
+GCC_CHECK_MATH_FUNC([sinh])
+GCC_CHECK_MATH_FUNC([sinhl])
+GCC_CHECK_MATH_FUNC([csinhf])
+GCC_CHECK_MATH_FUNC([csinh])
+GCC_CHECK_MATH_FUNC([csinhl])
+GCC_CHECK_MATH_FUNC([sqrtf])
+GCC_CHECK_MATH_FUNC([sqrt])
+GCC_CHECK_MATH_FUNC([sqrtl])
+GCC_CHECK_MATH_FUNC([csqrtf])
+GCC_CHECK_MATH_FUNC([csqrt])
+GCC_CHECK_MATH_FUNC([csqrtl])
+GCC_CHECK_MATH_FUNC([tanf])
+GCC_CHECK_MATH_FUNC([tan])
+GCC_CHECK_MATH_FUNC([tanl])
+GCC_CHECK_MATH_FUNC([ctanf])
+GCC_CHECK_MATH_FUNC([ctan])
+GCC_CHECK_MATH_FUNC([ctanl])
+GCC_CHECK_MATH_FUNC([tanhf])
+GCC_CHECK_MATH_FUNC([tanh])
+GCC_CHECK_MATH_FUNC([tanhl])
+GCC_CHECK_MATH_FUNC([ctanhf])
+GCC_CHECK_MATH_FUNC([ctanh])
+GCC_CHECK_MATH_FUNC([ctanhl])
+GCC_CHECK_MATH_FUNC([truncf])
+GCC_CHECK_MATH_FUNC([trunc])
+GCC_CHECK_MATH_FUNC([truncl])
+GCC_CHECK_MATH_FUNC([erff])
+GCC_CHECK_MATH_FUNC([erf])
+GCC_CHECK_MATH_FUNC([erfcf])
+GCC_CHECK_MATH_FUNC([erfc])
+GCC_CHECK_MATH_FUNC([erfcl])
+GCC_CHECK_MATH_FUNC([j0f])
+GCC_CHECK_MATH_FUNC([j0])
+GCC_CHECK_MATH_FUNC([j1f])
+GCC_CHECK_MATH_FUNC([j1])
+GCC_CHECK_MATH_FUNC([jnf])
+GCC_CHECK_MATH_FUNC([jn])
+GCC_CHECK_MATH_FUNC([jnl])
+GCC_CHECK_MATH_FUNC([y0f])
+GCC_CHECK_MATH_FUNC([y0])
+GCC_CHECK_MATH_FUNC([y1f])
+GCC_CHECK_MATH_FUNC([y1])
+GCC_CHECK_MATH_FUNC([ynf])
+GCC_CHECK_MATH_FUNC([yn])
+GCC_CHECK_MATH_FUNC([ynl])
+GCC_CHECK_MATH_FUNC([tgamma])
+GCC_CHECK_MATH_FUNC([tgammaf])
+GCC_CHECK_MATH_FUNC([lgamma])
+GCC_CHECK_MATH_FUNC([lgammaf])
 
 # Check for GFORTRAN_C99_1.1 funcs
-AC_CHECK_LIB([m],[cacos],[AC_DEFINE([HAVE_CACOS],[1],[libm includes cacos])])
-AC_CHECK_LIB([m],[cacosf],[AC_DEFINE([HAVE_CACOSF],[1],[libm includes cacosf])])
-AC_CHECK_LIB([m],[cacosh],[AC_DEFINE([HAVE_CACOSH],[1],[libm includes cacosh])])
-AC_CHECK_LIB([m],[cacoshf],[AC_DEFINE([HAVE_CACOSHF],[1],[libm includes cacoshf])])
-AC_CHECK_LIB([m],[cacoshl],[AC_DEFINE([HAVE_CACOSHL],[1],[libm includes cacoshl])])
-AC_CHECK_LIB([m],[cacosl],[AC_DEFINE([HAVE_CACOSL],[1],[libm includes cacosl])])
-AC_CHECK_LIB([m],[casin],[AC_DEFINE([HAVE_CASIN],[1],[libm includes casin])])
-AC_CHECK_LIB([m],[casinf],[AC_DEFINE([HAVE_CASINF],[1],[libm includes casinf])])
-AC_CHECK_LIB([m],[casinh],[AC_DEFINE([HAVE_CASINH],[1],[libm includes casinh])])
-AC_CHECK_LIB([m],[casinhf],[AC_DEFINE([HAVE_CASINHF],[1],[libm includes casinhf])])
-AC_CHECK_LIB([m],[casinhl],[AC_DEFINE([HAVE_CASINHL],[1],[libm includes casinhl])])
-AC_CHECK_LIB([m],[casinl],[AC_DEFINE([HAVE_CASINL],[1],[libm includes casinl])])
-AC_CHECK_LIB([m],[catan],[AC_DEFINE([HAVE_CATAN],[1],[libm includes catan])])
-AC_CHECK_LIB([m],[catanf],[AC_DEFINE([HAVE_CATANF],[1],[libm includes catanf])])
-AC_CHECK_LIB([m],[catanh],[AC_DEFINE([HAVE_CATANH],[1],[libm includes catanh])])
-AC_CHECK_LIB([m],[catanhf],[AC_DEFINE([HAVE_CATANHF],[1],[libm includes catanhf])])
-AC_CHECK_LIB([m],[catanhl],[AC_DEFINE([HAVE_CATANHL],[1],[libm includes catanhl])])
-AC_CHECK_LIB([m],[catanl],[AC_DEFINE([HAVE_CATANL],[1],[libm includes catanl])])
+GCC_CHECK_MATH_FUNC([cacos])
+GCC_CHECK_MATH_FUNC([cacosf])
+GCC_CHECK_MATH_FUNC([cacosh])
+GCC_CHECK_MATH_FUNC([cacoshf])
+GCC_CHECK_MATH_FUNC([cacoshl])
+GCC_CHECK_MATH_FUNC([cacosl])
+GCC_CHECK_MATH_FUNC([casin])
+GCC_CHECK_MATH_FUNC([casinf])
+GCC_CHECK_MATH_FUNC([casinh])
+GCC_CHECK_MATH_FUNC([casinhf])
+GCC_CHECK_MATH_FUNC([casinhl])
+GCC_CHECK_MATH_FUNC([casinl])
+GCC_CHECK_MATH_FUNC([catan])
+GCC_CHECK_MATH_FUNC([catanf])
+GCC_CHECK_MATH_FUNC([catanh])
+GCC_CHECK_MATH_FUNC([catanhf])
+GCC_CHECK_MATH_FUNC([catanhl])
+GCC_CHECK_MATH_FUNC([catanl])
 
 # On AIX, clog is present in libm as __clog
 AC_CHECK_LIB([m],[__clog],[AC_DEFINE([HAVE_CLOG],[1],[libm includes clog])])
@@ -463,9 +504,6 @@ LIBGFOR_CHECK_WORKING_STAT
 
 # Check whether __mingw_snprintf() is present
 LIBGFOR_CHECK_MINGW_SNPRINTF
-
-# Check for a broken powf implementation
-LIBGFOR_CHECK_FOR_BROKEN_POWF
 
 # Check whether libquadmath should be used
 AC_ARG_ENABLE(libquadmath-support,
@@ -484,12 +522,12 @@ LIBGFOR_CHECK_FLOAT128
 # Check for GNU libc feenableexcept
 AC_CHECK_LIB([m],[feenableexcept],[have_feenableexcept=yes AC_DEFINE([HAVE_FEENABLEEXCEPT],[1],[libm includes feenableexcept])])
 
-# At least for glibc and Tru64, clock_gettime is in librt.  But don't
+# At least for glibc, clock_gettime is in librt.  But don't
 # pull that in if it still doesn't give us the function we want.  This
 # test is copied from libgomp, and modified to not link in -lrt as
 # libgfortran calls clock_gettime via a weak reference if it's found
 # in librt.
-if test $ac_cv_func_clock_gettime = no; then
+if test "$ac_cv_func_clock_gettime" = no; then
   AC_CHECK_LIB(rt, clock_gettime,
     [AC_DEFINE(HAVE_CLOCK_GETTIME_LIBRT, 1,
                [Define to 1 if you have the `clock_gettime' function in librt.])])
@@ -497,18 +535,42 @@ fi
 
 # Check for SysV fpsetmask
 LIBGFOR_CHECK_FPSETMASK
+AC_CHECK_TYPES([fp_except,fp_except_t], [], [], [[
+#ifdef HAVE_IEEEFP_H
+#include <ieeefp.h>
+#endif
+#include <math.h>
+]])
+AC_CHECK_TYPES([fp_rnd,fp_rnd_t], [], [], [[
+#ifdef HAVE_IEEEFP_H
+#include <ieeefp.h>
+#endif
+#include <math.h>
+]])
+
+# Check whether we have fpsetsticky or fpresetsticky
+AC_CHECK_FUNC([fpsetsticky],[have_fpsetsticky=yes AC_DEFINE([HAVE_FPSETSTICKY],[1],[fpsetsticky is present])])
+AC_CHECK_FUNC([fpresetsticky],[have_fpresetsticky=yes AC_DEFINE([HAVE_FPRESETSTICKY],[1],[fpresetsticky is present])])
 
 # Check for AIX fp_trap and fp_enable
 AC_CHECK_FUNC([fp_trap],[have_fp_trap=yes AC_DEFINE([HAVE_FP_TRAP],[1],[fp_trap is present])])
 AC_CHECK_FUNC([fp_enable],[have_fp_enable=yes AC_DEFINE([HAVE_FP_ENABLE],[1],[fp_enable is present])])
+
+# Check if _SOFT_FLOAT is defined
+AC_CHECK_DEFINE([_SOFT_FLOAT],[have_soft_float=yes])
 
 # Runs configure.host to set up necessary host-dependent shell variables.
 # We then display a message about it, and propagate them through the
 # build chain.
 . ${srcdir}/configure.host
 AC_MSG_NOTICE([FPU dependent file will be ${fpu_host}.h])
+AC_MSG_NOTICE([Support for IEEE modules: ${ieee_support}])
 FPU_HOST_HEADER=config/${fpu_host}.h
 AC_SUBST(FPU_HOST_HEADER)
+
+# Whether we will build the IEEE modules
+AM_CONDITIONAL(IEEE_SUPPORT,[test x${ieee_support} = xyes])
+AC_SUBST(IEEE_SUPPORT)
 
 # Some targets require additional compiler options for IEEE compatibility.
 IEEE_FLAGS="${ieee_flags}"
@@ -536,7 +598,6 @@ fi
 
 # Check out attribute support.
 LIBGFOR_CHECK_ATTRIBUTE_VISIBILITY
-LIBGFOR_CHECK_ATTRIBUTE_DLLEXPORT
 LIBGFOR_CHECK_ATTRIBUTE_ALIAS
 
 # Check out sync builtins support.
@@ -545,14 +606,26 @@ LIBGFOR_CHECK_SYNC_FETCH_AND_ADD
 # Check out #pragma weak.
 LIBGFOR_GTHREAD_WEAK
 
+# Check out weakref support.
+LIBGFOR_CHECK_WEAKREF
+
 # Various other checks on target
 LIBGFOR_CHECK_UNLINK_OPEN_FILE
 
 # Check whether line terminator is LF or CRLF
 LIBGFOR_CHECK_CRLF
 
-# Check whether we have _Unwind_GetIPInfo for backtrace
-GCC_CHECK_UNWIND_GETIPINFO
+# Check whether we support AVX extensions
+LIBGFOR_CHECK_AVX
+
+# Check wether we support AVX2 extensions
+LIBGFOR_CHECK_AVX2
+
+# Check wether we support AVX512f extensions
+LIBGFOR_CHECK_AVX512F
+
+# Determine what GCC version number to use in filesystem paths.
+GCC_BASE_VER
 
 AC_CACHE_SAVE
 

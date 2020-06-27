@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build darwin freebsd linux netbsd openbsd plan9
+// +build darwin dragonfly freebsd linux nacl netbsd openbsd solaris
 
 package mime
 
@@ -11,6 +11,10 @@ import (
 	"os"
 	"strings"
 )
+
+func init() {
+	osInitMime = initMimeUnix
+}
 
 var typeFiles = []string{
 	"/etc/mime.types",
@@ -23,15 +27,11 @@ func loadMimeFile(filename string) {
 	if err != nil {
 		return
 	}
+	defer f.Close()
 
-	reader := bufio.NewReader(f)
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			f.Close()
-			return
-		}
-		fields := strings.Fields(line)
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
 		if len(fields) <= 1 || fields[0][0] == '#' {
 			continue
 		}
@@ -43,18 +43,21 @@ func loadMimeFile(filename string) {
 			setExtensionType("."+ext, mimeType)
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		panic(err)
+	}
 }
 
-func initMime() {
+func initMimeUnix() {
 	for _, filename := range typeFiles {
 		loadMimeFile(filename)
 	}
 }
 
 func initMimeForTests() map[string]string {
-	typeFiles = []string{"test.types"}
+	typeFiles = []string{"testdata/test.types"}
 	return map[string]string{
-		".t1":  "application/test",
+		".T1":  "application/test",
 		".t2":  "text/test; charset=utf-8",
 		".png": "image/png",
 	}

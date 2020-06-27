@@ -8,6 +8,7 @@ package cgi
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -16,10 +17,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -30,15 +31,22 @@ func newRequest(httpreq string) *http.Request {
 	if err != nil {
 		panic("cgi: bogus http request in test: " + httpreq)
 	}
-	req.RemoteAddr = "1.2.3.4"
+	req.RemoteAddr = "1.2.3.4:1234"
 	return req
 }
 
-func runCgiTest(t *testing.T, h *Handler, httpreq string, expectedMap map[string]string) *httptest.ResponseRecorder {
+func runCgiTest(t *testing.T, h *Handler,
+	httpreq string,
+	expectedMap map[string]string, checks ...func(reqInfo map[string]string)) *httptest.ResponseRecorder {
 	rw := httptest.NewRecorder()
 	req := newRequest(httpreq)
 	h.ServeHTTP(rw, req)
+	runResponseChecks(t, rw, expectedMap, checks...)
+	return rw
+}
 
+func runResponseChecks(t *testing.T, rw *httptest.ResponseRecorder,
+	expectedMap map[string]string, checks ...func(reqInfo map[string]string)) {
 	// Make a map to hold the test map that the CGI returns.
 	m := make(map[string]string)
 	m["_body"] = rw.Body.String()
@@ -63,17 +71,27 @@ readlines:
 	}
 
 	for key, expected := range expectedMap {
-		if got := m[key]; got != expected {
+		got := m[key]
+		if key == "cwd" {
+			// For Windows. golang.org/issue/4645.
+			fi1, _ := os.Stat(got)
+			fi2, _ := os.Stat(expected)
+			if os.SameFile(fi1, fi2) {
+				got = expected
+			}
+		}
+		if got != expected {
 			t.Errorf("for key %q got %q; expected %q", key, got, expected)
 		}
 	}
-	return rw
+	for _, check := range checks {
+		check(m)
+	}
 }
 
-var cgiTested = false
-var cgiWorks bool
+var cgiTested, cgiWorks bool
 
-func skipTest(t *testing.T) bool {
+func check(t *testing.T) {
 	if !cgiTested {
 		cgiTested = true
 		cgiWorks = exec.Command("./testdata/test.cgi").Run() == nil
@@ -81,16 +99,12 @@ func skipTest(t *testing.T) bool {
 	if !cgiWorks {
 		// No Perl on Windows, needed by test.cgi
 		// TODO: make the child process be Go, not Perl.
-		t.Logf("Skipping test: test.cgi failed.")
-		return true
+		t.Skip("Skipping test: test.cgi failed.")
 	}
-	return false
 }
 
 func TestCGIBasicGet(t *testing.T) {
-	if skipTest(t) {
-		return
-	}
+	check(t)
 	h := &Handler{
 		Path: "testdata/test.cgi",
 		Root: "/test.cgi",
@@ -105,6 +119,7 @@ func TestCGIBasicGet(t *testing.T) {
 		"env-QUERY_STRING":      "foo=bar&a=b",
 		"env-REMOTE_ADDR":       "1.2.3.4",
 		"env-REMOTE_HOST":       "1.2.3.4",
+		"env-REMOTE_PORT":       "1234",
 		"env-REQUEST_METHOD":    "GET",
 		"env-REQUEST_URI":       "/test.cgi?foo=bar&a=b",
 		"env-SCRIPT_FILENAME":   "testdata/test.cgi",
@@ -123,10 +138,41 @@ func TestCGIBasicGet(t *testing.T) {
 	}
 }
 
-func TestCGIBasicGetAbsPath(t *testing.T) {
-	if skipTest(t) {
-		return
+func TestCGIEnvIPv6(t *testing.T) {
+	check(t)
+	h := &Handler{
+		Path: "testdata/test.cgi",
+		Root: "/test.cgi",
 	}
+	expectedMap := map[string]string{
+		"test":                  "Hello CGI",
+		"param-a":               "b",
+		"param-foo":             "bar",
+		"env-GATEWAY_INTERFACE": "CGI/1.1",
+		"env-HTTP_HOST":         "example.com",
+		"env-PATH_INFO":         "",
+		"env-QUERY_STRING":      "foo=bar&a=b",
+		"env-REMOTE_ADDR":       "2000::3000",
+		"env-REMOTE_HOST":       "2000::3000",
+		"env-REMOTE_PORT":       "12345",
+		"env-REQUEST_METHOD":    "GET",
+		"env-REQUEST_URI":       "/test.cgi?foo=bar&a=b",
+		"env-SCRIPT_FILENAME":   "testdata/test.cgi",
+		"env-SCRIPT_NAME":       "/test.cgi",
+		"env-SERVER_NAME":       "example.com",
+		"env-SERVER_PORT":       "80",
+		"env-SERVER_SOFTWARE":   "go",
+	}
+
+	rw := httptest.NewRecorder()
+	req := newRequest("GET /test.cgi?foo=bar&a=b HTTP/1.0\nHost: example.com\n\n")
+	req.RemoteAddr = "[2000::3000]:12345"
+	h.ServeHTTP(rw, req)
+	runResponseChecks(t, rw, expectedMap)
+}
+
+func TestCGIBasicGetAbsPath(t *testing.T) {
+	check(t)
 	pwd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd error: %v", err)
@@ -144,9 +190,7 @@ func TestCGIBasicGetAbsPath(t *testing.T) {
 }
 
 func TestPathInfo(t *testing.T) {
-	if skipTest(t) {
-		return
-	}
+	check(t)
 	h := &Handler{
 		Path: "testdata/test.cgi",
 		Root: "/test.cgi",
@@ -163,9 +207,7 @@ func TestPathInfo(t *testing.T) {
 }
 
 func TestPathInfoDirRoot(t *testing.T) {
-	if skipTest(t) {
-		return
-	}
+	check(t)
 	h := &Handler{
 		Path: "testdata/test.cgi",
 		Root: "/myscript/",
@@ -181,9 +223,7 @@ func TestPathInfoDirRoot(t *testing.T) {
 }
 
 func TestDupHeaders(t *testing.T) {
-	if skipTest(t) {
-		return
-	}
+	check(t)
 	h := &Handler{
 		Path: "testdata/test.cgi",
 	}
@@ -202,10 +242,33 @@ func TestDupHeaders(t *testing.T) {
 		expectedMap)
 }
 
-func TestPathInfoNoRoot(t *testing.T) {
-	if skipTest(t) {
-		return
+// Issue 16405: CGI+http.Transport differing uses of HTTP_PROXY.
+// Verify we don't set the HTTP_PROXY environment variable.
+// Hope nobody was depending on it. It's not a known header, though.
+func TestDropProxyHeader(t *testing.T) {
+	check(t)
+	h := &Handler{
+		Path: "testdata/test.cgi",
 	}
+	expectedMap := map[string]string{
+		"env-REQUEST_URI":     "/myscript/bar?a=b",
+		"env-SCRIPT_FILENAME": "testdata/test.cgi",
+		"env-HTTP_X_FOO":      "a",
+	}
+	runCgiTest(t, h, "GET /myscript/bar?a=b HTTP/1.0\n"+
+		"X-Foo: a\n"+
+		"Proxy: should_be_stripped\n"+
+		"Host: example.com\n\n",
+		expectedMap,
+		func(reqInfo map[string]string) {
+			if v, ok := reqInfo["env-HTTP_PROXY"]; ok {
+				t.Errorf("HTTP_PROXY = %q; should be absent", v)
+			}
+		})
+}
+
+func TestPathInfoNoRoot(t *testing.T) {
+	check(t)
 	h := &Handler{
 		Path: "testdata/test.cgi",
 		Root: "",
@@ -221,9 +284,7 @@ func TestPathInfoNoRoot(t *testing.T) {
 }
 
 func TestCGIBasicPost(t *testing.T) {
-	if skipTest(t) {
-		return
-	}
+	check(t)
 	postReq := `POST /test.cgi?a=b HTTP/1.0
 Host: example.com
 Content-Type: application/x-www-form-urlencoded
@@ -250,9 +311,7 @@ func chunk(s string) string {
 
 // The CGI spec doesn't allow chunked requests.
 func TestCGIPostChunked(t *testing.T) {
-	if skipTest(t) {
-		return
-	}
+	check(t)
 	postReq := `POST /test.cgi?a=b HTTP/1.1
 Host: example.com
 Content-Type: application/x-www-form-urlencoded
@@ -273,9 +332,7 @@ Transfer-Encoding: chunked
 }
 
 func TestRedirect(t *testing.T) {
-	if skipTest(t) {
-		return
-	}
+	check(t)
 	h := &Handler{
 		Path: "testdata/test.cgi",
 		Root: "/test.cgi",
@@ -290,9 +347,7 @@ func TestRedirect(t *testing.T) {
 }
 
 func TestInternalRedirect(t *testing.T) {
-	if skipTest(t) {
-		return
-	}
+	check(t)
 	baseHandler := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		fmt.Fprintf(rw, "basepath=%s\n", req.URL.Path)
 		fmt.Fprintf(rw, "remoteaddr=%s\n", req.RemoteAddr)
@@ -304,7 +359,7 @@ func TestInternalRedirect(t *testing.T) {
 	}
 	expectedMap := map[string]string{
 		"basepath":   "/foo",
-		"remoteaddr": "1.2.3.4",
+		"remoteaddr": "1.2.3.4:1234",
 	}
 	runCgiTest(t, h, "GET /test.cgi?loc=/foo HTTP/1.0\nHost: example.com\n\n", expectedMap)
 }
@@ -312,8 +367,9 @@ func TestInternalRedirect(t *testing.T) {
 // TestCopyError tests that we kill the process if there's an error copying
 // its output. (for example, from the client having gone away)
 func TestCopyError(t *testing.T) {
-	if skipTest(t) || runtime.GOOS == "windows" {
-		return
+	check(t)
+	if runtime.GOOS == "windows" {
+		t.Skipf("skipping test on %q", runtime.GOOS)
 	}
 	h := &Handler{
 		Path: "testdata/test.cgi",
@@ -353,11 +409,7 @@ func TestCopyError(t *testing.T) {
 	}
 
 	childRunning := func() bool {
-		p, err := os.FindProcess(pid)
-		if err != nil {
-			return false
-		}
-		return p.Signal(syscall.Signal(0)) == nil
+		return isProcessRunning(t, pid)
 	}
 
 	if !childRunning() {
@@ -376,10 +428,10 @@ func TestCopyError(t *testing.T) {
 }
 
 func TestDirUnix(t *testing.T) {
-	if skipTest(t) || runtime.GOOS == "windows" {
-		return
+	check(t)
+	if runtime.GOOS == "windows" {
+		t.Skipf("skipping test on %q", runtime.GOOS)
 	}
-
 	cwd, _ := os.Getwd()
 	h := &Handler{
 		Path: "testdata/test.cgi",
@@ -405,8 +457,8 @@ func TestDirUnix(t *testing.T) {
 }
 
 func TestDirWindows(t *testing.T) {
-	if skipTest(t) || runtime.GOOS != "windows" {
-		return
+	if runtime.GOOS != "windows" {
+		t.Skip("Skipping windows specific test.")
 	}
 
 	cgifile, _ := filepath.Abs("testdata/test.cgi")
@@ -415,7 +467,7 @@ func TestDirWindows(t *testing.T) {
 	var err error
 	perl, err = exec.LookPath("perl")
 	if err != nil {
-		return
+		t.Skip("Skipping test: perl not found.")
 	}
 	perl, _ = filepath.Abs(perl)
 
@@ -457,7 +509,7 @@ func TestEnvOverride(t *testing.T) {
 	var err error
 	perl, err = exec.LookPath("perl")
 	if err != nil {
-		return
+		t.Skipf("Skipping test: perl not found.")
 	}
 	perl, _ = filepath.Abs(perl)
 
@@ -469,12 +521,53 @@ func TestEnvOverride(t *testing.T) {
 		Args: []string{cgifile},
 		Env: []string{
 			"SCRIPT_FILENAME=" + cgifile,
-			"REQUEST_URI=/foo/bar"},
+			"REQUEST_URI=/foo/bar",
+			"PATH=/wibble"},
 	}
 	expectedMap := map[string]string{
 		"cwd": cwd,
 		"env-SCRIPT_FILENAME": cgifile,
 		"env-REQUEST_URI":     "/foo/bar",
+		"env-PATH":            "/wibble",
 	}
 	runCgiTest(t, h, "GET /test.cgi HTTP/1.0\nHost: example.com\n\n", expectedMap)
+}
+
+func TestHandlerStderr(t *testing.T) {
+	check(t)
+	var stderr bytes.Buffer
+	h := &Handler{
+		Path:   "testdata/test.cgi",
+		Root:   "/test.cgi",
+		Stderr: &stderr,
+	}
+
+	rw := httptest.NewRecorder()
+	req := newRequest("GET /test.cgi?writestderr=1 HTTP/1.0\nHost: example.com\n\n")
+	h.ServeHTTP(rw, req)
+	if got, want := stderr.String(), "Hello, stderr!\n"; got != want {
+		t.Errorf("Stderr = %q; want %q", got, want)
+	}
+}
+
+func TestRemoveLeadingDuplicates(t *testing.T) {
+	tests := []struct {
+		env  []string
+		want []string
+	}{
+		{
+			env:  []string{"a=b", "b=c", "a=b2"},
+			want: []string{"b=c", "a=b2"},
+		},
+		{
+			env:  []string{"a=b", "b=c", "d", "e=f"},
+			want: []string{"a=b", "b=c", "d", "e=f"},
+		},
+	}
+	for _, tt := range tests {
+		got := removeLeadingDuplicates(tt.env)
+		if !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("removeLeadingDuplicates(%q) = %q; want %q", tt.env, got, tt.want)
+		}
+	}
 }

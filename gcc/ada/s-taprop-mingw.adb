@@ -6,7 +6,7 @@
 --                                                                          --
 --                                  B o d y                                 --
 --                                                                          --
---          Copyright (C) 1992-2012, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNARL is free software; you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -157,10 +157,18 @@ package body System.Task_Primitives.Operations is
 
    package body Specific is
 
+      -------------------
+      -- Is_Valid_Task --
+      -------------------
+
       function Is_Valid_Task return Boolean is
       begin
          return TlsGetValue (TlsIndex) /= System.Null_Address;
       end Is_Valid_Task;
+
+      ---------
+      -- Set --
+      ---------
 
       procedure Set (Self_Id : Task_Id) is
          Succeeded : BOOL;
@@ -716,57 +724,30 @@ package body System.Task_Primitives.Operations is
    -- Set_Priority --
    ------------------
 
-   type Prio_Array_Type is array (System.Any_Priority) of Integer;
-   pragma Atomic_Components (Prio_Array_Type);
-
-   Prio_Array : Prio_Array_Type;
-   --  Global array containing the id of the currently running task for
-   --  each priority.
-   --
-   --  Note: we assume that we are on a single processor with run-til-blocked
-   --  scheduling.
-
    procedure Set_Priority
      (T                   : Task_Id;
       Prio                : System.Any_Priority;
       Loss_Of_Inheritance : Boolean := False)
    is
-      Res        : BOOL;
-      Array_Item : Integer;
+      Res : BOOL;
+      pragma Unreferenced (Loss_Of_Inheritance);
 
    begin
-      Res := SetThreadPriority
-        (T.Common.LL.Thread, Interfaces.C.int (Underlying_Priorities (Prio)));
+      Res :=
+        SetThreadPriority
+          (T.Common.LL.Thread,
+           Interfaces.C.int (Underlying_Priorities (Prio)));
       pragma Assert (Res = Win32.TRUE);
 
-      if Dispatching_Policy = 'F' or else Get_Policy (Prio) = 'F' then
+      --  Note: Annex D (RM D.2.3(5/2)) requires the task to be placed at the
+      --  head of its priority queue when decreasing its priority as a result
+      --  of a loss of inherited priority. This is not the case, but we
+      --  consider it an acceptable variation (RM 1.1.3(6)), given this is
+      --  the built-in behavior offered by the Windows operating system.
 
-         --  Annex D requirement [RM D.2.2 par. 9]:
-         --    If the task drops its priority due to the loss of inherited
-         --    priority, it is added at the head of the ready queue for its
-         --    new active priority.
-
-         if Loss_Of_Inheritance
-           and then Prio < T.Common.Current_Priority
-         then
-            Array_Item := Prio_Array (T.Common.Base_Priority) + 1;
-            Prio_Array (T.Common.Base_Priority) := Array_Item;
-
-            loop
-               --  Let some processes a chance to arrive
-
-               Yield;
-
-               --  Then wait for our turn to proceed
-
-               exit when Array_Item = Prio_Array (T.Common.Base_Priority)
-                 or else Prio_Array (T.Common.Base_Priority) = 1;
-            end loop;
-
-            Prio_Array (T.Common.Base_Priority) :=
-              Prio_Array (T.Common.Base_Priority) - 1;
-         end if;
-      end if;
+      --  In older versions we attempted to better approximate the Annex D
+      --  required behavior, but this simulation was not entirely accurate,
+      --  and it seems better to live with the standard Windows semantics.
 
       T.Common.Current_Priority := Prio;
    end Set_Priority;
@@ -788,13 +769,9 @@ package body System.Task_Primitives.Operations is
    --  1) from System.Task_Primitives.Operations.Initialize
    --  2) from System.Tasking.Stages.Task_Wrapper
 
-   --  The thread initialisation has to be done only for the first case
-
-   --  This is because the GetCurrentThread NT call does not return the real
-   --  thread handler but only a "pseudo" one. It is not possible to release
-   --  the thread handle and free the system resources from this "pseudo"
-   --  handle. So we really want to keep the real thread handle set in
-   --  System.Task_Primitives.Operations.Create_Task during thread creation.
+   --  The pseudo handle (LL.Thread) need not be closed when it is no
+   --  longer needed. Calling the CloseHandle function with this handle
+   --  has no effect.
 
    procedure Enter_Task (Self_ID : Task_Id) is
       procedure Get_Stack_Bounds (Base : Address; Limit : Address);
@@ -814,6 +791,7 @@ package body System.Task_Primitives.Operations is
          raise Invalid_CPU_Number;
       end if;
 
+      Self_ID.Common.LL.Thread    := GetCurrentThread;
       Self_ID.Common.LL.Thread_Id := GetCurrentThreadId;
 
       Get_Stack_Bounds
@@ -914,8 +892,8 @@ package body System.Task_Primitives.Operations is
             DWORD (Stack_Size),
             Entry_Point,
             pTaskParameter,
-            DWORD (Create_Suspended) or
-              DWORD (Stack_Size_Param_Is_A_Reservation),
+            DWORD (Create_Suspended)
+              or DWORD (Stack_Size_Param_Is_A_Reservation),
             TaskId'Unchecked_Access);
       else
          hTask := CreateThread
@@ -1056,7 +1034,6 @@ package body System.Task_Primitives.Operations is
 
    procedure Initialize (Environment_Task : Task_Id) is
       Discard : BOOL;
-      pragma Unreferenced (Discard);
 
    begin
       Environment_Task_Id := Environment_Task;
@@ -1096,16 +1073,22 @@ package body System.Task_Primitives.Operations is
    -- Monotonic_Clock --
    ---------------------
 
-   function Monotonic_Clock return Duration
-     renames System.OS_Primitives.Monotonic_Clock;
+   function Monotonic_Clock return Duration is
+      function Internal_Clock return Duration;
+      pragma Import (Ada, Internal_Clock, "__gnat_monotonic_clock");
+   begin
+      return Internal_Clock;
+   end Monotonic_Clock;
 
    -------------------
    -- RT_Resolution --
    -------------------
 
    function RT_Resolution return Duration is
+      Ticks_Per_Second : aliased LARGE_INTEGER;
    begin
-      return 0.000_001; --  1 micro-second
+      QueryPerformanceFrequency (Ticks_Per_Second'Access);
+      return Duration (1.0 / Ticks_Per_Second);
    end RT_Resolution;
 
    ----------------

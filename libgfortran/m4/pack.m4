@@ -1,8 +1,8 @@
 `/* Specific implementation of the PACK intrinsic
-   Copyright (C) 2002, 2004, 2005, 2006, 2007, 2008, 2009 Free Software Foundation, Inc.
+   Copyright (C) 2002-2017 Free Software Foundation, Inc.
    Contributed by Paul Brook <paul@nowt.org>
 
-This file is part of the GNU Fortran 95 runtime library (libgfortran).
+This file is part of the GNU Fortran runtime library (libgfortran).
 
 Libgfortran is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public
@@ -24,8 +24,6 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 <http://www.gnu.org/licenses/>.  */
 
 #include "libgfortran.h"
-#include <stdlib.h>
-#include <assert.h>
 #include <string.h>'
 
 include(iparm.m4)dnl
@@ -99,7 +97,7 @@ pack_'rtype_code` ('rtype` *ret, const 'rtype` *array,
 
   dim = GFC_DESCRIPTOR_RANK (array);
 
-  mptr = mask->data;
+  mptr = mask->base_addr;
 
   /* Use the same loop for all logical types, by using GFC_LOGICAL_1
      and using shifting to address size and endian issues.  */
@@ -137,9 +135,9 @@ pack_'rtype_code` ('rtype` *ret, const 'rtype` *array,
   if (zero_sized)
     sptr = NULL;
   else
-    sptr = array->data;
+    sptr = array->base_addr;
 
-  if (ret->data == NULL || unlikely (compile_options.bounds_check))
+  if (ret->base_addr == NULL || unlikely (compile_options.bounds_check))
     {
       /* Count the elements, either for allocating memory or
 	 for bounds checking.  */
@@ -161,15 +159,15 @@ pack_'rtype_code` ('rtype` *ret, const 'rtype` *array,
 	  total = count_0 (mask);
         }
 
-      if (ret->data == NULL)
+      if (ret->base_addr == NULL)
 	{
 	  /* Setup the array descriptor.  */
 	  GFC_DIMENSION_SET(ret->dim[0], 0, total-1, 1);
 
 	  ret->offset = 0;
 
-	  /* internal_malloc_size allocates a single byte for zero size.  */
-	  ret->data = internal_malloc_size (sizeof ('rtype_name`) * total);
+	  /* xmallocarray allocates a single byte for zero size.  */
+	  ret->base_addr = xmallocarray (total, sizeof ('rtype_name`));
 
 	  if (total == 0)
 	    return;
@@ -192,7 +190,7 @@ pack_'rtype_code` ('rtype` *ret, const 'rtype` *array,
     rstride0 = 1;
   sstride0 = sstride[0];
   mstride0 = mstride[0];
-  rptr = ret->data;
+  rptr = ret->base_addr;
 
   while (sptr && mptr)
     {
@@ -237,14 +235,14 @@ pack_'rtype_code` ('rtype` *ret, const 'rtype` *array,
   if (vector)
     {
       n = GFC_DESCRIPTOR_EXTENT(vector,0);
-      nelem = ((rptr - ret->data) / rstride0);
+      nelem = ((rptr - ret->base_addr) / rstride0);
       if (n > nelem)
         {
           sstride0 = GFC_DESCRIPTOR_STRIDE(vector,0);
           if (sstride0 == 0)
             sstride0 = 1;
 
-          sptr = vector->data + sstride0 * nelem;
+          sptr = vector->base_addr + sstride0 * nelem;
           n -= nelem;
           while (n--)
             {

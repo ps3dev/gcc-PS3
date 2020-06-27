@@ -1,7 +1,6 @@
 ! { dg-do compile }
+! { dg-compile-aux-modules "whole_file_30.f90" }
 ! Test the fix for the problem described in PR46818.
-! Note that the module file from whole_file_30.f90, 'system_defs_m',
-! is needed for this test.
 !
 ! Contributed by Martien Hulsen  <m.a.hulsen@tue.nl>
 ! and reduced by Tobias Burnus  <burnus@gcc.gnu.org>
@@ -18,4 +17,4 @@ program t
   type(sysvector_t), target :: sol
   solution => sol
 end program t
-! { dg-final { cleanup-modules "system_defs_m convecreac_m" } }
+! { dg-final { cleanup-modules "system_defs_m" } }

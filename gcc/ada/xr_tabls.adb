@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1998-2010, Free Software Foundation, Inc.         --
+--          Copyright (C) 1998-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -25,7 +25,6 @@
 
 with Types;    use Types;
 with Osint;
-with Hostparm;
 
 with Ada.Unchecked_Conversion;
 with Ada.Unchecked_Deallocation;
@@ -223,6 +222,7 @@ package body Xr_Tabls is
       Line         : Natural;
       Column       : Natural;
       Decl_Type    : Character;
+      Is_Parameter : Boolean := False;
       Remove_Only  : Boolean := False;
       Symbol_Match : Boolean := True)
       return         Declaration_Reference
@@ -235,7 +235,7 @@ package body Xr_Tabls is
       New_Decl : Declaration_Reference :=
                    Entities_HTable.Get (Key'Unchecked_Access);
 
-      Is_Parameter : Boolean := False;
+      Is_Param : Boolean := Is_Parameter;
 
    begin
       --  Insert the Declaration in the table. There might already be a
@@ -243,7 +243,7 @@ package body Xr_Tabls is
       --  need to check that first.
 
       if New_Decl /= null and then New_Decl.Symbol_Length = 0 then
-         Is_Parameter := New_Decl.Is_Parameter;
+         Is_Param := Is_Parameter or else New_Decl.Is_Parameter;
          Entities_HTable.Remove (Key'Unrestricted_Access);
          Entities_Count := Entities_Count - 1;
          Free (New_Decl.Key);
@@ -269,7 +269,7 @@ package body Xr_Tabls is
                                       Column        => Column,
                                       Source_Line   => null,
                                       Next          => null),
-              Is_Parameter  => Is_Parameter,
+              Is_Parameter  => Is_Param,
               Decl_Type     => Decl_Type,
               Body_Ref      => null,
               Ref_Ref       => null,
@@ -294,6 +294,10 @@ package body Xr_Tabls is
       then
          New_Decl.Match := Default_Match
            or else Match (File_Ref, Line, Column);
+         New_Decl.Is_Parameter := New_Decl.Is_Parameter or Is_Param;
+
+      elsif New_Decl /= null then
+         New_Decl.Is_Parameter := New_Decl.Is_Parameter or Is_Param;
       end if;
 
       return New_Decl;
@@ -392,11 +396,13 @@ package body Xr_Tabls is
       Labels_As_Ref : Boolean)
    is
       New_Ref : Reference;
+      New_Decl : Declaration_Reference;
+      pragma Unreferenced (New_Decl);
 
    begin
       case Ref_Type is
-         when 'b' | 'c' | 'H' | 'm' | 'o' | 'r' | 'R' |
-              's' | 'i' | ' ' | 'x' =>
+         when ' ' | 'b' | 'c' | 'H' | 'i' | 'm' | 'o' | 'r' | 'R' | 's' | 'x'
+         =>
             null;
 
          when 'l' | 'w' =>
@@ -406,42 +412,28 @@ package body Xr_Tabls is
 
          when '=' | '<' | '>' | '^' =>
 
-            --  Create a dummy declaration in the table to report it as a
-            --  parameter. Note that the current declaration for the subprogram
-            --  comes before the declaration of the parameter.
+            --  Create dummy declaration in table to report it as a parameter
 
-            declare
-               Key      : constant String :=
-                            Key_From_Ref (File_Ref, Line, Column);
-               New_Decl : Declaration_Reference;
+            --  In a given ALI file, the declaration of the subprogram comes
+            --  before the declaration of the parameter. However, it is
+            --  possible that another ALI file has been parsed that also
+            --  references the parameter (for instance a named parameter in
+            --  a call), so we need to check whether there already exists a
+            --  declaration for the parameter.
 
-            begin
-               New_Decl := new Declaration_Record'
-                 (Symbol_Length => 0,
-                  Symbol        => "",
-                  Key           => new String'(Key),
-                  Decl          => new Reference_Record'
-                                     (File          => File_Ref,
-                                      Line          => Line,
-                                      Column        => Column,
-                                      Source_Line   => null,
-                                      Next          => null),
-                  Is_Parameter  => True,
-                  Decl_Type     => ' ',
-                  Body_Ref      => null,
-                  Ref_Ref       => null,
-                  Modif_Ref     => null,
-                  Match         => False,
-                  Par_Symbol    => null,
-                  Next          => null);
-               Entities_HTable.Set (New_Decl);
-               Entities_Count := Entities_Count + 1;
-            end;
+            New_Decl :=
+              Add_Declaration
+                (File_Ref     => File_Ref,
+                 Symbol       => "",
+                 Line         => Line,
+                 Column       => Column,
+                 Decl_Type    => ' ',
+                 Is_Parameter => True);
 
-         when 'e' | 'z' | 't' | 'p' | 'P' | 'k' | 'd' =>
+         when 'd' | 'e' | 'E' | 'k' | 'p' | 'P' | 't' | 'z' =>
             return;
 
-         when others    =>
+         when others =>
             Ada.Text_IO.Put_Line ("Unknown reference type: " & Ref_Type);
             return;
       end case;
@@ -463,7 +455,7 @@ package body Xr_Tabls is
             New_Ref.Next          := Declaration.Body_Ref;
             Declaration.Body_Ref  := New_Ref;
 
-         when 'r' | 'R' | 's' | 'H' | 'i' | 'l' | 'o' | ' ' | 'x' | 'w' =>
+         when ' ' | 'H' | 'i' | 'l' | 'o' | 'r' | 'R' | 's' | 'w' | 'x' =>
             New_Ref.Next          := Declaration.Ref_Ref;
             Declaration.Ref_Ref   := New_Ref;
 
@@ -1144,13 +1136,7 @@ package body Xr_Tabls is
          Buffer (Read_Ptr) := EOF;
          Contents := new String'(Buffer (1 .. Read_Ptr));
 
-         --  Things are not simple on VMS due to the plethora of file types
-         --  and organizations. It seems clear that there shouldn't be more
-         --  bytes read than are contained in the file though.
-
-         if (Hostparm.OpenVMS and then Read_Ptr > Length + 1)
-           or else (not Hostparm.OpenVMS and then Read_Ptr /= Length + 1)
-         then
+         if Read_Ptr /= Length + 1 then
             raise Ada.Text_IO.End_Error;
          end if;
 

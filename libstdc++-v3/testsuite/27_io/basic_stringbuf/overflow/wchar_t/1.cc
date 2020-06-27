@@ -1,6 +1,6 @@
 // 2004-07-07  Paolo Carlini  <pcarlini@suse.de>
 
-// Copyright (C) 2004, 2009 Free Software Foundation, Inc.
+// Copyright (C) 2004-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -18,6 +18,12 @@
 // <http://www.gnu.org/licenses/>.
 
 // 27.7.1.3 basic_stringbuf overridden virtual functions.
+
+// { dg-options "-DMAX_SIZE=100000" { target simulator } }
+
+#ifndef MAX_SIZE
+#define MAX_SIZE 10000000
+#endif
 
 #include <sstream>
 #include <cstdlib>
@@ -37,8 +43,6 @@ data(unsigned len)
 void
 test01(unsigned iter)
 {
-  bool test __attribute__((unused)) = true;
-
   for (unsigned n = 1; n <= iter; n *= 10)
     {
       const wstring str = data(n);
@@ -51,6 +55,6 @@ test01(unsigned iter)
 
 int main()
 {
-  test01(10000000);
+  test01(MAX_SIZE);
   return 0;
 }

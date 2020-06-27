@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2015, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -72,17 +72,6 @@ package body Exception_Traces is
    --  latter case because Notify_Handled_Exception may be called for an
    --  actually unhandled occurrence in the Front-End-SJLJ case.
 
-   --------------------------------
-   -- Import Run-Time C Routines --
-   --------------------------------
-
-   --  The purpose of the following pragma Import is to ensure that we
-   --  generate appropriate subprogram descriptors for all C routines in
-   --  the standard GNAT library that can raise exceptions. This ensures
-   --  that the exception propagation can properly find these routines
-
-   pragma Propagate_Exceptions;
-
    ----------------------
    -- Notify_Exception --
    ----------------------
@@ -96,7 +85,11 @@ package body Exception_Traces is
       if not Excep.Id.Not_Handled_By_Others
         and then
           (Exception_Trace = Every_Raise
-            or else (Exception_Trace = Unhandled_Raise and then Is_Unhandled))
+            or else
+              (Is_Unhandled
+                and then
+                  (Exception_Trace = Unhandled_Raise
+                    or else Exception_Trace = Unhandled_Raise_In_Main)))
       then
          --  Exception trace messages need to be protected when several tasks
          --  can issue them at the same time.
@@ -104,13 +97,16 @@ package body Exception_Traces is
          Lock_Task.all;
          To_Stderr (Nline);
 
-         if Is_Unhandled then
-            To_Stderr ("Unhandled ");
+         if Exception_Trace /= Unhandled_Raise_In_Main then
+            if Is_Unhandled then
+               To_Stderr ("Unhandled ");
+            end if;
+
+            To_Stderr ("Exception raised");
+            To_Stderr (Nline);
          end if;
 
-         To_Stderr ("Exception raised");
-         To_Stderr (Nline);
-         To_Stderr (Tailored_Exception_Information (Excep.all));
+         To_Stderr (Exception_Information (Excep.all));
          Unlock_Task.all;
       end if;
 
@@ -132,18 +128,16 @@ package body Exception_Traces is
    -- Notify_Handled_Exception --
    ------------------------------
 
-   procedure Notify_Handled_Exception is
+   procedure Notify_Handled_Exception (Excep : EOA) is
    begin
-      Notify_Exception (Get_Current_Excep.all, Is_Unhandled => False);
+      Notify_Exception (Excep, Is_Unhandled => False);
    end Notify_Handled_Exception;
 
    --------------------------------
    -- Notify_Unhandled_Exception --
    --------------------------------
 
-   procedure Notify_Unhandled_Exception is
-      Excep : constant EOA := Get_Current_Excep.all;
-
+   procedure Notify_Unhandled_Exception (Excep : EOA) is
    begin
       --  Check whether there is any termination handler to be executed for
       --  the environment task, and execute it if needed. Here we handle both
@@ -161,15 +155,19 @@ package body Exception_Traces is
    -- Unhandled_Exception_Terminate --
    -----------------------------------
 
-   procedure Unhandled_Exception_Terminate is
-      Excep : constant EOA := Save_Occurrence (Get_Current_Excep.all.all);
+   procedure Unhandled_Exception_Terminate (Excep : EOA) is
+      Occ : Exception_Occurrence;
       --  This occurrence will be used to display a message after finalization.
       --  It is necessary to save a copy here, or else the designated value
       --  could be overwritten if an exception is raised during finalization
-      --  (even if that exception is caught).
+      --  (even if that exception is caught). The occurrence is saved on the
+      --  stack to avoid dynamic allocation (if this exception is due to lack
+      --  of space in the heap, we therefore avoid a second failure). We assume
+      --  that there is enough room on the stack however.
 
    begin
-      Last_Chance_Handler (Excep.all);
+      Save_Occurrence (Occ, Excep.all);
+      Last_Chance_Handler (Occ);
    end Unhandled_Exception_Terminate;
 
    ------------------------------------
@@ -179,8 +177,8 @@ package body Exception_Traces is
    --  The bulk of exception traces output is centralized in Notify_Exception,
    --  for both the Handled and Unhandled cases. Extra task specific output is
    --  triggered in the task wrapper for unhandled occurrences in tasks. It is
-   --  not performed in this unit to avoid dragging dependencies against the
-   --  tasking units here.
+   --  not performed in this unit to avoid dependencies on the tasking units
+   --  here.
 
    --  We used to rely on the output performed by Unhanded_Exception_Terminate
    --  for the case of an unhandled occurrence in the environment thread, and
@@ -199,13 +197,5 @@ package body Exception_Traces is
 
    --  Today's solution has the advantage of simplicity and better isolates
    --  the Exception_Traces machinery.
-
-   --  It currently outputs the information about unhandled exceptions twice
-   --  in the environment thread, once in the notification routine and once in
-   --  the termination routine. Avoiding the second output is possible but so
-   --  far has been considered undesirable. It would mean changing the order
-   --  of outputs between the two runs with or without exception traces, while
-   --  it seems preferable to only have additional outputs in the former
-   --  case.
 
 end Exception_Traces;

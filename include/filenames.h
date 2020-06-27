@@ -5,7 +5,7 @@
    use forward- and back-slash in path names interchangeably, and
    some of them have case-insensitive file names.
 
-   Copyright 2000, 2001, 2007, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2000-2017 Free Software Foundation, Inc.
 
 This file is part of BFD, the Binary File Descriptor library.
 
@@ -25,6 +25,8 @@ Foundation, Inc., 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA. 
 
 #ifndef FILENAMES_H
 #define FILENAMES_H
+
+#include "hashtab.h" /* for hashval_t */
 
 #ifdef __cplusplus
 extern "C" {
@@ -83,6 +85,12 @@ extern int filename_cmp (const char *s1, const char *s2);
 
 extern int filename_ncmp (const char *s1, const char *s2,
 			  size_t n);
+
+extern hashval_t filename_hash (const void *s);
+
+extern int filename_eq (const void *s1, const void *s2);
+
+extern int canonical_filename_eq (const char *a, const char *b);
 
 #ifdef __cplusplus
 }

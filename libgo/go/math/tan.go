@@ -73,7 +73,7 @@ var _tanQ = [...]float64{
 	-5.38695755929454629881E7, //0xc189afe03cbe5a31
 }
 
-// Tan returns the tangent of x.
+// Tan returns the tangent of the radian argument x.
 //
 // Special cases are:
 //	Tan(±0) = ±0
@@ -114,8 +114,8 @@ func tan(x float64) float64 {
 
 	/* map zeros and singularities to origin */
 	if j&1 == 1 {
-		j += 1
-		y += 1
+		j++
+		y++
 	}
 
 	z := ((x - y*PI4A) - y*PI4B) - y*PI4C

@@ -1,7 +1,7 @@
 /* Vector API for GNU compiler.
-   Copyright (C) 2004, 2005, 2006, 2007, 2008, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2004-2017 Free Software Foundation, Inc.
    Contributed by Nathan Sidwell <nathan@codesourcery.com>
+   Re-implemented in C++ by Diego Novillo <dnovillo@google.com>
 
 This file is part of GCC.
 
@@ -29,579 +29,354 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "system.h"
 #include "coretypes.h"
-#include "ggc.h"
-#include "vec.h"
-#include "diagnostic-core.h"
-#include "hashtab.h"
+#include "hash-table.h"
+#include "selftest.h"
 
-#ifdef GATHER_STATISTICS
+/* vNULL is an empty type with a template cast operation that returns
+   a zero-initialized vec<T, A, L> instance.  Use this when you want
+   to assign nil values to new vec instances or pass a nil vector as
+   a function call argument.
 
-/* Store information about each particular vector.  */
-struct vec_descriptor
+   We use this technique because vec<T, A, L> must be PODs (they are
+   stored in unions and passed in vararg functions), this means that
+   they cannot have ctors/dtors.  */
+vnull vNULL;
+
+/* Vector memory usage.  */
+struct vec_usage: public mem_usage
 {
-  const char *function;
-  const char *file;
-  int line;
-  size_t allocated;
-  size_t times;
-  size_t peak;
+  /* Default constructor.  */
+  vec_usage (): m_items (0), m_items_peak (0) {}
+
+  /* Constructor.  */
+  vec_usage (size_t allocated, size_t times, size_t peak,
+	     size_t items, size_t items_peak)
+    : mem_usage (allocated, times, peak),
+    m_items (items), m_items_peak (items_peak) {}
+
+  /* Comparison operator.  */
+  inline bool
+  operator< (const vec_usage &second) const
+  {
+    return (m_allocated == second.m_allocated ?
+	    (m_peak == second.m_peak ? m_times < second.m_times
+	     : m_peak < second.m_peak) : m_allocated < second.m_allocated);
+  }
+
+  /* Sum the usage with SECOND usage.  */
+  vec_usage
+  operator+ (const vec_usage &second)
+  {
+    return vec_usage (m_allocated + second.m_allocated,
+		      m_times + second.m_times,
+		      m_peak + second.m_peak,
+		      m_items + second.m_items,
+		      m_items_peak + second.m_items_peak);
+  }
+
+  /* Dump usage coupled to LOC location, where TOTAL is sum of all rows.  */
+  inline void
+  dump (mem_location *loc, mem_usage &total) const
+  {
+    char s[4096];
+    sprintf (s, "%s:%i (%s)", loc->get_trimmed_filename (),
+	     loc->m_line, loc->m_function);
+
+    s[48] = '\0';
+
+    fprintf (stderr, "%-48s %10li:%4.1f%%%10li%10li:%4.1f%%%11li%11li\n", s,
+	     (long)m_allocated, m_allocated * 100.0 / total.m_allocated,
+	     (long)m_peak, (long)m_times, m_times * 100.0 / total.m_times,
+	     (long)m_items, (long)m_items_peak);
+  }
+
+  /* Dump footer.  */
+  inline void
+  dump_footer ()
+  {
+    print_dash_line ();
+    fprintf (stderr, "%s%55li%25li%17li\n", "Total", (long)m_allocated,
+	     (long)m_times, (long)m_items);
+    print_dash_line ();
+  }
+
+  /* Dump header with NAME.  */
+  static inline void
+  dump_header (const char *name)
+  {
+    fprintf (stderr, "%-48s %11s%15s%10s%17s%11s\n", name, "Leak", "Peak",
+	     "Times", "Leak items", "Peak items");
+    print_dash_line ();
+  }
+
+  /* Compare wrapper used by qsort method.  */
+  static int
+  compare (const void *first, const void *second)
+  {
+    typedef std::pair<mem_location *, vec_usage *> mem_pair_t;
+
+    const mem_pair_t f = *(const mem_pair_t *)first;
+    const mem_pair_t s = *(const mem_pair_t *)second;
+
+    return (*f.second) < (*s.second);
+  }
+
+  /* Current number of items allocated.  */
+  size_t m_items;
+  /* Peak value of number of allocated items.  */
+  size_t m_items_peak;
 };
 
-
-/* Hashtable mapping vec addresses to descriptors.  */
-static htab_t vec_desc_hash;
-
-/* Hashtable helpers.  */
-static hashval_t
-hash_descriptor (const void *p)
-{
-  const struct vec_descriptor *const d =
-    (const struct vec_descriptor *) p;
-  return htab_hash_pointer (d->file) + d->line;
-}
-static int
-eq_descriptor (const void *p1, const void *p2)
-{
-  const struct vec_descriptor *const d = (const struct vec_descriptor *) p1;
-  const struct vec_descriptor *const l = (const struct vec_descriptor *) p2;
-  return d->file == l->file && d->function == l->function && d->line == l->line;
-}
-
-/* Hashtable converting address of allocated field to loc descriptor.  */
-static htab_t ptr_hash;
-struct ptr_hash_entry
-{
-  void *ptr;
-  struct vec_descriptor *loc;
-  size_t allocated;
-};
-
-/* Hash table helpers functions.  */
-static hashval_t
-hash_ptr (const void *p)
-{
-  const struct ptr_hash_entry *const d = (const struct ptr_hash_entry *) p;
-
-  return htab_hash_pointer (d->ptr);
-}
-
-static int
-eq_ptr (const void *p1, const void *p2)
-{
-  const struct ptr_hash_entry *const p = (const struct ptr_hash_entry *) p1;
-
-  return (p->ptr == p2);
-}
-
-/* Return descriptor for given call site, create new one if needed.  */
-static struct vec_descriptor *
-vec_descriptor (const char *name, int line, const char *function)
-{
-  struct vec_descriptor loc;
-  struct vec_descriptor **slot;
-
-  loc.file = name;
-  loc.line = line;
-  loc.function = function;
-  if (!vec_desc_hash)
-    vec_desc_hash = htab_create (10, hash_descriptor, eq_descriptor, NULL);
-
-  slot = (struct vec_descriptor **) htab_find_slot (vec_desc_hash, &loc,
-						    INSERT);
-  if (*slot)
-    return *slot;
-  *slot = XCNEW (struct vec_descriptor);
-  (*slot)->file = name;
-  (*slot)->line = line;
-  (*slot)->function = function;
-  (*slot)->allocated = 0;
-  (*slot)->peak = 0;
-  return *slot;
-}
+/* Vector memory description.  */
+static mem_alloc_description <vec_usage> vec_mem_desc;
 
 /* Account the overhead.  */
-static void
-register_overhead (struct vec_prefix *ptr, size_t size,
-		   const char *name, int line, const char *function)
-{
-  struct vec_descriptor *loc = vec_descriptor (name, line, function);
-  struct ptr_hash_entry *p = XNEW (struct ptr_hash_entry);
-  PTR *slot;
-
-  p->ptr = ptr;
-  p->loc = loc;
-  p->allocated = size;
-  if (!ptr_hash)
-    ptr_hash = htab_create (10, hash_ptr, eq_ptr, NULL);
-  slot = htab_find_slot_with_hash (ptr_hash, ptr, htab_hash_pointer (ptr), INSERT);
-  gcc_assert (!*slot);
-  *slot = p;
-
-  loc->allocated += size;
-  if (loc->peak < loc->allocated)
-    loc->peak += loc->allocated;
-  loc->times++;
-}
-
-/* Notice that the pointer has been freed.  */
-static void
-free_overhead (struct vec_prefix *ptr)
-{
-  PTR *slot = htab_find_slot_with_hash (ptr_hash, ptr, htab_hash_pointer (ptr),
-					NO_INSERT);
-  struct ptr_hash_entry *p = (struct ptr_hash_entry *) *slot;
-  p->loc->allocated -= p->allocated;
-  htab_clear_slot (ptr_hash, slot);
-  free (p);
-}
 
 void
-vec_heap_free (void *ptr)
+vec_prefix::register_overhead (void *ptr, size_t size, size_t elements
+			       MEM_STAT_DECL)
 {
-  free_overhead ((struct vec_prefix *)ptr);
-  free (ptr);
+  vec_mem_desc.register_descriptor (ptr, VEC_ORIGIN, false
+				    FINAL_PASS_MEM_STAT);
+  vec_usage *usage = vec_mem_desc.register_instance_overhead (size, ptr);
+  usage->m_items += elements;
+  if (usage->m_items_peak < usage->m_items)
+    usage->m_items_peak = usage->m_items;
 }
-#endif
 
-/* Calculate the new ALLOC value, making sure that RESERVE slots are
-   free.  If EXACT grow exactly, otherwise grow exponentially.  */
+/* Notice that the memory allocated for the vector has been freed.  */
 
-static inline unsigned
-calculate_allocation (const struct vec_prefix *pfx, int reserve, bool exact)
+void
+vec_prefix::release_overhead (void *ptr, size_t size, bool in_dtor
+			      MEM_STAT_DECL)
 {
-  unsigned alloc = 0;
-  unsigned num = 0;
+  if (!vec_mem_desc.contains_descriptor_for_instance (ptr))
+    vec_mem_desc.register_descriptor (ptr, VEC_ORIGIN,
+				      false FINAL_PASS_MEM_STAT);
+  vec_mem_desc.release_instance_overhead (ptr, size, in_dtor);
+}
 
-  gcc_assert (reserve >= 0);
 
-  if (pfx)
-    {
-      alloc = pfx->alloc;
-      num = pfx->num;
-    }
-  else if (!reserve)
-    /* If there's no prefix, and we've not requested anything, then we
-       will create a NULL vector.  */
-    return 0;
+/* Calculate the number of slots to reserve a vector, making sure that
+   it is of at least DESIRED size by growing ALLOC exponentially.  */
 
+unsigned
+vec_prefix::calculate_allocation_1 (unsigned alloc, unsigned desired)
+{
   /* We must have run out of room.  */
-  gcc_assert (alloc - num < (unsigned) reserve);
+  gcc_assert (alloc < desired);
 
-  if (exact)
-    /* Exact size.  */
-    alloc = num + reserve;
+  /* Exponential growth. */
+  if (!alloc)
+    alloc = 4;
+  else if (alloc < 16)
+    /* Double when small.  */
+    alloc = alloc * 2;
   else
-    {
-      /* Exponential growth. */
-      if (!alloc)
-	alloc = 4;
-      else if (alloc < 16)
-	/* Double when small.  */
-	alloc = alloc * 2;
-      else
-	/* Grow slower when large.  */
-	alloc = (alloc * 3 / 2);
+    /* Grow slower when large.  */
+    alloc = (alloc * 3 / 2);
 
-      /* If this is still too small, set it to the right size. */
-      if (alloc < num + reserve)
-	alloc = num + reserve;
-    }
+  /* If this is still too small, set it to the right size. */
+  if (alloc < desired)
+    alloc = desired;
   return alloc;
 }
 
-/* Ensure there are at least RESERVE free slots in VEC.  If EXACT grow
-   exactly, else grow exponentially.  As a special case, if VEC is
-   NULL and RESERVE is 0, no vector will be created.  The vector's
-   trailing array is at VEC_OFFSET offset and consists of ELT_SIZE
-   sized elements.  */
-
-static void *
-vec_gc_o_reserve_1 (void *vec, int reserve, size_t vec_offset, size_t elt_size,
-		    bool exact MEM_STAT_DECL)
-{
-  struct vec_prefix *pfx = (struct vec_prefix *) vec;
-  unsigned alloc = calculate_allocation (pfx, reserve, exact);
-  size_t size;
-
-  if (!alloc)
-    {
-      if (pfx)
-        ggc_free (pfx);
-      return NULL;
-    }
-
-  /* Calculate the amount of space we want.  */
-  size = vec_offset + alloc * elt_size;
-  /* Ask the allocator how much space it will really give us.  */
-  size = ggc_round_alloc_size (size);
-  /* Adjust the number of slots accordingly.  */
-  alloc = (size - vec_offset) / elt_size;
-  /* And finally, recalculate the amount of space we ask for.  */
-  size = vec_offset + alloc * elt_size;
-
-  vec = ggc_realloc_stat (vec, size PASS_MEM_STAT);
-
-  ((struct vec_prefix *)vec)->alloc = alloc;
-  if (!pfx)
-    ((struct vec_prefix *)vec)->num = 0;
-
-  return vec;
-}
-
-/* Ensure there are at least RESERVE free slots in VEC, growing
-   exponentially.  If RESERVE < 0 grow exactly, else grow
-   exponentially.  As a special case, if VEC is NULL, and RESERVE is
-   0, no vector will be created. */
-
-void *
-vec_gc_p_reserve (void *vec, int reserve MEM_STAT_DECL)
-{
-  return vec_gc_o_reserve_1 (vec, reserve,
-			     sizeof (struct vec_prefix),
-			     sizeof (void *), false
-			     PASS_MEM_STAT);
-}
-
-/* Ensure there are at least RESERVE free slots in VEC, growing
-   exactly.  If RESERVE < 0 grow exactly, else grow exponentially.  As
-   a special case, if VEC is NULL, and RESERVE is 0, no vector will be
-   created. */
-
-void *
-vec_gc_p_reserve_exact (void *vec, int reserve MEM_STAT_DECL)
-{
-  return vec_gc_o_reserve_1 (vec, reserve,
-			     sizeof (struct vec_prefix),
-			     sizeof (void *), true
-			     PASS_MEM_STAT);
-}
-
-/* As for vec_gc_p_reserve, but for object vectors.  The vector's
-   trailing array is at VEC_OFFSET offset and consists of ELT_SIZE
-   sized elements.  */
-
-void *
-vec_gc_o_reserve (void *vec, int reserve, size_t vec_offset, size_t elt_size
-		  MEM_STAT_DECL)
-{
-  return vec_gc_o_reserve_1 (vec, reserve, vec_offset, elt_size, false
-			     PASS_MEM_STAT);
-}
-
-/* As for vec_gc_p_reserve_exact, but for object vectors.  The
-   vector's trailing array is at VEC_OFFSET offset and consists of
-   ELT_SIZE sized elements.  */
-
-void *
-vec_gc_o_reserve_exact (void *vec, int reserve, size_t vec_offset,
-			size_t elt_size MEM_STAT_DECL)
-{
-  return vec_gc_o_reserve_1 (vec, reserve, vec_offset, elt_size, true
-			     PASS_MEM_STAT);
-}
-
-/* As for vec_gc_o_reserve_1, but for heap allocated vectors.  */
-
-static void *
-vec_heap_o_reserve_1 (void *vec, int reserve, size_t vec_offset,
-		      size_t elt_size, bool exact MEM_STAT_DECL)
-{
-  struct vec_prefix *pfx = (struct vec_prefix *) vec;
-  unsigned alloc = calculate_allocation (pfx, reserve, exact);
-
-  if (!alloc)
-    {
-      if (pfx)
-        vec_heap_free (pfx);
-      return NULL;
-    }
-
-#ifdef GATHER_STATISTICS
-  if (vec)
-    free_overhead (pfx);
-#endif
-
-  vec = xrealloc (vec, vec_offset + alloc * elt_size);
-  ((struct vec_prefix *)vec)->alloc = alloc;
-  if (!pfx)
-    ((struct vec_prefix *)vec)->num = 0;
-#ifdef GATHER_STATISTICS
-  if (vec)
-    register_overhead ((struct vec_prefix *)vec,
-    		       vec_offset + alloc * elt_size PASS_MEM_STAT);
-#endif
-
-  return vec;
-}
-
-/* As for vec_gc_p_reserve, but for heap allocated vectors.  */
-
-void *
-vec_heap_p_reserve (void *vec, int reserve MEM_STAT_DECL)
-{
-  return vec_heap_o_reserve_1 (vec, reserve,
-			       sizeof (struct vec_prefix),
-			       sizeof (void *), false
-			       PASS_MEM_STAT);
-}
-
-/* As for vec_gc_p_reserve_exact, but for heap allocated vectors.  */
-
-void *
-vec_heap_p_reserve_exact (void *vec, int reserve MEM_STAT_DECL)
-{
-  return vec_heap_o_reserve_1 (vec, reserve,
-			       sizeof (struct vec_prefix),
-			       sizeof (void *), true
-			       PASS_MEM_STAT);
-}
-
-/* As for vec_gc_o_reserve, but for heap allocated vectors.  */
-
-void *
-vec_heap_o_reserve (void *vec, int reserve, size_t vec_offset, size_t elt_size
-		    MEM_STAT_DECL)
-{
-  return vec_heap_o_reserve_1 (vec, reserve, vec_offset, elt_size, false
-			       PASS_MEM_STAT);
-}
-
-/* As for vec_gc_o_reserve_exact, but for heap allocated vectors.  */
-
-void *
-vec_heap_o_reserve_exact (void *vec, int reserve, size_t vec_offset,
-			  size_t elt_size MEM_STAT_DECL)
-{
-  return vec_heap_o_reserve_1 (vec, reserve, vec_offset, elt_size, true
-			       PASS_MEM_STAT);
-}
-
-/* Stack vectors are a little different.  VEC_alloc turns into a call
-   to vec_stack_p_reserve_exact1 and passes in space allocated via a
-   call to alloca.  We record that pointer so that we know that we
-   shouldn't free it.  If the vector is resized, we resize it on the
-   heap.  We record the pointers in a vector and search it in LIFO
-   order--i.e., we look for the newest stack vectors first.  We don't
-   expect too many stack vectors at any one level, and searching from
-   the end should normally be efficient even if they are used in a
-   recursive function.  */
-
-typedef void *void_p;
-DEF_VEC_P(void_p);
-DEF_VEC_ALLOC_P(void_p,heap);
-
-static VEC(void_p,heap) *stack_vecs;
-
-/* Allocate a vector which uses alloca for the initial allocation.
-   SPACE is space allocated using alloca, ALLOC is the number of
-   entries allocated.  */
-
-void *
-vec_stack_p_reserve_exact_1 (int alloc, void *space)
-{
-  struct vec_prefix *pfx = (struct vec_prefix *) space;
-
-  VEC_safe_push (void_p, heap, stack_vecs, space);
-
-  pfx->num = 0;
-  pfx->alloc = alloc;
-
-  return space;
-}
-
-/* Grow a vector allocated using alloca.  When this happens, we switch
-   back to heap allocation.  We remove the vector from stack_vecs, if
-   it is there, since we no longer need to avoid freeing it.  */
-
-static void *
-vec_stack_o_reserve_1 (void *vec, int reserve, size_t vec_offset,
-		       size_t elt_size, bool exact MEM_STAT_DECL)
-{
-  bool found;
-  unsigned int ix;
-  void *newvec;
-
-  found = false;
-  for (ix = VEC_length (void_p, stack_vecs); ix > 0; --ix)
-    {
-      if (VEC_index (void_p, stack_vecs, ix - 1) == vec)
-	{
-	  VEC_unordered_remove (void_p, stack_vecs, ix - 1);
-	  found = true;
-	  break;
-	}
-    }
-
-  if (!found)
-    {
-      /* VEC is already on the heap.  */
-      return vec_heap_o_reserve_1 (vec, reserve, vec_offset, elt_size,
-				   exact PASS_MEM_STAT);
-    }
-
-  /* Move VEC to the heap.  */
-  reserve += ((struct vec_prefix *) vec)->num;
-  newvec = vec_heap_o_reserve_1 (NULL, reserve, vec_offset, elt_size,
-				 exact PASS_MEM_STAT);
-  if (newvec && vec)
-    {
-      ((struct vec_prefix *) newvec)->num = ((struct vec_prefix *) vec)->num;
-      memcpy (((struct vec_prefix *) newvec)+1,
-	      ((struct vec_prefix *) vec)+1,
-	      ((struct vec_prefix *) vec)->num * elt_size);
-    }
-  return newvec;
-}
-
-/* Grow a vector allocated on the stack.  */
-
-void *
-vec_stack_p_reserve (void *vec, int reserve MEM_STAT_DECL)
-{
-  return vec_stack_o_reserve_1 (vec, reserve,
-				sizeof (struct vec_prefix),
-				sizeof (void *), false
-				PASS_MEM_STAT);
-}
-
-/* Exact version of vec_stack_p_reserve.  */
-
-void *
-vec_stack_p_reserve_exact (void *vec, int reserve MEM_STAT_DECL)
-{
-  return vec_stack_o_reserve_1 (vec, reserve,
-				sizeof (struct vec_prefix),
-				sizeof (void *), true
-				PASS_MEM_STAT);
-}
-
-/* Like vec_stack_p_reserve, but for objects.  */
-
-void *
-vec_stack_o_reserve (void *vec, int reserve, size_t vec_offset,
-		     size_t elt_size MEM_STAT_DECL)
-{
-  return vec_stack_o_reserve_1 (vec, reserve, vec_offset, elt_size, false
-				PASS_MEM_STAT);
-}
-
-/* Like vec_stack_p_reserve_exact, but for objects.  */
-
-void *
-vec_stack_o_reserve_exact (void *vec, int reserve, size_t vec_offset,
-			    size_t elt_size MEM_STAT_DECL)
-{
-  return vec_stack_o_reserve_1 (vec, reserve, vec_offset, elt_size, true
-				PASS_MEM_STAT);
-}
-
-/* Free a vector allocated on the stack.  Don't actually free it if we
-   find it in the hash table.  */
-
-void
-vec_stack_free (void *vec)
-{
-  unsigned int ix;
-
-  for (ix = VEC_length (void_p, stack_vecs); ix > 0; --ix)
-    {
-      if (VEC_index (void_p, stack_vecs, ix - 1) == vec)
-	{
-	  VEC_unordered_remove (void_p, stack_vecs, ix - 1);
-	  return;
-	}
-    }
-
-  /* VEC was not on the list of vecs allocated on the stack, so it
-     must be allocated on the heap.  */
-  vec_heap_free (vec);
-}
-
-#if ENABLE_CHECKING
-/* Issue a vector domain error, and then fall over.  */
-
-void
-vec_assert_fail (const char *op, const char *struct_name,
-		 const char *file, unsigned int line, const char *function)
-{
-  internal_error ("vector %s %s domain error, in %s at %s:%u",
-		  struct_name, op, function, trim_filename (file), line);
-}
-#endif
-
-#ifdef GATHER_STATISTICS
-/* Helper for qsort; sort descriptors by amount of memory consumed.  */
-static int
-cmp_statistic (const void *loc1, const void *loc2)
-{
-  const struct vec_descriptor *const l1 =
-    *(const struct vec_descriptor *const *) loc1;
-  const struct vec_descriptor *const l2 =
-    *(const struct vec_descriptor *const *) loc2;
-  long diff;
-  diff = l1->allocated - l2->allocated;
-  if (!diff)
-    diff = l1->peak - l2->peak;
-  if (!diff)
-    diff = l1->times - l2->times;
-  return diff > 0 ? 1 : diff < 0 ? -1 : 0;
-}
-/* Collect array of the descriptors from hashtable.  */
-static struct vec_descriptor **loc_array;
-static int
-add_statistics (void **slot, void *b)
-{
-  int *n = (int *)b;
-  loc_array[*n] = (struct vec_descriptor *) *slot;
-  (*n)++;
-  return 1;
-}
-
 /* Dump per-site memory statistics.  */
-#endif
+
 void
 dump_vec_loc_statistics (void)
 {
-#ifdef GATHER_STATISTICS
-  int nentries = 0;
-  char s[4096];
-  size_t allocated = 0;
-  size_t times = 0;
-  int i;
-
-  loc_array = XCNEWVEC (struct vec_descriptor *, vec_desc_hash->n_elements);
-  fprintf (stderr, "Heap vectors:\n");
-  fprintf (stderr, "\n%-48s %10s       %10s       %10s\n",
-	   "source location", "Leak", "Peak", "Times");
-  fprintf (stderr, "-------------------------------------------------------\n");
-  htab_traverse (vec_desc_hash, add_statistics, &nentries);
-  qsort (loc_array, nentries, sizeof (*loc_array), cmp_statistic);
-  for (i = 0; i < nentries; i++)
-    {
-      struct vec_descriptor *d = loc_array[i];
-      allocated += d->allocated;
-      times += d->times;
-    }
-  for (i = 0; i < nentries; i++)
-    {
-      struct vec_descriptor *d = loc_array[i];
-      const char *s1 = d->file;
-      const char *s2;
-      while ((s2 = strstr (s1, "gcc/")))
-	s1 = s2 + 4;
-      sprintf (s, "%s:%i (%s)", s1, d->line, d->function);
-      s[48] = 0;
-      fprintf (stderr, "%-48s %10li:%4.1f%% %10li      %10li:%4.1f%% \n", s,
-	       (long)d->allocated,
-	       (d->allocated) * 100.0 / allocated,
-	       (long)d->peak,
-	       (long)d->times,
-	       (d->times) * 100.0 / times);
-    }
-  fprintf (stderr, "%-48s %10ld                        %10ld\n",
-	   "Total", (long)allocated, (long)times);
-  fprintf (stderr, "\n%-48s %10s       %10s       %10s\n",
-	   "source location", "Leak", "Peak", "Times");
-  fprintf (stderr, "-------------------------------------------------------\n");
-#endif
+  vec_mem_desc.dump (VEC_ORIGIN);
 }
+
+#ifndef GENERATOR_FILE
+#if CHECKING_P
+
+namespace selftest {
+
+/* Selftests.  */
+
+/* Call V.safe_push for all ints from START up to, but not including LIMIT.
+   Helper function for selftests.  */
+
+static void
+safe_push_range (vec <int>&v, int start, int limit)
+{
+  for (int i = start; i < limit; i++)
+    v.safe_push (i);
+}
+
+/* Verify that vec::quick_push works correctly.  */
+
+static void
+test_quick_push ()
+{
+  auto_vec <int> v;
+  ASSERT_EQ (0, v.length ());
+  v.reserve (3);
+  ASSERT_EQ (0, v.length ());
+  ASSERT_TRUE (v.space (3));
+  v.quick_push (5);
+  v.quick_push (6);
+  v.quick_push (7);
+  ASSERT_EQ (3, v.length ());
+  ASSERT_EQ (5, v[0]);
+  ASSERT_EQ (6, v[1]);
+  ASSERT_EQ (7, v[2]);
+}
+
+/* Verify that vec::safe_push works correctly.  */
+
+static void
+test_safe_push ()
+{
+  auto_vec <int> v;
+  ASSERT_EQ (0, v.length ());
+  v.safe_push (5);
+  v.safe_push (6);
+  v.safe_push (7);
+  ASSERT_EQ (3, v.length ());
+  ASSERT_EQ (5, v[0]);
+  ASSERT_EQ (6, v[1]);
+  ASSERT_EQ (7, v[2]);
+}
+
+/* Verify that vec::truncate works correctly.  */
+
+static void
+test_truncate ()
+{
+  auto_vec <int> v;
+  ASSERT_EQ (0, v.length ());
+  safe_push_range (v, 0, 10);
+  ASSERT_EQ (10, v.length ());
+
+  v.truncate (5);
+  ASSERT_EQ (5, v.length ());
+}
+
+/* Verify that vec::safe_grow_cleared works correctly.  */
+
+static void
+test_safe_grow_cleared ()
+{
+  auto_vec <int> v;
+  ASSERT_EQ (0, v.length ());
+  v.safe_grow_cleared (50);
+  ASSERT_EQ (50, v.length ());
+  ASSERT_EQ (0, v[0]);
+  ASSERT_EQ (0, v[49]);
+}
+
+/* Verify that vec::pop works correctly.  */
+
+static void
+test_pop ()
+{
+  auto_vec <int> v;
+  safe_push_range (v, 5, 20);
+  ASSERT_EQ (15, v.length ());
+
+  int last = v.pop ();
+  ASSERT_EQ (19, last);
+  ASSERT_EQ (14, v.length ());
+}
+
+/* Verify that vec::safe_insert works correctly.  */
+
+static void
+test_safe_insert ()
+{
+  auto_vec <int> v;
+  safe_push_range (v, 0, 10);
+  v.safe_insert (5, 42);
+  ASSERT_EQ (4, v[4]);
+  ASSERT_EQ (42, v[5]);
+  ASSERT_EQ (5, v[6]);
+  ASSERT_EQ (11, v.length ());
+}
+
+/* Verify that vec::ordered_remove works correctly.  */
+
+static void
+test_ordered_remove ()
+{
+  auto_vec <int> v;
+  safe_push_range (v, 0, 10);
+  v.ordered_remove (5);
+  ASSERT_EQ (4, v[4]);
+  ASSERT_EQ (6, v[5]);
+  ASSERT_EQ (9, v.length ());
+}
+
+/* Verify that vec::unordered_remove works correctly.  */
+
+static void
+test_unordered_remove ()
+{
+  auto_vec <int> v;
+  safe_push_range (v, 0, 10);
+  v.unordered_remove (5);
+  ASSERT_EQ (9, v.length ());
+}
+
+/* Verify that vec::block_remove works correctly.  */
+
+static void
+test_block_remove ()
+{
+  auto_vec <int> v;
+  safe_push_range (v, 0, 10);
+  v.block_remove (5, 3);
+  ASSERT_EQ (3, v[3]);
+  ASSERT_EQ (4, v[4]);
+  ASSERT_EQ (8, v[5]);
+  ASSERT_EQ (9, v[6]);
+  ASSERT_EQ (7, v.length ());
+}
+
+/* Comparator for use by test_qsort.  */
+
+static int
+reverse_cmp (const void *p_i, const void *p_j)
+{
+  return *(const int *)p_j - *(const int *)p_i;
+}
+
+/* Verify that vec::qsort works correctly.  */
+
+static void
+test_qsort ()
+{
+  auto_vec <int> v;
+  safe_push_range (v, 0, 10);
+  v.qsort (reverse_cmp);
+  ASSERT_EQ (9, v[0]);
+  ASSERT_EQ (8, v[1]);
+  ASSERT_EQ (1, v[8]);
+  ASSERT_EQ (0, v[9]);
+  ASSERT_EQ (10, v.length ());
+}
+
+/* Run all of the selftests within this file.  */
+
+void
+vec_c_tests ()
+{
+  test_quick_push ();
+  test_safe_push ();
+  test_truncate ();
+  test_safe_grow_cleared ();
+  test_pop ();
+  test_safe_insert ();
+  test_ordered_remove ();
+  test_unordered_remove ();
+  test_block_remove ();
+  test_qsort ();
+}
+
+} // namespace selftest
+
+#endif /* #if CHECKING_P */
+#endif /* #ifndef GENERATOR_FILE */

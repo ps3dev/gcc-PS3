@@ -17,7 +17,7 @@ func urlFilter(args ...interface{}) string {
 	if t == contentTypeURL {
 		return s
 	}
-	if i := strings.IndexRune(s, ':'); i >= 0 && strings.IndexRune(s[:i], '/') < 0 {
+	if i := strings.IndexRune(s, ':'); i >= 0 && !strings.ContainsRune(s[:i], '/') {
 		protocol := strings.ToLower(s[:i])
 		if protocol != "http" && protocol != "https" && protocol != "mailto" {
 			return "#" + filterFailsafe
@@ -32,7 +32,7 @@ func urlEscaper(args ...interface{}) string {
 	return urlProcessor(false, args...)
 }
 
-// urlEscaper normalizes URL content so it can be embedded in a quote-delimited
+// urlNormalizer normalizes URL content so it can be embedded in a quote-delimited
 // string or parenthesis delimited url(...).
 // The normalizer does not encode all HTML specials. Specifically, it does not
 // encode '&' so correct embedding in an HTML attribute requires escaping of
@@ -60,7 +60,7 @@ func urlProcessor(norm bool, args ...interface{}) string {
 		c := s[i]
 		switch c {
 		// Single quote and parens are sub-delims in RFC 3986, but we
-		// escape them so the output can be embedded in in single
+		// escape them so the output can be embedded in single
 		// quoted attributes and unquoted CSS url(...) constructs.
 		// Single quotes are reserved in URLs, but are only used in
 		// the obsolete "mark" rule in an appendix in RFC 3986

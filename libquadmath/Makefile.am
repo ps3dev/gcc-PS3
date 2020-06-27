@@ -6,9 +6,10 @@ AUTOMAKE_OPTIONS = 1.8 foreign
 ## Skip over everything if the quadlib is not available:
 if BUILD_LIBQUADMATH
 ACLOCAL_AMFLAGS = -I .. -I ../config
+AM_CPPFLAGS = -I $(top_srcdir)/../include
 
 ## May be used by toolexeclibdir.
-gcc_version := $(shell cat $(top_srcdir)/../gcc/BASE-VER)
+gcc_version := $(shell @get_gcc_base_ver@ $(top_srcdir)/../gcc/BASE-VER)
 
 ## Symbol versioning (copied from libssp).
 if LIBQUAD_USE_SYMVER
@@ -43,7 +44,8 @@ nodist_libsubinclude_HEADERS = quadmath.h quadmath_weak.h
 libsubincludedir = $(libdir)/gcc/$(target_alias)/$(gcc_version)/include
 
 libquadmath_la_SOURCES = \
-  math/acoshq.c math/fmodq.c math/acosq.c math/frexpq.c \
+  math/x2y2m1q.c math/isinf_nsq.c math/acoshq.c math/fmodq.c \
+  math/acosq.c math/frexpq.c \
   math/rem_pio2q.c math/asinhq.c math/hypotq.c math/remainderq.c \
   math/asinq.c math/rintq.c math/atan2q.c math/isinfq.c \
   math/roundq.c math/atanhq.c math/isnanq.c math/scalblnq.c math/atanq.c \
@@ -55,11 +57,13 @@ libquadmath_la_SOURCES = \
   math/erfq.c math/logq.c math/sqrtq.c math/expm1q.c math/lroundq.c \
   math/tanhq.c math/expq.c math/modfq.c math/tanq.c math/fabsq.c \
   math/nanq.c math/tgammaq.c math/finiteq.c math/nextafterq.c \
-  math/truncq.c math/floorq.c math/powq.c math/fmaq.c \
+  math/truncq.c math/floorq.c math/powq.c math/fmaq.c math/logbq.c \
   math/cacoshq.c math/cacosq.c math/casinhq.c math/casinq.c \
   math/catanhq.c math/catanq.c math/cimagq.c math/conjq.c math/cprojq.c \
   math/crealq.c math/fdimq.c math/fmaxq.c math/fminq.c math/ilogbq.c \
   math/llrintq.c math/log2q.c math/lrintq.c math/nearbyintq.c math/remquoq.c \
+  math/ccoshq.c math/cexpq.c math/clog10q.c math/clogq.c math/csinq.c \
+  math/csinhq.c math/csqrtq.c math/ctanq.c math/ctanhq.c \
   printf/addmul_1.c printf/add_n.c printf/cmp.c printf/divrem.c \
   printf/flt1282mpn.c printf/fpioconst.c printf/lshift.c printf/mul_1.c \
   printf/mul_n.c printf/mul.c printf/printf_fphex.c printf/printf_fp.c \
@@ -156,7 +160,13 @@ TEXINFO_TEX   = ../gcc/doc/include/texinfo.tex
 
 # Defines info, dvi, pdf and html targets
 MAKEINFOFLAGS = -I $(srcdir)/../gcc/doc/include
+
+if BUILD_LIBQUADMATH
 info_TEXINFOS = libquadmath.texi
+else
+info_TEXINFOS = 
+endif
+
 libquadmath_TEXINFOS = libquadmath-vers.texi
 
 libquadmath-vers.texi:

@@ -13,5 +13,4 @@ A sum(A a,A b)
   return a;
 }
 
-/* { dg-final { scan-tree-dump-times "not vectorized: more than one data ref in stmt" 0 "slp" } } */
-/* { dg-final { cleanup-tree-dump "slp" } } */
+/* { dg-final { scan-tree-dump-times "basic block vectorized" 1 "slp2" } } */

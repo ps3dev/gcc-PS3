@@ -1,12 +1,10 @@
-@c Copyright (C) 1996, 1997, 1999, 2000, 2001, 2002, 2003, 2004, 2005,
-@c 2008, 2010 Free Software Foundation, Inc.
+@c Copyright (C) 1996-2017 Free Software Foundation, Inc.
 @c This is part of the GCC manual.
 @c For copying conditions, see the file gcc.texi.
 
 @ignore
 @c man begin COPYRIGHT
-Copyright @copyright{} 1996, 1997, 1999, 2000, 2001, 2002, 2003, 2004,
-2005, 2008, 2010  Free Software Foundation, Inc.
+Copyright @copyright{} 1996-2017 Free Software Foundation, Inc.
 
 Permission is granted to copy, distribute and/or modify this document
 under the terms of the GNU Free Documentation License, Version 1.3 or
@@ -124,15 +122,18 @@ gcov [@option{-v}|@option{--version}] [@option{-h}|@option{--help}]
      [@option{-a}|@option{--all-blocks}]
      [@option{-b}|@option{--branch-probabilities}]
      [@option{-c}|@option{--branch-counts}]
-     [@option{-u}|@option{--unconditional-branches}]
-     [@option{-n}|@option{--no-output}]
+     [@option{-d}|@option{--display-progress}]
+     [@option{-f}|@option{--function-summaries}]
+     [@option{-i}|@option{--intermediate-format}]
      [@option{-l}|@option{--long-file-names}]
+     [@option{-m}|@option{--demangled-names}]
+     [@option{-n}|@option{--no-output}]
+     [@option{-o}|@option{--object-directory} @var{directory|file}]
      [@option{-p}|@option{--preserve-paths}]
      [@option{-r}|@option{--relative-only}]
-     [@option{-f}|@option{--function-summaries}]
-     [@option{-o}|@option{--object-directory} @var{directory|file}]
      [@option{-s}|@option{--source-prefix} @var{directory}]
-     [@option{-d}|@option{--display-progress}]
+     [@option{-u}|@option{--unconditional-branches}]
+     [@option{-x}|@option{--hash-filenames}]
      @var{files}
 @c man end
 @c man begin SEEALSO
@@ -142,15 +143,6 @@ gpl(7), gfdl(7), fsf-funding(7), gcc(1) and the Info entry for @file{gcc}.
 
 @c man begin OPTIONS
 @table @gcctabopt
-@item -h
-@itemx --help
-Display help about using @command{gcov} (on the standard output), and
-exit without doing any further processing.
-
-@item -v
-@itemx --version
-Display the @command{gcov} version number (on the standard output),
-and exit without doing any further processing.
 
 @item -a
 @itemx --all-blocks
@@ -171,9 +163,57 @@ be shown, unless the @option{-u} option is given.
 Write branch frequencies as the number of branches taken, rather than
 the percentage of branches taken.
 
-@item -n
-@itemx --no-output
-Do not create the @command{gcov} output file.
+@item -d
+@itemx --display-progress
+Display the progress on the standard output.
+
+@item -f
+@itemx --function-summaries
+Output summaries for each function in addition to the file level summary.
+
+@item -h
+@itemx --help
+Display help about using @command{gcov} (on the standard output), and
+exit without doing any further processing.
+
+@item -i
+@itemx --intermediate-format
+Output gcov file in an easy-to-parse intermediate text format that can
+be used by @command{lcov} or other tools. The output is a single
+@file{.gcov} file per @file{.gcda} file. No source code is required.
+
+The format of the intermediate @file{.gcov} file is plain text with
+one entry per line
+
+@smallexample
+file:@var{source_file_name}
+function:@var{line_number},@var{execution_count},@var{function_name}
+lcount:@var{line number},@var{execution_count}
+branch:@var{line_number},@var{branch_coverage_type}
+
+Where the @var{branch_coverage_type} is
+   notexec (Branch not executed)
+   taken (Branch executed and taken)
+   nottaken (Branch executed, but not taken)
+
+There can be multiple @var{file} entries in an intermediate gcov
+file. All entries following a @var{file} pertain to that source file
+until the next @var{file} entry.
+@end smallexample
+
+Here is a sample when @option{-i} is used in conjunction with @option{-b} option:
+
+@smallexample
+file:array.cc
+function:11,1,_Z3sumRKSt6vectorIPiSaIS0_EE
+function:22,1,main
+lcount:11,1
+lcount:12,1
+lcount:14,1
+branch:14,taken
+lcount:26,1
+branch:28,nottaken
+@end smallexample
 
 @item -l
 @itemx --long-file-names
@@ -185,6 +225,25 @@ produce an output file called @file{a.c##x.h.gcov} instead of
 multiple source files and you want to see the individual
 contributions.  If you use the @samp{-p} option, both the including
 and included file names will be complete path names.
+
+@item -m
+@itemx --demangled-names
+Display demangled function names in output. The default is to show
+mangled function names.
+
+@item -n
+@itemx --no-output
+Do not create the @command{gcov} output file.
+
+@item -o @var{directory|file}
+@itemx --object-directory @var{directory}
+@itemx --object-file @var{file}
+Specify either the directory containing the gcov data files, or the
+object path name.  The @file{.gcno}, and
+@file{.gcda} data files are searched for using this option.  If a directory
+is specified, the data files are in that directory and named after the
+input file name, without its extension.  If a file is specified here,
+the data files are named after that file, without its extension.
 
 @item -p
 @itemx --preserve-paths
@@ -203,20 +262,6 @@ Only output information about source files with a relative pathname
 header files and coverage of any inline functions therein is normally
 uninteresting.
 
-@item -f
-@itemx --function-summaries
-Output summaries for each function in addition to the file level summary.
-
-@item -o @var{directory|file}
-@itemx --object-directory @var{directory}
-@itemx --object-file @var{file}
-Specify either the directory containing the gcov data files, or the
-object path name.  The @file{.gcno}, and
-@file{.gcda} data files are searched for using this option.  If a directory
-is specified, the data files are in that directory and named after the
-input file name, without its extension.  If a file is specified here,
-the data files are named after that file, without its extension.
-
 @item -s @var{directory}
 @itemx --source-prefix @var{directory}
 A prefix for source file names to remove when generating the output
@@ -230,9 +275,24 @@ applied before determining whether the source file is absolute.
 When branch probabilities are given, include those of unconditional branches.
 Unconditional branches are normally not interesting.
 
-@item -d
-@itemx --display-progress
-Display the progress on the standard output.
+@item -v
+@itemx --version
+Display the @command{gcov} version number (on the standard output),
+and exit without doing any further processing.
+
+@item -w
+@itemx --verbose
+Print verbose informations related to basic blocks and arcs.
+
+@item -x
+@itemx --hash-filenames
+By default, gcov uses the full pathname of the source files to to create
+an output filename.  This can lead to long filenames that can overflow
+filesystem limits.  This option creates names of the form
+@file{@var{source-file}##@var{md5}.gcov},
+where the @var{source-file} component is the final filename part and
+the @var{md5} component is calculated from the full mangled name that
+would have been used otherwise.
 
 @end table
 
@@ -264,7 +324,9 @@ command line option.  The @var{execution_count} is @samp{-} for lines
 containing no code.  Unexecuted lines are marked @samp{#####} or
 @samp{====}, depending on whether they are reachable by
 non-exceptional paths or only exceptional paths such as C++ exception
-handlers, respectively.
+handlers, respectively. Given @samp{-a} option, unexecuted blocks are
+marked @samp{$$$$$} or @samp{%%%%%}, depending on whether a basic block
+is reachable via non-exceptional or exceptional paths.
 
 Some lines of information at the start have @var{line_number} of zero.
 These preamble lines are of the form
@@ -312,8 +374,9 @@ is what you see when you use the basic @command{gcov} facility:
 $ gcc -fprofile-arcs -ftest-coverage tmp.c
 $ a.out
 $ gcov tmp.c
-90.00% of 10 source lines executed in file tmp.c
-Creating tmp.c.gcov.
+File 'tmp.c'
+Lines executed:90.00% of 10
+Creating 'tmp.c.gcov'
 @end smallexample
 
 The file @file{tmp.c.gcov} contains output from @command{gcov}.
@@ -397,11 +460,12 @@ When you use the @option{-b} option, your output looks like this:
 
 @smallexample
 $ gcov -b tmp.c
-90.00% of 10 source lines executed in file tmp.c
-80.00% of 5 branches executed in file tmp.c
-80.00% of 5 branches taken at least once in file tmp.c
-50.00% of 2 calls executed in file tmp.c
-Creating tmp.c.gcov.
+File 'tmp.c'
+Lines executed:90.00% of 10
+Branches executed:80.00% of 5
+Taken at least once:80.00% of 5
+Calls executed:50.00% of 2
+Creating 'tmp.c.gcov'
 @end smallexample
 
 Here is a sample of a resulting @file{tmp.c.gcov} file:
@@ -538,34 +602,47 @@ now be calculable at compile time in some instances.  Because the
 coverage of all the uses of the inline function will be shown for the
 same source lines, the line counts themselves might seem inconsistent.
 
+Long-running applications can use the @code{__gcov_reset} and @code{__gcov_dump}
+facilities to restrict profile collection to the program region of
+interest. Calling @code{__gcov_reset(void)} will clear all profile counters
+to zero, and calling @code{__gcov_dump(void)} will cause the profile information
+collected at that point to be dumped to @file{.gcda} output files.
+Instrumented applications use a static destructor with priority 99
+to invoke the @code{__gcov_dump} function. Thus @code{__gcov_dump}
+is executed after all user defined static destructors,
+as well as handlers registered with @code{atexit}.
+
 @c man end
 
 @node Gcov Data Files
-@section Brief description of @command{gcov} data files
+@section Brief Description of @command{gcov} Data Files
 
 @command{gcov} uses two files for profiling.  The names of these files
 are derived from the original @emph{object} file by substituting the
-file suffix with either @file{.gcno}, or @file{.gcda}.  All of these files
-are placed in the same directory as the object file, and contain data
-stored in a platform-independent format.
+file suffix with either @file{.gcno}, or @file{.gcda}.  The files
+contain coverage and profile data stored in a platform-independent format.
+The @file{.gcno} files are placed in the same directory as the object
+file.  By default, the @file{.gcda} files are also stored in the same
+directory as the object file, but the GCC @option{-fprofile-dir} option
+may be used to store the @file{.gcda} files in a separate directory.
 
-The @file{.gcno} file is generated when the source file is compiled with
-the GCC @option{-ftest-coverage} option.  It contains information to
+The @file{.gcno} notes file is generated when the source file is compiled
+with the GCC @option{-ftest-coverage} option.  It contains information to
 reconstruct the basic block graphs and assign source line numbers to
 blocks.
 
-The @file{.gcda} file is generated when a program containing object files
-built with the GCC @option{-fprofile-arcs} option is executed.  A
-separate @file{.gcda} file is created for each object file compiled with
-this option.  It contains arc transition counts, and some summary
-information.
+The @file{.gcda} count data file is generated when a program containing
+object files built with the GCC @option{-fprofile-arcs} option is executed.
+A separate @file{.gcda} file is created for each object file compiled with
+this option.  It contains arc transition counts, value profile counts, and
+some summary information.
 
 The full details of the file format is specified in @file{gcov-io.h},
 and functions provided in that header file should be used to access the
 coverage files.
 
 @node Cross-profiling
-@section Data file relocation to support cross-profiling
+@section Data File Relocation to Support Cross-Profiling
 
 Running the program will cause profile output to be generated.  For each
 source file compiled with @option{-fprofile-arcs}, an accompanying @file{.gcda}
@@ -600,5 +677,5 @@ it.  This can be overcome by, for example, setting the environment as
 setting will name the data file @file{/target/run/build/foo.gcda}.
 
 You must move the data files to the expected directory tree in order to
-use them for profile directed optimizations (@option{--use-profile}), or to
+use them for profile directed optimizations (@option{-fprofile-use}), or to
 use the @command{gcov} tool.

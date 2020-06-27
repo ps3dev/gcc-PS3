@@ -1,6 +1,6 @@
 /* LTO IL compression streams.
 
-   Copyright 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2009-2017 Free Software Foundation, Inc.
    Contributed by Simon Baldwin <simonb@google.com>
 
 This file is part of GCC.
@@ -21,17 +21,19 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "config.h"
 #include "system.h"
+#include "coretypes.h"
+#include "backend.h"
+#include "tree.h"
+#include "gimple.h"
+#include "cgraph.h"
+#include "lto-streamer.h"
 /* zlib.h includes other system headers.  Those headers may test feature
    test macros.  config.h may define feature test macros.  For this reason,
    zlib.h needs to be included after, rather than before, config.h and
    system.h.  */
 #include <zlib.h>
-#include "coretypes.h"
-#include "tree.h"
-#include "diagnostic-core.h"
-#include "langhooks.h"
-#include "lto-streamer.h"
 #include "lto-compress.h"
+#include "timevar.h"
 
 /* Compression stream structure, holds the flush callback and opaque token,
    the buffered data, and a note of whether compressing or uncompressing.  */
@@ -176,6 +178,8 @@ lto_end_compression (struct lto_compression_stream *stream)
 
   gcc_assert (stream->is_compression);
 
+  timevar_push (TV_IPA_LTO_COMPRESS);
+
   out_stream.next_out = outbuf;
   out_stream.avail_out = outbuf_length;
   out_stream.next_in = cursor;
@@ -219,6 +223,7 @@ lto_end_compression (struct lto_compression_stream *stream)
 
   lto_destroy_compression_stream (stream);
   free (outbuf);
+  timevar_pop (TV_IPA_LTO_COMPRESS);
 }
 
 /* Return a new uncompression stream, with CALLBACK flush function passed
@@ -259,6 +264,7 @@ lto_end_uncompression (struct lto_compression_stream *stream)
   size_t uncompressed_bytes = 0;
 
   gcc_assert (!stream->is_compression);
+  timevar_push (TV_IPA_LTO_DECOMPRESS);
 
   while (remaining > 0)
     {
@@ -310,4 +316,5 @@ lto_end_uncompression (struct lto_compression_stream *stream)
 
   lto_destroy_compression_stream (stream);
   free (outbuf);
+  timevar_pop (TV_IPA_LTO_DECOMPRESS);
 }

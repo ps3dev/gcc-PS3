@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---                     Copyright (C) 1997-2010, AdaCore                     --
+--                     Copyright (C) 1997-2016, AdaCore                     --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -180,7 +180,7 @@ package GNAT.Spitbol is
    --  Returns the substring starting at the given character position (which
    --  is always counted from the start of the string, regardless of bounds,
    --  e.g. 2 means starting with the second character of the string), and
-   --  with the length (Len) given. Indexing_Error is raised if the starting
+   --  with the length (Len) given. Index_Error is raised if the starting
    --  position is out of range, and Length_Error is raised if Len is too long.
 
    function Trim (Str : VString) return VString;
@@ -379,12 +379,12 @@ package GNAT.Spitbol is
 
       pragma Finalize_Storage_Only (Table);
 
-      procedure Adjust (Object : in out Table);
+      overriding procedure Adjust (Object : in out Table);
       --  The Adjust procedure does a deep copy of the table structure
       --  so that the effect of assignment is, like other assignments
       --  in Ada, value-oriented.
 
-      procedure Finalize (Object : in out Table);
+      overriding procedure Finalize (Object : in out Table);
       --  This is the finalization routine that ensures that all storage
       --  associated with a table is properly released when a table object
       --  is abandoned and finalized.

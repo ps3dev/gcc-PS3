@@ -1,7 +1,6 @@
 /* Definitions of target machine for GCC,
-   for ARM with targetting the VXWorks run time environment. 
-   Copyright (C) 1999, 2000, 2003, 2004, 2007, 2008, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   for ARM with targeting the VXWorks run time environment. 
+   Copyright (C) 1999-2017 Free Software Foundation, Inc.
 
    Contributed by: Mike Stump <mrs@wrs.com>
    Brought up to date by CodeSourcery, LLC.
@@ -18,8 +17,13 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
-You should have received a copy of the GNU General Public License
-along with GCC; see the file COPYING3.  If not see
+Under Section 7 of GPL version 3, you are granted additional
+permissions described in the GCC Runtime Library Exception, version
+3.1, as published by the Free Software Foundation.
+
+You should have received a copy of the GNU General Public License and
+a copy of the GCC Runtime Library Exception along with this program;
+see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 <http://www.gnu.org/licenses/>.  */
 
 
@@ -36,7 +40,7 @@ along with GCC; see the file COPYING3.  If not see
       builtin_define ("CPU=ARMARCH5");		\
     else if (arm_arch4)				\
       {						\
-	if (thumb_code)				\
+	if (TARGET_THUMB)			\
 	  builtin_define ("CPU=ARMARCH4_T");	\
 	else					\
 	  builtin_define ("CPU=ARMARCH4");	\
@@ -108,3 +112,10 @@ along with GCC; see the file COPYING3.  If not see
 
 #undef TARGET_DEFAULT_WORD_RELOCATIONS
 #define TARGET_DEFAULT_WORD_RELOCATIONS 1
+
+/* Define this to be nonzero if static stack checking is supported.  */
+#define STACK_CHECK_STATIC_BUILTIN 1
+
+/* This platform supports the probing method of stack checking (RTP mode).
+   8K is reserved in the stack to propagate exceptions in case of overflow.  */
+#define STACK_CHECK_PROTECT 8192

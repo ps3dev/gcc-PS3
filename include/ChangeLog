@@ -1,6 +1,634 @@
-2012-03-22  Release Manager
+2017-08-14  Release Manager
 
-	* GCC 4.7.0 released.
+	* GCC 7.2.0 released.
+
+2017-05-02  Release Manager
+
+	* GCC 7.1.0 released.
+
+2017-04-04  Jonathan Wakely  <jwakely@redhat.com>
+
+	* ansidecl.h (ATTRIBUTE_PACKED): Fix typo in comment.
+
+2017-02-25  Jakub Jelinek  <jakub@redhat.com>
+
+	PR debug/77589
+	* dwarf2.def (DW_OP_GNU_variable_value): New opcode.
+
+2017-01-30  Alexandre Oliva <aoliva@redhat.com>
+
+	Introduce C++ support in libcc1.
+	* gcc-c-fe.def (int_type_v0): Rename from...
+	(int_type): ... this.  Introduce new version.
+	(float_type_v0): Rename from...
+	(float_type): ... this.  Introduce new version.
+	(char_type): New.
+	* gcc-c-interface.h (gcc_c_api_version): Add GCC_C_FE_VERSION_1.
+	(gcc_type_array): Move...
+	* gcc-interface.h: ... here.
+	* gcc-cp-fe.def: New.
+	* gcc-cp-interface.h: New.
+
+2017-01-30  Jan Kratochvil <jan.kratochvil@redhat.com>
+
+	* gcc-interface.h (enum gcc_base_api_version): Update comment
+	for GCC_FE_VERSION_1.
+	(struct gcc_base_vtable): Rename set_arguments to
+	set_arguments_v0.  Add set_arguments, set_triplet_regexp and
+	set_driver_filename.
+
+	* gcc-interface.h (enum gcc_base_api_version): Add comment to
+	GCC_FE_VERSION_1.
+	(struct gcc_base_vtable): Rename compile to compile_v0.
+	Update comment for compile.  New methods set_verbose and
+	compile.
+
+	* gcc-interface.h (enum gcc_base_api_version): Add
+	GCC_FE_VERSION_1.
+
+2017-01-24  Pekka Jääskeläinen  <pekka@parmance.com>
+	    Martin Jambor  <mjambor@suse.cz>
+
+	* hsa.h: Moved here from libgomp/plugin/hsa.h.
+
+2017-01-04  Richard Earnshaw  <rearnsha@arm.com>
+	    Jiong Wang  <jiong.wang@arm.com>
+
+	* dwarf2.def (DW_OP_AARCH64_operation): Reserve the number 0xea.
+	(DW_CFA_GNU_window_save): Comments the multiplexing on AArch64.
+
+2017-01-04  Jakub Jelinek  <jakub@redhat.com>
+
+	Update copyright years.
+
+2016-12-21  Jakub Jelinek  <jakub@redhat.com>
+
+	* dwarf2.def (DW_FORM_ref_sup): Renamed to ...
+	(DW_FORM_ref_sup4): ... this.  New form.
+	(DW_FORM_ref_sup8): New form.
+
+2016-11-03  David Tolnay <dtolnay@gmail.com>
+	    Mark Wielaard  <mark@klomp.org>
+
+	* demangle.h (DMGL_RUST): New macro.
+	(DMGL_STYLE_MASK): Add DMGL_RUST.
+	(demangling_styles): Add dlang_rust.
+	(RUST_DEMANGLING_STYLE_STRING): New macro.
+	(RUST_DEMANGLING): New macro.
+	(rust_demangle): New prototype.
+	(rust_is_mangled): Likewise.
+	(rust_demangle_sym): Likewise.
+
+2016-11-07  Jason Merrill  <jason@redhat.com>
+
+	* demangle.h (enum demangle_component_type): Add
+	DEMANGLE_COMPONENT_NOEXCEPT, DEMANGLE_COMPONENT_THROW_SPEC.
+
+2016-10-17  Jakub Jelinek  <jakub@redhat.com>
+
+	* dwarf2.h (enum dwarf_calling_convention): Add new DWARF5
+	calling convention codes.
+	(enum dwarf_line_number_content_type): New.
+	(enum dwarf_location_list_entry_type): Add DWARF5 DW_LLE_*
+	codes.
+	(enum dwarf_source_language): Add new DWARF5 DW_LANG_* codes.
+	(enum dwarf_macro_record_type): Add DWARF5 DW_MACRO_* codes.
+	(enum dwarf_name_index_attribute): New.
+	(enum dwarf_range_list_entry): New.
+	(enum dwarf_unit_type): New.
+	* dwarf2.def: Add new DWARF5 DW_TAG_*, DW_FORM_*, DW_AT_*,
+	DW_OP_* and DW_ATE_* entries.
+
+2016-10-14  Pedro Alves  <palves@redhat.com>
+
+	* ansidecl.h [__cplusplus >= 201103 && GCC_VERSION < 4007] (FINAL,
+	OVERRIDE): Define as empty.
+	[__cplusplus < 201103 && GCC_VERSION < 4007] (FINAL): Define as
+	__final.
+	[__cplusplus < 201103 && GCC_VERSION >= 4007] (OVERRIDE): Define as
+	empty.
+
+2016-10-14  Pedro Alves  <palves@redhat.com>
+
+	* ansidecl.h (GCC_FINAL): Delete.
+	(OVERRIDE, FINAL): New, moved from gcc/coretypes.h.
+
+2016-08-15  Jakub Jelinek  <jakub@redhat.com>
+
+	* dwarf2.def (DW_AT_string_length_bit_size,
+	DW_AT_string_length_byte_size): New attributes.
+
+2016-08-12  Alexandre Oliva <aoliva@redhat.com>
+
+	PR debug/63240
+	* dwarf2.def (DW_AT_deleted, DW_AT_defaulted): New.
+	* dwarf2.h (enum dwarf_defaulted_attribute): New.
+
+2016-07-29  Aldy Hernandez  <aldyh@redhat.com>
+
+	* libiberty.h (MAX_ALLOCA_SIZE): New macro.
+
+2016-05-26  Chung-Lin Tang  <cltang@codesourcery.com>
+
+	* gomp-constants.h (GOMP_VERSION): Increment to 1, add comment to
+	describe the need for incrementing this macro whenever the plugin
+	interface is modified.
+
+2016-04-29  Tom Tromey  <tom@tromey.com>
+
+	* dwarf2.h (enum dwarf_source_language) <DW_LANG_Rust,
+	DW_LANG_Rust_old>: New constants.
+
+2016-04-29  Oleg Endo  <olegendo@gcc.gnu.org>
+
+	* longlong.h (umul_ppmm): Remove SHMEDIA checks.
+	(__umulsidi3, count_leading_zeros): Remove SHMEDIA implementations.
+
+2016-04-29  Claudiu Zissulescu  <claziss@synopsys.com>
+
+	* longlong.h (add_ssaaaa): Replace obsolete 'J' constraint with
+	'Cal' constraint.
+	(sub_ddmmss): Likewise.
+
+2016-03-17  Thomas Schwinge  <thomas@codesourcery.com>
+
+	* gomp-constants.h (enum gomp_map_kind): Rename
+	GOMP_MAP_FORCE_DEALLOC to GOMP_MAP_DELETE.  Adjust all users.
+
+2016-03-03  Than McIntosh <thanm@google.com>
+
+	* plugin-api.h: Add new hooks to the plugin transfer vector to
+	to support querying section alignment and section size.
+	(ld_plugin_get_input_section_alignment): New hook.
+	(ld_plugin_get_input_section_size): New hook.
+	(ld_plugin_tag): Add LDPT_GET_INPUT_SECTION_ALIGNMENT
+	and LDPT_GET_INPUT_SECTION_SIZE.
+	(ld_plugin_tv): Add tv_get_input_section_alignment and
+	tv_get_input_section_size.
+
+2016-03-03  Evgenii Stepanov  <eugenis@google.com>
+
+	* plugin-api.h (enum ld_plugin_tag): Add LDPT_GET_SYMBOLS_V3.
+
+2016-01-19  Martin Jambor  <mjambor@suse.cz>
+
+	* gomp-constants.h (GOMP_DEVICE_HSA): New macro.
+	(GOMP_VERSION_HSA): Likewise.
+	(GOMP_TARGET_ARG_DEVICE_MASK): Likewise.
+	(GOMP_TARGET_ARG_DEVICE_ALL): Likewise.
+	(GOMP_TARGET_ARG_SUBSEQUENT_PARAM): Likewise.
+	(GOMP_TARGET_ARG_ID_MASK): Likewise.
+	(GOMP_TARGET_ARG_NUM_TEAMS): Likewise.
+	(GOMP_TARGET_ARG_THREAD_LIMIT): Likewise.
+	(GOMP_TARGET_ARG_VALUE_SHIFT): Likewise.
+	(GOMP_TARGET_ARG_HSA_KERNEL_ATTRIBUTES): Likewise.
+
+2016-01-07  Mike Frysinger  <vapier@gentoo.org>
+
+	* longlong.h: Change !__SHMEDIA__ to
+	(!defined (__SHMEDIA__) || !__SHMEDIA__).
+	Change __SHMEDIA__ to defined (__SHMEDIA__) && __SHMEDIA__.
+
+2016-01-05  Mike Frysinger  <vapier@gentoo.org>
+
+	* libiberty.h (dupargv): Change arg to char * const *.
+	(writeargv, countargv): Likewise.
+
+2015-11-27  Pedro Alves  <palves@redhat.com>
+
+	PR other/61321
+	PR other/61233
+	* demangle.h (enum demangle_component_type)
+	<DEMANGLE_COMPONENT_CONVERSION>: New value.
+
+2015-11-25  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
+
+	* vtv-change-permission.h (VTV_PAGE_SIZE) [__sun__ && __svr4__ &&
+	__sparc__]: Define.
+
+2015-11-12  James Norris  <jnorris@codesourcery.com>
+	    Joseph Myers  <joseph@codesourcery.com>
+
+	* gomp-constants.h (enum gomp_map_kind): Add GOMP_MAP_DEVICE_RESIDENT
+	and GOMP_MAP_LINK.
+
+2015-11-09  Alan Modra  <amodra@gmail.com>
+
+	PR gdb/17133
+	* obstack.h (__attribute_pure__): Expand _GL_ATTRIBUTE_PURE.
+
+2015-11-09  Alan Modra  <amodra@gmail.com>
+
+	PR gdb/17133
+	* obstack.h: Import current gnulib file.
+
+2015-11-05  Jakub Jelinek  <jakub@redhat.com>
+	    Ilya Verbin  <ilya.verbin@intel.com>
+
+	* gomp-constants.h (GOMP_MAP_FLAG_SPECIAL_2): Define.
+	(GOMP_MAP_FLAG_ALWAYS): Remove.
+	(enum gomp_map_kind): Use GOMP_MAP_FLAG_SPECIAL_2 instead of
+	GOMP_MAP_FLAG_ALWAYS for GOMP_MAP_ALWAYS_TO, GOMP_MAP_ALWAYS_FROM,
+	GOMP_MAP_ALWAYS_TOFROM, GOMP_MAP_STRUCT, GOMP_MAP_RELEASE.
+	Add GOMP_MAP_ALWAYS_POINTER and GOMP_MAP_FIRSTPRIVATE_REFERENCE.
+	(GOMP_MAP_ALWAYS_P): Define.
+	(GOMP_TARGET_FLAG_NOWAIT): Adjust comment.
+
+2015-10-27  Daniel Jacobowitz  <dan@codesourcery.com>
+	    Joseph Myers  <joseph@codesourcery.com>
+	    Mark Shinwell  <shinwell@codesourcery.com>
+	    Andrew Stubbs  <ams@codesourcery.com>
+	    Rich Felker <dalias@libc.org>
+
+	* longlong.h (udiv_qrnnd): Add FDPIC compatible version for SH.
+
+2015-10-18  Roland McGrath  <roland@gnu.org>
+
+	PR other/63758
+	* environ.h: New file.
+
+2015-10-13  Jakub Jelinek  <jakub@redhat.com>
+	    Ilya Verbin  <ilya.verbin@intel.com>
+
+	* gomp-constants.h (GOMP_MAP_FLAG_ALWAYS): Define.
+	(enum gomp_map_kind): Add GOMP_MAP_FIRSTPRIVATE,
+	GOMP_MAP_FIRSTPRIVATE_INT, GOMP_MAP_USE_DEVICE_PTR,
+	GOMP_MAP_ZERO_LEN_ARRAY_SECTION, GOMP_MAP_ALWAYS_TO,
+	GOMP_MAP_ALWAYS_FROM, GOMP_MAP_ALWAYS_TOFROM, GOMP_MAP_STRUCT,
+	GOMP_MAP_DELETE_ZERO_LEN_ARRAY_SECTION, GOMP_MAP_DELETE,
+	GOMP_MAP_RELEASE, GOMP_MAP_FIRSTPRIVATE_POINTER.
+	(GOMP_MAP_ALWAYS_TO_P, GOMP_MAP_ALWAYS_FROM_P): Define.
+	(GOMP_TASK_FLAG_UNTIED, GOMP_TASK_FLAG_FINAL, GOMP_TASK_FLAG_MERGEABLE,
+	GOMP_TASK_FLAG_DEPEND, GOMP_TASK_FLAG_PRIORITY, GOMP_TASK_FLAG_UP,
+	GOMP_TASK_FLAG_GRAINSIZE, GOMP_TASK_FLAG_IF, GOMP_TASK_FLAG_NOGROUP,
+	GOMP_TARGET_FLAG_NOWAIT, GOMP_TARGET_FLAG_EXIT_DATA,
+	GOMP_TARGET_FLAG_UPDATE): Define.
+
+2015-09-28  Nathan Sidwell  <nathan@codesourcery.com>
+
+	* gomp-constants.h (GOMP_VERSION_NVIDIA_PTX): Increment.
+	(GOMP_DIM_GANG, GOMP_DIM_WORKER, GOMP_DIM_VECTOR, GOMP_DIM_MAX,
+	GOMP_DIM_MASK): New.
+	(GOMP_LAUNCH_DIM, GOMP_LAUNCH_ASYNC, GOMP_LAUNCH_WAIT): New.
+	(GOMP_LAUNCH_CODE_SHIFT, GOMP_LAUNCH_DEVICE_SHIFT,
+	GOMP_LAUNCH_OP_SHIFT): New.
+	(GOMP_LAUNCH_PACK, GOMP_LAUNCH_CODE, GOMP_LAUNCH_DEVICE,
+	GOMP_LAUNCH_OP): New.
+	(GOMP_LAUNCH_OP_MAX): New.
+
+2015-08-24  Nathan Sidwell  <nathan@codesourcery.com>
+
+	* gomp-constants.h (GOMP_VERSION, GOMP_VERSION_NVIDIA_PTX,
+	GOMP_VERSION_INTEL_MIC): New.
+	(GOMP_VERSION_PACK, GOMP_VERSION_LIB, GOMP_VERSION_DEV): New.
+
+2015-08-14  Pierre-Marie de Rodat  <derodat@adacore.com>
+
+	* dwarf2.def (DW_AT_GNU_bias): New attribute.
+
+2015-08-14  Pierre-Marie de Rodat  <derodat@adacore.com>
+
+	* dwarf2.def (DW_AT_GNU_numerator, DW_AT_GNU_denominator): New
+	attributes.
+
+2015-08-11  Trevor Saunders  <tbsaunde+gcc@tbsaunde.org>
+
+	* ansidecl.h (GCC_FINAL): New macro.
+
+2015-08-10  Thomas Schwinge  <thomas@codesourcery.com>
+
+	* gomp-constants.c (GOMP_DEVICE_HOST_NONSHM): Remove.
+
+2015-05-22  Yunlian Jiang  <yunlian@google.com>
+
+	* libiberty.h (asprintf): Don't declare if HAVE_DECL_ASPRINTF is
+	not defined.
+
+2015-03-19  Richard Biener  <rguenther@suse.de>
+
+	* partition.h (struct partition_elem): Re-order elements to
+	avoid padding.
+
+2015-03-02  Markus Trippelsdorf  <markus@trippelsdorf.de>
+
+	PR target/65261
+	* ansidecl.h (ATTRIBUTE_NO_SANITIZE_UNDEFINED): New macro.
+
+2015-02-19  Pedro Alves  <palves@redhat.com>
+
+	* floatformat.h [__cplusplus]: Wrap in extern "C".
+
+2015-02-04  Jakub Jelinek  <jakub@redhat.com>
+
+	* dwarf2.h (enum dwarf_source_language): Add DW_LANG_Fortran03
+	and DW_LANG_Fortran08.
+
+2015-01-15  Thomas Schwinge  <thomas@codesourcery.com>
+	    Julian Brown  <julian@codesourcery.com>
+	    James Norris  <jnorris@codesourcery.com>
+
+	* gomp-constants.h: New file.
+
+2014-12-14  Jan-Benedict Glaw  <jbglaw@lug-owl.de>
+
+	* libiberty.h: Merge Copyright year update from Binutils.
+
+2014-12-24  Uros Bizjak  <ubizjak@gmail.com>
+	    Ben Elliston  <bje@au.ibm.com>
+	    Manuel Lopez-Ibanez  <manu@gcc.gnu.org>
+
+	* libiberty.h (xasprintf): Declare.
+
+2014-12-11  Uros Bizjak  <ubizjak@gmail.com>
+            Ben Elliston  <bje@au.ibm.com>
+            Manuel Lopez-Ibanez  <manu@gcc.gnu.org>
+
+	* libiberty.h (xvasprintf): Declare.
+
+2014-12-09  Trevor Saunders  <tsaunders@mozilla.com>
+
+	* hashtab.h, splay-tree.h: Remove GTY markers.
+
+2014-12-08  Mark Wielaard  <mjw@redhat.com>
+
+	PR debug/60782
+	* dwarf2.def: Add DWARFv5 DW_TAG_atomic_type.
+
+2014-11-21  Mark Wielaard  <mjw@redhat.com>
+
+	* dwarf2.h: Add DW_LANG_C_plus_plus_11, DW_LANG_C11 and
+	DW_LANG_C_plus_plus_14.
+
+2014-11-25  Mark Wielaard  <mjw@redhat.com>
+
+	* dwarf2.def (DW_AT_noreturn): New DWARF5 attribute.
+
+2014-11-14  Shinichiro Hamaji  <shinichiro.hamaji@gmail.com>
+
+	* dwarf2.def (DW_AT_APPLE_optimized, DW_AT_APPLE_flags)
+	(DW_AT_APPLE_isa, DW_AT_APPLE_block)
+	(DW_AT_APPLE_major_runtime_vers, DW_AT_APPLE_runtime_class)
+	(DW_AT_APPLE_omit_frame_ptr, DW_AT_APPLE_property_name)
+	(DW_AT_APPLE_property_getter, DW_AT_APPLE_property_setter)
+	(DW_AT_APPLE_property_attribute, DW_AT_APPLE_objc_complete_type)
+	(DW_AT_APPLE_property): New macros.
+
+2014-11-11  Anthony Brandon  <anthony.brandon@gmail.com>
+	    Manuel López-Ibáñez  <manu@gcc.gnu.org>
+
+	PR driver/36312
+	* filenames.h: Add prototype for canonical_filename_eq.
+
+2014-11-11  David Malcolm  <dmalcolm@redhat.com>
+
+	* ChangeLog.jit: New.
+
+2014-10-28  Richard Henderson  <rth@redhat.com>
+
+	* longlong.h [__alpha] (umul_ppmm): Disable for c++.
+
+2014-10-28  Yury Gribov  <y.gribov@samsung.com>
+
+	* libiberty.h (strtol, strtoul, strtoll, strtoull): New prototypes.
+
+2014-10-27  Phil Muldoon  <pmuldoon@redhat.com>
+	    Jan Kratochvil  <jan.kratochvil@redhat.com>
+	    Tom Tromey  <tromey@redhat.com>
+
+	* gcc-c-fe.def: New file.
+	* gcc-c-interface.h: New file.
+	* gcc-interface.h: New file.
+
+2014-10-15  David Malcolm  <dmalcolm@redhat.com>
+
+	* libiberty.h (choose_tmpdir): New prototype.
+
+2013-10-02  Mark Wielaard  <mjw@redhat.com>
+
+	PR debug/63239
+	* dwarf2.def (DW_AT_GNU_deleted): New attribute.
+
+2014-09-26  Max Ostapenko  <m.ostapenko@partner.samsung.com>
+
+	* libiberty.h (PEX_STDOUT_APPEND): New flag.
+	(PEX_STDERR_APPEND): Likewise.
+
+2014-09-23  Iain Buclaw  <ibuclaw@gdcproject.org>
+
+	* demangle.h (DMGL_DLANG): New macro.
+	(DMGL_STYLE_MASK): Add DMGL_DLANG.
+	(demangling_styles): Add dlang_demangling.
+	(DLANG_DEMANGLING_STYLE_STRING): New macro.
+	(DLANG_DEMANGLING): New macro.
+	(dlang_demangle): New prototype.
+
+2014-09-15  Andreas Krebbel  <Andreas.Krebbel@de.ibm.com>
+
+	* longlong.h: Add __udiv_w_sdiv prototype.
+
+2014-06-10  Thomas Schwinge  <thomas@codesourcery.com>
+
+	PR lto/61334
+	* libiberty.h [defined (HAVE_DECL_STRNLEN) &&
+	!HAVE_DECL_STRNLEN] (strnlen): New prototype.
+
+2014-05-21  John Marino  <gnugcc@marino.st>
+
+	* liberty.h: Use basename function on DragonFly.
+
+2014-05-01  Steve Ellcey  <sellcey@mips.com>
+
+	* include/longlong.h: Use 'defined()' to check __mips16.
+
+2014-04-30  Richard Sandiford  <rdsandiford@googlemail.com>
+
+	* longlong.h (__i386__): Remove W_TYPE_SIZE==64 handling.
+
+2014-04-22  Yufeng Zhang  <yufeng.zhang@arm.com>
+
+	* longlong.h: Merge from glibc.
+
+2014-01-21  Tom Tromey  <tromey@redhat.com>
+
+	* ansidecl.h (ANSI_PROTOTYPES, PTRCONST, LONG_DOUBLE, PARAMS)
+	(VPARAMS, VA_START, VA_OPEN, VA_CLOSE, VA_FIXEDARG, CONST)
+	(VOLATILE, SIGNED, PROTO, EXFUN, DEFUN, DEFUN_VOID, AND, DOTS)
+	(NOARGS): Don't define.
+	* libiberty.h (expandargv, writeargv): Don't use PARAMS.
+
+2013-12-23  Bill Maddox  <maddox@google.com>
+
+	* demangle.h (enum gnu_v3_ctor_kinds):
+	Added literal gnu_v3_unified_ctor.
+	(enum gnu_v3_ctor_kinds):
+	Added literal gnu_v3_unified_dtor.
+
+2013-12-04  Richard Sandiford  <rdsandiford@googlemail.com>
+
+	* longlong.h: New file.
+
+2013-10-29  Marc Glisse  <marc.glisse@inria.fr>
+
+	PR tree-optimization/58689
+	* ansidecl.h (ATTRIBUTE_RETURNS_NONNULL): New macro.
+	* libiberty.h (basename, lbasename, dos_lbasename, unix_lbasename,
+	concat_copy): Mark with attributes nonnull(1) and returns_nonnull.
+	(concat, reconcat, concat_copy2, choose_temp_base, xstrerror,
+	xmalloc, xrealloc, xcalloc, xstrdup, xstrndup, xmemdup, pex_init):
+	Mark with attribute returns_nonnull.
+
+2013-10-22  Sterling Augustine  <saugustine@google.com>
+
+	* gdb/gdb-index.h: Merge from gdb tree.
+
+2013-08-20  Alan Modra  <amodra@gmail.com>
+
+	* floatformat.h (floatformat_ibm_long_double): Delete.
+	(floatformat_ibm_long_double_big): Declare.
+	(floatformat_ibm_long_double_little): Declare.
+
+2013-08-19  Dehao Chen  <dehao@google.com>
+
+	* dwarf2.def (DW_AT_GNU_discriminator): New attribute.
+
+2013-08-02  Caroline Tice  <cmtice@google.com>
+
+	* vtv-change-permission.h: New file.
+
+2013-04-03  Jason Merrill  <jason@redhat.com>
+
+	Demangle C++11 ref-qualifier.
+	* demangle.h (enum demangle_component_type): Add
+	DEMANGLE_COMPONENT_REFERENCE_THIS,
+	DEMANGLE_COMPONENT_RVALUE_REFERENCE_THIS.
+
+2013-03-01  Cary Coutant  <ccoutant@google.com>
+
+	* dwarf2.h (enum dwarf_sect): New enum type.
+
+2013-02-11  Sriraman Tallam  <tmsriram@google.com>
+
+	* plugin-api.h (enum ld_plugin_level): Assign integers
+	explicitly for all values.
+
+2013-01-30  Kai Tietz  <ktietz@redhat.com>
+
+	PR other/54620
+	PR target/39064
+	* md5.h (md5_uintptr, md5_uint32): Define as uintptr_t/uint32_t if
+	stdint.h and sys/types.h headers are present.
+	* sha1.h (sha1_uintptr, sha1_uint32): Likewise.
+
+2012-12-18  Aldy Hernandez  <aldyh@redhat.com>
+
+	PR other/54324
+	* ansidecl.h (ATTRIBUTE_UNUSED): Do not set __attribute__ for GCC
+	< 3.4.
+
+2012-11-09  Jason Merrill  <jason@redhat.com>
+
+	* demangle.h (enum demangle_component_type): Add
+	DEMANGLE_COMPONENT_TAGGED_NAME.
+
+2012-10-29  Sterling Augustine  <saugustine@google.com>
+            Cary Coutant  <ccoutant@google.com>
+
+	* dwarf2.h (dwarf_location_list_entry_type): New enum with fields
+	DW_LLE_GNU_end_of_list_entry, DW_LLE_GNU_base_address_selection_entry,
+	DW_LLE_GNU_start_end_entry and DW_LLE_GNU_start_length_entry.
+
+
+2012-10-08  Jason Merrill  <jason@redhat.com>
+
+	* demangle.h (enum demangle_component_type): Add
+	DEMANGLE_COMPONENT_TLS_INIT and DEMANGLE_COMPONENT_TLS_WRAPPER.
+
+2012-09-18  Florian Weimer  <fweimer@redhat.com>
+
+	PR other/54411
+	* objalloc.h (objalloc_alloc): Do not use fast path on wraparound.
+
+2012-09-06  Cary Coutant  <ccoutant@google.com>
+
+	* dwarf2.def: Edit comment.
+
+2012-08-24  Sriraman Tallam  <tmsriram@google.com>
+
+	* plugin-api.h (ld_plugin_allow_unique_segment_for_sections):
+	New interface.
+	(ld_plugin_unique_segment_for_sections): New interface.
+	(LDPT_ALLOW_UNIQUE_SEGMENT_FOR_SECTIONS): New enum val.
+	(LDPT_UNIQUE_SEGMENT_FOR_SECTIONS): New enum val.
+	(tv_allow_unique_segment_for_sections): New member.
+	(tv_unique_segment_for_sections): New member.
+
+2012-07-13  Doug Evans  <dje@google.com>
+
+	* filenames.h: #include "hashtab.h".
+	(filename_hash, filename_eq): Declare.
+
+2012-06-18  Doug Evans  <dje@google.com>
+
+	* dwarf2.def (DW_OP): Add DW_OP_GNU_const_index.
+
+2012-06-12  Rafael Ávila de Espíndola <respindola@mozilla.com>
+
+	* plugin-api.h (ld_plugin_output_file_type): Add LDPO_PIE.
+
+2012-06-08  Jakub Jelinek  <jakub@redhat.com>
+
+	* dwarf2.def (DW_FORM_GNU_ref_alt, DW_FORM_GNU_strp_alt): New
+	forms.
+	* dwarf2.h (enum dwarf_macro_record_type): Add
+	DW_MACRO_GNU_define_indirect_alt, DW_MACRO_GNU_undef_indirect_alt
+	and DW_MACRO_GNU_transparent_include_alt.
+
+2012-05-23  Doug Evans  <dje@google.com>
+
+	* leb128.h: #include stdint.h, inttypes.h.
+	(read_uleb128_to_uint64): Renamed from read_uleb128_to_ull.
+	Change to take a uint64_t * argument instead of unsigned long long.
+	(read_sleb128_to_uint64): Renamed from read_sleb128_to_ll.
+	Change to take an int64_t * argument instead of long long.
+
+2012-05-22  Doug Evans  <dje@google.com>
+
+	* leb128.h: New file.
+
+2012-05-19  Gary Funck  <gary@intrepid.com>
+
+	* dwarf2.def: Update comment re: UPC extensions to reference
+	DWARF4 specification.
+
+2012-05-02  Cary Coutant  <ccoutant@google.com>
+
+	* dwarf2.def: Remove DW_FORM_GNU_ref_index,
+	replace DW_AT_GNU_ref_base with DW_AT_GNU_ranges_base.
+
+2012-04-28  Doug Evans  <dje@google.com>
+
+	* dwarf2.def (DW_OP): Add DW_OP_GNU_addr_index.
+
+2012-04-27  Tom Tromey  <tromey@redhat.com>
+
+	* dwarf2.h: Wrap function declarations in extern "C".
+
+2012-04-27  Tom Tromey  <tromey@redhat.com>
+
+	* dwarf2.h (enum dwarf_tag, enum dwarf_form, enum dwarf_attribute)
+	(enum dwarf_location_atom, enum dwarf_type, enum
+	dwarf_call_frame_info): Remove.
+	(DW_TAG, DW_TAG_DUP, DW_FORM, DW_AT, DW_AT_DUP, DW_OP)
+	(DW_OP_DUP, DW_ATE, DW_ATE_DUP, DW_CFA): New macros.
+	Include dwarf2.def.
+	(get_DW_TAG_name, get_DW_AT_name, get_DW_FORM_name)
+	(get_DW_OP_name, get_DW_ATE_name): Declare.
+	* dwarf2.def: New file, from dwarf2.h.
+
+2012-04-10  Tristan Gingold  <gingold@adacore.com>
+
+	* splay-tree.h: Conditionnaly includes stdint.h and inttypes.h
+	(libi_uhostptr_t, libi_shostptr_t): Remove, replaced by uintptr_t.
 
 2012-01-26  Cary Coutant  <ccoutant@google.com>
 
@@ -170,7 +798,7 @@
 	Sync LD plugin patch series (part 1/6) with src/include/.
 	* plugin-api.h (LDPT_GNU_LD_VERSION): New ld_plugin_tag enum member.
 
-2010-10-06  Andi Kleen <ak@linux.intel.com>
+2010-10-06  Andi Kleen  <ak@linux.intel.com>
 
 	* libiberty.h (setproctitle): Add prototype.
 

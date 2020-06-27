@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -30,12 +30,10 @@ with Binde;    use Binde;
 with Binderr;  use Binderr;
 with Bindgen;  use Bindgen;
 with Bindusg;
-with Butil;    use Butil;
 with Casing;   use Casing;
 with Csets;
 with Debug;    use Debug;
 with Fmap;
-with Fname;    use Fname;
 with Namet;    use Namet;
 with Opt;      use Opt;
 with Osint;    use Osint;
@@ -45,7 +43,6 @@ with Rident;   use Rident;
 with Snames;
 with Switch;   use Switch;
 with Switch.B; use Switch.B;
-with Table;
 with Targparm; use Targparm;
 with Types;    use Types;
 
@@ -69,32 +66,22 @@ procedure Gnatbind is
    --  The first library file, that should be a main subprogram if neither -n
    --  nor -z are used.
 
-   Std_Lib_File : File_Name_Type;
-   --  Standard library
-
-   Text     : Text_Buffer_Ptr;
-   Next_Arg : Positive;
+   Text : Text_Buffer_Ptr;
 
    Output_File_Name_Seen : Boolean := False;
    Output_File_Name      : String_Ptr := new String'("");
 
-   L_Switch_Seen : Boolean := False;
-
    Mapping_File : String_Ptr := null;
 
-   package Closure_Sources is new Table.Table
-     (Table_Component_Type => File_Name_Type,
-      Table_Index_Type     => Natural,
-      Table_Low_Bound      => 1,
-      Table_Initial        => 10,
-      Table_Increment      => 100,
-      Table_Name           => "Gnatbind.Closure_Sources");
-   --  Table to record the sources in the closure, to avoid duplications. Used
-   --  only with switch -R.
+   procedure Add_Artificial_ALI_File (Name : String);
+   --  Artificially add ALI file Name in the closure
 
    function Gnatbind_Supports_Auto_Init return Boolean;
-   --  Indicates if automatic initialization of elaboration procedure
-   --  through the constructor mechanism is possible on the platform.
+   --  Indicates if automatic initialization of elaboration procedure through
+   --  the constructor mechanism is possible on the platform.
+
+   function Is_Cross_Compiler return Boolean;
+   --  Returns True iff this is a cross-compiler
 
    procedure List_Applicable_Restrictions;
    --  List restrictions that apply to this partition if option taken
@@ -104,8 +91,42 @@ procedure Gnatbind is
    --  All the one character arguments are still handled by Switch. This
    --  routine handles -aO -aI and -I-. The lower bound of Argv must be 1.
 
-   function Is_Cross_Compiler return Boolean;
-   --  Returns True iff this is a cross-compiler
+   generic
+      with procedure Action (Argv : String);
+   procedure Generic_Scan_Bind_Args;
+   --  Iterate through the args calling Action on each one, taking care of
+   --  response files.
+
+   procedure Write_Arg (S : String);
+   --  Passed to Generic_Scan_Bind_Args to print args
+
+   -----------------------------
+   -- Add_Artificial_ALI_File --
+   -----------------------------
+
+   procedure Add_Artificial_ALI_File (Name : String) is
+      Id : ALI_Id;
+      pragma Warnings (Off, Id);
+
+      Std_Lib_File : File_Name_Type;
+      --  Standard library
+
+   begin
+      Name_Len := Name'Length;
+      Name_Buffer (1 .. Name_Len) := Name;
+      Std_Lib_File := Name_Find;
+      Text := Read_Library_Info (Std_Lib_File, True);
+
+      Id :=
+        Scan_ALI
+          (F             => Std_Lib_File,
+           T             => Text,
+           Ignore_ED     => False,
+           Err           => False,
+           Ignore_Errors => Debug_Flag_I);
+
+      Free (Text);
+   end Add_Artificial_ALI_File;
 
    ---------------------------------
    -- Gnatbind_Supports_Auto_Init --
@@ -115,6 +136,7 @@ procedure Gnatbind is
       function gnat_binder_supports_auto_init return Integer;
       pragma Import (C, gnat_binder_supports_auto_init,
                      "__gnat_binder_supports_auto_init");
+
    begin
       return gnat_binder_supports_auto_init /= 0;
    end Gnatbind_Supports_Auto_Init;
@@ -126,6 +148,7 @@ procedure Gnatbind is
    function Is_Cross_Compiler return Boolean is
       Cross_Compiler : Integer;
       pragma Import (C, Cross_Compiler, "__gnat_is_cross_compiler");
+
    begin
       return Cross_Compiler = 1;
    end Is_Cross_Compiler;
@@ -143,7 +166,7 @@ procedure Gnatbind is
       --  should not be listed.
 
       No_Restriction_List : constant array (All_Restrictions) of Boolean :=
-        (No_Allocators_After_Elaboration => True,
+        (No_Standard_Allocators_After_Elaboration => True,
          --  This involves run-time conditions not checkable at compile time
 
          No_Anonymous_Allocators         => True,
@@ -175,6 +198,18 @@ procedure Gnatbind is
 
          Max_Storage_At_Blocking         => True,
          --  Not checkable at compile time
+
+         --  The following three should not be partition-wide, so the
+         --  following tests are junk to be removed eventually ???
+
+         No_Specification_Of_Aspect      => True,
+         --  Requires a parameter value, not a count
+
+         No_Use_Of_Attribute             => True,
+         --  Requires a parameter value, not a count
+
+         No_Use_Of_Pragma                => True,
+         --  Requires a parameter value, not a count
 
          others                          => False);
 
@@ -231,7 +266,6 @@ procedure Gnatbind is
 
             when others =>
                raise Program_Error;
-
          end case;
       end Restriction_Could_Be_Set;
 
@@ -242,13 +276,13 @@ procedure Gnatbind is
 
       for R in All_Restrictions loop
          if not No_Restriction_List (R)
-            and then Restriction_Could_Be_Set (R)
+           and then Restriction_Could_Be_Set (R)
          then
             if not Additional_Restrictions_Listed then
                Write_Eol;
                Write_Line
-                 ("The following additional restrictions may be" &
-                  " applied to this partition:");
+                 ("The following additional restrictions may be applied to "
+                  & "this partition:");
                Additional_Restrictions_Listed := True;
             end if;
 
@@ -256,6 +290,7 @@ procedure Gnatbind is
 
             declare
                S : constant String := Restriction_Id'Image (R);
+
             begin
                Name_Len := S'Length;
                Name_Buffer (1 .. Name_Len) := S;
@@ -318,12 +353,6 @@ procedure Gnatbind is
          elsif Argv (2) = 'L' then
             if Argv'Length >= 3 then
 
-               --  Remember that the -L switch was specified, so that if this
-               --  is on OpenVMS, the export names are put in uppercase.
-               --  This is not known before the target parameters are read.
-
-               L_Switch_Seen := True;
-
                Opt.Bind_For_Library := True;
                Opt.Ada_Init_Name :=
                  new String'(Argv (3 .. Argv'Last) & Opt.Ada_Init_Suffix);
@@ -338,8 +367,8 @@ procedure Gnatbind is
 
             else
                Fail
-                 ("Prefix of initialization and finalization " &
-                  "procedure names missing in -L");
+                 ("Prefix of initialization and finalization procedure names "
+                  & "missing in -L");
             end if;
 
          --  -Sin -Slo -Shi -Sxx -Sev
@@ -468,8 +497,64 @@ procedure Gnatbind is
       end if;
    end Scan_Bind_Arg;
 
+   ----------------------------
+   -- Generic_Scan_Bind_Args --
+   ----------------------------
+
+   procedure Generic_Scan_Bind_Args is
+      Next_Arg : Positive := 1;
+
+   begin
+      --  Use low level argument routines to avoid dragging in secondary stack
+
+      while Next_Arg < Arg_Count loop
+         declare
+            Next_Argv : String (1 .. Len_Arg (Next_Arg));
+
+         begin
+            Fill_Arg (Next_Argv'Address, Next_Arg);
+
+            if Next_Argv'Length > 0 then
+               if Next_Argv (1) = '@' then
+                  if Next_Argv'Length > 1 then
+                     declare
+                        Arguments : constant Argument_List :=
+                                      Response_File.Arguments_From
+                                        (Response_File_Name        =>
+                                           Next_Argv (2 .. Next_Argv'Last),
+                                         Recursive                 => True,
+                                         Ignore_Non_Existing_Files => True);
+                     begin
+                        for J in Arguments'Range loop
+                           Action (Arguments (J).all);
+                        end loop;
+                     end;
+                  end if;
+
+               else
+                  Action (Next_Argv);
+               end if;
+            end if;
+         end;
+
+         Next_Arg := Next_Arg + 1;
+      end loop;
+   end Generic_Scan_Bind_Args;
+
+   ---------------
+   -- Write_Arg --
+   ---------------
+
+   procedure Write_Arg (S : String) is
+   begin
+      Write_Str (" " & S);
+   end Write_Arg;
+
    procedure Check_Version_And_Help is
      new Check_Version_And_Help_G (Bindusg.Display);
+
+   procedure Put_Bind_Args  is new Generic_Scan_Bind_Args (Write_Arg);
+   procedure Scan_Bind_Args is new Generic_Scan_Bind_Args (Scan_Bind_Arg);
 
 --  Start of processing for Gnatbind
 
@@ -487,67 +572,50 @@ begin
    begin
       pragma Assert
         (Shared_Libgnat_Default = SHARED
-         or else
-        Shared_Libgnat_Default = STATIC);
+          or else
+         Shared_Libgnat_Default = STATIC);
       Shared_Libgnat := (Shared_Libgnat_Default = SHARED);
    end;
 
-   --  Scan the switches and arguments
+   --  Carry out package initializations. These are initializations which
+   --  might logically be performed at elaboration time, and we decide to be
+   --  consistent. Like elaboration, the order in which these calls are made
+   --  is in some cases important.
+
+   Csets.Initialize;
+   Snames.Initialize;
+
+   --  Scan the switches and arguments. Note that Snames must already be
+   --  initialized (for processing of the -V switch).
 
    --  First, scan to detect --version and/or --help
 
-   Check_Version_And_Help ("GNATBIND", "1995");
+   Check_Version_And_Help ("GNATBIND", "1992");
 
-   --  Use low level argument routines to avoid dragging in the secondary stack
+   --  We need to Scan_Bind_Args first, to set Verbose_Mode, so we know whether
+   --  to Put_Bind_Args.
 
-   Next_Arg := 1;
-   Scan_Args : while Next_Arg < Arg_Count loop
-      declare
-         Next_Argv : String (1 .. Len_Arg (Next_Arg));
-      begin
-         Fill_Arg (Next_Argv'Address, Next_Arg);
+   Scan_Bind_Args;
 
-         if Next_Argv'Length > 0 then
-            if Next_Argv (1) = '@' then
-               if Next_Argv'Length > 1 then
-                  declare
-                     Arguments : constant Argument_List :=
-                                   Response_File.Arguments_From
-                                     (Response_File_Name        =>
-                                        Next_Argv (2 .. Next_Argv'Last),
-                                      Recursive                 => True,
-                                      Ignore_Non_Existing_Files => True);
-                  begin
-                     for J in Arguments'Range loop
-                        Scan_Bind_Arg (Arguments (J).all);
-                     end loop;
-                  end;
-               end if;
-
-            else
-               Scan_Bind_Arg (Next_Argv);
-            end if;
-         end if;
-      end;
-
-      Next_Arg := Next_Arg + 1;
-   end loop Scan_Args;
+   if Verbose_Mode then
+      Write_Str (Command_Name);
+      Put_Bind_Args;
+      Write_Eol;
+   end if;
 
    if Use_Pragma_Linker_Constructor then
       if Bind_Main_Program then
          Fail ("switch -a must be used in conjunction with -n or -Lxxx");
 
       elsif not Gnatbind_Supports_Auto_Init then
-         Fail ("automatic initialisation of elaboration " &
-               "not supported on this platform");
+         Fail ("automatic initialisation of elaboration not supported on this "
+               & "platform");
       end if;
    end if;
 
    --  Test for trailing -o switch
 
-   if Opt.Output_File_Name_Present
-     and then not Output_File_Name_Seen
-   then
+   if Opt.Output_File_Name_Present and then not Output_File_Name_Seen then
       Fail ("output file name missing after -o");
    end if;
 
@@ -557,15 +625,13 @@ begin
       Bindusg.Display;
    end if;
 
-   --  Check that the Ada binder file specified has extension .adb and that
-   --  the C binder file has extension .c
+   --  Check that the binder file specified has extension .adb
 
-   if Opt.Output_File_Name_Present
-     and then Output_File_Name_Seen
-   then
+   if Opt.Output_File_Name_Present and then Output_File_Name_Seen then
       Check_Extensions : declare
          Length : constant Natural := Output_File_Name'Length;
          Last   : constant Natural := Output_File_Name'Last;
+
       begin
          if Length <= 4
            or else Output_File_Name (Last - 3 .. Last) /= ".adb"
@@ -577,14 +643,6 @@ begin
 
    Osint.Add_Default_Search_Dirs;
 
-   --  Carry out package initializations. These are initializations which
-   --  might logically be performed at elaboration time, and we decide to be
-   --  consistent. Like elaboration, the order in which these calls are made
-   --  is in some cases important.
-
-   Csets.Initialize;
-   Snames.Initialize;
-
    --  Acquire target parameters
 
    Targparm.Get_Target_Parameters;
@@ -594,17 +652,6 @@ begin
    --  accumulate additional restrictions specified in other files.
 
    Cumulative_Restrictions := Targparm.Restrictions_On_Target;
-
-   --  On OpenVMS, when -L is used, all external names used in pragmas Export
-   --  are in upper case. The reason is that on OpenVMS, the macro-assembler
-   --  MACASM-32, used to build Stand-Alone Libraries, only understands
-   --  uppercase.
-
-   if L_Switch_Seen and then OpenVMS_On_Target then
-      To_Upper (Opt.Ada_Init_Name.all);
-      To_Upper (Opt.Ada_Final_Name.all);
-      To_Upper (Opt.Ada_Main_Name.all);
-   end if;
 
    --  Acquire configurable run-time mode
 
@@ -619,10 +666,15 @@ begin
       Display_Version ("GNATBIND", "1995");
    end if;
 
-   --  Output usage information if no files
+   --  Output usage information if no arguments
 
    if not More_Lib_Files then
-      Bindusg.Display;
+      if Argument_Count = 0 then
+         Bindusg.Display;
+      else
+         Write_Line ("try ""gnatbind --help"" for more information.");
+      end if;
+
       Exit_Program (E_Fatal);
    end if;
 
@@ -706,29 +758,15 @@ begin
 
       --  Add System.Standard_Library to list to ensure that these files are
       --  included in the bind, even if not directly referenced from Ada code
-      --  This is suppressed if the appropriate targparm switch is set.
+      --  This is suppressed if the appropriate targparm switch is set. Be sure
+      --  in any case that System is in the closure, as it may contain linker
+      --  options. Note that it will be automatically added if s-stalib is
+      --  added.
 
       if not Suppress_Standard_Library_On_Target then
-         Name_Buffer (1 .. 12) := "s-stalib.ali";
-         Name_Len := 12;
-         Std_Lib_File := Name_Find;
-         Text := Read_Library_Info (Std_Lib_File, True);
-
-         declare
-            Id : ALI_Id;
-            pragma Warnings (Off, Id);
-
-         begin
-            Id :=
-              Scan_ALI
-                (F             => Std_Lib_File,
-                 T             => Text,
-                 Ignore_ED     => False,
-                 Err           => False,
-                 Ignore_Errors => Debug_Flag_I);
-         end;
-
-         Free (Text);
+         Add_Artificial_ALI_File ("s-stalib.ali");
+      else
+         Add_Artificial_ALI_File ("system.ali");
       end if;
 
       --  Load ALIs for all dependent units
@@ -740,6 +778,13 @@ begin
       --  Quit if some file needs compiling
 
       if No_Object_Specified then
+         raise Unrecoverable_Error;
+      end if;
+
+      --  Quit with message if we had a GNATprove file
+
+      if GNATprove_Mode_Specified then
+         Error_Msg ("one or more files compiled in GNATprove mode");
          raise Unrecoverable_Error;
       end if;
 
@@ -800,12 +845,15 @@ begin
          end;
       end if;
 
-      --  Perform consistency and correctness checks
+      --  Perform consistency and correctness checks. Disable these in CodePeer
+      --  mode where we want to be more flexible.
 
-      Check_Duplicated_Subunits;
-      Check_Versions;
-      Check_Consistency;
-      Check_Configuration_Consistency;
+      if not CodePeer_Mode then
+         Check_Duplicated_Subunits;
+         Check_Versions;
+         Check_Consistency;
+         Check_Configuration_Consistency;
+      end if;
 
       --  List restrictions that could be applied to this partition
 
@@ -816,128 +864,19 @@ begin
       --  Complete bind if no errors
 
       if Errors_Detected = 0 then
-         Find_Elab_Order;
+         declare
+            Elab_Order : Unit_Id_Table;
+            use Unit_Id_Tables;
 
-         if Errors_Detected = 0 then
-            --  Display elaboration order if -l was specified
+         begin
+            Find_Elab_Order (Elab_Order, First_Main_Lib_File);
 
-            if Elab_Order_Output then
-               if not Zero_Formatting then
-                  Write_Eol;
-                  Write_Str ("ELABORATION ORDER");
-                  Write_Eol;
-               end if;
-
-               for J in Elab_Order.First .. Elab_Order.Last loop
-                  if not Units.Table (Elab_Order.Table (J)).SAL_Interface then
-                     if not Zero_Formatting then
-                        Write_Str ("   ");
-                     end if;
-
-                     Write_Unit_Name
-                       (Units.Table (Elab_Order.Table (J)).Uname);
-                     Write_Eol;
-                  end if;
-               end loop;
-
-               if not Zero_Formatting then
-                  Write_Eol;
-               end if;
+            if Errors_Detected = 0 and then not Check_Only then
+               Gen_Output_File
+                 (Output_File_Name.all,
+                  Elab_Order => Elab_Order.Table (First .. Last (Elab_Order)));
             end if;
-
-            if not Check_Only then
-               Gen_Output_File (Output_File_Name.all);
-            end if;
-
-            --  Display list of sources in the closure (except predefined
-            --  sources) if -R was used.
-
-            if List_Closure then
-               List_Closure_Display : declare
-                  Source : File_Name_Type;
-
-                  function Put_In_Sources (S : File_Name_Type) return Boolean;
-                  --  Check if S is already in table Sources and put in Sources
-                  --  if it is not. Return False if the source is already in
-                  --  Sources, and True if it is added.
-
-                  --------------------
-                  -- Put_In_Sources --
-                  --------------------
-
-                  function Put_In_Sources
-                    (S : File_Name_Type) return Boolean is
-                  begin
-                     for J in 1 .. Closure_Sources.Last loop
-                        if Closure_Sources.Table (J) = S then
-                           return False;
-                        end if;
-                     end loop;
-
-                     Closure_Sources.Append (S);
-                     return True;
-                  end Put_In_Sources;
-
-               --  Start of processing for List_Closure_Display
-
-               begin
-                  Closure_Sources.Init;
-
-                  if not Zero_Formatting then
-                     Write_Eol;
-                     Write_Str ("REFERENCED SOURCES");
-                     Write_Eol;
-                  end if;
-
-                  for J in reverse Elab_Order.First .. Elab_Order.Last loop
-                     Source := Units.Table (Elab_Order.Table (J)).Sfile;
-
-                     --  Do not include the sources of the runtime and do not
-                     --  include the same source several times.
-
-                     if Put_In_Sources (Source)
-                       and then not Is_Internal_File_Name (Source)
-                     then
-                        if not Zero_Formatting then
-                           Write_Str ("   ");
-                        end if;
-
-                        Write_Str (Get_Name_String (Source));
-                        Write_Eol;
-                     end if;
-                  end loop;
-
-                  --  Subunits do not appear in the elaboration table because
-                  --  they are subsumed by their parent units, but we need to
-                  --  list them for other tools. For now they are listed after
-                  --  other files, rather than right after their parent, since
-                  --  there is no easy link between the elaboration table and
-                  --  the ALIs table ??? As subunits may appear repeatedly in
-                  --  the list, if the parent unit appears in the context of
-                  --  several units in the closure, duplicates are suppressed.
-
-                  for J in Sdep.First .. Sdep.Last loop
-                     Source := Sdep.Table (J).Sfile;
-
-                     if Sdep.Table (J).Subunit_Name /= No_Name
-                       and then Put_In_Sources (Source)
-                       and then not Is_Internal_File_Name (Source)
-                     then
-                        if not Zero_Formatting then
-                           Write_Str ("   ");
-                        end if;
-
-                        Write_Str (Get_Name_String (Source));
-                        Write_Eol;
-                     end if;
-                  end loop;
-
-                  if not Zero_Formatting then
-                     Write_Eol;
-                  end if;
-               end List_Closure_Display;
-            end if;
-         end if;
+         end;
       end if;
 
       Total_Errors := Total_Errors + Errors_Detected;
@@ -949,7 +888,7 @@ begin
          Total_Warnings := Total_Warnings + Warnings_Detected;
    end;
 
-   --  All done. Set proper exit status
+   --  All done. Set the proper exit status.
 
    Finalize_Binderr;
    Namet.Finalize;

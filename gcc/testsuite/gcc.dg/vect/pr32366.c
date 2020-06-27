@@ -3,6 +3,7 @@
 /* { dg-do compile } */
 /* { dg-require-effective-target vect_float } */
 
+void
 stream_test (void)
 {
   static float input[20];
@@ -11,4 +12,3 @@ stream_test (void)
     input[k] = k * 1.0;
 }
 
-/* { dg-final { cleanup-tree-dump "vect" } } */

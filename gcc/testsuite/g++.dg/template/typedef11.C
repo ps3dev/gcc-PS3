@@ -5,21 +5,21 @@
 
 class Alpha
 {
-  typedef int X; // { dg-error "'typedef int Alpha::X' is private" }
+  typedef int X; // { dg-message "private" }
 };
 
 template<int>
 class Beta
 {
-    typedef int Y; // { dg-error "'typedef int Beta<0>::Y' is private" }
+    typedef int Y; // { dg-message "private" }
 };
 
 template <int>
 int
 bar ()
 {
-  Beta<0>::Y i = 0;
-  return Alpha::X ();
+  Beta<0>::Y i = 0;		// { dg-error "within this context" }
+  return Alpha::X ();		// { dg-error "within this context" }
 }
 
-int i = bar<0> (); // { dg-error "within this context" }
+int i = bar<0> ();

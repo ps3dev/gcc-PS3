@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2011, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -45,10 +45,6 @@ package Scans is
    --  The class column in this table indicates the token classes which
    --  apply to the token, as defined by subsequent subtype declarations.
 
-   --  Note: Namet.Is_Keyword_Name depends on the fact that the first entry in
-   --  this type declaration is *not* for a reserved word. For details on why
-   --  there is this requirement, see Initialize_Ada_Keywords below.
-
    type Token_Type is (
 
       --  Token name          Token type   Class(es)
@@ -64,6 +60,8 @@ package Scans is
       Tok_Operator_Symbol, -- op symbol    Name, Literal, Lit_Or_Name, Desig
 
       Tok_Identifier,      -- identifier   Name, Lit_Or_Name, Desig
+
+      Tok_At_Sign,         -- @  AI12-0125-3 : target name
 
       Tok_Double_Asterisk, -- **
 
@@ -81,6 +79,15 @@ package Scans is
       Tok_Abs,             -- ABS
       Tok_Others,          -- OTHERS
       Tok_Null,            -- NULL
+
+      --  Note: Tok_Raise is in no categories now, it used to be Cterm, Eterm,
+      --  After_SM, but now that Ada 2012 has added raise expressions, the
+      --  raise token can appear anywhere. Note in particular that Tok_Raise
+      --  being in Eterm stopped the parser from recognizing "return raise
+      --  exception-name". This degrades error recovery slightly, and perhaps
+      --  we could do better, but not worth the effort.
+
+      Tok_Raise,           -- RAISE
 
       Tok_Dot,             -- .            Namext
       Tok_Apostrophe,      -- '            Namext
@@ -148,7 +155,6 @@ package Scans is
       Tok_Goto,            -- GOTO         Eterm, Sterm, After_SM
       Tok_If,              -- IF           Eterm, Sterm, After_SM
       Tok_Pragma,          -- PRAGMA       Eterm, Sterm, After_SM
-      Tok_Raise,           -- RAISE        Eterm, Sterm, After_SM
       Tok_Requeue,         -- REQUEUE      Eterm, Sterm, After_SM
       Tok_Return,          -- RETURN       Eterm, Sterm, After_SM
       Tok_Select,          -- SELECT       Eterm, Sterm, After_SM
@@ -201,7 +207,7 @@ package Scans is
       --  This entry is used when scanning project files (where it represents
       --  an entire comment), and in preprocessing with the -C switch set
       --  (where it represents just the "--" of a comment). For the project
-      --  file case, the text of the comment is stored in
+      --  file case, the text of the comment is stored in Comment_Id.
 
       Tok_End_Of_Line,
       --  Represents an end of line. Not used during normal compilation scans
@@ -209,8 +215,10 @@ package Scans is
       --  also when scanning project files (where it is needed because of ???)
 
       Tok_Special,
-      --  Used only in preprocessor scanning (to represent one of the
-      --  characters '#', '$', '?', '@', '`', '\', '^', '~', or '_'. The
+      --  AI12-0125-03 : target name as abbreviation for LHS
+
+      --  Otherwise used only in preprocessor scanning (to represent one of
+      --  the characters '#', '$', '?', '@', '`', '\', '^', '~', or '_'. The
       --  character value itself is stored in Scans.Special_Character.
 
       Tok_SPARK_Hide,
@@ -219,6 +227,11 @@ package Scans is
       No_Token);
       --  No_Token is used for initializing Token values to indicate that
       --  no value has been set yet.
+
+   function Keyword_Name (Token : Token_Type) return Name_Id;
+   --  Given a token that is a reserved word, return the corresponding Name_Id
+   --  in lower case. E.g. Keyword_Name (Tok_Begin) = Name_Find ("begin").
+   --  It is an error to pass any other kind of token.
 
    --  Note: in the RM, operator symbol is a special case of string literal.
    --  We distinguish at the lexical level in this compiler, since there are
@@ -260,12 +273,13 @@ package Scans is
    --  of Pascal style not equal operator).
 
    subtype Token_Class_Name is
-     Token_Type range Tok_Char_Literal .. Tok_Identifier;
+   Token_Type range Tok_Char_Literal .. Tok_At_Sign;
    --  First token of name (4.1),
    --    (identifier, char literal, operator symbol)
+   --  Includes '@' after Ada2012 corrigendum.
 
    subtype Token_Class_Desig is
-     Token_Type range Tok_Operator_Symbol .. Tok_Identifier;
+     Token_Type range Tok_Operator_Symbol .. Tok_At_Sign;
    --  Token which can be a Designator (identifier, operator symbol)
 
    subtype Token_Class_Namext is
@@ -388,6 +402,11 @@ package Scans is
    --  file being compiled. This CRC includes only program tokens, and
    --  excludes comments.
 
+   Limited_Checksum : Word := 0;
+   --  Used to accumulate a CRC representing significant tokens in the
+   --  limited view of a package, i.e. visible type names and related
+   --  tagged indicators.
+
    First_Non_Blank_Location : Source_Ptr := No_Location; -- init for -gnatVa
    --  Location of first non-blank character on the line containing the
    --  current token (i.e. the location of the character whose column number
@@ -396,7 +415,7 @@ package Scans is
    Token_Node : Node_Id := Empty;
    --  Node table Id for the current token. This is set only if the current
    --  token is one for which the scanner constructs a node (i.e. it is an
-   --  identifier, operator symbol, or literal. For other token types,
+   --  identifier, operator symbol, or literal). For other token types,
    --  Token_Node is undefined.
 
    Token_Name : Name_Id := No_Name;
@@ -452,8 +471,9 @@ package Scans is
    --  Wide_Character).
 
    Special_Character : Character;
+   --  AI12-0125-03 : '@' as target name is handled elsewhere.
    --  Valid only when Token = Tok_Special. Returns one of the characters
-   --  '#', '$', '?', '@', '`', '\', '^', '~', or '_'.
+   --  '#', '$', '?', '`', '\', '^', '~', or '_'.
    --
    --  Why only this set? What about wide characters???
 
@@ -464,8 +484,12 @@ package Scans is
    --  Is it really right for this to be a Name rather than a String, what
    --  about the case of Wide_Wide_Characters???
 
-   Inside_Conditional_Expression : Nat := 0;
-   --  This is a counter that is set non-zero while scanning out a conditional
+   Inside_Depends : Boolean := False;
+   --  Flag set True for parsing the argument of a Depends pragma or aspect
+   --  (used to allow/require non-standard style rules for =>+ with -gnatyt).
+
+   Inside_If_Expression : Nat := 0;
+   --  This is a counter that is set non-zero while scanning out an if
    --  expression (incremented on entry, decremented on exit). It is used to
    --  disconnect format checks that normally apply to keywords THEN, ELSE etc.
 

@@ -1,10 +1,93 @@
-2012-03-22  Release Manager
+2017-08-14  Release Manager
 
-	* GCC 4.7.0 released.
+	* GCC 7.2.0 released.
 
-2012-02-24  Dave Korn  <dave.korn.cygwin@gmail.com>
+2017-06-01  Eric Botcazou  <ebotcazou@adacore.com>
 
-	* Makefile.in (bindir): Import from autoconf and pass down to submake.
+	PR ada/80921
+	* configure.ac (default_gnatlib_target): Remove bogus condition.
+	(have_getipinfo): Tweak.
+	* configure: Regenerate.
+
+2017-05-02  Release Manager
+
+	* GCC 7.1.0 released.
+
+2017-01-17  Jakub Jelinek  <jakub@redhat.com>
+
+	PR other/79046
+	* configure.ac: Add GCC_BASE_VER.
+	* Makefile.in (version): Use @get_gcc_base_ver@ instead of cat to get
+	version from BASE-VER file.
+	* configure: Regenerate.
+
+2017-01-04  Alan Modra  <amodra@gmail.com>
+
+	* Makefile.in (configure_deps): Update and order as per
+	configure.ac sinclude.
+	* configure: Regenerate.
+
+2017-01-01  Jakub Jelinek  <jakub@redhat.com>
+
+	Update copyright years.
+
+2016-11-15  Matthias Klose  <doko@ubuntu.com>
+
+	* configure: Regenerate.
+
+2016-04-30  Oleg Endo  <olegendo@gcc.gnu.org>
+
+	* configure: Remove SH5 support.
+
+2016-01-04  Jakub Jelinek  <jakub@redhat.com>
+
+	Update copyright years.
+
+2015-04-10  Jakub Jelinek  <jakub@redhat.com>
+	    Iain Sandoe  <iain@codesourcery.com>
+
+	PR target/65351
+	* configure: Regenerate.
+
+2015-04-07  Jakub Jelinek  <jakub@redhat.com>
+	    Iain Sandoe  <iain@codesourcery.com>
+
+	PR target/65351
+	* configure: Regenerate.
+
+2015-01-05  Jakub Jelinek  <jakub@redhat.com>
+
+	Update copyright years.
+
+2014-08-12  Joel Sherrill  <joel.sherrill@oarcorp.com>
+
+	* Makefile.in: Add CFLAGS_FOR_TARGET to GNATLIBCFLAGS_FOR_C.
+
+2014-01-02  Richard Sandiford  <rdsandiford@googlemail.com>
+
+	Update copyright years
+
+2013-11-15  Andreas Schwab  <schwab@linux-m68k.org>
+
+	* configure: Regenerate.
+
+2013-03-27  Kai Tietz  <ktietz@redhat.com>
+
+	* configure: Regenerated.
+
+2013-02-13  Kai Tietz  <ktietz@redhat.com>
+
+	PR target/52122
+	* Makefile.in (LN_S_RECURSIVE): New.
+	(adainclude, adalib): Use LN_S_RECURSIVE for copy.
+
+2013-01-14  Richard Sandiford  <rdsandiford@googlemail.com>
+
+	Update copyright years.
+
+2012-06-11  Olivier Hainque  <hainque@adacore.com>
+
+	* Makefile.in (GNATLIBCFLAGS_FOR_C): Remove $(PICFLAG).
 
 2012-01-22  Douglas B Rupp  <rupp@gnat.com>
 
@@ -101,7 +184,7 @@
 
 2008-09-21  Laurent Guerby  <laurent@guerby.net>
             Paolo Bonzini  <bonzini@gnu.org>
-	
+
 	PR ada/5911
 	* Makefile.in (all, install, mostlyclean, clean, distclean): Add
 	multilib handling.
@@ -109,7 +192,7 @@
 	* configure: Regenerate.
 
 2008-08-29  Laurent Guerby  <laurent@guerby.net>
-	
+
 	* Makefile.in (FLAGS_TO_PASS): renamed to LIBADA_FLAGS_TO_PASS to
 	avoid conflicts. Factor more flags to pass.
 	(libsubdir): New variable.
@@ -118,7 +201,7 @@
 2008-08-28  Laurent Guerby  <laurent@guerby.net>
 
 	* configure: Regenerate.
-	
+
 2008-08-06  Thomas Quinot  <quinot@adacore.com>
 
 	* Makefile.in: generate s-oscons.ads again, previous change was
@@ -313,8 +396,8 @@
 	* configure: Generate.
 
 	* New directory, new ChangeLog.
-
-Copyright 2003, 2004 Free Software Foundation, Inc.
+
+Copyright (C) 2003-2017 Free Software Foundation, Inc.
 
 This ChangeLog is free software; the Free Software Foundation gives
 unlimited permission to copy, distribute, and modify it.

@@ -1,4 +1,4 @@
-// Copyright (C) 2001, 2003, 2004, 2005, 2009 Free Software Foundation, Inc.
+// Copyright (C) 2001-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -7,7 +7,7 @@
 // any later version.
 
 // This library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without Pred the implied warranty of
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
@@ -26,7 +26,6 @@ template<typename _Tp>
 void
 modifiers1()
 {
-  bool test __attribute__((unused)) = true;
   typedef _Tp list_type;
   typedef typename list_type::iterator iterator;
   typedef typename list_type::value_type value_type;
@@ -89,14 +88,22 @@ modifiers1()
   b = list0301.begin();
   list0301.insert(b, A, A + N); // should be [321 322 333 13 13]
   VERIFY(list0301.size() == 5);
+#if __cplusplus >= 201103L
+  VERIFY(copy_constructor::count() == 0);
+#else
   VERIFY(copy_constructor::count() == 3);
+#endif
   VERIFY(m->id() == 13);
 
   // range fill at end
   value_type::reset();
   list0301.insert(e, A, A + N); // should be [321 322 333 13 13 321 322 333]
   VERIFY(list0301.size() == 8);
+#if __cplusplus >= 201103L
+  VERIFY(copy_constructor::count() == 0);
+#else
   VERIFY(copy_constructor::count() == 3);
+#endif
   VERIFY(e == list0301.end());
   VERIFY(m->id() == 13);
 
@@ -104,7 +111,11 @@ modifiers1()
   value_type::reset();
   list0301.insert(m, A, A + N);
   VERIFY(list0301.size() == 11);
+#if __cplusplus >= 201103L
+  VERIFY(copy_constructor::count() == 0);
+#else
   VERIFY(copy_constructor::count() == 3);
+#endif
   VERIFY(e == list0301.end());
   VERIFY(m->id() == 13);
 

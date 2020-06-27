@@ -1,7 +1,4 @@
-// { dg-options "-std=gnu++0x" }
-
-// Copyright (C) 2005, 2006, 2007, 2008, 2009, 2010, 2011
-// Free Software Foundation, Inc.
+// Copyright (C) 2005-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -10,7 +7,7 @@
 // any later version.
 
 // This library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without Pred the implied warranty of
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
@@ -18,7 +15,8 @@
 // with this library; see the file COPYING3.  If not see
 // <http://www.gnu.org/licenses/>.
 
-// { dg-options "-std=gnu++0x -DITERATIONS=5" { target simulator } }
+// { dg-options "-DITERATIONS=5" { target simulator } }
+// { dg-do run { target c++11 } }
 
 // 25.3.6 Heap operations [lib.alg.heap.operations]
 
@@ -43,8 +41,6 @@ typedef test_container<int, random_access_iterator_wrapper> container_ref;
 void 
 check_make(int* array, int length)
 {
-  bool test __attribute__((unused)) = true;
-
   rvalstruct makeheap[9];
   int        makeheap_ref[9];
   std::copy(array, array + length, makeheap);
@@ -63,8 +59,6 @@ check_make(int* array, int length)
 void
 check_pop(int* array, int length)
 {
-  bool test __attribute__((unused)) = true;
-
   rvalstruct popheap[9];
   int        popheap_ref[9];
   std::copy(array, array + length, popheap);
@@ -83,8 +77,6 @@ check_pop(int* array, int length)
 void
 check_sort(int* array, int length)
 {
-  bool test __attribute__((unused)) = true;
-
   rvalstruct sortheap[9];
   int        sortheap_ref[9];
   std::copy(array, array + length, sortheap);
@@ -103,8 +95,6 @@ check_sort(int* array, int length)
 void
 check_push(int* array, int pushval, int length)
 {
-  bool test __attribute__((unused)) = true;
-
   rvalstruct pushheap[10];
   int        pushheap_ref[10];
   std::copy(array, array + length, pushheap);

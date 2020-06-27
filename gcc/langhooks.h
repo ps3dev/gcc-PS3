@@ -1,6 +1,5 @@
 /* The lang_hooks data structure.
-   Copyright 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010,
-   2011 Free Software Foundation, Inc.
+   Copyright (C) 2001-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -21,7 +20,7 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef GCC_LANG_HOOKS_H
 #define GCC_LANG_HOOKS_H
 
-/* This file should be #include-d after tree.h.  */
+/* FIXME: This file should be #include-d after tree.h (for enum tree_code).  */
 
 struct diagnostic_info;
 
@@ -35,19 +34,14 @@ typedef void (*lang_print_tree_hook) (FILE *, tree, int indent);
 enum classify_record
   { RECORD_IS_STRUCT, RECORD_IS_CLASS, RECORD_IS_INTERFACE };
 
+class substring_loc;
+
 /* The following hooks are documented in langhooks.c.  Must not be
    NULL.  */
 
 struct lang_hooks_for_tree_inlining
 {
   bool (*var_mod_type_p) (tree, tree);
-};
-
-struct lang_hooks_for_callgraph
-{
-  /* The node passed is a language-specific tree node.  If its contents
-     are relevant to use of other declarations, mark them.  */
-  tree (*analyze_expr) (tree *, int *);
 };
 
 /* The following hooks are used by tree-dump.c.  */
@@ -77,7 +71,7 @@ struct lang_hooks_for_types
 
   /* Given MODE and UNSIGNEDP, return a suitable type-tree with that
      mode.  */
-  tree (*type_for_mode) (enum machine_mode, int);
+  tree (*type_for_mode) (machine_mode, int);
 
   /* Given PRECISION and UNSIGNEDP, return a suitable type-tree for an
      integer type with at least that precision.  */
@@ -108,8 +102,9 @@ struct lang_hooks_for_types
   /* This routine is called in tree.c to print an error message for
      invalid use of an incomplete type.  VALUE is the expression that
      was used (or 0 if that isn't known) and TYPE is the type that was
-     invalid.  */
-  void (*incomplete_type_error) (const_tree value, const_tree type);
+     invalid.  LOC is the location of the use.  */
+  void (*incomplete_type_error) (location_t loc, const_tree value,
+				 const_tree type);
 
   /* Called from assign_temp to return the maximum size, if there is one,
      for a type.  */
@@ -119,10 +114,13 @@ struct lang_hooks_for_types
      firstprivate variables.  */
   void (*omp_firstprivatize_type_sizes) (struct gimplify_omp_ctx *, tree);
 
+  /* Return true if TYPE is a mappable type.  */
+  bool (*omp_mappable_type) (tree type);
+
   /* Return TRUE if TYPE1 and TYPE2 are identical for type hashing purposes.
      Called only after doing all language independent checks.
      At present, this function is only called when both TYPE1 and TYPE2 are
-     FUNCTION_TYPEs.  */
+     FUNCTION_TYPE or METHOD_TYPE.  */
   bool (*type_hash_eq) (const_tree, const_tree);
 
   /* Return TRUE if TYPE uses a hidden descriptor and fills in information
@@ -131,6 +129,11 @@ struct lang_hooks_for_types
 
   /* Fill in information for the debugger about the bounds of TYPE.  */
   void (*get_subrange_bounds) (const_tree, tree *, tree *);
+
+  /* Called on INTEGER_TYPEs.  Return NULL_TREE for non-biased types.  For
+     biased types, return as an INTEGER_CST node the value that is represented
+     by a physical zero.  */
+  tree (*get_type_bias) (const_tree);
 
   /* A type descriptive of TYPE's complex layout generated to help the
      debugger to decode variable-length or self-referential constructs.
@@ -142,6 +145,31 @@ struct lang_hooks_for_types
      return values from functions.  The argument TYPE is the top of the
      chain, and BOTTOM is the new type which we will point to.  */
   tree (*reconstruct_complex_type) (tree, tree);
+
+  /* Returns the tree that represents the underlying data type used to
+     implement the enumeration.  The default implementation will just use
+     type_for_size.  Used in dwarf2out.c to add a DW_AT_type base type
+     reference to a DW_TAG_enumeration.  */
+  tree (*enum_underlying_base_type) (const_tree);
+
+  /* Return a type to use in the debug info instead of TYPE, or NULL_TREE to
+     keep TYPE.  This is useful to keep a single "source type" when the
+     middle-end uses specialized types, for instance constrained discriminated
+     types in Ada.  */
+  tree (*get_debug_type) (const_tree);
+
+  /* Return TRUE if TYPE implements a fixed point type and fills in information
+     for the debugger about scale factor, etc.  */
+  bool (*get_fixed_point_type_info) (const_tree,
+				     struct fixed_point_type_info *);
+
+  /* Returns -1 if dwarf ATTR shouldn't be added for TYPE, or the attribute
+     value otherwise.  */
+  int (*type_dwarf_attribute) (const_tree, int);
+
+  /* Returns a tree for the unit size of T excluding tail padding that
+     might be used by objects inheriting from T.  */
+  tree (*unit_size_without_reusable_padding) (tree);
 };
 
 /* Language hooks related to decls and the symbol table.  */
@@ -162,8 +190,9 @@ struct lang_hooks_for_decls
   /* Returns the chain of decls so far in the current scope level.  */
   tree (*getdecls) (void);
 
-  /* Returns true if DECL is explicit member function.  */
-  bool (*function_decl_explicit_p) (tree);
+  /* Returns -1 if dwarf ATTR shouldn't be added for DECL, or the attribute
+     value otherwise.  */
+  int (*decl_dwarf_attribute) (const_tree, int);
 
   /* Returns True if the parameter is a generic parameter decl
      of a generic type, e.g a template template parameter for the C++ FE.  */
@@ -180,9 +209,11 @@ struct lang_hooks_for_decls
      We will already have checked that it has static binding.  */
   bool (*warn_unused_global) (const_tree);
 
-  /* Obtain a list of globals and do final output on them at end
-     of compilation */
-  void (*final_write_globals) (void);
+  /* Perform any post compilation-proper parser cleanups and
+     processing.  This is currently only needed for the C++ parser,
+     which hopefully can be cleaned up so this hook is no longer
+     necessary.  */
+  void (*post_compilation_parsing_cleanups) (void);
 
   /* True if this decl may be called via a sibcall.  */
   bool (*ok_for_sibcall) (const_tree);
@@ -224,12 +255,20 @@ struct lang_hooks_for_decls
   /* Similarly, except use an assignment operator instead.  */
   tree (*omp_clause_assign_op) (tree clause, tree dst, tree src);
 
+  /* Build and return code for a constructor of DST that sets it to
+     SRC + ADD.  */
+  tree (*omp_clause_linear_ctor) (tree clause, tree dst, tree src, tree add);
+
   /* Build and return code destructing DECL.  Return NULL if nothing
      to be done.  */
   tree (*omp_clause_dtor) (tree clause, tree decl);
 
   /* Do language specific checking on an implicitly determined clause.  */
-  void (*omp_finish_clause) (tree clause);
+  void (*omp_finish_clause) (tree clause, gimple_seq *pre_p);
+
+  /* Return true if DECL is a scalar variable (for the purpose of
+     implicit firstprivatization).  */
+  bool (*omp_scalar_p) (tree decl);
 };
 
 /* Language hooks related to LTO serialization.  */
@@ -253,7 +292,8 @@ struct lang_hooks_for_lto
 
 struct lang_hooks
 {
-  /* String identifying the front end.  e.g. "GNU C++".  */
+  /* String identifying the front end and optionally language standard
+     version, e.g. "GNU C++98" or "GNU Java".  */
   const char *name;
 
   /* sizeof (struct lang_identifier), so make_node () creates
@@ -407,18 +447,18 @@ struct lang_hooks
 
   struct lang_hooks_for_tree_inlining tree_inlining;
 
-  struct lang_hooks_for_callgraph callgraph;
-
   struct lang_hooks_for_tree_dump tree_dump;
 
   struct lang_hooks_for_decls decls;
 
   struct lang_hooks_for_types types;
-
+  
   struct lang_hooks_for_lto lto;
 
-  /* Returns the generic parameters of an instantiation of
-     a generic type or decl, e.g. C++ template instantiation.  */
+  /* Returns a TREE_VEC of the generic parameters of an instantiation of
+     a generic type or decl, e.g. C++ template instantiation.  If
+     TREE_CHAIN of the return value is set, it is an INTEGER_CST
+     indicating how many of the elements are non-default.  */
   tree (*get_innermost_generic_parms) (const_tree);
 
   /* Returns the TREE_VEC of arguments of an instantiation
@@ -465,6 +505,10 @@ struct lang_hooks
      FUNCTION_DECL for `std::terminate'.  */
   tree (*eh_protect_cleanup_actions) (void);
 
+  /* Return true if a stmt can fallthru.  Used by block_may_fallthru
+     to possibly handle language trees.  */
+  bool (*block_may_fallthru) (const_tree);
+
   /* True if this language uses __cxa_end_cleanup when the ARM EABI
      is enabled.  */
   bool eh_use_cxa_end_cleanup;
@@ -473,12 +517,27 @@ struct lang_hooks
      gimplification.  */
   bool deep_unsharing;
 
+  /* True if this language may use custom descriptors for nested functions
+     instead of trampolines.  */
+  bool custom_function_descriptors;
+
+  /* Run all lang-specific selftests.  */
+  void (*run_lang_selftests) (void);
+
+  /* Attempt to determine the source location of the substring.
+     If successful, return NULL and write the source location to *OUT_LOC.
+     Otherwise return an error message.  Error messages are intended
+     for GCC developers (to help debugging) rather than for end-users.  */
+  const char *(*get_substring_location) (const substring_loc &,
+					 location_t *out_loc);
+
   /* Whenever you add entries here, make sure you adjust langhooks-def.h
      and langhooks.c accordingly.  */
 };
 
 /* Each front end provides its own.  */
 extern struct lang_hooks lang_hooks;
+
 extern tree add_builtin_function (const char *name, tree type,
 				  int function_code, enum built_in_class cl,
 				  const char *library_name,
@@ -489,5 +548,13 @@ extern tree add_builtin_function_ext_scope (const char *name, tree type,
 					    enum built_in_class cl,
 					    const char *library_name,
 					    tree attrs);
+extern tree add_builtin_type (const char *name, tree type);
+
+/* Language helper functions.  */
+
+extern bool lang_GNU_C (void);
+extern bool lang_GNU_CXX (void);
+extern bool lang_GNU_Fortran (void);
+extern bool lang_GNU_OBJC (void);
 
 #endif /* GCC_LANG_HOOKS_H */

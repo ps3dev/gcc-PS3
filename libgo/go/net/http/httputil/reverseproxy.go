@@ -7,6 +7,7 @@
 package httputil
 
 import (
+	"context"
 	"io"
 	"log"
 	"net"
@@ -17,6 +18,10 @@ import (
 	"time"
 )
 
+// onExitFlushLoop is a callback set by tests to detect the state of the
+// flushLoop() goroutine.
+var onExitFlushLoop func()
+
 // ReverseProxy is an HTTP Handler that takes an incoming request and
 // sends it to another server, proxying the response back to the
 // client.
@@ -25,6 +30,8 @@ type ReverseProxy struct {
 	// the request into a new request to be sent
 	// using Transport. Its response is then copied
 	// back to the original client unmodified.
+	// Director must not access the provided Request
+	// after returning.
 	Director func(*http.Request)
 
 	// The transport used to perform proxy requests.
@@ -36,6 +43,29 @@ type ReverseProxy struct {
 	// response body.
 	// If zero, no periodic flushing is done.
 	FlushInterval time.Duration
+
+	// ErrorLog specifies an optional logger for errors
+	// that occur when attempting to proxy the request.
+	// If nil, logging goes to os.Stderr via the log package's
+	// standard logger.
+	ErrorLog *log.Logger
+
+	// BufferPool optionally specifies a buffer pool to
+	// get byte slices for use by io.CopyBuffer when
+	// copying HTTP response bodies.
+	BufferPool BufferPool
+
+	// ModifyResponse is an optional function that
+	// modifies the Response from the backend.
+	// If it returns an error, the proxy returns a StatusBadGateway error.
+	ModifyResponse func(*http.Response) error
+}
+
+// A BufferPool is an interface for getting and returning temporary
+// byte slices for use by io.CopyBuffer.
+type BufferPool interface {
+	Get() []byte
+	Put([]byte)
 }
 
 func singleJoiningSlash(a, b string) string {
@@ -50,10 +80,13 @@ func singleJoiningSlash(a, b string) string {
 	return a + b
 }
 
-// NewSingleHostReverseProxy returns a new ReverseProxy that rewrites
+// NewSingleHostReverseProxy returns a new ReverseProxy that routes
 // URLs to the scheme, host, and base path provided in target. If the
 // target's path is "/base" and the incoming request was for "/dir",
 // the target request will be for /base/dir.
+// NewSingleHostReverseProxy does not rewrite the Host header.
+// To rewrite Host headers, use ReverseProxy directly with a custom
+// Director policy.
 func NewSingleHostReverseProxy(target *url.URL) *ReverseProxy {
 	targetQuery := target.RawQuery
 	director := func(req *http.Request) {
@@ -64,6 +97,10 @@ func NewSingleHostReverseProxy(target *url.URL) *ReverseProxy {
 			req.URL.RawQuery = targetQuery + req.URL.RawQuery
 		} else {
 			req.URL.RawQuery = targetQuery + "&" + req.URL.RawQuery
+		}
+		if _, ok := req.Header["User-Agent"]; !ok {
+			// explicitly disable User-Agent so it's not set to default value
+			req.Header.Set("User-Agent", "")
 		}
 	}
 	return &ReverseProxy{Director: director}
@@ -77,54 +114,206 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
+// Hop-by-hop headers. These are removed when sent to the backend.
+// http://www.w3.org/Protocols/rfc2616/rfc2616-sec13.html
+var hopHeaders = []string{
+	"Connection",
+	"Proxy-Connection", // non-standard but still sent by libcurl and rejected by e.g. google
+	"Keep-Alive",
+	"Proxy-Authenticate",
+	"Proxy-Authorization",
+	"Te",      // canonicalized version of "TE"
+	"Trailer", // not Trailers per URL above; http://www.rfc-editor.org/errata_search.php?eid=4522
+	"Transfer-Encoding",
+	"Upgrade",
+}
+
 func (p *ReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	transport := p.Transport
 	if transport == nil {
 		transport = http.DefaultTransport
 	}
 
-	outreq := new(http.Request)
-	*outreq = *req // includes shallow copies of maps, but okay
-
-	p.Director(outreq)
-	outreq.Proto = "HTTP/1.1"
-	outreq.ProtoMajor = 1
-	outreq.ProtoMinor = 1
-	outreq.Close = false
-
-	// Remove the connection header to the backend.  We want a
-	// persistent connection, regardless of what the client sent
-	// to us.  This is modifying the same underlying map from req
-	// (shallow copied above) so we only copy it if necessary.
-	if outreq.Header.Get("Connection") != "" {
-		outreq.Header = make(http.Header)
-		copyHeader(outreq.Header, req.Header)
-		outreq.Header.Del("Connection")
+	ctx := req.Context()
+	if cn, ok := rw.(http.CloseNotifier); ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		defer cancel()
+		notifyChan := cn.CloseNotify()
+		go func() {
+			select {
+			case <-notifyChan:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
 	}
 
-	if clientIp, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
-		outreq.Header.Set("X-Forwarded-For", clientIp)
+	outreq := new(http.Request)
+	*outreq = *req // includes shallow copies of maps, but okay
+	if req.ContentLength == 0 {
+		outreq.Body = nil // Issue 16036: nil Body for http.Transport retries
+	}
+	outreq = outreq.WithContext(ctx)
+
+	p.Director(outreq)
+	outreq.Close = false
+
+	// We are modifying the same underlying map from req (shallow
+	// copied above) so we only copy it if necessary.
+	copiedHeaders := false
+
+	// Remove hop-by-hop headers listed in the "Connection" header.
+	// See RFC 2616, section 14.10.
+	if c := outreq.Header.Get("Connection"); c != "" {
+		for _, f := range strings.Split(c, ",") {
+			if f = strings.TrimSpace(f); f != "" {
+				if !copiedHeaders {
+					outreq.Header = make(http.Header)
+					copyHeader(outreq.Header, req.Header)
+					copiedHeaders = true
+				}
+				outreq.Header.Del(f)
+			}
+		}
+	}
+
+	// Remove hop-by-hop headers to the backend. Especially
+	// important is "Connection" because we want a persistent
+	// connection, regardless of what the client sent to us.
+	for _, h := range hopHeaders {
+		if outreq.Header.Get(h) != "" {
+			if !copiedHeaders {
+				outreq.Header = make(http.Header)
+				copyHeader(outreq.Header, req.Header)
+				copiedHeaders = true
+			}
+			outreq.Header.Del(h)
+		}
+	}
+
+	if clientIP, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
+		// If we aren't the first proxy retain prior
+		// X-Forwarded-For information as a comma+space
+		// separated list and fold multiple headers into one.
+		if prior, ok := outreq.Header["X-Forwarded-For"]; ok {
+			clientIP = strings.Join(prior, ", ") + ", " + clientIP
+		}
+		outreq.Header.Set("X-Forwarded-For", clientIP)
 	}
 
 	res, err := transport.RoundTrip(outreq)
 	if err != nil {
-		log.Printf("http: proxy error: %v", err)
-		rw.WriteHeader(http.StatusInternalServerError)
+		p.logf("http: proxy error: %v", err)
+		rw.WriteHeader(http.StatusBadGateway)
 		return
+	}
+
+	// Remove hop-by-hop headers listed in the
+	// "Connection" header of the response.
+	if c := res.Header.Get("Connection"); c != "" {
+		for _, f := range strings.Split(c, ",") {
+			if f = strings.TrimSpace(f); f != "" {
+				res.Header.Del(f)
+			}
+		}
+	}
+
+	for _, h := range hopHeaders {
+		res.Header.Del(h)
+	}
+
+	if p.ModifyResponse != nil {
+		if err := p.ModifyResponse(res); err != nil {
+			p.logf("http: proxy error: %v", err)
+			rw.WriteHeader(http.StatusBadGateway)
+			return
+		}
 	}
 
 	copyHeader(rw.Header(), res.Header)
 
-	rw.WriteHeader(res.StatusCode)
+	// The "Trailer" header isn't included in the Transport's response,
+	// at least for *http.Transport. Build it up from Trailer.
+	if len(res.Trailer) > 0 {
+		trailerKeys := make([]string, 0, len(res.Trailer))
+		for k := range res.Trailer {
+			trailerKeys = append(trailerKeys, k)
+		}
+		rw.Header().Add("Trailer", strings.Join(trailerKeys, ", "))
+	}
 
-	if res.Body != nil {
-		var dst io.Writer = rw
-		if p.FlushInterval != 0 {
-			if wf, ok := rw.(writeFlusher); ok {
-				dst = &maxLatencyWriter{dst: wf, latency: p.FlushInterval}
+	rw.WriteHeader(res.StatusCode)
+	if len(res.Trailer) > 0 {
+		// Force chunking if we saw a response trailer.
+		// This prevents net/http from calculating the length for short
+		// bodies and adding a Content-Length.
+		if fl, ok := rw.(http.Flusher); ok {
+			fl.Flush()
+		}
+	}
+	p.copyResponse(rw, res.Body)
+	res.Body.Close() // close now, instead of defer, to populate res.Trailer
+	copyHeader(rw.Header(), res.Trailer)
+}
+
+func (p *ReverseProxy) copyResponse(dst io.Writer, src io.Reader) {
+	if p.FlushInterval != 0 {
+		if wf, ok := dst.(writeFlusher); ok {
+			mlw := &maxLatencyWriter{
+				dst:     wf,
+				latency: p.FlushInterval,
+				done:    make(chan bool),
+			}
+			go mlw.flushLoop()
+			defer mlw.stop()
+			dst = mlw
+		}
+	}
+
+	var buf []byte
+	if p.BufferPool != nil {
+		buf = p.BufferPool.Get()
+	}
+	p.copyBuffer(dst, src, buf)
+	if p.BufferPool != nil {
+		p.BufferPool.Put(buf)
+	}
+}
+
+func (p *ReverseProxy) copyBuffer(dst io.Writer, src io.Reader, buf []byte) (int64, error) {
+	if len(buf) == 0 {
+		buf = make([]byte, 32*1024)
+	}
+	var written int64
+	for {
+		nr, rerr := src.Read(buf)
+		if rerr != nil && rerr != io.EOF {
+			p.logf("httputil: ReverseProxy read error during body copy: %v", rerr)
+		}
+		if nr > 0 {
+			nw, werr := dst.Write(buf[:nr])
+			if nw > 0 {
+				written += int64(nw)
+			}
+			if werr != nil {
+				return written, werr
+			}
+			if nr != nw {
+				return written, io.ErrShortWrite
 			}
 		}
-		io.Copy(dst, res.Body)
+		if rerr != nil {
+			return written, rerr
+		}
+	}
+}
+
+func (p *ReverseProxy) logf(format string, args ...interface{}) {
+	if p.ErrorLog != nil {
+		p.ErrorLog.Printf(format, args...)
+	} else {
+		log.Printf(format, args...)
 	}
 }
 
@@ -137,22 +326,14 @@ type maxLatencyWriter struct {
 	dst     writeFlusher
 	latency time.Duration
 
-	lk   sync.Mutex // protects init of done, as well Write + Flush
+	mu   sync.Mutex // protects Write + Flush
 	done chan bool
 }
 
-func (m *maxLatencyWriter) Write(p []byte) (n int, err error) {
-	m.lk.Lock()
-	defer m.lk.Unlock()
-	if m.done == nil {
-		m.done = make(chan bool)
-		go m.flushLoop()
-	}
-	n, err = m.dst.Write(p)
-	if err != nil {
-		m.done <- true
-	}
-	return
+func (m *maxLatencyWriter) Write(p []byte) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.dst.Write(p)
 }
 
 func (m *maxLatencyWriter) flushLoop() {
@@ -160,13 +341,17 @@ func (m *maxLatencyWriter) flushLoop() {
 	defer t.Stop()
 	for {
 		select {
-		case <-t.C:
-			m.lk.Lock()
-			m.dst.Flush()
-			m.lk.Unlock()
 		case <-m.done:
+			if onExitFlushLoop != nil {
+				onExitFlushLoop()
+			}
 			return
+		case <-t.C:
+			m.mu.Lock()
+			m.dst.Flush()
+			m.mu.Unlock()
 		}
 	}
-	panic("unreached")
 }
+
+func (m *maxLatencyWriter) stop() { m.done <- true }

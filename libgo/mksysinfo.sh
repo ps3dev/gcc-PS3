@@ -4,132 +4,20 @@
 # Use of this source code is governed by a BSD-style
 # license that can be found in the LICENSE file.
 
-# Create sysinfo.go.
+# Create sysinfo.go from gen-sysinfo.go and errno.i.
 
 # This shell script creates the sysinfo.go file which holds types and
-# constants extracted from the system header files.  This relies on a
-# hook in gcc: the -fdump-go-spec option will generate debugging
-# information in Go syntax.
+# constants extracted from the system header files.  This reads the
+# raw data from gen-sysinfo.go which is generated using the
+# -fdump-go-spec option.
 
-# We currently #include all the files at once, which works, but leads
-# to exposing some names which ideally should not be exposed, as they
-# match grep patterns.  E.g., WCHAR_MIN gets exposed because it starts
-# with W, like the wait flags.
+# This currently exposes some names that ideally should not be
+# exposed, as they match grep patterns.  E.g., WCHAR_MIN gets exposed
+# because it starts with W, like the wait flags.
 
-CC=${CC:-gcc}
 OUT=tmp-sysinfo.go
 
 set -e
-
-rm -f sysinfo.c
-cat > sysinfo.c <<EOF
-#include "config.h"
-
-#include <sys/types.h>
-#include <dirent.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <netinet/in.h>
-/* <netinet/tcp.h> needs u_char/u_short, but <sys/bsd_types> is only
-   included by <netinet/in.h> if _SGIAPI (i.e. _SGI_SOURCE
-   && !_XOPEN_SOURCE.
-   <sys/termios.h> only defines TIOCNOTTY if !_XOPEN_SOURCE, while
-   <sys/ttold.h> does so unconditionally.  */
-#ifdef __sgi__
-#include <sys/bsd_types.h>
-#include <sys/ttold.h>
-#endif
-#include <netinet/tcp.h>
-#include <signal.h>
-#include <sys/ioctl.h>
-#include <termios.h>
-#if defined(HAVE_SYSCALL_H)
-#include <syscall.h>
-#endif
-#if defined(HAVE_SYS_SYSCALL_H)
-#include <sys/syscall.h>
-#endif
-#if defined(HAVE_SYS_EPOLL_H)
-#include <sys/epoll.h>
-#endif
-#if defined(HAVE_SYS_MMAN_H)
-#include <sys/mman.h>
-#endif
-#if defined(HAVE_SYS_PRCTL_H)
-#include <sys/prctl.h>
-#endif
-#if defined(HAVE_SYS_PTRACE_H)
-#include <sys/ptrace.h>
-#endif
-#include <sys/resource.h>
-#include <sys/uio.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/time.h>
-#include <sys/times.h>
-#include <sys/wait.h>
-#include <sys/un.h>
-#if defined(HAVE_SYS_USER_H)
-#include <sys/user.h>
-#endif
-#if defined(HAVE_SYS_UTSNAME_H)
-#include <sys/utsname.h>
-#endif
-#if defined(HAVE_SYS_SELECT_H)
-#include <sys/select.h>
-#endif
-#include <time.h>
-#include <unistd.h>
-#include <netdb.h>
-#include <pwd.h>
-#if defined(HAVE_LINUX_FILTER_H)
-#include <linux/filter.h>
-#endif
-#if defined(HAVE_LINUX_NETLINK_H)
-#include <linux/netlink.h>
-#endif
-#if defined(HAVE_LINUX_RTNETLINK_H)
-#include <linux/rtnetlink.h>
-#endif
-#if defined(HAVE_NET_IF_H)
-#include <net/if.h>
-#endif
-#if defined(HAVE_SYS_MOUNT_H)
-#include <sys/mount.h>
-#endif
-#if defined(HAVE_SYS_VFS_H)
-#include <sys/vfs.h>
-#endif
-#if defined(HAVE_STATFS_H)
-#include <sys/statfs.h>
-#endif
-#if defined(HAVE_SYS_TIMEX_H)
-#include <sys/timex.h>
-#endif
-#if defined(HAVE_SYS_SYSINFO_H)
-#include <sys/sysinfo.h>
-#endif
-#if defined(HAVE_USTAT_H)
-#include <ustat.h>
-#endif
-#if defined(HAVE_UTIME_H)
-#include <utime.h>
-#endif
-#if defined(HAVE_LINUX_REBOOT_H)
-#include <linux/reboot.h>
-#endif
-
-/* Constants that may only be defined as expressions on some systems,
-   expressions too complex for -fdump-go-spec to handle.  These are
-   handled specially below.  */
-enum {
-#ifdef TIOCGWINSZ
-  TIOCGWINSZ_val = TIOCGWINSZ,
-#endif
-};
-EOF
-
-${CC} -fdump-go-spec=gen-sysinfo.go -std=gnu99 -S -o sysinfo.s sysinfo.c
 
 echo 'package syscall' > ${OUT}
 echo 'import "unsafe"' >> ${OUT}
@@ -155,8 +43,7 @@ grep -v '^// ' gen-sysinfo.go | \
     >> ${OUT}
 
 # The errno constants.  These get type Errno.
-echo '#include <errno.h>' | ${CC} -x c - -E -dM | \
-  egrep '#define E[A-Z0-9_]+ ' | \
+  egrep '#define E[A-Z0-9_]+ ' errno.i | \
   sed -e 's/^#define \(E[A-Z0-9_]*\) .*$/const \1 = Errno(_\1)/' >> ${OUT}
 
 # The O_xxx flags.
@@ -169,10 +56,45 @@ if ! grep '^const O_CLOEXEC' ${OUT} >/dev/null 2>&1; then
   echo "const O_CLOEXEC = 0" >> ${OUT}
 fi
 
+# The os package requires F_DUPFD_CLOEXEC to be defined.
+if ! grep '^const F_DUPFD_CLOEXEC' ${OUT} >/dev/null 2>&1; then
+  echo "const F_DUPFD_CLOEXEC = 0" >> ${OUT}
+fi
+
+# These flags can be lost on i386 GNU/Linux when using
+# -D_FILE_OFFSET_BITS=64, because we see "#define F_SETLK F_SETLK64"
+# before we see the definition of F_SETLK64.
+for flag in F_GETLK F_SETLK F_SETLKW; do
+  if ! grep "^const ${flag} " ${OUT} >/dev/null 2>&1 \
+      && grep "^const ${flag}64 " ${OUT} >/dev/null 2>&1; then
+    echo "const ${flag} = ${flag}64" >> ${OUT}
+  fi
+done
+
+# The Flock_t struct for fcntl.
+grep '^type _flock ' gen-sysinfo.go | \
+    sed -e 's/type _flock/type Flock_t/' \
+      -e 's/l_type/Type/' \
+      -e 's/l_whence/Whence/' \
+      -e 's/l_start/Start/' \
+      -e 's/l_len/Len/' \
+      -e 's/l_pid/Pid/' \
+    >> ${OUT}
+
 # The signal numbers.
 grep '^const _SIG[^_]' gen-sysinfo.go | \
   grep -v '^const _SIGEV_' | \
   sed -e 's/^\(const \)_\(SIG[^= ]*\)\(.*\)$/\1\2 = Signal(_\2)/' >> ${OUT}
+if ! grep '^const SIGPOLL ' ${OUT} >/dev/null 2>&1; then
+  if grep '^const SIGIO ' ${OUT} > /dev/null 2>&1; then
+    echo "const SIGPOLL = SIGIO" >> ${OUT}
+  fi
+fi
+if ! grep '^const SIGCLD ' ${OUT} >/dev/null 2>&1; then
+  if grep '^const SIGCHLD ' ${OUT} >/dev/null 2>&1; then
+    echo "const SIGCLD = SIGCHLD" >> ${OUT}
+  fi
+fi
 
 # The syscall numbers.  We force the names to upper case.
 grep '^const _SYS_' gen-sysinfo.go | \
@@ -181,6 +103,14 @@ grep '^const _SYS_' gen-sysinfo.go | \
     sup=`echo $sys | tr abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ`
     echo "const $sup = _$sys" >> ${OUT}
   done
+
+# The GNU/Linux support wants to use SYS_GETDENTS64 if available.
+if ! grep '^const SYS_GETDENTS ' ${OUT} >/dev/null 2>&1; then
+  echo "const SYS_GETDENTS = 0" >> ${OUT}
+fi
+if ! grep '^const SYS_GETDENTS64 ' ${OUT} >/dev/null 2>&1; then
+  echo "const SYS_GETDENTS64 = 0" >> ${OUT}
+fi
 
 # Stat constants.
 grep '^const _S_' gen-sysinfo.go | \
@@ -193,6 +123,8 @@ grep '^const _MAP_' gen-sysinfo.go | \
   sed -e 's/^\(const \)_\(MAP_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
 grep '^const _MADV_' gen-sysinfo.go | \
   sed -e 's/^\(const \)_\(MADV_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
+grep '^const _MCL_' gen-sysinfo.go | \
+  sed -e 's/^\(const \)_\(MCL_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
 
 # Process status constants.
 grep '^const _W' gen-sysinfo.go |
@@ -211,7 +143,7 @@ if grep '^const ___WALL = ' gen-sysinfo.go >/dev/null 2>&1 \
 fi
 
 # Networking constants.
-egrep '^const _(AF|SOCK|SOL|SO|IPPROTO|TCP|IP|IPV6)_' gen-sysinfo.go |
+egrep '^const _(AF|ARPHRD|ETH|IN|SOCK|SOL|SO|IPPROTO|TCP|IP|IPV6)_' gen-sysinfo.go |
   sed -e 's/^\(const \)_\([^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
 grep '^const _SOMAXCONN' gen-sysinfo.go |
   sed -e 's/^\(const \)_\(SOMAXCONN[^= ]*\)\(.*\)$/\1\2 = _\2/' \
@@ -220,19 +152,48 @@ grep '^const _SHUT_' gen-sysinfo.go |
   sed -e 's/^\(const \)_\(SHUT[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
 
 # The net package requires some const definitions.
-for m in IP_PKTINFO IPV6_V6ONLY IPPROTO_IPV6 IPV6_JOIN_GROUP IPV6_LEAVE_GROUP IPV6_TCLASS; do
+for m in IP_PKTINFO IPV6_V6ONLY IPPROTO_IPV6 IPV6_JOIN_GROUP IPV6_LEAVE_GROUP IPV6_TCLASS SO_REUSEPORT; do
   if ! grep "^const $m " ${OUT} >/dev/null 2>&1; then
     echo "const $m = 0" >> ${OUT}
   fi
 done
+for m in SOCK_CLOEXEC SOCK_NONBLOCK; do
+  if ! grep "^const $m " ${OUT} >/dev/null 2>&1; then
+    echo "const $m = -1" >> ${OUT}
+  fi
+done
+
+# The syscall package requires AF_LOCAL.
+if ! grep '^const AF_LOCAL ' ${OUT} >/dev/null 2>&1; then
+  if grep '^const AF_UNIX ' ${OUT} >/dev/null 2>&1; then
+    echo "const AF_LOCAL = AF_UNIX" >> ${OUT}
+  fi
+fi
+
+# sysconf constants.
+grep '^const __SC' gen-sysinfo.go |
+  sed -e 's/^\(const \)__\(SC[^= ]*\)\(.*\)$/\1\2 = __\2/' >> ${OUT}
 
 # pathconf constants.
 grep '^const __PC' gen-sysinfo.go |
   sed -e 's/^\(const \)__\(PC[^= ]*\)\(.*\)$/\1\2 = __\2/' >> ${OUT}
 
+# The PATH_MAX constant.
+if grep '^const _PATH_MAX ' gen-sysinfo.go >/dev/null 2>&1; then
+  echo 'const PathMax = _PATH_MAX' >> ${OUT}
+fi
+
 # epoll constants.
 grep '^const _EPOLL' gen-sysinfo.go |
+  grep -v EPOLLET |
   sed -e 's/^\(const \)_\(EPOLL[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
+# Make sure EPOLLET is positive.
+if grep '^const _EPOLLET = [0-9]' gen-sysinfo.go >/dev/null 2>&1; then
+  grep '^const _EPOLLET ' gen-sysinfo.go |
+    sed -e 's/^\(const \)_\(EPOLL[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
+else
+  echo "const EPOLLET = 0x80000000" >> ${OUT}
+fi
 # Make sure EPOLLRDHUP and EPOLL_CLOEXEC are defined.
 if ! grep '^const EPOLLRDHUP' ${OUT} >/dev/null 2>&1; then
   echo "const EPOLLRDHUP = 0x2000" >> ${OUT}
@@ -302,12 +263,50 @@ if ! grep '^const _PTRACE_TRACEME' ${OUT} > /dev/null 2>&1; then
   echo "const _PTRACE_TRACEME = 0" >> ${OUT}
 fi
 
+# A helper function that prints a structure from gen-sysinfo.go with the first
+# letter of the field names in upper case.  $1 is the name of structure.  If $2
+# is not empty, the structure or type is renamed to $2.
+upcase_fields () {
+  name="$1"
+  def=`grep "^type $name " gen-sysinfo.go`
+  fields=`echo $def | sed -e 's/^[^{]*{\(.*\)}$/\1/'`
+  prefix=`echo $def | sed -e 's/{.*//'`
+  if test "$2" != ""; then
+    prefix=`echo $prefix | sed -e "s/$1/$2/"`
+  fi
+  if test "$fields" != ""; then
+    nfields=
+    while test -n "$fields"; do
+      field=`echo $fields | sed -e 's/^\([^;]*\);.*$/\1/'`
+      fields=`echo $fields | sed -e 's/^[^;]*; *\(.*\)$/\1/'`
+      # capitalize the next character.
+      f=`echo $field | sed -e 's/^\(.\).*$/\1/'`
+      r=`echo $field | sed -e 's/^.\(.*\)$/\1/'`
+      f=`echo $f | tr abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ`
+      field="$f$r"
+      nfields="$nfields $field;"
+    done
+    echo "${prefix} {$nfields }"
+  fi
+}
+
 # The registers returned by PTRACE_GETREGS.  This is probably
 # GNU/Linux specific; it should do no harm if there is no
 # _user_regs_struct.
 regs=`grep '^type _user_regs_struct struct' gen-sysinfo.go || true`
+if test "$regs" = ""; then
+  # s390
+  regs=`grep '^type __user_regs_struct struct' gen-sysinfo.go || true`
+  if test "$regs" != ""; then
+    # Substructures of __user_regs_struct on s390
+    upcase_fields "__user_psw_struct" "PtracePsw" >> ${OUT} || true
+    upcase_fields "__user_fpregs_struct" "PtraceFpregs" >> ${OUT} || true
+    upcase_fields "__user_per_struct" "PtracePer" >> ${OUT} || true
+  fi
+fi
 if test "$regs" != ""; then
-  regs=`echo $regs | sed -e 's/type _user_regs_struct struct //' -e 's/[{}]//g'`
+  regs=`echo $regs |
+    sed -e 's/type __*user_regs_struct struct //' -e 's/[{}]//g'`
   regs=`echo $regs | sed -e s'/^ *//'`
   nregs=
   while test -n "$regs"; do
@@ -318,6 +317,10 @@ if test "$regs" != ""; then
     r=`echo $field | sed -e 's/^.\(.*\)$/\1/'`
     f=`echo $f | tr abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ`
     field="$f$r"
+    field=`echo "$field" | sed \
+      -e 's/__user_psw_struct/PtracePsw/' \
+      -e 's/__user_fpregs_struct/PtraceFpregs/' \
+      -e 's/__user_per_struct/PtracePer/'`
     nregs="$nregs $field;"
   done
   echo "type PtraceRegs struct {$nregs }" >> ${OUT}
@@ -337,12 +340,27 @@ echo "type Uid_t _uid_t" >> ${OUT}
 echo "type Gid_t _gid_t" >> ${OUT}
 echo "type Socklen_t _socklen_t" >> ${OUT}
 
-# The long type, needed because that is the type that ptrace returns.
+# The C int type.
+sizeof_int=`grep '^const ___SIZEOF_INT__ = ' gen-sysinfo.go | sed -e 's/.*= //'`
+if test "$sizeof_int" = "4"; then
+  echo "type _C_int int32" >> ${OUT}
+  echo "type _C_uint uint32" >> ${OUT}
+elif test "$sizeof_int" = "8"; then
+  echo "type _C_int int64" >> ${OUT}
+  echo "type _C_uint uint64" >> ${OUT}
+else
+  echo 1>&2 "mksysinfo.sh: could not determine size of int (got $sizeof_int)"
+  exit 1
+fi
+
+# The C long type, needed because that is the type that ptrace returns.
 sizeof_long=`grep '^const ___SIZEOF_LONG__ = ' gen-sysinfo.go | sed -e 's/.*= //'`
 if test "$sizeof_long" = "4"; then
   echo "type _C_long int32" >> ${OUT}
+  echo "type _C_ulong uint32" >> ${OUT}
 elif test "$sizeof_long" = "8"; then
   echo "type _C_long int64" >> ${OUT}
+  echo "type _C_ulong uint64" >> ${OUT}
 else
   echo 1>&2 "mksysinfo.sh: could not determine size of long (got $sizeof_long)"
   exit 1
@@ -429,9 +447,9 @@ fi | sed -e 's/type _stat64/type Stat_t/' \
          -e 's/st_size/Size/' \
          -e 's/st_blksize/Blksize/' \
          -e 's/st_blocks/Blocks/' \
-         -e 's/st_atim/Atime/' \
-         -e 's/st_mtim/Mtime/' \
-         -e 's/st_ctim/Ctime/' \
+         -e 's/st_atim/Atim/' \
+         -e 's/st_mtim/Mtim/' \
+         -e 's/st_ctim/Ctim/' \
          -e 's/\([^a-zA-Z0-9_]\)_timeval\([^a-zA-Z0-9_]\)/\1Timeval\2/g' \
          -e 's/\([^a-zA-Z0-9_]\)_timespec_t\([^a-zA-Z0-9_]\)/\1Timespec\2/g' \
          -e 's/\([^a-zA-Z0-9_]\)_timespec\([^a-zA-Z0-9_]\)/\1Timespec\2/g' \
@@ -458,9 +476,15 @@ fi | sed -e 's/type _dirent64/type Dirent/' \
       >> ${OUT}
 echo "type DIR _DIR" >> ${OUT}
 
+# Values for d_type field in dirent.
+grep '^const _DT_' gen-sysinfo.go |
+  sed -e 's/^\(const \)_\(DT_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
+
 # The rusage struct.
 rusage=`grep '^type _rusage struct' gen-sysinfo.go`
 if test "$rusage" != ""; then
+  # Remove anonymous unions from GNU/Linux <bits/resource.h>.
+  rusage=`echo $rusage | sed -e 's/Godump_[0-9][0-9]* struct {\([^}]*\)};/\1/g'`
   rusage=`echo $rusage | sed -e 's/type _rusage struct //' -e 's/[{}]//g'`
   rusage=`echo $rusage | sed -e 's/^ *//'`
   nrusage=
@@ -541,9 +565,6 @@ if test -n "$cmsghdr"; then
         -e 's/cmsg_type/Type/' \
         -e 's/\[\]/[0]/' \
       >> ${OUT}
-
-  # The size of the cmsghdr struct.
-  echo 'var SizeofCmsghdr = int(unsafe.Sizeof(Cmsghdr{}))' >> ${OUT}
 fi
 
 # The SCM_ flags for Cmsghdr.
@@ -551,17 +572,7 @@ grep '^const _SCM_' gen-sysinfo.go | \
   sed -e 's/^\(const \)_\(SCM_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
 
 # The ucred struct.
-grep '^type _ucred ' gen-sysinfo.go | \
-    sed -e 's/_ucred/Ucred/' \
-      -e 's/pid/Pid/' \
-      -e 's/uid/Uid/' \
-      -e 's/gid/Gid/' \
-    >> ${OUT}
-
-# The size of the ucred struct.
-if grep 'type Ucred ' ${OUT} >/dev/null 2>&1; then
-  echo 'var SizeofUcred = int(unsafe.Sizeof(Ucred{}))' >> ${OUT}
-fi  
+upcase_fields "_ucred" "Ucred" >> ${OUT} || true
 
 # The ip_mreq struct.
 grep '^type _ip_mreq ' gen-sysinfo.go | \
@@ -576,9 +587,6 @@ if ! grep 'type IPMreq ' ${OUT} >/dev/null 2>&1; then
   echo 'type IPMreq struct { Multiaddr [4]byte; Interface [4]byte; }' >> ${OUT}
 fi
 
-# The size of the ip_mreq struct.
-echo 'var SizeofIPMreq = int(unsafe.Sizeof(IPMreq{}))' >> ${OUT}
-
 # The ipv6_mreq struct.
 grep '^type _ipv6_mreq ' gen-sysinfo.go | \
     sed -e 's/_ipv6_mreq/IPv6Mreq/' \
@@ -591,9 +599,6 @@ grep '^type _ipv6_mreq ' gen-sysinfo.go | \
 if ! grep 'type IPv6Mreq ' ${OUT} >/dev/null 2>&1; then
   echo 'type IPv6Mreq struct { Multiaddr [16]byte; Interface uint32; }' >> ${OUT}
 fi
-
-# The size of the ipv6_mreq struct.
-echo 'var SizeofIPv6Mreq = int(unsafe.Sizeof(IPv6Mreq{}))' >> ${OUT}
 
 # The ip_mreqn struct.
 grep '^type _ip_mreqn ' gen-sysinfo.go | \
@@ -609,8 +614,25 @@ if ! grep 'type IPMreqn ' ${OUT} >/dev/null 2>&1; then
   echo 'type IPMreqn struct { Multiaddr [4]byte; Interface [4]byte; Ifindex int32 }' >> ${OUT}
 fi
 
-# The size of the ip_mreqn struct.
-echo 'var SizeofIPMreqn = int(unsafe.Sizeof(IPMreqn{}))' >> ${OUT}
+# The icmp6_filter struct.
+grep '^type _icmp6_filter ' gen-sysinfo.go | \
+    sed -e 's/_icmp6_filter/ICMPv6Filter/' \
+      -e 's/data/Data/' \
+      -e 's/filt/Filt/' \
+    >> ${OUT}
+
+# We need ICMPv6Filter to compile the syscall package.
+if ! grep 'type ICMPv6Filter ' ${OUT} > /dev/null 2>&1; then
+  echo 'type ICMPv6Filter struct { Data [8]uint32 }' >> ${OUT}
+fi
+
+# The ip6_mtuinfo struct.
+grep '^type _ip6_mtuinfo ' gen-sysinfo.go | \
+    sed -e 's/_ip6_mtuinfo/IPv6MTUInfo/' \
+      -e 's/ip6m_addr/Addr/' \
+      -e 's/_sockaddr_in6/RawSockaddrInet6/' \
+      -e 's/ip6m_mtu/Mtu/' \
+    >> ${OUT}
 
 # Try to guess the type to use for fd_set.
 fd_set=`grep '^type _fd_set ' gen-sysinfo.go || true`
@@ -626,11 +648,13 @@ grep '^type _addrinfo ' gen-sysinfo.go | \
       -e 's/ ai_/ Ai_/g' \
     >> ${OUT}
 
-# The addrinfo flags and errors.
+# The addrinfo and nameinfo flags and errors.
 grep '^const _AI_' gen-sysinfo.go | \
   sed -e 's/^\(const \)_\(AI_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
 grep '^const _EAI_' gen-sysinfo.go | \
   sed -e 's/^\(const \)_\(EAI_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
+grep '^const _NI_' gen-sysinfo.go | \
+  sed -e 's/^\(const \)_\(NI_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
 
 # The passwd struct.
 grep '^type _passwd ' gen-sysinfo.go | \
@@ -638,20 +662,205 @@ grep '^type _passwd ' gen-sysinfo.go | \
       -e 's/ pw_/ Pw_/g' \
     >> ${OUT}
 
+# The group struct.
+grep '^type _group ' gen-sysinfo.go | \
+    sed -e 's/_group/Group/' \
+      -e 's/ gr_/ Gr_/g' \
+    >> ${OUT}
+
 # The ioctl flags for the controlling TTY.
 grep '^const _TIOC' gen-sysinfo.go | \
     grep -v '_val =' | \
     sed -e 's/^\(const \)_\(TIOC[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
+grep '^const _TUNSET' gen-sysinfo.go | \
+    grep -v '_val =' | \
+    sed -e 's/^\(const \)_\(TUNSET[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
 # We need TIOCGWINSZ.
 if ! grep '^const TIOCGWINSZ' ${OUT} >/dev/null 2>&1; then
   if grep '^const _TIOCGWINSZ_val' ${OUT} >/dev/null 2>&1; then
     echo 'const TIOCGWINSZ = _TIOCGWINSZ_val' >> ${OUT}
   fi
 fi
+if ! grep '^const TIOCSWINSZ' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TIOCSWINSZ_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TIOCSWINSZ = _TIOCSWINSZ_val' >> ${OUT}
+  fi
+fi
+if ! grep '^const TIOCNOTTY' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TIOCNOTTY_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TIOCNOTTY = _TIOCNOTTY_val' >> ${OUT}
+  fi
+fi
+if ! grep '^const TIOCSCTTY' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TIOCSCTTY_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TIOCSCTTY = _TIOCSCTTY_val' >> ${OUT}
+  fi
+fi
+if ! grep '^const TIOCGPGRP' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TIOCGPGRP_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TIOCGPGRP = _TIOCGPGRP_val' >> ${OUT}
+  fi
+fi
+if ! grep '^const TIOCSPGRP' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TIOCSPGRP_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TIOCSPGRP = _TIOCSPGRP_val' >> ${OUT}
+  fi
+fi
+if ! grep '^const TIOCGPTN' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TIOCGPTN_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TIOCGPTN = _TIOCGPTN_val' >> ${OUT}
+  fi
+fi
+if ! grep '^const TIOCSPTLCK' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TIOCSPTLCK_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TIOCSPTLCK = _TIOCSPTLCK_val' >> ${OUT}
+  fi
+fi
+if ! grep '^const TIOCGDEV' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TIOCGDEV_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TIOCGDEV = _TIOCGDEV_val' >> ${OUT}
+  fi
+fi
+if ! grep '^const TIOCSIG' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TIOCSIG_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TIOCSIG = _TIOCSIG_val' >> ${OUT}
+  fi
+fi
+
+if ! grep '^const TUNSETNOCSUM' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNSETNOCSUM_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNSETNOCSUM = _TUNSETNOCSUM_val' >> ${OUT}
+  fi
+fi
+
+if ! grep '^const TUNSETDEBUG' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNSETDEBUG_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNSETDEBUG = _TUNSETDEBUG_val' >> ${OUT}
+  fi
+fi
+
+if ! grep '^const TUNSETIFF' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNSETIFF_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNSETIFF = _TUNSETIFF_val' >> ${OUT}
+  fi
+fi
+
+if ! grep '^const TUNSETPERSIST' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNSETPERSIST_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNSETPERSIST = _TUNSETPERSIST_val' >> ${OUT}
+  fi
+fi
+
+if ! grep '^const TUNSETOWNER' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNSETOWNER_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNSETOWNER = _TUNSETOWNER_val' >> ${OUT}
+  fi
+fi
+
+if ! grep '^const TUNSETLINK' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNSETLINK_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNSETLINK = _TUNSETLINK_val' >> ${OUT}
+  fi
+fi
+
+if ! grep '^const TUNSETGROUP' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNSETGROUP_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNSETGROUP = _TUNSETGROUP_val' >> ${OUT}
+  fi
+fi
+
+if ! grep '^const TUNGETFEATURES' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNGETFEATURES_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNGETFEATURES = _TUNGETFEATURES_val' >> ${OUT}
+  fi
+fi
+
+if ! grep '^const TUNSETOFFLOAD' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNSETOFFLOAD_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNSETOFFLOAD = _TUNSETOFFLOAD_val' >> ${OUT}
+  fi
+fi
+
+if ! grep '^const TUNSETTXFILTER' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNSETTXFILTER_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNSETTXFILTER = _TUNSETTXFILTER_val' >> ${OUT}
+  fi
+fi
+
+if ! grep '^const TUNGETIFF' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNGETIFF_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNGETIFF = _TUNGETIFF_val' >> ${OUT}
+  fi
+fi
+
+if ! grep '^const TUNGETSNDBUF' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNGETSNDBUF_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNGETSNDBUF = _TUNGETSNDBUF_val' >> ${OUT}
+  fi
+fi
+
+if ! grep '^const TUNSETSNDBUF' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNSETSNDBUF_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNSETSNDBUF = _TUNSETSNDBUF_val' >> ${OUT}
+  fi
+fi
+
+if ! grep '^const TUNATTACHFILTER' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNATTACHFILTER_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNATTACHFILTER = _TUNATTACHFILTER_val' >> ${OUT}
+  fi
+fi
+
+if ! grep '^const TUNDETACHFILTER' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNDETACHFILTER_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNDETACHFILTER = _TUNDETACHFILTER_val' >> ${OUT}
+  fi
+fi
+
+if ! grep '^const TUNGETVNETHDRSZ' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNGETVNETHDRSZ_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNGETVNETHDRSZ = _TUNGETVNETHDRSZ_val' >> ${OUT}
+  fi
+fi
+
+if ! grep '^const TUNSETVNETHDRSZ' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNSETVNETHDRSZ_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNSETVNETHDRSZ = _TUNSETVNETHDRSZ_val' >> ${OUT}
+  fi
+fi
+
+if ! grep '^const TUNSETQUEUE' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNSETQUEUE_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNSETQUEUE = _TUNSETQUEUE_val' >> ${OUT}
+  fi
+fi
+
+
+if ! grep '^const TUNSETIFINDEX' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNSETIFINDEX_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNSETIFINDEX = _TUNSETIFINDEX_val' >> ${OUT}
+  fi
+fi
+
+if ! grep '^const TUNGETFILTER' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TUNGETFILTER_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TUNGETFILTER = _TUNGETFILTER_val' >> ${OUT}
+  fi
+fi
 
 # The ioctl flags for terminal control
-grep '^const _TC[GS]ET' gen-sysinfo.go | \
+grep '^const _TC[GS]ET' gen-sysinfo.go | grep -v _val | \
     sed -e 's/^\(const \)_\(TC[GS]ET[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
+if ! grep '^const TCGETS' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TCGETS_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TCGETS = _TCGETS_val' >> ${OUT}
+  fi
+fi
+if ! grep '^const TCSETS' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _TCSETS_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const TCSETS = _TCSETS_val' >> ${OUT}
+  fi
+fi
 
 # ioctl constants.  Might fall back to 0 if TIOCNXCL is missing, too, but
 # needs handling in syscalls.exec.go.
@@ -677,8 +886,8 @@ grep '^const _NLM' gen-sysinfo.go | \
 
 # NLMSG_HDRLEN is defined as an expression using sizeof.
 if ! grep '^const NLMSG_HDRLEN' ${OUT} > /dev/null 2>&1; then
-  if grep '^type NlMsghdr ' ${OUT} > /dev/null 2>&1; then
-    echo 'var NLMSG_HDRLEN = int((unsafe.Sizeof(NlMsghdr{}) + (NLMSG_ALIGNTO-1)) &^ (NLMSG_ALIGNTO-1))' >> ${OUT}
+  if grep '^const _sizeof_nlmsghdr ' ${OUT} > /dev/null 2>&1; then
+    echo 'const NLMSG_HDRLEN = (_sizeof_nlmsghdr + (NLMSG_ALIGNTO-1)) &^ (NLMSG_ALIGNTO-1)' >> ${OUT}
   fi
 fi
 
@@ -690,16 +899,11 @@ grep '^type _rtmsg ' gen-sysinfo.go | \
       -e 's/rtm_src_len/Src_len/' \
       -e 's/rtm_tos/Tos/' \
       -e 's/rtm_table/Table/' \
-      -e 's/rtm_protocol/Procotol/' \
+      -e 's/rtm_protocol/Protocol/' \
       -e 's/rtm_scope/Scope/' \
       -e 's/rtm_type/Type/' \
       -e 's/rtm_flags/Flags/' \
     >> ${OUT}
-
-# The size of the rtmsg struct.
-if grep 'type RtMsg ' ${OUT} > /dev/null 2>&1; then
-  echo 'var SizeofRtMsg = int(unsafe.Sizeof(RtMsg{}))' >> ${OUT}
-fi
 
 # The rtgenmsg struct.
 grep '^type _rtgenmsg ' gen-sysinfo.go | \
@@ -708,15 +912,20 @@ grep '^type _rtgenmsg ' gen-sysinfo.go | \
     >> ${OUT}
 
 # The routing message flags.
+grep '^const _RT_' gen-sysinfo.go | \
+    sed -e 's/^\(const \)_\(RT_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
 grep '^const _RTA' gen-sysinfo.go | \
     sed -e 's/^\(const \)_\(RTA[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
+grep '^const _RTF' gen-sysinfo.go | \
+    sed -e 's/^\(const \)_\(RTF[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
+grep '^const _RTCF' gen-sysinfo.go | \
+    sed -e 's/^\(const \)_\(RTCF[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
 grep '^const _RTM' gen-sysinfo.go | \
     sed -e 's/^\(const \)_\(RTM[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
-
-# The size of the rtgenmsg struct.
-if grep 'type RtGenmsg ' ${OUT} > /dev/null 2>&1; then
-  echo 'var SizeofRtGenmsg = int(unsafe.Sizeof(RtGenmsg{}))' >> ${OUT}
-fi
+grep '^const _RTN' gen-sysinfo.go | \
+    sed -e 's/^\(const \)_\(RTN[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
+grep '^const _RTPROT' gen-sysinfo.go | \
+    sed -e 's/^\(const \)_\(RTPROT[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
 
 # The ifinfomsg struct.
 grep '^type _ifinfomsg ' gen-sysinfo.go | \
@@ -740,11 +949,6 @@ grep '^const _IFNAMSIZ' gen-sysinfo.go | \
 grep '^const _SIOC' gen-sysinfo.go |
     sed -e 's/^\(const \)_\(SIOC[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
 
-# The size of the ifinfomsg struct.
-if grep 'type IfInfomsg ' ${OUT} > /dev/null 2>&1; then
-  echo 'var SizeofIfInfomsg = int(unsafe.Sizeof(IfInfomsg{}))' >> ${OUT}
-fi
-
 # The ifaddrmsg struct.
 grep '^type _ifaddrmsg ' gen-sysinfo.go | \
     sed -e 's/_ifaddrmsg/IfAddrmsg/' \
@@ -755,11 +959,6 @@ grep '^type _ifaddrmsg ' gen-sysinfo.go | \
       -e 's/ifa_index/Index/' \
     >> ${OUT}
 
-# The size of the ifaddrmsg struct.
-if grep 'type IfAddrmsg ' ${OUT} > /dev/null 2>&1; then
-  echo 'var SizeofIfAddrmsg = int(unsafe.Sizeof(IfAddrmsg{}))' >> ${OUT}
-fi
-
 # The rtattr struct.
 grep '^type _rtattr ' gen-sysinfo.go | \
     sed -e 's/_rtattr/RtAttr/' \
@@ -767,10 +966,22 @@ grep '^type _rtattr ' gen-sysinfo.go | \
       -e 's/rta_type/Type/' \
     >> ${OUT}
 
-# The size of the rtattr struct.
-if grep 'type RtAttr ' ${OUT} > /dev/null 2>&1; then
-  echo 'var SizeofRtAttr = int(unsafe.Sizeof(RtAttr{}))' >> ${OUT}
-fi
+# The in_pktinfo struct.
+grep '^type _in_pktinfo ' gen-sysinfo.go | \
+    sed -e 's/_in_pktinfo/Inet4Pktinfo/' \
+      -e 's/ipi_ifindex/Ifindex/' \
+      -e 's/ipi_spec_dst/Spec_dst/' \
+      -e 's/ipi_addr/Addr/' \
+      -e 's/_in_addr/[4]byte/g' \
+    >> ${OUT}
+
+# The in6_pktinfo struct.
+grep '^type _in6_pktinfo ' gen-sysinfo.go | \
+    sed -e 's/_in6_pktinfo/Inet6Pktinfo/' \
+      -e 's/ipi6_addr/Addr/' \
+      -e 's/ipi6_ifindex/Ifindex/' \
+      -e 's/_in6_addr/[16]byte/' \
+    >> ${OUT}
 
 # The termios struct.
 grep '^type _termios ' gen-sysinfo.go | \
@@ -788,21 +999,24 @@ grep '^type _termios ' gen-sysinfo.go | \
 # The termios constants.
 for n in IGNBRK BRKINT IGNPAR PARMRK INPCK ISTRIP INLCR IGNCR ICRNL IUCLC \
     IXON IXANY IXOFF IMAXBEL IUTF8 OPOST OLCUC ONLCR OCRNL ONOCR ONLRET \
-    OFILL OFDEL NLDLY NL0 NL1 CRDLY CR0 CR1 CR2 CR3 TABDLY BSDLY VTDLY \
-    FFDLY CBAUD CBAUDEX CSIZE CSTOPB CREAD PARENB PARODD HUPCL CLOCAL \
-    LOBLK CIBAUD CMSPAR CRTSCTS ISIG ICANON XCASE ECHO ECHOE ECHOK ECHONL \
-    ECHOCTL ECHOPRT ECHOKE DEFECHO FLUSHO NOFLSH TOSTOP PENDIN IEXTEN VINTR \
-    VQUIT VERASE VKILL VEOF VMIN VEOL VTIME VEOL2 VSWTCH VSTART VSTOP VSUSP \
-    VDSUSP VLNEXT VWERASE VREPRINT VDISCARD VSTATUS TCSANOW TCSADRAIN \
+    OFILL OFDEL NLDLY NL0 NL1 CRDLY CR0 CR1 CR2 CR3 CS5 CS6 CS7 CS8 TABDLY \
+    BSDLY VTDLY FFDLY CBAUD CBAUDEX CSIZE CSTOPB CREAD PARENB PARODD HUPCL \
+    CLOCAL LOBLK CIBAUD CMSPAR CRTSCTS ISIG ICANON XCASE ECHO ECHOE ECHOK \
+    ECHONL ECHOCTL ECHOPRT ECHOKE DEFECHO FLUSHO NOFLSH TOSTOP PENDIN IEXTEN \
+    VINTR VQUIT VERASE VKILL VEOF VMIN VEOL VTIME VEOL2 VSWTCH VSTART VSTOP \
+    VSUSP VDSUSP VLNEXT VWERASE VREPRINT VDISCARD VSTATUS TCSANOW TCSADRAIN \
     TCSAFLUSH TCIFLUSH TCOFLUSH TCIOFLUSH TCOOFF TCOON TCIOFF TCION B0 B50 \
     B75 B110 B134 B150 B200 B300 B600 B1200 B1800 B2400 B4800 B9600 B19200 \
-    B38400 B57600 B115200 B230400; do
+    B38400 B57600 B115200 B230400 B460800 B500000 B576000 B921600 B1000000 \
+    B1152000 B1500000 B2000000 B2500000 B3000000 B3500000 B4000000; do
 
     grep "^const _$n " gen-sysinfo.go | \
 	sed -e 's/^\(const \)_\([^=]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
 done
 
 # The mount flags
+grep '^const _MNT_' gen-sysinfo.go |
+    sed -e 's/^\(const \)_\(MNT_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
 grep '^const _MS_' gen-sysinfo.go |
     sed -e 's/^\(const \)_\(MS_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
 
@@ -878,6 +1092,8 @@ grep '^type _rlimit ' gen-sysinfo.go | \
 # The RLIMIT constants.
 grep '^const _RLIMIT_' gen-sysinfo.go |
     sed -e 's/^\(const \)_\(RLIMIT_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
+grep '^const _RLIM_' gen-sysinfo.go |
+    sed -e 's/^\(const \)_\(RLIM_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
 
 # The sysinfo struct.
 grep '^type _sysinfo ' gen-sysinfo.go | \
@@ -917,6 +1133,14 @@ grep '^type _utimbuf ' gen-sysinfo.go | \
       -e 's/modtime/Modtime/' \
     >> ${OUT}
 
+# The LOCK flags for flock.
+grep '^const _LOCK_' gen-sysinfo.go |
+    sed -e 's/^\(const \)_\(LOCK_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
+
+# The PRIO constants.
+grep '^const _PRIO_' gen-sysinfo.go | \
+  sed -e 's/^\(const \)_\(PRIO_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
+
 # The GNU/Linux LINUX_REBOOT flags.
 grep '^const _LINUX_REBOOT_' gen-sysinfo.go |
     sed -e 's/^\(const \)_\(LINUX_REBOOT_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
@@ -936,6 +1160,132 @@ grep '^type _sock_fprog ' gen-sysinfo.go | \
       -e 's/len/Len/' \
       -e 's/filter/Filter/' \
       -e 's/_sock_filter/SockFilter/' \
+    >> ${OUT}
+
+# The GNU/Linux filter flags.
+grep '^const _BPF_' gen-sysinfo.go | \
+  sed -e 's/^\(const \)_\(BPF_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
+
+# The GNU/Linux nlattr struct.
+grep '^type _nlattr ' gen-sysinfo.go | \
+    sed -e 's/_nlattr/NlAttr/' \
+      -e 's/nla_len/Len/' \
+      -e 's/nla_type/Type/' \
+    >> ${OUT}
+
+# The GNU/Linux nlmsgerr struct.
+grep '^type _nlmsgerr ' gen-sysinfo.go | \
+    sed -e 's/_nlmsgerr/NlMsgerr/' \
+      -e 's/error/Error/' \
+      -e 's/msg/Msg/' \
+      -e 's/_nlmsghdr/NlMsghdr/' \
+    >> ${OUT}
+
+# The GNU/Linux rtnexthop struct.
+grep '^type _rtnexthop ' gen-sysinfo.go | \
+    sed -e 's/_rtnexthop/RtNexthop/' \
+      -e 's/rtnh_len/Len/' \
+      -e 's/rtnh_flags/Flags/' \
+      -e 's/rtnh_hops/Hops/' \
+      -e 's/rtnh_ifindex/Ifindex/' \
+    >> ${OUT}
+
+# The GNU/Linux netlink flags.
+grep '^const _NETLINK_' gen-sysinfo.go | \
+  sed -e 's/^\(const \)_\(NETLINK_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
+grep '^const _NLA_' gen-sysinfo.go | grep -v '_val =' | \
+  sed -e 's/^\(const \)_\(NLA_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
+
+if ! grep '^const NLA_HDRLEN' ${OUT} >/dev/null 2>&1; then
+  if grep '^const _NLA_HDRLEN_val' ${OUT} >/dev/null 2>&1; then
+    echo 'const NLA_HDRLEN = _NLA_HDRLEN_val' >> ${OUT}
+  fi
+fi
+
+# The GNU/Linux packet socket flags.
+grep '^const _PACKET_' gen-sysinfo.go | \
+  sed -e 's/^\(const \)_\(PACKET_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
+
+# The GNU/Linux inotify_event struct.
+grep '^type _inotify_event ' gen-sysinfo.go | \
+    sed -e 's/_inotify_event/InotifyEvent/' \
+      -e 's/wd/Wd/' \
+      -e 's/mask/Mask/' \
+      -e 's/cookie/Cookie/' \
+      -e 's/len/Len/' \
+      -e 's/name/Name/' \
+      -e 's/\[\]/[0]/' \
+      -e 's/\[0\]byte/[0]int8/' \
+    >> ${OUT}
+
+# The GNU/Linux CLONE flags.
+grep '^const _CLONE_' gen-sysinfo.go | \
+  sed -e 's/^\(const \)_\(CLONE_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
+# We need some CLONE constants that are not defined in older versions
+# of glibc.
+if ! grep '^const CLONE_NEWUSER ' ${OUT} > /dev/null 2>&1; then
+  echo "const CLONE_NEWUSER = 0x10000000" >> ${OUT}
+fi
+if ! grep '^const CLONE_NEWNET ' ${OUT} > /dev/null 2>&1; then
+  echo "const CLONE_NEWNET = 0x40000000" >> ${OUT}
+fi
+
+# Struct sizes.
+set cmsghdr Cmsghdr ip_mreq IPMreq ip_mreqn IPMreqn ipv6_mreq IPv6Mreq \
+    ifaddrmsg IfAddrmsg ifinfomsg IfInfomsg in_pktinfo Inet4Pktinfo \
+    in6_pktinfo Inet6Pktinfo inotify_event InotifyEvent linger Linger \
+    msghdr Msghdr nlattr NlAttr nlmsgerr NlMsgerr nlmsghdr NlMsghdr \
+    rtattr RtAttr rtgenmsg RtGenmsg rtmsg RtMsg rtnexthop RtNexthop \
+    sock_filter SockFilter sock_fprog SockFprog ucred Ucred \
+    icmp6_filter ICMPv6Filter ip6_mtuinfo IPv6MTUInfo
+while test $# != 0; do
+    nc=$1
+    ngo=$2
+    shift
+    shift
+    if grep "^const _sizeof_$nc =" gen-sysinfo.go >/dev/null 2>&1; then
+	echo "const Sizeof$ngo = _sizeof_$nc" >> ${OUT}
+    fi
+done
+
+# In order to compile the net package, we need some sizes to exist
+# even if the types do not.
+if ! grep 'const SizeofIPMreq ' ${OUT} >/dev/null 2>&1; then
+    echo 'const SizeofIPMreq = 8' >> ${OUT}
+fi
+if ! grep 'const SizeofIPv6Mreq ' ${OUT} >/dev/null 2>&1; then
+    echo 'const SizeofIPv6Mreq = 20' >> ${OUT}
+fi
+if ! grep 'const SizeofIPMreqn ' ${OUT} >/dev/null 2>&1; then
+    echo 'const SizeofIPMreqn = 12' >> ${OUT}
+fi
+if ! grep 'const SizeofICMPv6Filter ' ${OUT} >/dev/null 2>&1; then
+    echo 'const SizeofICMPv6Filter = 32' >> ${OUT}
+fi
+
+# The Solaris 11 Update 1 _zone_net_addr_t struct.
+grep '^type _zone_net_addr_t ' gen-sysinfo.go | \
+    sed -e 's/_in6_addr/[16]byte/' \
+    >> ${OUT}
+
+# The Solaris 12 _flow_arp_desc_t struct.
+grep '^type _flow_arp_desc_t ' gen-sysinfo.go | \
+    sed -e 's/_in6_addr_t/[16]byte/g' \
+    >> ${OUT}
+
+# The Solaris 12 _flow_l3_desc_t struct.
+grep '^type _flow_l3_desc_t ' gen-sysinfo.go | \
+    sed -e 's/_in6_addr_t/[16]byte/g' \
+    >> ${OUT}
+
+# The Solaris 12 _mac_ipaddr_t struct.
+grep '^type _mac_ipaddr_t ' gen-sysinfo.go | \
+    sed -e 's/_in6_addr_t/[16]byte/g' \
+    >> ${OUT}
+
+# The Solaris 12 _mactun_info_t struct.
+grep '^type _mactun_info_t ' gen-sysinfo.go | \
+    sed -e 's/_in6_addr_t/[16]byte/g' \
     >> ${OUT}
 
 exit $?

@@ -1,7 +1,6 @@
 // 1999-08-11 bkoz
 
-// Copyright (C) 1999, 2000, 2001, 2002, 2003, 2009, 2010
-// Free Software Foundation
+// Copyright (C) 1999-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -29,7 +28,6 @@ test02()
 {
   typedef std::char_traits<char>	traits_type;
 
-  bool test __attribute__((unused)) = true;
   const char str_lit01[] = "\t\t\t    sun*ra \n"
   "                            "
   "and his myth science arkestra present\n"

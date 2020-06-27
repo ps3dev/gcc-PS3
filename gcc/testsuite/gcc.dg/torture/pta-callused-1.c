@@ -21,5 +21,4 @@ int main()
   return 0;
 }
 
-/* { dg-final { scan-tree-dump "p.._., points-to vars: { i j }" "alias" } } */
-/* { dg-final { cleanup-tree-dump "alias" } } */
+/* { dg-final { scan-tree-dump "p.._. = { i j }" "alias" } } */

@@ -1,4 +1,4 @@
-// Copyright 2009 The Go Authors.  All rights reserved.
+// Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -26,29 +26,40 @@ const (
 )
 
 const (
-	Magic32 uint32 = 0xfeedface
-	Magic64 uint32 = 0xfeedfacf
+	Magic32  uint32 = 0xfeedface
+	Magic64  uint32 = 0xfeedfacf
+	MagicFat uint32 = 0xcafebabe
 )
 
-// A Type is a Mach-O file type, either an object or an executable.
+// A Type is the Mach-O file type, e.g. an object file, executable, or dynamic library.
 type Type uint32
 
 const (
-	TypeObj  Type = 1
-	TypeExec Type = 2
+	TypeObj    Type = 1
+	TypeExec   Type = 2
+	TypeDylib  Type = 6
+	TypeBundle Type = 8
 )
 
 // A Cpu is a Mach-O cpu type.
 type Cpu uint32
 
+const cpuArch64 = 0x01000000
+
 const (
 	Cpu386   Cpu = 7
-	CpuAmd64 Cpu = Cpu386 + 1<<24
+	CpuAmd64 Cpu = Cpu386 | cpuArch64
+	CpuArm   Cpu = 12
+	CpuPpc   Cpu = 18
+	CpuPpc64 Cpu = CpuPpc | cpuArch64
 )
 
 var cpuStrings = []intName{
 	{uint32(Cpu386), "Cpu386"},
 	{uint32(CpuAmd64), "CpuAmd64"},
+	{uint32(CpuArm), "CpuArm"},
+	{uint32(CpuPpc), "CpuPpc"},
+	{uint32(CpuPpc64), "CpuPpc64"},
 }
 
 func (i Cpu) String() string   { return stringName(uint32(i), cpuStrings, false) }
@@ -134,7 +145,7 @@ type Section32 struct {
 	Reserve2 uint32
 }
 
-// A Section32 is a 64-bit Mach-O section header.
+// A Section64 is a 64-bit Mach-O section header.
 type Section64 struct {
 	Name     [16]byte
 	Seg      [16]byte
@@ -279,27 +290,4 @@ func stringName(i uint32, names []intName, goSyntax bool) string {
 		}
 	}
 	return strconv.FormatUint(uint64(i), 10)
-}
-
-func flagName(i uint32, names []intName, goSyntax bool) string {
-	s := ""
-	for _, n := range names {
-		if n.i&i == n.i {
-			if len(s) > 0 {
-				s += "+"
-			}
-			if goSyntax {
-				s += "macho."
-			}
-			s += n.s
-			i -= n.i
-		}
-	}
-	if len(s) == 0 {
-		return "0x" + strconv.FormatUint(uint64(i), 16)
-	}
-	if i != 0 {
-		s += "+0x" + strconv.FormatUint(uint64(i), 16)
-	}
-	return s
 }

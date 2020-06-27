@@ -15,11 +15,6 @@
 #endif
 
 
-#if defined( AAB_DARWIN7_9_LONG_DOUBLE_FUNCS_2_CHECK )
-#include <architecture/ppc/math.h>
-#endif  /* AAB_DARWIN7_9_LONG_DOUBLE_FUNCS_2_CHECK */
-
-
 #if defined( BROKEN_CABS_CHECK )
 #ifdef __STDC__
 
@@ -27,11 +22,12 @@
 
 #endif
 
- /* This is a comment
-                         and it ends here. */
-
-
 #endif  /* BROKEN_CABS_CHECK */
+
+
+#if defined( DARWIN_9_LONG_DOUBLE_FUNCS_2_CHECK )
+#include <architecture/ppc/math.h>
+#endif  /* DARWIN_9_LONG_DOUBLE_FUNCS_2_CHECK */
 
 
 #if defined( HPPA_HPUX_FP_MACROS_CHECK )
@@ -87,6 +83,12 @@ typedef struct exception t_math_exception;
 extern int class();
 #endif
 #endif  /* RS6000_DOUBLE_CHECK */
+
+
+#if defined( SOLARIS_MATH_12_CHECK )
+#if __cplusplus >= 201103L
+#endif
+#endif  /* SOLARIS_MATH_12_CHECK */
 
 
 #if defined( STRICT_ANSI_NOT_CTD_CHECK )

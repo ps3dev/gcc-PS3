@@ -1,5 +1,5 @@
 ;; Constraint definitions for RS6000
-;; Copyright (C) 2006, 2007, 2009, 2010 Free Software Foundation, Inc.
+;; Copyright (C) 2006-2017 Free Software Foundation, Inc.
 ;;
 ;; This file is part of GCC.
 ;;
@@ -17,7 +17,7 @@
 ;; along with GCC; see the file COPYING3.  If not see
 ;; <http://www.gnu.org/licenses/>.
 
-;; Available constraint letters: "e", "k", "u", "A", "B", "C", "D"
+;; Available constraint letters: e k q t u A B C D S T
 
 ;; Register constraints
 
@@ -31,9 +31,6 @@
   "@internal")
 
 (define_register_constraint "h" "SPECIAL_REGS"
-  "@internal")
-
-(define_register_constraint "q" "MQ_REGS"
   "@internal")
 
 (define_register_constraint "c" "CTR_REGS"
@@ -55,21 +52,162 @@
   "@internal")
 
 ;; Use w as a prefix to add VSX modes
-;; vector double (V2DF)
-(define_register_constraint "wd" "rs6000_constraints[RS6000_CONSTRAINT_wd]"
-  "@internal")
-
-;; vector float (V4SF)
-(define_register_constraint "wf" "rs6000_constraints[RS6000_CONSTRAINT_wf]"
-  "@internal")
-
-;; scalar double (DF)
-(define_register_constraint "ws" "rs6000_constraints[RS6000_CONSTRAINT_ws]"
-  "@internal")
-
 ;; any VSX register
 (define_register_constraint "wa" "rs6000_constraints[RS6000_CONSTRAINT_wa]"
-  "@internal")
+  "Any VSX register if the -mvsx option was used or NO_REGS.")
+
+(define_register_constraint "wb" "rs6000_constraints[RS6000_CONSTRAINT_wb]"
+  "Altivec register if the -mpower9-dform option was used or NO_REGS.")
+
+;; NOTE: For compatibility, "wc" is reserved to represent individual CR bits.
+;; It is currently used for that purpose in LLVM.
+
+(define_register_constraint "wd" "rs6000_constraints[RS6000_CONSTRAINT_wd]"
+  "VSX vector register to hold vector double data or NO_REGS.")
+
+(define_register_constraint "we" "rs6000_constraints[RS6000_CONSTRAINT_we]"
+  "VSX register if the -mpower9-vector -m64 options were used or NO_REGS.")
+
+(define_register_constraint "wf" "rs6000_constraints[RS6000_CONSTRAINT_wf]"
+  "VSX vector register to hold vector float data or NO_REGS.")
+
+(define_register_constraint "wg" "rs6000_constraints[RS6000_CONSTRAINT_wg]"
+  "If -mmfpgpr was used, a floating point register or NO_REGS.")
+
+(define_register_constraint "wh" "rs6000_constraints[RS6000_CONSTRAINT_wh]"
+  "Floating point register if direct moves are available, or NO_REGS.")
+
+(define_register_constraint "wi" "rs6000_constraints[RS6000_CONSTRAINT_wi]"
+  "FP or VSX register to hold 64-bit integers for VSX insns or NO_REGS.")
+
+(define_register_constraint "wj" "rs6000_constraints[RS6000_CONSTRAINT_wj]"
+  "FP or VSX register to hold 64-bit integers for direct moves or NO_REGS.")
+
+(define_register_constraint "wk" "rs6000_constraints[RS6000_CONSTRAINT_wk]"
+  "FP or VSX register to hold 64-bit doubles for direct moves or NO_REGS.")
+
+(define_register_constraint "wl" "rs6000_constraints[RS6000_CONSTRAINT_wl]"
+  "Floating point register if the LFIWAX instruction is enabled or NO_REGS.")
+
+(define_register_constraint "wm" "rs6000_constraints[RS6000_CONSTRAINT_wm]"
+  "VSX register if direct move instructions are enabled, or NO_REGS.")
+
+;; NO_REGs register constraint, used to merge mov{sd,sf}, since movsd can use
+;; direct move directly, and movsf can't to move between the register sets.
+;; There is a mode_attr that resolves to wm for SDmode and wn for SFmode
+(define_register_constraint "wn" "NO_REGS" "No register (NO_REGS).")
+
+(define_register_constraint "wo" "rs6000_constraints[RS6000_CONSTRAINT_wo]"
+  "VSX register if the -mpower9-vector option was used or NO_REGS.")
+
+(define_register_constraint "wp" "rs6000_constraints[RS6000_CONSTRAINT_wp]"
+  "VSX register to use for IEEE 128-bit fp TFmode, or NO_REGS.")
+
+(define_register_constraint "wq" "rs6000_constraints[RS6000_CONSTRAINT_wq]"
+  "VSX register to use for IEEE 128-bit fp KFmode, or NO_REGS.")
+
+(define_register_constraint "wr" "rs6000_constraints[RS6000_CONSTRAINT_wr]"
+  "General purpose register if 64-bit instructions are enabled or NO_REGS.")
+
+(define_register_constraint "ws" "rs6000_constraints[RS6000_CONSTRAINT_ws]"
+  "VSX vector register to hold scalar double values or NO_REGS.")
+
+(define_register_constraint "wt" "rs6000_constraints[RS6000_CONSTRAINT_wt]"
+  "VSX vector register to hold 128 bit integer or NO_REGS.")
+
+(define_register_constraint "wu" "rs6000_constraints[RS6000_CONSTRAINT_wu]"
+  "Altivec register to use for float/32-bit int loads/stores  or NO_REGS.")
+
+(define_register_constraint "wv" "rs6000_constraints[RS6000_CONSTRAINT_wv]"
+  "Altivec register to use for double loads/stores  or NO_REGS.")
+
+(define_register_constraint "ww" "rs6000_constraints[RS6000_CONSTRAINT_ww]"
+  "FP or VSX register to perform float operations under -mvsx or NO_REGS.")
+
+(define_register_constraint "wx" "rs6000_constraints[RS6000_CONSTRAINT_wx]"
+  "Floating point register if the STFIWX instruction is enabled or NO_REGS.")
+
+(define_register_constraint "wy" "rs6000_constraints[RS6000_CONSTRAINT_wy]"
+  "FP or VSX register to perform ISA 2.07 float ops or NO_REGS.")
+
+(define_register_constraint "wz" "rs6000_constraints[RS6000_CONSTRAINT_wz]"
+  "Floating point register if the LFIWZX instruction is enabled or NO_REGS.")
+
+(define_register_constraint "wA" "rs6000_constraints[RS6000_CONSTRAINT_wA]"
+  "BASE_REGS if 64-bit instructions are enabled or NO_REGS.")
+
+;; wB needs ISA 2.07 VUPKHSW
+(define_constraint "wB"
+  "Signed 5-bit constant integer that can be loaded into an altivec register."
+  (and (match_code "const_int")
+       (and (match_test "TARGET_P8_VECTOR")
+	    (match_operand 0 "s5bit_cint_operand"))))
+
+(define_constraint "wD"
+  "Int constant that is the element number of the 64-bit scalar in a vector."
+  (and (match_code "const_int")
+       (match_test "TARGET_VSX && (ival == VECTOR_ELEMENT_SCALAR_64BIT)")))
+
+(define_constraint "wE"
+  "Vector constant that can be loaded with the XXSPLTIB instruction."
+  (match_test "xxspltib_constant_nosplit (op, mode)"))
+
+;; Extended fusion store
+(define_memory_constraint "wF"
+  "Memory operand suitable for power9 fusion load/stores"
+  (match_operand 0 "fusion_addis_mem_combo_load"))
+
+;; Fusion gpr load.
+(define_memory_constraint "wG"
+  "Memory operand suitable for TOC fusion memory references"
+  (match_operand 0 "toc_fusion_mem_wrapped"))
+
+(define_register_constraint "wH" "rs6000_constraints[RS6000_CONSTRAINT_wH]"
+  "Altivec register to hold 32-bit integers or NO_REGS.")
+
+(define_register_constraint "wI" "rs6000_constraints[RS6000_CONSTRAINT_wI]"
+  "FPR register to hold 32-bit integers or NO_REGS.")
+
+(define_register_constraint "wJ" "rs6000_constraints[RS6000_CONSTRAINT_wJ]"
+  "FPR register to hold 8/16-bit integers or NO_REGS.")
+
+(define_register_constraint "wK" "rs6000_constraints[RS6000_CONSTRAINT_wK]"
+  "Altivec register to hold 8/16-bit integers or NO_REGS.")
+
+(define_constraint "wL"
+  "Int constant that is the element number mfvsrld accesses in a vector."
+  (and (match_code "const_int")
+       (and (match_test "TARGET_DIRECT_MOVE_128")
+	    (match_test "(ival == VECTOR_ELEMENT_MFVSRLD_64BIT)"))))
+
+;; Generate the XXORC instruction to set a register to all 1's
+(define_constraint "wM"
+  "Match vector constant with all 1's if the XXLORC instruction is available"
+  (and (match_test "TARGET_P8_VECTOR")
+       (match_operand 0 "all_ones_constant")))
+
+;; ISA 3.0 vector d-form addresses
+(define_memory_constraint "wO"
+  "Memory operand suitable for the ISA 3.0 vector d-form instructions."
+  (match_operand 0 "vsx_quad_dform_memory_operand"))
+
+;; Lq/stq validates the address for load/store quad
+(define_memory_constraint "wQ"
+  "Memory operand suitable for the load/store quad instructions"
+  (match_operand 0 "quad_memory_operand"))
+
+(define_constraint "wS"
+  "Vector constant that can be loaded with XXSPLTIB & sign extension."
+  (match_test "xxspltib_constant_split (op, mode)"))
+
+;; ISA 3.0 DS-form instruction that has the bottom 2 bits 0 and no update form.
+;; Used by LXSD/STXSD/LXSSP/STXSSP.  In contrast to "Y", the multiple-of-four
+;; offset is enforced for 32-bit too.
+(define_memory_constraint "wY"
+  "Offsettable memory operand, with bottom 2 bits 0"
+  (and (match_code "mem")
+       (not (match_test "update_address_mem (op, mode)"))
+       (match_test "mem_operand_ds_form (op, mode)")))
 
 ;; Altivec style load/store that ignores the bottom bits of the address
 (define_memory_constraint "wZ"
@@ -81,7 +219,7 @@
 (define_constraint "I"
   "A signed 16-bit constant"
   (and (match_code "const_int")
-       (match_test "(unsigned HOST_WIDE_INT) (ival + 0x8000) < 0x10000")))
+       (match_test "((unsigned HOST_WIDE_INT) ival + 0x8000) < 0x10000")))
 
 (define_constraint "J"
   "high-order 16 bits nonzero"
@@ -117,7 +255,7 @@
 (define_constraint "P"
   "constant whose negation is signed 16-bit constant"
   (and (match_code "const_int")
-       (match_test "(unsigned HOST_WIDE_INT) ((- ival) + 0x8000) < 0x10000")))
+       (match_test "((- (unsigned HOST_WIDE_INT) ival) + 0x8000) < 0x10000")))
 
 ;; Floating-point constraints
 
@@ -150,8 +288,9 @@ to use @samp{m} or @samp{es} in @code{asm} statements)"
        (match_test "GET_CODE (XEXP (op, 0)) == REG")))
 
 (define_memory_constraint "Y"
-  "Indexed or word-aligned displacement memory operand"
-  (match_operand 0 "word_offset_memref_operand"))
+  "memory operand for 8 byte and 16 byte gpr load/store"
+  (and (match_code "mem")
+       (match_test "mem_operand_gpr (op, mode)")))
 
 (define_memory_constraint "Z"
   "Memory operand that is an indexed or indirect from a register (it is
@@ -170,27 +309,10 @@ usually better to use @samp{m} or @samp{es} in @code{asm} statements)"
 
 ;; General constraints
 
-(define_constraint "S"
-  "Constant that can be placed into a 64-bit mask operand"
-  (match_operand 0 "mask64_operand"))
-
-(define_constraint "T"
-  "Constant that can be placed into a 32-bit mask operand"
-  (match_operand 0 "mask_operand"))
-
 (define_constraint "U"
   "V.4 small data reference"
   (and (match_test "DEFAULT_ABI == ABI_V4")
-       (match_operand 0 "small_data_operand")))
-
-(define_constraint "t"
-  "AND masks that can be performed by two rldic{l,r} insns
-   (but excluding those that could match other constraints of anddi3)"
-  (and (and (and (match_operand 0 "mask64_2_operand")
-		 (match_test "(fixed_regs[CR0_REGNO]
-			      || !logical_operand (op, DImode))"))
-	    (not (match_operand 0 "mask_operand")))
-       (not (match_operand 0 "mask64_operand"))))
+       (match_test "small_data_operand (op, mode)")))
 
 (define_constraint "W"
   "vector constant that does not require memory"
@@ -198,4 +320,4 @@ usually better to use @samp{m} or @samp{es} in @code{asm} statements)"
 
 (define_constraint "j"
   "Zero vector constant"
-  (match_test "op == const0_rtx || op == CONST0_RTX (GET_MODE (op))"))
+  (match_test "op == const0_rtx || op == CONST0_RTX (mode)"))

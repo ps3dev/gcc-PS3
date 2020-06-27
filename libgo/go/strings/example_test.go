@@ -7,11 +7,20 @@ package strings_test
 import (
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 func ExampleFields() {
 	fmt.Printf("Fields are: %q", strings.Fields("  foo bar  baz   "))
 	// Output: Fields are: ["foo" "bar" "baz"]
+}
+
+func ExampleFieldsFunc() {
+	f := func(c rune) bool {
+		return !unicode.IsLetter(c) && !unicode.IsNumber(c)
+	}
+	fmt.Printf("Fields are: %q", strings.FieldsFunc("  foo1;bar2,baz3...", f))
+	// Output: Fields are: ["foo1" "bar2" "baz3"]
 }
 
 func ExampleContains() {
@@ -41,7 +50,6 @@ func ExampleContainsAny() {
 func ExampleCount() {
 	fmt.Println(strings.Count("cheese", "e"))
 	fmt.Println(strings.Count("five", "")) // before & after each rune
-
 	// Output:
 	// 3
 	// 5
@@ -52,6 +60,28 @@ func ExampleEqualFold() {
 	// Output: true
 }
 
+func ExampleHasPrefix() {
+	fmt.Println(strings.HasPrefix("Gopher", "Go"))
+	fmt.Println(strings.HasPrefix("Gopher", "C"))
+	fmt.Println(strings.HasPrefix("Gopher", ""))
+	// Output:
+	// true
+	// false
+	// true
+}
+
+func ExampleHasSuffix() {
+	fmt.Println(strings.HasSuffix("Amigo", "go"))
+	fmt.Println(strings.HasSuffix("Amigo", "O"))
+	fmt.Println(strings.HasSuffix("Amigo", "Ami"))
+	fmt.Println(strings.HasSuffix("Amigo", ""))
+	// Output:
+	// true
+	// false
+	// false
+	// true
+}
+
 func ExampleIndex() {
 	fmt.Println(strings.Index("chicken", "ken"))
 	fmt.Println(strings.Index("chicken", "dmr"))
@@ -60,7 +90,26 @@ func ExampleIndex() {
 	// -1
 }
 
-func ExampleRune() {
+func ExampleIndexFunc() {
+	f := func(c rune) bool {
+		return unicode.Is(unicode.Han, c)
+	}
+	fmt.Println(strings.IndexFunc("Hello, 世界", f))
+	fmt.Println(strings.IndexFunc("Hello, world", f))
+	// Output:
+	// 7
+	// -1
+}
+
+func ExampleIndexAny() {
+	fmt.Println(strings.IndexAny("chicken", "aeiouy"))
+	fmt.Println(strings.IndexAny("crwth", "aeiouy"))
+	// Output:
+	// 2
+	// -1
+}
+
+func ExampleIndexRune() {
 	fmt.Println(strings.IndexRune("chicken", 'k'))
 	fmt.Println(strings.IndexRune("chicken", 'd'))
 	// Output:
@@ -142,8 +191,8 @@ func ExampleToTitle() {
 }
 
 func ExampleTrim() {
-	fmt.Printf("[%q]", strings.Trim(" !!! Achtung !!! ", "! "))
-	// Output: ["Achtung"]
+	fmt.Printf("[%q]", strings.Trim(" !!! Achtung! Achtung! !!! ", "! "))
+	// Output: ["Achtung! Achtung"]
 }
 
 func ExampleMap() {
@@ -179,4 +228,20 @@ func ExampleToUpper() {
 func ExampleToLower() {
 	fmt.Println(strings.ToLower("Gopher"))
 	// Output: gopher
+}
+
+func ExampleTrimSuffix() {
+	var s = "Hello, goodbye, etc!"
+	s = strings.TrimSuffix(s, "goodbye, etc!")
+	s = strings.TrimSuffix(s, "planet")
+	fmt.Print(s, "world!")
+	// Output: Hello, world!
+}
+
+func ExampleTrimPrefix() {
+	var s = "Goodbye,, world!"
+	s = strings.TrimPrefix(s, "Goodbye,")
+	s = strings.TrimPrefix(s, "Howdy,")
+	fmt.Print("Hello" + s)
+	// Output: Hello, world!
 }

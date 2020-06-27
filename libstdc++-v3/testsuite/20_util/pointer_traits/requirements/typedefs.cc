@@ -1,6 +1,6 @@
-// { dg-options "-std=gnu++0x" }
+// { dg-do compile { target c++11 } }
 //
-// Copyright (C) 2011 Free Software Foundation, Inc.
+// Copyright (C) 2011-2017 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -22,8 +22,6 @@
 
 #include <memory>
 
-// { dg-do compile }
-
 template<typename Ptr>
 void test01()
 {
@@ -32,6 +30,7 @@ void test01()
   typedef typename test_type::pointer           pointer;
   typedef typename test_type::element_type      element_type;
   typedef typename test_type::difference_type   difference_type;
+  typedef typename test_type::template rebind<char> rebind_type;
 }
 
 int main()

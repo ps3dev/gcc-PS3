@@ -11,9 +11,9 @@ package rpc
 
 import (
 	"fmt"
+	"html/template"
 	"net/http"
 	"sort"
-	"text/template"
 )
 
 const debugText = `<html>
@@ -37,6 +37,9 @@ const debugText = `<html>
 	</html>`
 
 var debug = template.Must(template.New("RPC debug").Parse(debugText))
+
+// If set, print log statements for internal and I/O errors.
+var debugLog = false
 
 type debugMethod struct {
 	Type *methodType

@@ -1,6 +1,5 @@
 /* Definitions for Linux for S/390.
-   Copyright (C) 1999, 2000, 2001, 2002, 2004, 2005, 2006, 2007, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 1999-2017 Free Software Foundation, Inc.
    Contributed by Hartmut Penner (hpenner@de.ibm.com) and
                   Ulrich Weigand (uweigand@de.ibm.com).
 
@@ -25,9 +24,12 @@ along with GCC; see the file COPYING3.  If not see
 
 /* Target specific type definitions.  */
 
-/* ??? Do we really want long as size_t on 31-bit?  */
+/* For 31 bit our size type differs from most other targets (where it
+   is "unsigned int").  The difference tends to cause trouble e.g.:
+   Glibc BZ #16712, GCC BZ #79358 but cannot be changed due to ABI
+   issues.  */
 #undef  SIZE_TYPE
-#define SIZE_TYPE (TARGET_64BIT ? "long unsigned int" : "long unsigned int")
+#define SIZE_TYPE "long unsigned int"
 #undef  PTRDIFF_TYPE
 #define PTRDIFF_TYPE (TARGET_64BIT ? "long int" : "int")
 
@@ -48,9 +50,19 @@ along with GCC; see the file COPYING3.  If not see
 
 
 /* Target specific assembler settings.  */
-
+/* Rewrite -march=arch* options to the original CPU name in order to
+   make it work with older binutils.  */
 #undef  ASM_SPEC
-#define ASM_SPEC "%{m31&m64}%{mesa&mzarch}%{march=*}"
+#define ASM_SPEC					\
+  "%{m31&m64}%{mesa&mzarch}%{march=z*}"			\
+  "%{march=arch3:-march=g5}"				\
+  "%{march=arch5:-march=z900}"				\
+  "%{march=arch6:-march=z990}"				\
+  "%{march=arch7:-march=z9-ec}"				\
+  "%{march=arch8:-march=z10}"				\
+  "%{march=arch9:-march=z196}"				\
+  "%{march=arch10:-march=zEC12}"			\
+  "%{march=arch11:-march=z13}"
 
 
 /* Target specific linker settings.  */
@@ -87,5 +99,14 @@ along with GCC; see the file COPYING3.  If not see
 
 /* Define if long doubles should be mangled as 'g'.  */
 #define TARGET_ALTERNATE_LONG_DOUBLE_MANGLING
+
+#undef TARGET_LIBC_HAS_FUNCTION
+#define TARGET_LIBC_HAS_FUNCTION gnu_libc_has_function
+
+/* Uninitialized common symbols in non-PIE executables, even with
+   strong definitions in dependent shared libraries, will resolve
+   to COPY relocated symbol in the executable.  See PR65780.  */
+#undef TARGET_BINDS_LOCAL_P
+#define TARGET_BINDS_LOCAL_P default_binds_local_p_2
 
 #endif

@@ -1,7 +1,6 @@
 // Boilerplate support routines for -*- C++ -*- dynamic memory management.
 
-// Copyright (C) 1997, 1998, 1999, 2000, 2004, 2009, 2010, 2011 
-// Free Software Foundation
+// Copyright (C) 1997-2017 Free Software Foundation, Inc.
 //
 // This file is part of GCC.
 //
@@ -26,6 +25,9 @@
 
 #include <bits/c++config.h>
 #include "new"
+
+// The sized deletes are defined in other files.
+#pragma GCC diagnostic ignored "-Wsized-deallocation"
 
 _GLIBCXX_WEAK_DEFINITION void
 operator delete[] (void *ptr) _GLIBCXX_USE_NOEXCEPT

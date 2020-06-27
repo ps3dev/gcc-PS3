@@ -20,6 +20,16 @@ type valueConverterTest struct {
 var now = time.Now()
 var answer int64 = 42
 
+type (
+	i  int64
+	f  float64
+	b  bool
+	bs []byte
+	s  string
+	t  time.Time
+	is []int
+)
+
 var valueConverterTests = []valueConverterTest{
 	{Bool, "true", true, ""},
 	{Bool, "True", true, ""},
@@ -41,6 +51,12 @@ var valueConverterTests = []valueConverterTest{
 	{DefaultParameterConverter, (*int64)(nil), nil, ""},
 	{DefaultParameterConverter, &answer, answer, ""},
 	{DefaultParameterConverter, &now, now, ""},
+	{DefaultParameterConverter, i(9), int64(9), ""},
+	{DefaultParameterConverter, f(0.1), float64(0.1), ""},
+	{DefaultParameterConverter, b(true), true, ""},
+	{DefaultParameterConverter, bs{1}, []byte{1}, ""},
+	{DefaultParameterConverter, s("a"), "a", ""},
+	{DefaultParameterConverter, is{1}, nil, "unsupported type driver.is, a slice of int"},
 }
 
 func TestValueConverters(t *testing.T) {
@@ -51,14 +67,14 @@ func TestValueConverters(t *testing.T) {
 			goterr = err.Error()
 		}
 		if goterr != tt.err {
-			t.Errorf("test %d: %s(%T(%v)) error = %q; want error = %q",
+			t.Errorf("test %d: %T(%T(%v)) error = %q; want error = %q",
 				i, tt.c, tt.in, tt.in, goterr, tt.err)
 		}
 		if tt.err != "" {
 			continue
 		}
 		if !reflect.DeepEqual(out, tt.out) {
-			t.Errorf("test %d: %s(%T(%v)) = %v (%T); want %v (%T)",
+			t.Errorf("test %d: %T(%T(%v)) = %v (%T); want %v (%T)",
 				i, tt.c, tt.in, tt.in, out, out, tt.out, tt.out)
 		}
 	}

@@ -1,7 +1,5 @@
 /* Definitions of target machine for GNU compiler.  VAX version.
-   Copyright (C) 1987, 1988, 1991, 1993, 1994, 1995, 1996, 1997, 1998,
-   1999, 2000, 2001, 2002, 2003, 2004, 2005, 2007, 2008, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 1987-2017 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -34,8 +32,6 @@ along with GCC; see the file COPYING3.  If not see
 	}					\
     }						\
   while (0)
-
-#define VMS_TARGET 0
 
 /* Use -J option for long branch support with Unix assembler.  */
 
@@ -230,7 +226,7 @@ enum reg_class { NO_REGS, ALL_REGS, LIM_REG_CLASSES };
    reg number REGNO.  This could be a conditional expression
    or could index an array.  */
 
-#define REGNO_REG_CLASS(REGNO) ALL_REGS
+#define REGNO_REG_CLASS(REGNO) ((void)(REGNO), ALL_REGS)
 
 /* The class value for index registers, and the one for base regs.  */
 
@@ -242,7 +238,7 @@ enum reg_class { NO_REGS, ALL_REGS, LIM_REG_CLASSES };
 
 /* Define this if pushing a word on the stack
    makes the stack pointer a smaller address.  */
-#define STACK_GROWS_DOWNWARD
+#define STACK_GROWS_DOWNWARD 1
 
 /* Define this to nonzero if the nominal address of the stack frame
    is at the high-address end of the local variables;
@@ -259,7 +255,7 @@ enum reg_class { NO_REGS, ALL_REGS, LIM_REG_CLASSES };
 /* Given an rtx for the address of a frame,
    return an rtx for the address of the word in the frame
    that holds the dynamic chain--the previous frame's address.  */
-#define DYNAMIC_CHAIN_ADDRESS(FRAME) plus_constant ((FRAME), 12)
+#define DYNAMIC_CHAIN_ADDRESS(FRAME) plus_constant (Pmode, (FRAME), 12)
 
 /* If we generate an insn to push BYTES bytes,
    this says how many the stack pointer really advances by.
@@ -299,7 +295,7 @@ enum reg_class { NO_REGS, ALL_REGS, LIM_REG_CLASSES };
 /* 1 if N is a possible register number for function argument passing.
    On the VAX, no registers are used in this way.  */
 
-#define FUNCTION_ARG_REGNO_P(N) 0
+#define FUNCTION_ARG_REGNO_P(N) ((void) (N), 0)
 
 /* Define a data type for recording info about an argument list
    during the scan of that argument list.  This data type should
@@ -337,22 +333,22 @@ enum reg_class { NO_REGS, ALL_REGS, LIM_REG_CLASSES };
     }								\
   while (0)
 
+/* This macro specifies a table of register pairs used to eliminate
+   unneeded registers that point into the stack frame.  */
+#define ELIMINABLE_REGS {{FRAME_POINTER_REGNUM, STACK_POINTER_REGNUM}}
+
+/* On the VAX, FRAME_POINTER_REQUIRED is always 1, so the definition of this
+   macro doesn't matter for register eliminations, but it should still
+   give realistic data for rtx_addr_can_trap_p.  */
+#define INITIAL_ELIMINATION_OFFSET(FROM, TO, OFFSET) \
+  ((OFFSET) = get_frame_size ())
+
 /* EXIT_IGNORE_STACK should be nonzero if, when returning from a function,
    the stack pointer does not matter.  The value is tested only in
    functions that have frame pointers.
    No definition is equivalent to always zero.  */
 
 #define EXIT_IGNORE_STACK 1
-
-/* Store in the variable DEPTH the initial difference between the
-   frame pointer reg contents and the stack pointer reg contents,
-   as of the start of the function body.  This depends on the layout
-   of the fixed parts of the stack frame and on how registers are saved.
-
-   On the VAX, FRAME_POINTER_REQUIRED is always 1, so the definition of this
-   macro doesn't matter.  But it must be defined.  */
-
-#define INITIAL_FRAME_POINTER_OFFSET(DEPTH) (DEPTH) = 0;
 
 /* Length in units of the trampoline for entering a nested function.  */
 
@@ -370,7 +366,8 @@ enum reg_class { NO_REGS, ALL_REGS, LIM_REG_CLASSES };
 
 #define RETURN_ADDR_RTX(COUNT, FRAME)					\
   ((COUNT == 0)								\
-   ? gen_rtx_MEM (Pmode, plus_constant (FRAME, RETURN_ADDRESS_OFFSET))	\
+   ? gen_rtx_MEM (Pmode, plus_constant (Pmode, FRAME,			\
+					RETURN_ADDRESS_OFFSET))		\
    : (rtx) 0)
 
 
@@ -386,7 +383,8 @@ enum reg_class { NO_REGS, ALL_REGS, LIM_REG_CLASSES };
    They give nonzero only if REGNO is a hard reg of the suitable class
    or a pseudo reg currently allocated to a suitable hard reg.
    Since they use reg_renumber, they are safe only once reg_renumber
-   has been allocated, which happens in local-alloc.c.  */
+   has been allocated, which happens in reginfo.c during register
+   allocation.  */
 
 #define REGNO_OK_FOR_INDEX_P(regno)	\
   ((regno) < FIRST_PSEUDO_REGISTER || reg_renumber[regno] >= 0)
@@ -433,11 +431,6 @@ enum reg_class { NO_REGS, ALL_REGS, LIM_REG_CLASSES };
 #define REG_OK_FOR_BASE_P(X) REGNO_OK_FOR_BASE_P (REGNO (X))
 
 #endif
-
-/* Go to LABEL if ADDR (a legitimate address expression)
-   has an effect that depends on the machine mode it is used for.  */
-#define GO_IF_MODE_DEPENDENT_ADDRESS(ADDR, LABEL) \
-  { if (vax_mode_dependent_address_p (ADDR)) goto LABEL; }
 
 /* Specify the machine mode that this machine uses
    for the index in the tablejump instruction.  */
@@ -455,10 +448,6 @@ enum reg_class { NO_REGS, ALL_REGS, LIM_REG_CLASSES };
 
 /* Define this as 1 if `char' should by default be signed; else as 0.  */
 #define DEFAULT_SIGNED_CHAR 1
-
-/* This flag, if defined, says the same insns that convert to a signed fixnum
-   also convert validly to an unsigned one.  */
-#define FIXUNS_TRUNC_LIKE_FIX_TRUNC
 
 /* Max number of bytes we can move from memory to memory
    in one reasonably fast instruction.  */

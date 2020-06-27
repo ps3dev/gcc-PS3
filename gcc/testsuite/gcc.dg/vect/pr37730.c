@@ -1,6 +1,8 @@
 /* PR middle-end/37730 */
 /* { dg-do compile } */
 
+void sdp_seq_alloc (void *);
+
 void
 add_opush (void)
 {
@@ -13,4 +15,3 @@ add_opush (void)
   sdp_seq_alloc (dtds);
 }
 
-/* { dg-final { cleanup-tree-dump "vect" } } */

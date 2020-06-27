@@ -1,7 +1,5 @@
 /* Common hooks for ARM.
-   Copyright (C) 1991, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001,
-   2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 1991-2017 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -23,6 +21,7 @@
 #include "system.h"
 #include "coretypes.h"
 #include "tm.h"
+#include "memmodel.h"
 #include "tm_p.h"
 #include "common/common-target.h"
 #include "common/common-target-def.h"
@@ -35,6 +34,7 @@ static const struct default_options arm_option_optimization_table[] =
     /* Enable section anchors by default at -O1 or higher.  */
     { OPT_LEVELS_1_PLUS, OPT_fsection_anchors, NULL, 1 },
     { OPT_LEVELS_1_PLUS, OPT_fomit_frame_pointer, NULL, 1 },
+    { OPT_LEVELS_1_PLUS, OPT_fsched_pressure, NULL, 1 },
     { OPT_LEVELS_NONE, 0, NULL, 0 }
   };
 
@@ -63,6 +63,89 @@ arm_except_unwind_info (struct gcc_options *opts)
   /* ... we use sjlj exceptions for backwards compatibility.  */
   return UI_SJLJ;
 }
+
+#define ARM_CPU_NAME_LENGTH 20
+
+/* Truncate NAME at the first '.' character seen, or return
+   NAME unmodified.  */
+
+const char *
+arm_rewrite_selected_cpu (const char *name)
+{
+  static char output_buf[ARM_CPU_NAME_LENGTH + 1] = {0};
+  char *arg_pos;
+
+  strncpy (output_buf, name, ARM_CPU_NAME_LENGTH);
+  arg_pos = strchr (output_buf, '.');
+
+  /* If we found a '.' truncate the entry at that point.  */
+  if (arg_pos)
+    *arg_pos = '\0';
+
+  return output_buf;
+}
+
+/* Called by the driver to rewrite a name passed to the -mcpu
+   argument in preparation to be passed to the assembler.  The
+   names passed from the command line will be in ARGV, we want
+   to use the right-most argument, which should be in
+   ARGV[ARGC - 1].  ARGC should always be greater than 0.  */
+
+const char *
+arm_rewrite_mcpu (int argc, const char **argv)
+{
+  gcc_assert (argc);
+  return arm_rewrite_selected_cpu (argv[argc - 1]);
+}
+
+struct arm_arch_core_flag
+{
+  const char *const name;
+  const enum isa_feature isa_bits[isa_num_bits];
+};
+
+#include "config/arm/arm-cpu-cdata.h"
+
+/* Scan over a raw feature array BITS checking for BIT being present.
+   This is slower than the normal bitmask checks, but we would spend longer
+   initializing that than doing the check this way.  Returns true iff
+   BIT is found.  */
+static bool
+check_isa_bits_for (const enum isa_feature* bits, enum isa_feature bit)
+{
+  while (*bits != isa_nobit)
+    if (*bits++ == bit)
+      return true;
+
+  return false;
+}
+
+/* Called by the driver to check whether the target denoted by current
+   command line options is a Thumb-only target.  ARGV is an array of
+   -march and -mcpu values (ie. it contains the rhs after the equal
+   sign) and we use the last one of them to make a decision.  The
+   number of elements in ARGV is given in ARGC.  */
+const char *
+arm_target_thumb_only (int argc, const char **argv)
+{
+  unsigned int opt;
+
+  if (argc)
+    {
+      for (opt = 0; opt < (ARRAY_SIZE (arm_arch_core_flags)); opt++)
+	if ((strcmp (argv[argc - 1], arm_arch_core_flags[opt].name) == 0)
+	    && !check_isa_bits_for (arm_arch_core_flags[opt].isa_bits,
+				    isa_bit_notm))
+	  return "-mthumb";
+
+      return NULL;
+    }
+  else
+    return NULL;
+}
+
+#undef ARM_CPU_NAME_LENGTH
+
 
 #undef  TARGET_DEFAULT_TARGET_FLAGS
 #define TARGET_DEFAULT_TARGET_FLAGS (TARGET_DEFAULT | MASK_SCHED_PROLOG)

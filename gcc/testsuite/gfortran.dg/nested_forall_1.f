@@ -1,4 +1,5 @@
 ! { dg-do compile }
+! { dg-require-visibility "" }
 !
 ! PR fortran/35820
 ! 
@@ -35,4 +36,3 @@
       END FORALL
       END SUBROUTINE
       END MODULE TESTS
-! { dg-final { cleanup-modules "tests" } }
