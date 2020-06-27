@@ -1,6 +1,30 @@
-2011-06-27  Release Manager
+2012-03-22  Release Manager
 
-	* GCC 4.6.1 released.
+	* GCC 4.7.0 released.
+
+2012-01-31  Joseph Myers  <joseph@codesourcery.com>
+
+	* uk.po: Update.
+
+2012-01-31  Joseph Myers  <joseph@codesourcery.com>
+
+	* es.po: Update.
+
+2012-01-30  Joseph Myers  <joseph@codesourcery.com>
+
+	* be.po, ca.po, da.po, de.po, el.po, es.po, fi.po, fr.po, id.po,
+	ja.po, nl.po, ru.po, sv.po, tr.po, uk,po, vi.po, zh_CN.po,
+	zh_TW.po: Update.
+
+2012-01-27  Joseph Myers  <joseph@codesourcery.com>
+
+	* cpplib.pot: Regenerate.
+
+2011-07-08  Joseph Myers  <joseph@codesourcery.com>
+
+	* be.po, ca.po, da.po, de.po, el.po, es.po, fi.po, fr.po, id.po,
+	ja.po, nl.po, ru.po, sv.po, tr.po, uk,po, vi.po, zh_CN.po,
+	zh_TW.po: Update.
 
 2011-06-21  Joseph Myers  <joseph@codesourcery.com>
 
@@ -15,10 +39,6 @@
 	* be.po, ca.po, da.po, de.po, el.po, es.po, fi.po, fr.po, id.po,
 	ja.po, nl.po, ru.po, sv.po, tr.po, uk,po, vi.po, zh_CN.po,
 	zh_TW.po: Update.
-
-2011-03-25  Release Manager
-
-	* GCC 4.6.0 released.
 
 2011-03-24  Joseph Myers  <joseph@codesourcery.com>
 

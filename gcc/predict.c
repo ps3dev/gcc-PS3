@@ -113,7 +113,7 @@ static const struct predictor_info predictor_info[]= {
 static inline bool
 maybe_hot_frequency_p (int freq)
 {
-  struct cgraph_node *node = cgraph_node (current_function_decl);
+  struct cgraph_node *node = cgraph_get_node (current_function_decl);
   if (!profile_info || !flag_branch_probabilities)
     {
       if (node->frequency == NODE_FREQUENCY_UNLIKELY_EXECUTED)
@@ -124,7 +124,7 @@ maybe_hot_frequency_p (int freq)
   if (profile_status == PROFILE_ABSENT)
     return true;
   if (node->frequency == NODE_FREQUENCY_EXECUTED_ONCE
-      && freq <= (ENTRY_BLOCK_PTR->frequency * 2 / 3))
+      && freq < (ENTRY_BLOCK_PTR->frequency * 2 / 3))
     return false;
   if (freq < ENTRY_BLOCK_PTR->frequency / PARAM_VALUE (HOT_BB_FREQUENCY_FRACTION))
     return false;
@@ -196,16 +196,32 @@ maybe_hot_edge_p (edge e)
   return maybe_hot_frequency_p (EDGE_FREQUENCY (e));
 }
 
+
 /* Return true in case BB is probably never executed.  */
+
 bool
 probably_never_executed_bb_p (const_basic_block bb)
 {
   if (profile_info && flag_branch_probabilities)
     return ((bb->count + profile_info->runs / 2) / profile_info->runs) == 0;
   if ((!profile_info || !flag_branch_probabilities)
-      && cgraph_node (current_function_decl)->frequency == NODE_FREQUENCY_UNLIKELY_EXECUTED)
+      && (cgraph_get_node (current_function_decl)->frequency
+	  == NODE_FREQUENCY_UNLIKELY_EXECUTED))
     return true;
   return false;
+}
+
+/* Return true if NODE should be optimized for size.  */
+
+bool
+cgraph_optimize_for_size_p (struct cgraph_node *node)
+{
+  if (optimize_size)
+    return true;
+  if (node && (node->frequency == NODE_FREQUENCY_UNLIKELY_EXECUTED))
+    return true;
+  else
+    return false;
 }
 
 /* Return true when current function should always be optimized for size.  */
@@ -213,10 +229,11 @@ probably_never_executed_bb_p (const_basic_block bb)
 bool
 optimize_function_for_size_p (struct function *fun)
 {
-  return (optimize_size
-	  || (fun && fun->decl
-	      && (cgraph_node (fun->decl)->frequency
-		  == NODE_FREQUENCY_UNLIKELY_EXECUTED)));
+  if (optimize_size)
+    return true;
+  if (!fun || !fun->decl)
+    return false;
+  return cgraph_optimize_for_size_p (cgraph_get_node (fun->decl));
 }
 
 /* Return true when current function should always be optimized for speed.  */
@@ -977,7 +994,7 @@ predict_loops (void)
 	     the loop, use it to predict this exit.  */
 	  else if (n_exits == 1)
 	    {
-	      nitercst = estimated_loop_iterations_int (loop, false);
+	      nitercst = max_stmt_executions_int (loop, false);
 	      if (nitercst < 0)
 		continue;
 	      if (nitercst > max)
@@ -1173,7 +1190,8 @@ static tree expr_expected_value (tree, bitmap);
 /* Helper function for expr_expected_value.  */
 
 static tree
-expr_expected_value_1 (tree type, tree op0, enum tree_code code, tree op1, bitmap visited)
+expr_expected_value_1 (tree type, tree op0, enum tree_code code,
+		       tree op1, bitmap visited)
 {
   gimple def;
 
@@ -1238,17 +1256,36 @@ expr_expected_value_1 (tree type, tree op0, enum tree_code code, tree op1, bitma
 	  tree decl = gimple_call_fndecl (def);
 	  if (!decl)
 	    return NULL;
-	  if (DECL_BUILT_IN_CLASS (decl) == BUILT_IN_NORMAL
-	      && DECL_FUNCTION_CODE (decl) == BUILT_IN_EXPECT)
-	    {
-	      tree val;
+	  if (DECL_BUILT_IN_CLASS (decl) == BUILT_IN_NORMAL)
+	    switch (DECL_FUNCTION_CODE (decl))
+	      {
+	      case BUILT_IN_EXPECT:
+		{
+		  tree val;
+		  if (gimple_call_num_args (def) != 2)
+		    return NULL;
+		  val = gimple_call_arg (def, 0);
+		  if (TREE_CONSTANT (val))
+		    return val;
+		  return gimple_call_arg (def, 1);
+		}
 
-	      if (gimple_call_num_args (def) != 2)
-		return NULL;
-	      val = gimple_call_arg (def, 0);
-	      if (TREE_CONSTANT (val))
-		return val;
-	      return gimple_call_arg (def, 1);
+	      case BUILT_IN_SYNC_BOOL_COMPARE_AND_SWAP_N:
+	      case BUILT_IN_SYNC_BOOL_COMPARE_AND_SWAP_1:
+	      case BUILT_IN_SYNC_BOOL_COMPARE_AND_SWAP_2:
+	      case BUILT_IN_SYNC_BOOL_COMPARE_AND_SWAP_4:
+	      case BUILT_IN_SYNC_BOOL_COMPARE_AND_SWAP_8:
+	      case BUILT_IN_SYNC_BOOL_COMPARE_AND_SWAP_16:
+	      case BUILT_IN_ATOMIC_COMPARE_EXCHANGE:
+	      case BUILT_IN_ATOMIC_COMPARE_EXCHANGE_N:
+	      case BUILT_IN_ATOMIC_COMPARE_EXCHANGE_1:
+	      case BUILT_IN_ATOMIC_COMPARE_EXCHANGE_2:
+	      case BUILT_IN_ATOMIC_COMPARE_EXCHANGE_4:
+	      case BUILT_IN_ATOMIC_COMPARE_EXCHANGE_8:
+	      case BUILT_IN_ATOMIC_COMPARE_EXCHANGE_16:
+		/* Assume that any given atomic operation has low contention,
+		   and thus the compare-and-swap operation succeeds.  */
+		return boolean_true_node;
 	    }
 	}
 
@@ -1790,7 +1827,8 @@ tree_estimate_probability_driver (void)
 static void
 predict_paths_for_bb (basic_block cur, basic_block bb,
 		      enum br_predictor pred,
-		      enum prediction taken)
+		      enum prediction taken,
+		      bitmap visited)
 {
   edge e;
   edge_iterator ei;
@@ -1811,7 +1849,7 @@ predict_paths_for_bb (basic_block cur, basic_block bb,
 	continue;
       gcc_assert (bb == cur || dominated_by_p (CDI_POST_DOMINATORS, cur, bb));
 
-      /* See if there is how many edge from e->src that is not abnormal
+      /* See if there is an edge from e->src that is not abnormal
 	 and does not lead to BB.  */
       FOR_EACH_EDGE (e2, ei2, e->src->succs)
 	if (e2 != e
@@ -1824,16 +1862,20 @@ predict_paths_for_bb (basic_block cur, basic_block bb,
 
       /* If there is non-abnormal path leaving e->src, predict edge
 	 using predictor.  Otherwise we need to look for paths
-	 leading to e->src.  */
+	 leading to e->src.
+
+	 The second may lead to infinite loop in the case we are predicitng
+	 regions that are only reachable by abnormal edges.  We simply
+	 prevent visiting given BB twice.  */
       if (found)
         predict_edge_def (e, pred, taken);
-      else
-	predict_paths_for_bb (e->src, e->src, pred, taken);
+      else if (bitmap_set_bit (visited, e->src->index))
+	predict_paths_for_bb (e->src, e->src, pred, taken, visited);
     }
   for (son = first_dom_son (CDI_POST_DOMINATORS, cur);
        son;
        son = next_dom_son (CDI_POST_DOMINATORS, son))
-    predict_paths_for_bb (son, bb, pred, taken);
+    predict_paths_for_bb (son, bb, pred, taken, visited);
 }
 
 /* Sets branch probabilities according to PREDiction and
@@ -1843,7 +1885,9 @@ static void
 predict_paths_leading_to (basic_block bb, enum br_predictor pred,
 			  enum prediction taken)
 {
-  predict_paths_for_bb (bb, bb, pred, taken);
+  bitmap visited = BITMAP_ALLOC (NULL);
+  predict_paths_for_bb (bb, bb, pred, taken, visited);
+  BITMAP_FREE (visited);
 }
 
 /* Like predict_paths_leading_to but take edge instead of basic block.  */
@@ -1866,7 +1910,11 @@ predict_paths_leading_to_edge (edge e, enum br_predictor pred,
 	break;
       }
   if (!has_nonloop_edge)
-    predict_paths_for_bb (bb, bb, pred, taken);
+    {
+      bitmap visited = BITMAP_ALLOC (NULL);
+      predict_paths_for_bb (bb, bb, pred, taken, visited);
+      BITMAP_FREE (visited);
+    }
   else
     predict_edge_def (e, pred, taken);
 }
@@ -2225,7 +2273,7 @@ void
 compute_function_frequency (void)
 {
   basic_block bb;
-  struct cgraph_node *node = cgraph_node (current_function_decl);
+  struct cgraph_node *node = cgraph_get_node (current_function_decl);
   if (DECL_STATIC_CONSTRUCTOR (current_function_decl)
       || MAIN_NAME_P (DECL_NAME (current_function_decl)))
     node->only_called_at_startup = true;
@@ -2274,7 +2322,7 @@ tree
 build_predict_expr (enum br_predictor predictor, enum prediction taken)
 {
   tree t = build1 (PREDICT_EXPR, void_type_node,
-		   build_int_cst (NULL, predictor));
+		   build_int_cst (integer_type_node, predictor));
   SET_PREDICT_EXPR_OUTCOME (t, taken);
   return t;
 }
@@ -2289,7 +2337,7 @@ struct gimple_opt_pass pass_profile =
 {
  {
   GIMPLE_PASS,
-  "profile",				/* name */
+  "profile_estimate",			/* name */
   gate_estimate_probability,		/* gate */
   tree_estimate_probability_driver,	/* execute */
   NULL,					/* sub */

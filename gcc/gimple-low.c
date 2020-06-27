@@ -169,7 +169,7 @@ lower_function_body (void)
 	 and insert.  */
       disp_var = create_tmp_var (ptr_type_node, "setjmpvar");
       arg = build_addr (disp_label, current_function_decl);
-      t = implicit_built_in_decls[BUILT_IN_SETJMP_DISPATCHER];
+      t = builtin_decl_implicit (BUILT_IN_SETJMP_DISPATCHER);
       x = gimple_build_call (t, 1, arg);
       gimple_call_set_lhs (x, disp_var);
 
@@ -203,30 +203,33 @@ struct gimple_opt_pass pass_lower_cf =
   PROP_gimple_lcf,			/* properties_provided */
   0,					/* properties_destroyed */
   0,					/* todo_flags_start */
-  TODO_dump_func			/* todo_flags_finish */
+  0             			/* todo_flags_finish */
  }
 };
+
 
 
 /* Verify if the type of the argument matches that of the function
    declaration.  If we cannot verify this or there is a mismatch,
    return false.  */
 
-bool
-gimple_check_call_args (gimple stmt)
+static bool
+gimple_check_call_args (gimple stmt, tree fndecl)
 {
-  tree fndecl, parms, p;
+  tree parms, p;
   unsigned int i, nargs;
+
+  /* Calls to internal functions always match their signature.  */
+  if (gimple_call_internal_p (stmt))
+    return true;
 
   nargs = gimple_call_num_args (stmt);
 
   /* Get argument types for verification.  */
-  fndecl = gimple_call_fndecl (stmt);
-  parms = NULL_TREE;
   if (fndecl)
     parms = TYPE_ARG_TYPES (TREE_TYPE (fndecl));
-  else if (POINTER_TYPE_P (TREE_TYPE (gimple_call_fn (stmt))))
-    parms = TYPE_ARG_TYPES (TREE_TYPE (TREE_TYPE (gimple_call_fn (stmt))));
+  else
+    parms = TYPE_ARG_TYPES (gimple_call_fntype (stmt));
 
   /* Verify if the type of the argument matches that of the function
      declaration.  If we cannot verify this or there is a mismatch,
@@ -273,6 +276,25 @@ gimple_check_call_args (gimple stmt)
   return true;
 }
 
+/* Verify if the type of the argument and lhs of CALL_STMT matches
+   that of the function declaration CALLEE.
+   If we cannot verify this or there is a mismatch, return false.  */
+
+bool
+gimple_check_call_matching_types (gimple call_stmt, tree callee)
+{
+  tree lhs;
+
+  if ((DECL_RESULT (callee)
+       && !DECL_BY_REFERENCE (DECL_RESULT (callee))
+       && (lhs = gimple_call_lhs (call_stmt)) != NULL_TREE
+       && !useless_type_conversion_p (TREE_TYPE (DECL_RESULT (callee)),
+                                      TREE_TYPE (lhs))
+       && !fold_convertible_p (TREE_TYPE (DECL_RESULT (callee)), lhs))
+      || !gimple_check_call_args (call_stmt, callee))
+    return false;
+  return true;
+}
 
 /* Lower sequence SEQ.  Unlike gimplification the statements are not relowered
    when they are changed -- if this has to be done, the lowering routine must
@@ -374,6 +396,11 @@ lower_stmt (gimple_stmt_iterator *gsi, struct lower_data *data)
       lower_sequence (gimple_eh_filter_failure (stmt), data);
       break;
 
+    case GIMPLE_EH_ELSE:
+      lower_sequence (gimple_eh_else_n_body (stmt), data);
+      lower_sequence (gimple_eh_else_e_body (stmt), data);
+      break;
+
     case GIMPLE_NOP:
     case GIMPLE_ASM:
     case GIMPLE_ASSIGN:
@@ -423,6 +450,10 @@ lower_stmt (gimple_stmt_iterator *gsi, struct lower_data *data)
       lower_omp_directive (gsi, data);
       data->cannot_fallthru = false;
       return;
+
+    case GIMPLE_TRANSACTION:
+      lower_sequence (gimple_transaction_body (stmt), data);
+      break;
 
     default:
       gcc_unreachable ();
@@ -705,6 +736,10 @@ gimple_stmt_may_fallthru (gimple stmt)
       return (gimple_seq_may_fallthru (gimple_try_eval (stmt))
 	      && gimple_seq_may_fallthru (gimple_try_cleanup (stmt)));
 
+    case GIMPLE_EH_ELSE:
+      return (gimple_seq_may_fallthru (gimple_eh_else_n_body (stmt))
+	      || gimple_seq_may_fallthru (gimple_eh_else_e_body (stmt)));
+
     case GIMPLE_CALL:
       /* Functions that do not return do not fall through.  */
       return (gimple_call_flags (stmt) & ECF_NORETURN) == 0;
@@ -758,6 +793,9 @@ lower_gimple_return (gimple_stmt_iterator *gsi, struct lower_data *data)
 
   /* Generate a goto statement and remove the return statement.  */
  found:
+  /* When not optimizing, make sure user returns are preserved.  */
+  if (!optimize && gimple_has_location (stmt))
+    DECL_ARTIFICIAL (tmp_rs.label) = 0;
   t = gimple_build_goto (tmp_rs.label);
   gimple_set_location (t, gimple_location (stmt));
   gimple_set_block (t, gimple_block (stmt));
@@ -836,7 +874,7 @@ lower_builtin_setjmp (gimple_stmt_iterator *gsi)
 
   /* Build '__builtin_setjmp_setup (BUF, NEXT_LABEL)' and insert.  */
   arg = build_addr (next_label, current_function_decl);
-  t = implicit_built_in_decls[BUILT_IN_SETJMP_SETUP];
+  t = builtin_decl_implicit (BUILT_IN_SETJMP_SETUP);
   g = gimple_build_call (t, 2, gimple_call_arg (stmt, 0), arg);
   gimple_set_location (g, loc);
   gimple_set_block (g, gimple_block (stmt));
@@ -861,7 +899,7 @@ lower_builtin_setjmp (gimple_stmt_iterator *gsi)
 
   /* Build '__builtin_setjmp_receiver (NEXT_LABEL)' and insert.  */
   arg = build_addr (next_label, current_function_decl);
-  t = implicit_built_in_decls[BUILT_IN_SETJMP_RECEIVER];
+  t = builtin_decl_implicit (BUILT_IN_SETJMP_RECEIVER);
   g = gimple_build_call (t, 1, arg);
   gimple_set_location (g, loc);
   gimple_set_block (g, gimple_block (stmt));

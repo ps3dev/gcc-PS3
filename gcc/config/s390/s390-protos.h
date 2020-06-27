@@ -41,7 +41,7 @@ extern void s390_function_profiler (FILE *, int);
 extern void s390_set_has_landing_pad_p (bool);
 extern bool s390_hard_regno_mode_ok (unsigned int, enum machine_mode);
 extern bool s390_hard_regno_rename_ok (unsigned int, unsigned int);
-extern bool s390_class_max_nregs (enum reg_class, enum machine_mode);
+extern int s390_class_max_nregs (enum reg_class, enum machine_mode);
 
 #ifdef RTX_CODE
 extern int s390_extra_constraint_str (rtx, int, const char *);
@@ -66,7 +66,6 @@ extern bool tls_symbolic_reference_mentioned_p (rtx);
 extern bool legitimate_la_operand_p (rtx);
 extern bool preferred_la_operand_p (rtx, rtx);
 extern int legitimate_pic_operand_p (rtx);
-extern int legitimate_constant_p (rtx);
 extern bool legitimate_reload_constant_p (rtx);
 extern rtx legitimize_pic_address (rtx, rtx);
 extern rtx legitimize_reload_address (rtx, enum machine_mode, int, int);
