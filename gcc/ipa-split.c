@@ -1,5 +1,5 @@
 /* Function splitting pass
-   Copyright (C) 2010, 2011
+   Copyright (C) 2010, 2011, 2012
    Free Software Foundation, Inc.
    Contributed by Jan Hubicka  <jh@suse.cz>
 
@@ -92,6 +92,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "fibheap.h"
 #include "params.h"
 #include "gimple-pretty-print.h"
+#include "ipa-inline.h"
 
 /* Per basic block info.  */
 
@@ -129,6 +130,10 @@ struct split_point
 /* Best split point found.  */
 
 struct split_point best_split_point;
+
+/* Set of basic blocks that are not allowed to dominate a split point.  */
+
+static bitmap forbidden_dominators;
 
 static tree find_retval (basic_block return_bb);
 
@@ -169,8 +174,9 @@ static void
 dump_split_point (FILE * file, struct split_point *current)
 {
   fprintf (file,
-	   "Split point at BB %i header time:%i header size: %i"
-	   " split time: %i split size: %i\n  bbs: ",
+	   "Split point at BB %i\n"
+	   "  header time: %i header size: %i\n"
+	   "  split time: %i split size: %i\n  bbs: ",
 	   current->entry_bb->index, current->header_time,
 	   current->header_size, current->split_time, current->split_size);
   dump_bitmap (file, current->split_bbs);
@@ -268,6 +274,83 @@ done:
   BITMAP_FREE (seen);
   VEC_free (basic_block, heap, worklist);
   return ok;
+}
+
+/* If STMT is a call, check the callee against a list of forbidden
+   predicate functions.  If a match is found, look for uses of the
+   call result in condition statements that compare against zero.
+   For each such use, find the block targeted by the condition
+   statement for the nonzero result, and set the bit for this block
+   in the forbidden dominators bitmap.  The purpose of this is to avoid
+   selecting a split point where we are likely to lose the chance
+   to optimize away an unused function call.  */
+
+static void
+check_forbidden_calls (gimple stmt)
+{
+  imm_use_iterator use_iter;
+  use_operand_p use_p;
+  tree lhs;
+
+  /* At the moment, __builtin_constant_p is the only forbidden
+     predicate function call (see PR49642).  */
+  if (!gimple_call_builtin_p (stmt, BUILT_IN_CONSTANT_P))
+    return;
+
+  lhs = gimple_call_lhs (stmt);
+
+  if (!lhs || TREE_CODE (lhs) != SSA_NAME)
+    return;
+
+  FOR_EACH_IMM_USE_FAST (use_p, use_iter, lhs)
+    {
+      tree op1;
+      basic_block use_bb, forbidden_bb;
+      enum tree_code code;
+      edge true_edge, false_edge;
+      gimple use_stmt = USE_STMT (use_p);
+
+      if (gimple_code (use_stmt) != GIMPLE_COND)
+	continue;
+
+      /* Assuming canonical form for GIMPLE_COND here, with constant
+	 in second position.  */
+      op1 = gimple_cond_rhs (use_stmt);
+      code = gimple_cond_code (use_stmt);
+      use_bb = gimple_bb (use_stmt);
+
+      extract_true_false_edges_from_block (use_bb, &true_edge, &false_edge);
+
+      /* We're only interested in comparisons that distinguish
+	 unambiguously from zero.  */
+      if (!integer_zerop (op1) || code == LE_EXPR || code == GE_EXPR)
+	continue;
+
+      if (code == EQ_EXPR)
+	forbidden_bb = false_edge->dest;
+      else
+	forbidden_bb = true_edge->dest;
+
+      bitmap_set_bit (forbidden_dominators, forbidden_bb->index);
+    }
+}
+
+/* If BB is dominated by any block in the forbidden dominators set,
+   return TRUE; else FALSE.  */
+
+static bool
+dominated_by_forbidden (basic_block bb)
+{
+  unsigned dom_bb;
+  bitmap_iterator bi;
+
+  EXECUTE_IF_SET_IN_BITMAP (forbidden_dominators, 1, dom_bb, bi)
+    {
+      if (dominated_by_p (CDI_DOMINATORS, bb, BASIC_BLOCK (dom_bb)))
+	return true;
+    }
+
+  return false;
 }
 
 /* We found an split_point CURRENT.  NON_SSA_VARS is bitmap of all non ssa
@@ -411,6 +494,18 @@ consider_split (struct split_point *current, bitmap non_ssa_vars,
 		 "  Refused: split part has non-ssa uses\n");
       return;
     }
+
+  /* If the split point is dominated by a forbidden block, reject
+     the split.  */
+  if (!bitmap_empty_p (forbidden_dominators)
+      && dominated_by_forbidden (current->entry_bb))
+    {
+      if (dump_file && (dump_flags & TDF_DETAILS))
+	fprintf (dump_file,
+		 "  Refused: split point dominated by forbidden block\n");
+      return;
+    }
+
   /* See if retval used by return bb is computed by header or split part.
      When it is computed by split part, we need to produce return statement
      in the split part and add code to header to pass it around.
@@ -529,7 +624,9 @@ find_return_bb (void)
   for (bsi = gsi_last_bb (e->src); !gsi_end_p (bsi); gsi_prev (&bsi))
     {
       gimple stmt = gsi_stmt (bsi);
-      if (gimple_code (stmt) == GIMPLE_LABEL || is_gimple_debug (stmt))
+      if (gimple_code (stmt) == GIMPLE_LABEL
+	  || is_gimple_debug (stmt)
+	  || gimple_clobber_p (stmt))
 	;
       else if (gimple_code (stmt) == GIMPLE_ASSIGN
 	       && found_return
@@ -562,7 +659,8 @@ find_retval (basic_block return_bb)
   for (bsi = gsi_start_bb (return_bb); !gsi_end_p (bsi); gsi_next (&bsi))
     if (gimple_code (gsi_stmt (bsi)) == GIMPLE_RETURN)
       return gimple_return_retval (gsi_stmt (bsi));
-    else if (gimple_code (gsi_stmt (bsi)) == GIMPLE_ASSIGN)
+    else if (gimple_code (gsi_stmt (bsi)) == GIMPLE_ASSIGN
+	     && !gimple_clobber_p (gsi_stmt (bsi)))
       return gimple_assign_rhs1 (gsi_stmt (bsi));
   return NULL;
 }
@@ -636,6 +734,9 @@ visit_bb (basic_block bb, basic_block return_bb,
       tree decl;
 
       if (is_gimple_debug (stmt))
+	continue;
+
+      if (gimple_clobber_p (stmt))
 	continue;
 
       /* FIXME: We can split regions containing EH.  We can not however
@@ -943,10 +1044,10 @@ static void
 split_function (struct split_point *split_point)
 {
   VEC (tree, heap) *args_to_pass = NULL;
-  bitmap args_to_skip = BITMAP_ALLOC (NULL);
+  bitmap args_to_skip;
   tree parm;
   int num = 0;
-  struct cgraph_node *node;
+  struct cgraph_node *node, *cur_node = cgraph_get_node (current_function_decl);
   basic_block return_bb = find_return_bb ();
   basic_block call_bb;
   gimple_stmt_iterator gsi;
@@ -956,7 +1057,6 @@ split_function (struct split_point *split_point)
   tree retval = NULL, real_retval = NULL;
   bool split_part_return_p = false;
   gimple last_stmt = NULL;
-  bool conv_needed = false;
   unsigned int i;
   tree arg;
 
@@ -966,23 +1066,40 @@ split_function (struct split_point *split_point)
       dump_split_point (dump_file, split_point);
     }
 
+  if (cur_node->local.can_change_signature)
+    args_to_skip = BITMAP_ALLOC (NULL);
+  else
+    args_to_skip = NULL;
+
   /* Collect the parameters of new function and args_to_skip bitmap.  */
   for (parm = DECL_ARGUMENTS (current_function_decl);
        parm; parm = DECL_CHAIN (parm), num++)
-    if (!is_gimple_reg (parm)
-	|| !gimple_default_def (cfun, parm)
-	|| !bitmap_bit_p (split_point->ssa_names_to_pass,
-			  SSA_NAME_VERSION (gimple_default_def (cfun, parm))))
+    if (args_to_skip
+	&& (!is_gimple_reg (parm)
+	    || !gimple_default_def (cfun, parm)
+	    || !bitmap_bit_p (split_point->ssa_names_to_pass,
+			      SSA_NAME_VERSION (gimple_default_def (cfun,
+								    parm)))))
       bitmap_set_bit (args_to_skip, num);
     else
       {
-	arg = gimple_default_def (cfun, parm);
-	if (TYPE_MAIN_VARIANT (DECL_ARG_TYPE (parm))
-	    != TYPE_MAIN_VARIANT (TREE_TYPE (arg)))
+	/* This parm might not have been used up to now, but is going to be
+	   used, hence register it.  */
+	add_referenced_var (parm);
+	if (is_gimple_reg (parm))
 	  {
-	    conv_needed = true;
-	    arg = fold_convert (DECL_ARG_TYPE (parm), arg);
+	    arg = gimple_default_def (cfun, parm);
+	    if (!arg)
+	      {
+		arg = make_ssa_name (parm, gimple_build_nop ());
+		set_default_def (parm, arg);
+	      }
 	  }
+	else
+	  arg = parm;
+
+	if (!useless_type_conversion_p (DECL_ARG_TYPE (parm), TREE_TYPE (arg)))
+	  arg = fold_convert (DECL_ARG_TYPE (parm), arg);
 	VEC_safe_push (tree, heap, args_to_pass, arg);
       }
 
@@ -1036,12 +1153,13 @@ split_function (struct split_point *split_point)
 
   /* If RETURN_BB has virtual operand PHIs, they must be removed and the
      virtual operand marked for renaming as we change the CFG in a way that
-     tree-inline is not able to compensate for. 
+     tree-inline is not able to compensate for.
 
      Note this can happen whether or not we have a return value.  If we have
      a return value, then RETURN_BB may have PHIs for real operands too.  */
   if (return_bb != EXIT_BLOCK_PTR)
     {
+      bool phi_p = false;
       for (gsi = gsi_start_phis (return_bb); !gsi_end_p (gsi);)
 	{
 	  gimple stmt = gsi_stmt (gsi);
@@ -1052,14 +1170,34 @@ split_function (struct split_point *split_point)
 	    }
 	  mark_virtual_phi_result_for_renaming (stmt);
 	  remove_phi_node (&gsi, true);
+	  phi_p = true;
 	}
+      /* In reality we have to rename the reaching definition of the
+	 virtual operand at return_bb as we will eventually release it
+	 when we remove the code region we outlined.
+	 So we have to rename all immediate virtual uses of that region
+	 if we didn't see a PHI definition yet.  */
+      /* ???  In real reality we want to set the reaching vdef of the
+         entry of the SESE region as the vuse of the call and the reaching
+	 vdef of the exit of the SESE region as the vdef of the call.  */
+      if (!phi_p)
+	for (gsi = gsi_start_bb (return_bb); !gsi_end_p (gsi); gsi_next (&gsi))
+	  {
+	    gimple stmt = gsi_stmt (gsi);
+	    if (gimple_vuse (stmt))
+	      {
+		gimple_set_vuse (stmt, NULL_TREE);
+		update_stmt (stmt);
+	      }
+	    if (gimple_vdef (stmt))
+	      break;
+	  }
     }
 
   /* Now create the actual clone.  */
   rebuild_cgraph_edges ();
-  node = cgraph_function_versioning (cgraph_node (current_function_decl),
-				     NULL, NULL,
-				     args_to_skip,
+  node = cgraph_function_versioning (cur_node, NULL, NULL, args_to_skip,
+				     !split_part_return_p,
 				     split_point->split_bbs,
 				     split_point->entry_bb, "part");
   /* For usual cloning it is enough to clear builtin only when signature
@@ -1070,7 +1208,7 @@ split_function (struct split_point *split_point)
       DECL_BUILT_IN_CLASS (node->decl) = NOT_BUILT_IN;
       DECL_FUNCTION_CODE (node->decl) = (enum built_in_function) 0;
     }
-  cgraph_node_remove_callees (cgraph_node (current_function_decl));
+  cgraph_node_remove_callees (cur_node);
   if (!split_part_return_p)
     TREE_THIS_VOLATILE (node->decl) = 1;
   if (dump_file)
@@ -1092,14 +1230,13 @@ split_function (struct split_point *split_point)
 
   /* Produce the call statement.  */
   gsi = gsi_last_bb (call_bb);
-  if (conv_needed)
-    FOR_EACH_VEC_ELT (tree, args_to_pass, i, arg)
-      if (!is_gimple_val (arg))
-	{
-	  arg = force_gimple_operand_gsi (&gsi, arg, true, NULL_TREE,
-					  false, GSI_NEW_STMT);
-	  VEC_replace (tree, args_to_pass, i, arg);
-	}
+  FOR_EACH_VEC_ELT (tree, args_to_pass, i, arg)
+    if (!is_gimple_val (arg))
+      {
+	arg = force_gimple_operand_gsi (&gsi, arg, true, NULL_TREE,
+					false, GSI_CONTINUE_LINKING);
+	VEC_replace (tree, args_to_pass, i, arg);
+      }
   call = gimple_build_call_vec (node->decl, args_to_pass);
   gimple_set_block (call, DECL_INITIAL (current_function_decl));
 
@@ -1163,7 +1300,8 @@ split_function (struct split_point *split_point)
 			    gimple_return_set_retval (gsi_stmt (bsi), retval);
 			    break;
 			  }
-			else if (gimple_code (gsi_stmt (bsi)) == GIMPLE_ASSIGN)
+			else if (gimple_code (gsi_stmt (bsi)) == GIMPLE_ASSIGN
+				 && !gimple_clobber_p (gsi_stmt (bsi)))
 			  {
 			    gimple_assign_set_rhs1 (gsi_stmt (bsi), retval);
 			    break;
@@ -1172,11 +1310,31 @@ split_function (struct split_point *split_point)
 		    }
 		}
 	      if (DECL_BY_REFERENCE (DECL_RESULT (current_function_decl)))
-	        gimple_call_set_lhs (call, build_simple_mem_ref (retval));
+		{
+		  gimple_call_set_lhs (call, build_simple_mem_ref (retval));
+		  gsi_insert_after (&gsi, call, GSI_NEW_STMT);
+		}
 	      else
-	        gimple_call_set_lhs (call, retval);
+		{
+		  tree restype;
+		  restype = TREE_TYPE (DECL_RESULT (current_function_decl));
+		  gsi_insert_after (&gsi, call, GSI_NEW_STMT);
+		  if (!useless_type_conversion_p (TREE_TYPE (retval), restype))
+		    {
+		      gimple cpy;
+		      tree tem = create_tmp_reg (restype, NULL);
+		      tem = make_ssa_name (tem, call);
+		      cpy = gimple_build_assign_with_ops (NOP_EXPR, retval,
+							  tem, NULL_TREE);
+		      gsi_insert_after (&gsi, cpy, GSI_NEW_STMT);
+		      retval = tem;
+		    }
+		  gimple_call_set_lhs (call, retval);
+		  update_stmt (call);
+		}
 	    }
-          gsi_insert_after (&gsi, call, GSI_NEW_STMT);
+	  else
+	    gsi_insert_after (&gsi, call, GSI_NEW_STMT);
 	}
       /* We don't use return block (there is either no return in function or
 	 multiple of them).  So create new basic block with return statement.
@@ -1230,7 +1388,7 @@ split_function (struct split_point *split_point)
     }
   free_dominance_info (CDI_DOMINATORS);
   free_dominance_info (CDI_POST_DOMINATORS);
-  compute_inline_parameters (node);
+  compute_inline_parameters (node, true);
 }
 
 /* Execute function splitting pass.  */
@@ -1242,12 +1400,13 @@ execute_split_functions (void)
   basic_block bb;
   int overall_time = 0, overall_size = 0;
   int todo = 0;
-  struct cgraph_node *node = cgraph_node (current_function_decl);
+  struct cgraph_node *node = cgraph_get_node (current_function_decl);
 
-  if (flags_from_decl_or_type (current_function_decl) & ECF_NORETURN)
+  if (flags_from_decl_or_type (current_function_decl)
+      & (ECF_NORETURN|ECF_MALLOC))
     {
       if (dump_file)
-	fprintf (dump_file, "Not splitting: noreturn function.\n");
+	fprintf (dump_file, "Not splitting: noreturn/malloc function.\n");
       return 0;
     }
   if (MAIN_NAME_P (DECL_NAME (current_function_decl)))
@@ -1258,13 +1417,13 @@ execute_split_functions (void)
     }
   /* This can be relaxed; function might become inlinable after splitting
      away the uninlinable part.  */
-  if (!node->local.inlinable)
+  if (!inline_summary (node)->inlinable)
     {
       if (dump_file)
 	fprintf (dump_file, "Not splitting: not inlinable.\n");
       return 0;
     }
-  if (node->local.disregard_inline_limits)
+  if (DECL_DISREGARD_INLINE_LIMITS (node->decl))
     {
       if (dump_file)
 	fprintf (dump_file, "Not splitting: disregarding inline limits.\n");
@@ -1315,6 +1474,10 @@ execute_split_functions (void)
       return 0;
     }
 
+  /* Initialize bitmap to track forbidden calls.  */
+  forbidden_dominators = BITMAP_ALLOC (NULL);
+  calculate_dominance_info (CDI_DOMINATORS);
+
   /* Compute local info about basic blocks and determine function size/time.  */
   VEC_safe_grow_cleared (bb_info, heap, bb_info_vec, last_basic_block + 1);
   memset (&best_split_point, 0, sizeof (best_split_point));
@@ -1336,6 +1499,7 @@ execute_split_functions (void)
 	  this_time = estimate_num_insns (stmt, &eni_time_weights) * freq;
 	  size += this_size;
 	  time += this_time;
+	  check_forbidden_calls (stmt);
 
 	  if (dump_file && (dump_flags & TDF_DETAILS))
 	    {
@@ -1357,6 +1521,7 @@ execute_split_functions (void)
       BITMAP_FREE (best_split_point.split_bbs);
       todo = TODO_update_ssa | TODO_cleanup_cfg;
     }
+  BITMAP_FREE (forbidden_dominators);
   VEC_free (bb_info, heap, bb_info_vec);
   bb_info_vec = NULL;
   return todo;
@@ -1388,7 +1553,7 @@ struct gimple_opt_pass pass_split_functions =
   0,					/* properties_provided */
   0,					/* properties_destroyed */
   0,					/* todo_flags_start */
-  TODO_dump_func			/* todo_flags_finish */
+  TODO_verify_all      			/* todo_flags_finish */
  }
 };
 
@@ -1429,6 +1594,6 @@ struct gimple_opt_pass pass_feedback_split_functions =
   0,					/* properties_provided */
   0,					/* properties_destroyed */
   0,					/* todo_flags_start */
-  TODO_dump_func			/* todo_flags_finish */
+  TODO_verify_all      			/* todo_flags_finish */
  }
 };

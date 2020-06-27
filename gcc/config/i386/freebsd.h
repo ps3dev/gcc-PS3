@@ -1,5 +1,5 @@
 /* Definitions for Intel 386 running FreeBSD with ELF format
-   Copyright (C) 1996, 2000, 2002, 2004, 2007, 2010
+   Copyright (C) 1996, 2000, 2002, 2004, 2007, 2010, 2011
    Free Software Foundation, Inc.
    Contributed by Eric Youngdale.
    Modified for stabs-in-ELF by H.J. Lu.
@@ -22,8 +22,6 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
-
-#define TARGET_VERSION fprintf (stderr, " (i386 FreeBSD/ELF)");
 
 /* Override the default comment-starter of "/".  */
 #undef  ASM_COMMENT_START
@@ -147,3 +145,6 @@ along with GCC; see the file COPYING3.  If not see
 #if FBSD_MAJOR >= 6
 #define SUBTARGET32_DEFAULT_CPU "i486"
 #endif
+
+#define TARGET_ASM_FILE_END file_end_indicate_exec_stack
+
