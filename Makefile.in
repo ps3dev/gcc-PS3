@@ -25734,7 +25734,6 @@ check-libiberty:
 .PHONY: install-libiberty maybe-install-libiberty
 maybe-install-libiberty:
 @if libiberty
-maybe-install-libiberty: install-libiberty
 
 install-libiberty: installdirs
 	@: $(MAKE); $(unstage)
