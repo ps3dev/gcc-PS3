@@ -81,7 +81,7 @@ extern int dot_symbols;
   (rs6000_isa_flags & rs6000_isa_flags_explicit & OPTION_MASK_RELOCATABLE)
 
 #undef	RS6000_ABI_NAME
-#define	RS6000_ABI_NAME "aixdesc"
+#define	RS6000_ABI_NAME "linux"
 
 #define INVALID_64BIT "-m%s not supported in this configuration"
 #define INVALID_32BIT INVALID_64BIT

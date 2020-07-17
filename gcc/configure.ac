@@ -5462,12 +5462,12 @@ EOF
 esac
 
 case "$target:$tm_file" in
-  powerpc64-*-freebsd* | powerpc64*-*-linux* | powerpc*-*-linux*rs6000/biarch64.h*)
+  powerpc64-*-freebsd* | powerpc64*-*-linux* | powerpc64-ps3-elf* | powerpc*-*-linux*rs6000/biarch64.h*)
   case "$target" in
      *le-*-linux*)
      emul_name="-melf64lppc"
       ;;
-     *-*-linux*)
+     *-*-linux* | *-ps3-elf*)
      emul_name="-melf64ppc"
       ;;
      *-*-freebsd*)
