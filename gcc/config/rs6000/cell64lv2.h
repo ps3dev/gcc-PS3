@@ -143,7 +143,7 @@ extern int dot_symbols;
 	  else							\
 	    {							\
 	      if (!global_options_set.x_rs6000_current_cmodel)	\
-		SET_CMODEL (CMODEL_MEDIUM);			\
+		SET_CMODEL (CMODEL_SMALL);			\
 	      if (rs6000_current_cmodel != CMODEL_SMALL)	\
 		{						\
 		  if (!global_options_set.x_TARGET_NO_FP_IN_TOC) \
