@@ -1425,9 +1425,7 @@ static bool rs6000_keep_leaf_when_profiled () __attribute__ ((unused));
 static tree rs6000_fold_builtin (tree, int, tree *, bool);
 
 #ifdef POWERPC_CELL64LV2
-
-static bool rs6000_cell64lv2_valid_pointer_mode(enum machine_mode);
-
+static bool rs6000_cell64lv2_valid_pointer_mode (scalar_int_mode);
 #endif
 
 /* Hash table stuff for keeping track of TOC entries.  */
@@ -39743,9 +39741,11 @@ rs6000_mangle_decl_assembler_name (tree decl, tree id)
 #undef TARGET_VALID_POINTER_MODE
 #define TARGET_VALID_POINTER_MODE rs6000_cell64lv2_valid_pointer_mode
 
-static bool rs6000_cell64lv2_valid_pointer_mode(enum machine_mode mode)
+static bool
+rs6000_cell64lv2_valid_pointer_mode (scalar_int_mode mode)
 {
-	return (mode == SImode || (TARGET_64BIT && mode == DImode) || mode == ptr_mode || mode == Pmode);
+  return (mode == SImode || (TARGET_64BIT && mode == DImode)
+	  || mode == ptr_mode || mode == Pmode);
 }
 
 #endif
