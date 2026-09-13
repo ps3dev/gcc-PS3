@@ -1,5 +1,5 @@
 /* IPA visibility pass
-   Copyright (C) 2003-2017 Free Software Foundation, Inc.
+   Copyright (C) 2003-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -42,7 +42,7 @@ along with GCC; see the file COPYING3.  If not see
       its calling convention.  We simply mark all static functions whose
       address is not taken as local.
 
-      externally_visible flag is set for symbols that can not be privatized.
+      externally_visible flag is set for symbols that cannot be privatized.
       For privatized symbols we clear TREE_PUBLIC flag and dismantle comdat
       group.
 
@@ -83,21 +83,26 @@ along with GCC; see the file COPYING3.  If not see
 #include "cgraph.h"
 #include "calls.h"
 #include "varasm.h"
+#include "ipa-utils.h"
+#include "stringpool.h"
+#include "attribs.h"
 
-/* Return true when NODE can not be local. Worker for cgraph_local_node_p.  */
+/* Return true when NODE cannot be local. Worker for cgraph_local_node_p.  */
 
 static bool
 non_local_p (struct cgraph_node *node, void *data ATTRIBUTE_UNUSED)
 {
   return !(node->only_called_directly_or_aliased_p ()
 	   /* i386 would need update to output thunk with local calling
-	      convetions.  */
+	      conventions.  */
 	   && !node->thunk.thunk_p
 	   && node->definition
 	   && !DECL_EXTERNAL (node->decl)
+	   && !lookup_attribute ("noipa", DECL_ATTRIBUTES (node->decl))
 	   && !node->externally_visible
 	   && !node->used_from_other_partition
-	   && !node->in_other_partition);
+	   && !node->in_other_partition
+	   && node->get_availability () >= AVAIL_AVAILABLE);
 }
 
 /* Return true when function can be marked local.  */
@@ -142,7 +147,7 @@ comdat_can_be_unshared_p_1 (symtab_node *node)
           && !flag_whole_program))
     return false;
 
-  /* Non-readonly and volatile variables can not be duplicated.  */
+  /* Non-readonly and volatile variables cannot be duplicated.  */
   if (is_a <varpool_node *> (node)
       && (!TREE_READONLY (node->decl)
 	  || TREE_THIS_VOLATILE (node->decl)))
@@ -153,7 +158,7 @@ comdat_can_be_unshared_p_1 (symtab_node *node)
 /* COMDAT functions must be shared only if they have address taken,
    otherwise we can produce our own private implementation with
    -fwhole-program.  
-   Return true when turning COMDAT function static can not lead to wrong
+   Return true when turning COMDAT function static cannot lead to wrong
    code when the resulting object links with a library defining same COMDAT.
 
    Virtual functions do have their addresses taken from the vtables,
@@ -198,7 +203,7 @@ cgraph_externally_visible_p (struct cgraph_node *node,
      using the implicit built-in declarations anymore.  Similarly this enables
      us to remove them as unreachable before actual calls may appear during
      expansion or folding.  */
-  if (DECL_BUILT_IN (node->decl))
+  if (fndecl_built_in_p (node->decl))
     return true;
 
   /* If linker counts on us, we must preserve the function.  */
@@ -208,6 +213,8 @@ cgraph_externally_visible_p (struct cgraph_node *node,
     return true;
   if (lookup_attribute ("externally_visible",
 			DECL_ATTRIBUTES (node->decl)))
+    return true;
+  if (lookup_attribute ("noipa", DECL_ATTRIBUTES (node->decl)))
     return true;
   if (TARGET_DLLIMPORT_DECL_ATTRIBUTES
       && lookup_attribute ("dllexport",
@@ -236,10 +243,6 @@ cgraph_externally_visible_p (struct cgraph_node *node,
     return true;
 
   if (MAIN_NAME_P (DECL_NAME (node->decl)))
-    return true;
-
-  if (node->instrumentation_clone
-      && MAIN_NAME_P (DECL_NAME (node->orig_decl)))
     return true;
 
   return false;
@@ -332,10 +335,10 @@ varpool_node::externally_visible_p (void)
 static bool
 can_replace_by_local_alias (symtab_node *node)
 {
-#ifndef ASM_OUTPUT_DEF
   /* If aliases aren't supported, we can't do replacement.  */
-  return false;
-#endif
+  if (!TARGET_SUPPORTS_ALIASES)
+    return false;
+
   /* Weakrefs have a reason to be non-local.  Be sure we do not replace
      them.  */
   while (node->transparent_alias && node->definition && !node->weakref)
@@ -456,17 +459,12 @@ update_visibility_by_resolution_info (symtab_node * node)
 static void
 optimize_weakref (symtab_node *node)
 {
-#ifdef ASM_OUTPUT_DEF
-  bool aliases_supported = true;
-#else
-  bool aliases_supported = false;
-#endif
   bool strip_weakref = false;
   bool static_alias = false;
 
   gcc_assert (node->weakref);
 
-  /* Weakrefs with no target defined can not be optimized.  */
+  /* Weakrefs with no target defined cannot be optimized.  */
   if (!node->analyzed)
     return;
   symtab_node *target = node->get_alias_target ();
@@ -479,8 +477,8 @@ optimize_weakref (symtab_node *node)
 
   /* If we have definition of weakref's target and we know it binds locally,
      we can turn weakref to static alias.  */
-  if (target->definition && decl_binds_to_current_def_p (target->decl)
-      && aliases_supported)
+  if (TARGET_SUPPORTS_ALIASES
+      && target->definition && decl_binds_to_current_def_p (target->decl))
     strip_weakref = static_alias = true;
   /* Otherwise we can turn weakref into transparent alias.  This transformation
      may break asm statements which directly refers to symbol name and expect
@@ -541,7 +539,8 @@ localize_node (bool whole_program, symtab_node *node)
      symbols.  In this case we can privatize all hidden symbol but we need
      to keep non-hidden exported.  */
   if (node->same_comdat_group
-      && node->resolution == LDPR_PREVAILING_DEF_IRONLY)
+      && (node->resolution == LDPR_PREVAILING_DEF_IRONLY
+	  || node->resolution == LDPR_PREVAILING_DEF_IRONLY_EXP))
     {
       symtab_node *next;
       for (next = node->same_comdat_group;
@@ -613,17 +612,54 @@ function_and_variable_visibility (bool whole_program)
   struct cgraph_node *node;
   varpool_node *vnode;
 
-  /* All aliases should be procssed at this point.  */
+  /* All aliases should be processed at this point.  */
   gcc_checking_assert (!alias_pairs || !alias_pairs->length ());
+
+#ifdef ASM_OUTPUT_DEF
+  FOR_EACH_DEFINED_FUNCTION (node)
+    {
+      if (node->get_availability () != AVAIL_INTERPOSABLE
+	  || DECL_EXTERNAL (node->decl)
+	  || node->has_aliases_p ()
+	  || lookup_attribute ("noipa", DECL_ATTRIBUTES (node->decl)))
+	continue;
+
+      cgraph_node *alias = 0;
+      for (cgraph_edge *e = node->callees; e; e = e->next_callee)
+	{
+	  /* Recursive function calls usually can't be interposed.  */
+
+	  if (!e->recursive_p ())
+	    continue;
+
+	  if (!alias)
+	    {
+	      alias = dyn_cast<cgraph_node *> (node->noninterposable_alias ());
+	      gcc_assert (alias && alias != node);
+	    }
+
+	  e->redirect_callee (alias);
+	  if (gimple_has_body_p (e->caller->decl))
+	    {
+	      push_cfun (DECL_STRUCT_FUNCTION (e->caller->decl));
+	      e->redirect_call_stmt_to_callee ();
+	      pop_cfun ();
+	    }
+	}
+    }
+#endif
 
   FOR_EACH_FUNCTION (node)
     {
       int flags = flags_from_decl_or_type (node->decl);
 
       /* Optimize away PURE and CONST constructors and destructors.  */
-      if (optimize
+      if (node->analyzed
+	  && (DECL_STATIC_CONSTRUCTOR (node->decl)
+	      || DECL_STATIC_DESTRUCTOR (node->decl))
 	  && (flags & (ECF_CONST | ECF_PURE))
-	  && !(flags & ECF_LOOPING_CONST_OR_PURE))
+	  && !(flags & ECF_LOOPING_CONST_OR_PURE)
+	  && opt_for_fn (node->decl, optimize))
 	{
 	  DECL_STATIC_CONSTRUCTOR (node->decl) = 0;
 	  DECL_STATIC_DESTRUCTOR (node->decl) = 0;
@@ -639,7 +675,7 @@ function_and_variable_visibility (bool whole_program)
 	}
 
       /* C++ FE on lack of COMDAT support create local COMDAT functions
-	 (that ought to be shared but can not due to object format
+	 (that ought to be shared but cannot due to object format
 	 limitations).  It is necessary to keep the flag to make rest of C++ FE
 	 happy.  Clear the flag here to avoid confusion in middle-end.  */
       if (DECL_COMDAT (node->decl) && !TREE_PUBLIC (node->decl))
@@ -685,7 +721,6 @@ function_and_variable_visibility (bool whole_program)
 	localize_node (whole_program, node);
 
       if (node->thunk.thunk_p
-	  && !node->thunk.add_pointer_bounds_args
 	  && TREE_PUBLIC (node->decl))
 	{
 	  struct cgraph_node *decl_node = node;
@@ -715,8 +750,8 @@ function_and_variable_visibility (bool whole_program)
       if (!node->local.local)
         node->local.local |= node->local_p ();
 
-      /* If we know that function can not be overwritten by a
-	 different semantics and moreover its section can not be
+      /* If we know that function cannot be overwritten by a
+	 different semantics and moreover its section cannot be
 	 discarded, replace all direct calls by calls to an
 	 noninterposable alias.  This make dynamic linking cheaper and
 	 enable more optimization.
@@ -752,7 +787,7 @@ function_and_variable_visibility (bool whole_program)
 		  || vnode->weakref
       		  || TREE_PUBLIC (vnode->decl)
 		  || DECL_EXTERNAL (vnode->decl));
-      /* In several cases declarations can not be common:
+      /* In several cases declarations cannot be common:
 
 	 - when declaration has initializer
 	 - when it is in weak
@@ -875,8 +910,8 @@ static unsigned int
 whole_program_function_and_variable_visibility (void)
 {
   function_and_variable_visibility (flag_whole_program);
-  if (optimize)
-    ipa_discover_readonly_nonaddressable_vars ();
+  if (optimize || in_lto_p)
+    ipa_discover_variable_flags ();
   return 0;
 }
 

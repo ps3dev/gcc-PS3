@@ -5,6 +5,8 @@
 // The C definitions for tracebackctxt.go. That file uses //export so
 // it can't put function definitions in the "C" import comment.
 
+// +build !gccgo
+
 #include <stdlib.h>
 #include <stdint.h>
 
@@ -47,18 +49,18 @@ struct cgoSymbolizerArg {
 static int contextCount;
 
 int getContextCount() {
-	return __sync_add_and_fetch(&contextCount, 0);
+	return __atomic_load_n(&contextCount, __ATOMIC_SEQ_CST);
 }
 
 void tcContext(void* parg) {
 	struct cgoContextArg* arg = (struct cgoContextArg*)(parg);
 	if (arg->context == 0) {
-		arg->context = __sync_add_and_fetch(&contextCount, 1);
+		arg->context = __atomic_add_fetch(&contextCount, 1, __ATOMIC_SEQ_CST);
 	} else {
-		if (arg->context != __sync_add_and_fetch(&contextCount, 0)) {
+		if (arg->context != __atomic_load_n(&contextCount, __ATOMIC_SEQ_CST))
 			abort();
 		}
-		__sync_sub_and_fetch(&contextCount, 1);
+		__atomic_sub_fetch(&contextCount, 1, __ATOMIC_SEQ_CST);
 	}
 }
 

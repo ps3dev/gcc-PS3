@@ -1,6 +1,6 @@
 /* GIMPLE lowering pass.  Converts High GIMPLE into Low GIMPLE.
 
-   Copyright (C) 2003-2017 Free Software Foundation, Inc.
+   Copyright (C) 2003-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -30,6 +30,9 @@ along with GCC; see the file COPYING3.  If not see
 #include "calls.h"
 #include "gimple-iterator.h"
 #include "gimple-low.h"
+#include "predict.h"
+#include "gimple-predict.h"
+#include "gimple-fold.h"
 
 /* The differences between High GIMPLE and Low GIMPLE are the
    following:
@@ -107,6 +110,17 @@ lower_function_body (void)
   lower_gimple_bind (&i, &data);
 
   i = gsi_last (lowered_body);
+
+  /* If we had begin stmt markers from e.g. PCH, but this compilation
+     doesn't want them, lower_stmt will have cleaned them up; we can
+     now clear the flag that indicates we had them.  */
+  if (!MAY_HAVE_DEBUG_MARKER_STMTS && cfun->debug_nonbind_markers)
+    {
+      /* This counter needs not be exact, but before lowering it will
+	 most certainly be.  */
+      gcc_assert (cfun->debug_marker_count == 0);
+      cfun->debug_nonbind_markers = false;
+    }
 
   /* If the function falls off the end, we need a null return statement.
      If we've already got one in the return_statements vector, we don't
@@ -294,6 +308,20 @@ lower_stmt (gimple_stmt_iterator *gsi, struct lower_data *data)
       }
       break;
 
+    case GIMPLE_DEBUG:
+      gcc_checking_assert (cfun->debug_nonbind_markers);
+      /* We can't possibly have debug bind stmts before lowering, we
+	 first emit them when entering SSA.  */
+      gcc_checking_assert (gimple_debug_nonbind_marker_p (stmt));
+      /* Propagate fallthruness.  */
+      /* If the function (e.g. from PCH) had debug stmts, but they're
+	 disabled for this compilation, remove them.  */
+      if (!MAY_HAVE_DEBUG_MARKER_STMTS)
+	gsi_remove (gsi, true);
+      else
+	gsi_next (gsi);
+      return;
+
     case GIMPLE_NOP:
     case GIMPLE_ASM:
     case GIMPLE_ASSIGN:
@@ -328,7 +356,7 @@ lower_stmt (gimple_stmt_iterator *gsi, struct lower_data *data)
 	  }
 
 	if (decl
-	    && DECL_BUILT_IN_CLASS (decl) == BUILT_IN_NORMAL)
+	    && fndecl_built_in_p (decl, BUILT_IN_NORMAL))
 	  {
 	    if (DECL_FUNCTION_CODE (decl) == BUILT_IN_SETJMP)
 	      {
@@ -351,6 +379,12 @@ lower_stmt (gimple_stmt_iterator *gsi, struct lower_data *data)
 	    gsi_next (gsi);
 	    return;
 	  }
+
+	/* We delay folding of built calls from gimplification to
+	   here so the IL is in consistent state for the diagnostic
+	   machineries job.  */
+	if (gimple_call_builtin_p (stmt))
+	  fold_stmt (gsi);
       }
       break;
 
@@ -501,6 +535,10 @@ lower_try_catch (gimple_stmt_iterator *gsi, struct lower_data *data)
 	cannot_fallthru = false;
       break;
 
+    case GIMPLE_DEBUG:
+      gcc_checking_assert (gimple_debug_begin_stmt_p (stmt));
+      break;
+
     default:
       /* This case represents statements to be executed when an
 	 exception occurs.  Those statements are implicitly followed
@@ -643,7 +681,7 @@ gimple_stmt_may_fallthru (gimple *stmt)
 bool
 gimple_seq_may_fallthru (gimple_seq seq)
 {
-  return gimple_stmt_may_fallthru (gimple_seq_last_stmt (seq));
+  return gimple_stmt_may_fallthru (gimple_seq_last_nondebug_stmt (seq));
 }
 
 
@@ -685,8 +723,8 @@ lower_gimple_return (gimple_stmt_iterator *gsi, struct lower_data *data)
   if (!optimize && gimple_has_location (stmt))
     DECL_ARTIFICIAL (tmp_rs.label) = 0;
   t = gimple_build_goto (tmp_rs.label);
+  /* location includes block.  */
   gimple_set_location (t, gimple_location (stmt));
-  gimple_set_block (t, gimple_block (stmt));
   gsi_insert_before (gsi, t, GSI_SAME_STMT);
   gsi_remove (gsi, false);
 }
@@ -768,8 +806,8 @@ lower_builtin_setjmp (gimple_stmt_iterator *gsi)
   arg = build_addr (next_label);
   t = builtin_decl_implicit (BUILT_IN_SETJMP_SETUP);
   g = gimple_build_call (t, 2, gimple_call_arg (stmt, 0), arg);
+  /* location includes block.  */
   gimple_set_location (g, loc);
-  gimple_set_block (g, gimple_block (stmt));
   gsi_insert_before (gsi, g, GSI_SAME_STMT);
 
   /* Build 'DEST = 0' and insert.  */
@@ -777,7 +815,6 @@ lower_builtin_setjmp (gimple_stmt_iterator *gsi)
     {
       g = gimple_build_assign (dest, build_zero_cst (TREE_TYPE (dest)));
       gimple_set_location (g, loc);
-      gimple_set_block (g, gimple_block (stmt));
       gsi_insert_before (gsi, g, GSI_SAME_STMT);
     }
 
@@ -794,7 +831,6 @@ lower_builtin_setjmp (gimple_stmt_iterator *gsi)
   t = builtin_decl_implicit (BUILT_IN_SETJMP_RECEIVER);
   g = gimple_build_call (t, 1, arg);
   gimple_set_location (g, loc);
-  gimple_set_block (g, gimple_block (stmt));
   gsi_insert_before (gsi, g, GSI_SAME_STMT);
 
   /* Build 'DEST = 1' and insert.  */
@@ -803,7 +839,6 @@ lower_builtin_setjmp (gimple_stmt_iterator *gsi)
       g = gimple_build_assign (dest, fold_convert_loc (loc, TREE_TYPE (dest),
 						       integer_one_node));
       gimple_set_location (g, loc);
-      gimple_set_block (g, gimple_block (stmt));
       gsi_insert_before (gsi, g, GSI_SAME_STMT);
     }
 

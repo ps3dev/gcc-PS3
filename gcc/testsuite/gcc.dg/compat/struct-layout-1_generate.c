@@ -1280,6 +1280,8 @@ subvalues (struct entry *e, char *p, char *letter)
       if (e[0].len != 0)
 	output_FNB ('B', e);
       return 1;
+    default:
+      return 0;
     }
 }
 
@@ -1893,7 +1895,7 @@ generate_fields (enum FEATURE features, struct entry *e, struct entry *parent,
 		  || (e[n].type >= &attrib_array_types[0]
 		      && e[n].type < &attrib_array_types[NAATYPES2])
 		  || (e[n].type >= &complex_attrib_array_types[0]
-		      && e[n].type < &complex_attrib_array_types[NAATYPES2])
+		      && e[n].type < &complex_attrib_array_types[NCAATYPES2])
 		  || (e[n].type >= &aligned_bitfld_types[0]
 		      && e[n].type < &aligned_bitfld_types[n_aligned_bitfld_types])))
 	    e[n].attrib = NULL;

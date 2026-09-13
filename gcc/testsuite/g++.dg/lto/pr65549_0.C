@@ -1,5 +1,6 @@
 // { dg-lto-do link }
-// { dg-lto-options { { -std=gnu++14 -flto -g } { -std=gnu++14 -flto -g -O2 -fno-inline -flto-partition=max } } }
+// { dg-require-effective-target lto_incremental }
+// { dg-lto-options { { -std=gnu++14 -flto -g -Wno-return-type } { -std=gnu++14 -flto -g -O2 -fno-inline -flto-partition=max -Wno-return-type } } }
 // { dg-extra-ld-options "-r -nostdlib" }
 
 namespace std {
@@ -135,10 +136,12 @@ public:
     then(0, [] {});
   }
 } clients;
-main() {
+int main() {
   B app;
   app.run(0, 0, [&] {
     auto config = app.configuration()[0].as<std::string>();
     clients.then([] {});
   });
+
+  return 0;
 }

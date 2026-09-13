@@ -1,8 +1,7 @@
 ! Originally contributed by Tobias Burnas.
 ! { dg-do compile { target { powerpc*-*-* } } }
-! { dg-skip-if "do not override -mcpu" { powerpc*-*-* } { "-mcpu=*" } { "-mcpu=405" } }
 ! { dg-require-effective-target powerpc_p9vector_ok }
-! { dg-options "-mcpu=405 -mpower9-minmax -mfloat128-type" }
+! { dg-options "-mdejagnu-cpu=405 -mpower9-minmax -mfloat128-type" }
 ! { dg-excess-errors "expect error due to conflicting target options" }
 ! Since the error message is not associated with a particular line
 ! number, we cannot use the dg-error directive and cannot specify a
@@ -25,11 +24,11 @@ program stream_test
     rewind(10)
     read(10,*) str1
     read(10,*) str2
-    if(str1 /= rec1 .or. str2 /= rec2) call abort()
+    if(str1 /= rec1 .or. str2 /= rec2) STOP 1
     rewind(10)
     read(10,'(a)') str1
     read(10,'(a)') str2
-    if(str1 /= rec1 .or. str2 /= rec2) call abort()
+    if(str1 /= rec1 .or. str2 /= rec2) STOP 2
     close(10)
 
     open(10,form='formatted',access='stream',&
@@ -40,7 +39,7 @@ program stream_test
     read(10,*) i,str1
     read(10,*) r
     if(i /= 123 .or. str1 /= rec1 .or. r /= 12345.6789) &
-      call abort()
+      STOP 3
     close(10)
 
     open(unit=10,form='unformatted',access='stream', &
@@ -49,5 +48,5 @@ program stream_test
     len = len_trim(rec1//new_line('a')//rec2)
     rewind(10)
     read(10) str1(1:len)
-    if(str1 /= rec1//new_line('a')//rec2) call abort()
+    if(str1 /= rec1//new_line('a')//rec2) STOP 4
 end program stream_test

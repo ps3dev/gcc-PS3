@@ -1,5 +1,5 @@
 // PR c++/71285
-// { dg-options -std=c++1z }
+// { dg-do compile { target c++17 } }
 
 template<typename... Args>
 void spurious(Args... args)

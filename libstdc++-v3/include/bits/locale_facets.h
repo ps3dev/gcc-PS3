@@ -1,6 +1,6 @@
 // Locale support -*- C++ -*-
 
-// Copyright (C) 1997-2017 Free Software Foundation, Inc.
+// Copyright (C) 1997-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -59,10 +59,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 # define  _GLIBCXX_NUM_FACETS 14
 # define  _GLIBCXX_NUM_CXX11_FACETS 8
 #endif
-#ifdef _GLIBCXX_USE_C99_STDINT_TR1
-# define _GLIBCXX_NUM_UNICODE_FACETS 2
+#ifdef _GLIBCXX_USE_CHAR8_T
+# define _GLIBCXX_NUM_UNICODE_FACETS 4
 #else
-# define _GLIBCXX_NUM_UNICODE_FACETS 0
+# define _GLIBCXX_NUM_UNICODE_FACETS 2
 #endif
 
   // Convert string to numeric value of type _Tp and store results.
@@ -900,7 +900,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       {
 	if (_M_widen_ok == 1)
 	  {
-	    __builtin_memcpy(__to, __lo, __hi - __lo);
+	    if (__builtin_expect(__hi != __lo, true))
+	      __builtin_memcpy(__to, __lo, __hi - __lo);
 	    return __hi;
 	  }
 	if (!_M_widen_ok)
@@ -965,7 +966,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       {
 	if (__builtin_expect(_M_narrow_ok == 1, true))
 	  {
-	    __builtin_memcpy(__to, __lo, __hi - __lo);
+	    if (__builtin_expect(__hi != __lo, true))
+	      __builtin_memcpy(__to, __lo, __hi - __lo);
 	    return __hi;
 	  }
 	if (!_M_narrow_ok)
@@ -1104,7 +1106,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       virtual const char*
       do_widen(const char* __lo, const char* __hi, char_type* __to) const
       {
-	__builtin_memcpy(__to, __lo, __hi - __lo);
+	if (__builtin_expect(__hi != __lo, true))
+	  __builtin_memcpy(__to, __lo, __hi - __lo);
 	return __hi;
       }
 
@@ -1157,7 +1160,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       do_narrow(const char_type* __lo, const char_type* __hi,
 		char __dfault __attribute__((__unused__)), char* __to) const
       {
-	__builtin_memcpy(__to, __lo, __hi - __lo);
+	if (__builtin_expect(__hi != __lo, true))
+	  __builtin_memcpy(__to, __lo, __hi - __lo);
 	return __hi;
       }
 
@@ -1487,7 +1491,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
     protected:
       virtual
-      ~ctype_byname() { };
+      ~ctype_byname() { }
     };
 
   /// 22.2.1.4  Class ctype_byname specializations.
@@ -1667,11 +1671,11 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
     {
     public:
       // Types:
-      //@{
+      ///@{
       /// Public typedefs
       typedef _CharT			char_type;
       typedef basic_string<_CharT>	string_type;
-      //@}
+      ///@}
       typedef __numpunct_cache<_CharT>  __cache_type;
 
     protected:
@@ -1949,11 +1953,11 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
     {
     public:
       // Types:
-      //@{
+      ///@{
       /// Public typedefs
       typedef _CharT			char_type;
       typedef _InIter			iter_type;
-      //@}
+      ///@}
 
       /// Numpunct facet id.
       static locale::id			id;
@@ -1996,7 +2000,7 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
 	  ios_base::iostate& __err, bool& __v) const
       { return this->do_get(__in, __end, __io, __err, __v); }
 
-      //@{
+      ///@{
       /**
        *  @brief  Numeric parsing.
        *
@@ -2059,9 +2063,9 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
 	  ios_base::iostate& __err, unsigned long long& __v)  const
       { return this->do_get(__in, __end, __io, __err, __v); }
 #endif
-      //@}
+      ///@}
 
-      //@{
+      ///@{
       /**
        *  @brief  Numeric parsing.
        *
@@ -2102,7 +2106,7 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
       get(iter_type __in, iter_type __end, ios_base& __io,
 	  ios_base::iostate& __err, long double& __v) const
       { return this->do_get(__in, __end, __io, __err, __v); }
-      //@}
+      ///@}
 
       /**
        *  @brief  Numeric parsing.
@@ -2189,7 +2193,7 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
 	  return __ret;
 	}
 
-      //@{
+      ///@{
       /**
        *  @brief  Numeric parsing.
        *
@@ -2266,7 +2270,7 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
       do_get(iter_type, iter_type, ios_base&, ios_base::iostate&,
 	     long double&) const;
 #endif
-      //@}
+      ///@}
     };
 
   template<typename _CharT, typename _InIter>
@@ -2290,11 +2294,11 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
     {
     public:
       // Types:
-      //@{
+      ///@{
       /// Public typedefs
       typedef _CharT		char_type;
       typedef _OutIter		iter_type;
-      //@}
+      ///@}
 
       /// Numpunct facet id.
       static locale::id		id;
@@ -2328,7 +2332,7 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
       put(iter_type __s, ios_base& __io, char_type __fill, bool __v) const
       { return this->do_put(__s, __io, __fill, __v); }
 
-      //@{
+      ///@{
       /**
        *  @brief  Numeric formatting.
        *
@@ -2385,9 +2389,9 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
 	  unsigned long long __v) const
       { return this->do_put(__s, __io, __fill, __v); }
 #endif
-      //@}
+      ///@}
 
-      //@{
+      ///@{
       /**
        *  @brief  Numeric formatting.
        *
@@ -2437,7 +2441,7 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
       put(iter_type __s, ios_base& __io, char_type __fill,
 	  long double __v) const
       { return this->do_put(__s, __io, __fill, __v); }
-      //@}
+      ///@}
 
       /**
        *  @brief  Numeric formatting.
@@ -2486,9 +2490,9 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
 
       /// Destructor.
       virtual
-      ~num_put() { };
+      ~num_put() { }
 
-      //@{
+      ///@{
       /**
        *  @brief  Numeric formatting.
        *
@@ -2546,7 +2550,7 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL
       virtual iter_type
       do_put(iter_type, ios_base&, char_type, long double) const;
 #endif
-      //@}
+      ///@}
     };
 
   template <typename _CharT, typename _OutIter>

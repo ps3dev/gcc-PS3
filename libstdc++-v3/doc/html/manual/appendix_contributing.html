@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8" /><title>Appendix A.  Contributing</title><meta name="generator" content="DocBook XSL-NS Stylesheets V1.78.1" /><meta name="keywords" content="ISO C++, library" /><meta name="keywords" content="ISO C++, runtime, library" /><link rel="home" href="../index.html" title="The GNU C++ Library" /><link rel="up" href="appendix.html" title="Part IV.  Appendices" /><link rel="prev" href="appendix.html" title="Part IV.  Appendices" /><link rel="next" href="source_organization.html" title="Directory Layout and Source Conventions" /></head><body><div class="navheader"><table width="100%" summary="Navigation header"><tr><th colspan="3" align="center">Appendix A. 
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8" /><title>Appendix A.  Contributing</title><meta name="generator" content="DocBook XSL Stylesheets Vsnapshot" /><meta name="keywords" content="ISO C++, library" /><meta name="keywords" content="ISO C++, runtime, library" /><link rel="home" href="../index.html" title="The GNU C++ Library" /><link rel="up" href="appendix.html" title="Part IV.  Appendices" /><link rel="prev" href="appendix.html" title="Part IV.  Appendices" /><link rel="next" href="source_organization.html" title="Directory Layout and Source Conventions" /></head><body><div class="navheader"><table width="100%" summary="Navigation header"><tr><th colspan="3" align="center">Appendix A. 
   Contributing
   
 </th></tr><tr><td width="20%" align="left"><a accesskey="p" href="appendix.html">Prev</a> </td><th width="60%" align="center">Part IV. 
@@ -90,14 +90,12 @@
 	  easily and simply show the existing error or test new
 	  functionality.
 	</p></li><li class="listitem"><p>
-	  The patch itself. If you are accessing the SVN
-	  repository use <span class="command"><strong>svn update; svn diff NEW</strong></span>;
-	  else, use <span class="command"><strong>diff -cp OLD NEW</strong></span> ... If your
+	  The patch itself. If you are using the Git repository use
+	  <span class="command"><strong>git diff</strong></span> or <span class="command"><strong>git format-patch</strong></span>
+	  to produce a patch;
+	  otherwise, use <span class="command"><strong>diff -cp OLD NEW</strong></span>. If your
 	  version of diff does not support these options, then get the
-	  latest version of GNU
-	  diff. The <a class="link" href="http://gcc.gnu.org/wiki/SvnTricks" target="_top">SVN
-	  Tricks</a> wiki page has information on customising the
-	  output of <code class="code">svn diff</code>.
+	  latest version of GNU diff.
 	</p></li><li class="listitem"><p>
 	  When you have all these pieces, bundle them up in a
 	  mail message and send it to libstdc++@gcc.gnu.org. All

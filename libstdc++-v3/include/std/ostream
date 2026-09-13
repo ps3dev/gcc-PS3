@@ -1,6 +1,6 @@
 // Output streams -*- C++ -*-
 
-// Copyright (C) 1997-2017 Free Software Foundation, Inc.
+// Copyright (C) 1997-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -96,7 +96,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       class sentry;
       friend class sentry;
 
-      //@{
+      ///@{
       /**
        *  @brief  Interface for manipulators.
        *
@@ -132,9 +132,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	__pf(*this);
 	return *this;
       }
-      //@}
+      ///@}
 
-      //@{
+      ///@{
       /**
        *  @name Inserters
        *
@@ -153,7 +153,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
        *  be rethrown.
       */
 
-      //@{
+      ///@{
       /**
        *  @brief Integer arithmetic inserters
        *  @param  __n A variable of builtin integral type.
@@ -205,9 +205,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       operator<<(unsigned long long __n)
       { return _M_insert(__n); }
 #endif
-      //@}
+      ///@}
 
-      //@{
+      ///@{
       /**
        *  @brief  Floating point arithmetic inserters
        *  @param  __f A variable of builtin floating point type.
@@ -231,7 +231,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       __ostream_type&
       operator<<(long double __f)
       { return _M_insert(__f); }
-      //@}
+      ///@}
 
       /**
        *  @brief  Pointer arithmetic inserters
@@ -244,6 +244,12 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       __ostream_type&
       operator<<(const void* __p)
       { return _M_insert(__p); }
+
+#if __cplusplus >= 201703L
+      __ostream_type&
+      operator<<(nullptr_t)
+      { return *this << "nullptr"; }
+#endif
 
       /**
        *  @brief  Extracting from another streambuf.
@@ -268,9 +274,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       */
       __ostream_type&
       operator<<(__streambuf_type* __sb);
-      //@}
+      ///@}
 
-      //@{
+      ///@{
       /**
        *  @name Unformatted Output Functions
        *
@@ -333,7 +339,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       */
       __ostream_type&
       write(const char_type* __s, streamsize __n);
-      //@}
+      ///@}
 
       /**
        *  @brief  Synchronizing the stream buffer.
@@ -444,6 +450,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       explicit
       sentry(basic_ostream<_CharT, _Traits>& __os);
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
       /**
        *  @brief  Possibly flushes the stream.
        *
@@ -461,6 +469,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	      _M_os.setstate(ios_base::badbit);
 	  }
       }
+#pragma GCC diagnostic pop
 
       /**
        *  @brief  Quick status checking.
@@ -476,7 +485,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       { return _M_ok; }
     };
 
-  //@{
+  ///@{
   /**
    *  @brief  Character inserters
    *  @param  __out  An output stream.
@@ -518,9 +527,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     inline basic_ostream<char, _Traits>&
     operator<<(basic_ostream<char, _Traits>& __out, unsigned char __c)
     { return (__out << static_cast<char>(__c)); }
-  //@}
+  ///@}
 
-  //@{
+  ///@{
   /**
    *  @brief  String inserters
    *  @param  __out  An output stream.
@@ -573,7 +582,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     inline basic_ostream<char, _Traits> &
     operator<<(basic_ostream<char, _Traits>& __out, const unsigned char* __s)
     { return (__out << reinterpret_cast<const char*>(__s)); }
-  //@}
+  ///@}
 
   // Standard basic_ostream manipulators
 

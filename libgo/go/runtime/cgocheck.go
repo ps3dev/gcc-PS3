@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build ignore
-
 // Code to check that pointer writes follow the cgo rules.
 // These functions are invoked via the write barrier when debug.cgocheck > 1.
 
@@ -18,6 +16,10 @@ const cgoWriteBarrierFail = "Go pointer stored into non-Go memory"
 
 // cgoCheckWriteBarrier is called whenever a pointer is stored into memory.
 // It throws if the program is storing a Go pointer into non-Go memory.
+//
+// This is called from the write barrier, so its entire call tree must
+// be nosplit.
+//
 //go:nosplit
 //go:nowritebarrier
 func cgoCheckWriteBarrier(dst *uintptr, src uintptr) {
@@ -38,6 +40,13 @@ func cgoCheckWriteBarrier(dst *uintptr, src uintptr) {
 	// Allocating memory can write to various mfixalloc structs
 	// that look like they are non-Go memory.
 	if g.m.mallocing != 0 {
+		return
+	}
+
+	// It's OK if writing to memory allocated by persistentalloc.
+	// Do this check last because it is more expensive and rarely true.
+	// If it is false the expense doesn't matter since we are crashing.
+	if inPersistentAlloc(uintptr(unsafe.Pointer(dst))) {
 		return
 	}
 
@@ -110,23 +119,22 @@ func cgoCheckTypedBlock(typ *_type, src unsafe.Pointer, off, size uintptr) {
 	}
 
 	// The type has a GC program. Try to find GC bits somewhere else.
-	for _, datap := range activeModules() {
-		if cgoInRange(src, datap.data, datap.edata) {
-			doff := uintptr(src) - datap.data
-			cgoCheckBits(add(src, -doff), datap.gcdatamask.bytedata, off+doff, size)
-			return
+	roots := gcRoots
+	for roots != nil {
+		for i := 0; i < roots.count; i++ {
+			pr := roots.roots[i]
+			addr := uintptr(pr.decl)
+			if cgoInRange(src, addr, addr+pr.size) {
+				doff := uintptr(src) - addr
+				cgoCheckBits(add(src, -doff), pr.gcdata, off+doff, size)
+				return
+			}
 		}
-		if cgoInRange(src, datap.bss, datap.ebss) {
-			boff := uintptr(src) - datap.bss
-			cgoCheckBits(add(src, -boff), datap.gcbssmask.bytedata, off+boff, size)
-			return
-		}
+		roots = roots.next
 	}
 
-	aoff := uintptr(src) - mheap_.arena_start
-	idx := aoff >> _PageShift
-	s := mheap_.spans[idx]
-	if s.state == _MSpanStack {
+	s := spanOfUnchecked(uintptr(src))
+	if s.state == mSpanManual {
 		// There are no heap bits for value stored on the stack.
 		// For a channel receive src might be on the stack of some
 		// other goroutine, so we can't unwind the stack even if
@@ -148,9 +156,7 @@ func cgoCheckTypedBlock(typ *_type, src unsafe.Pointer, off, size uintptr) {
 		if i >= off && bits&bitPointer != 0 {
 			v := *(*unsafe.Pointer)(add(src, i))
 			if cgoIsGoPointer(v) {
-				systemstack(func() {
-					throw(cgoWriteBarrierFail)
-				})
+				throw(cgoWriteBarrierFail)
 			}
 		}
 		hbits = hbits.next()
@@ -183,9 +189,7 @@ func cgoCheckBits(src unsafe.Pointer, gcbits *byte, off, size uintptr) {
 			if bits&1 != 0 {
 				v := *(*unsafe.Pointer)(add(src, i))
 				if cgoIsGoPointer(v) {
-					systemstack(func() {
-						throw(cgoWriteBarrierFail)
-					})
+					throw(cgoWriteBarrierFail)
 				}
 			}
 		}

@@ -1,5 +1,5 @@
 ;; Predicate definitions for SPARC.
-;; Copyright (C) 2005-2017 Free Software Foundation, Inc.
+;; Copyright (C) 2005-2019 Free Software Foundation, Inc.
 ;;
 ;; This file is part of GCC.
 ;;
@@ -296,6 +296,8 @@
   if (arith_double_operand (op, mode))
     return true;
 
+  /* Turning an add/sub instruction into the other changes the Carry flag
+     so the 4096 trick cannot be used for double operations in 32-bit mode.  */
   return TARGET_ARCH64 && const_4096_operand (op, mode);
 })
 
@@ -466,17 +468,17 @@
 {
   switch (GET_MODE (XEXP (op, 0)))
     {
-    case CCmode:
-    case CCXmode:
+    case E_CCmode:
+    case E_CCXmode:
       return true;
-    case CCNZmode:
-    case CCXNZmode:
+    case E_CCNZmode:
+    case E_CCXNZmode:
       return nz_comparison_operator (op, mode);
-    case CCCmode:
-    case CCXCmode:
+    case E_CCCmode:
+    case E_CCXCmode:
       return c_comparison_operator (op, mode);
-    case CCVmode:
-    case CCXVmode:
+    case E_CCVmode:
+    case E_CCXVmode:
       return v_comparison_operator (op, mode);
     default:
       return false;
@@ -489,8 +491,8 @@
 {
   switch (GET_MODE (XEXP (op, 0)))
     {
-    case CCFPmode:
-    case CCFPEmode:
+    case E_CCFPmode:
+    case E_CCFPEmode:
       return true;
     default:
       return false;

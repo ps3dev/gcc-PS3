@@ -1,6 +1,6 @@
 /* Instruction scheduling pass.  This file computes dependencies between
    instructions.
-   Copyright (C) 1992-2017 Free Software Foundation, Inc.
+   Copyright (C) 1992-2019 Free Software Foundation, Inc.
    Contributed by Michael Tiemann (tiemann@cygnus.com) Enhanced by,
    and currently maintained by, Jim Wilson (wilson@cygnus.com)
 
@@ -461,11 +461,11 @@ static HARD_REG_SET implicit_reg_pending_uses;
    has enough entries to represent a dependency on any other insn in
    the insn chain.  All bitmap for true dependencies cache is
    allocated then the rest two ones are also allocated.  */
-static bitmap_head *true_dependency_cache = NULL;
-static bitmap_head *output_dependency_cache = NULL;
-static bitmap_head *anti_dependency_cache = NULL;
-static bitmap_head *control_dependency_cache = NULL;
-static bitmap_head *spec_dependency_cache = NULL;
+static bitmap true_dependency_cache = NULL;
+static bitmap output_dependency_cache = NULL;
+static bitmap anti_dependency_cache = NULL;
+static bitmap control_dependency_cache = NULL;
+static bitmap spec_dependency_cache = NULL;
 static int cache_size;
 
 /* True if we should mark added dependencies as a non-register deps.  */
@@ -2308,7 +2308,7 @@ sched_analyze_reg (struct deps_desc *deps, int regno, machine_mode mode,
      If so, mark all of them just like the first.  */
   if (regno < FIRST_PSEUDO_REGISTER)
     {
-      int i = hard_regno_nregs[regno][mode];
+      int i = hard_regno_nregs (regno, mode);
       if (ref == SET)
 	{
 	  while (--i >= 0)
@@ -2318,6 +2318,13 @@ sched_analyze_reg (struct deps_desc *deps, int regno, machine_mode mode,
 	{
 	  while (--i >= 0)
 	    note_reg_use (regno + i);
+	}
+      else if (ref == CLOBBER_HIGH)
+	{
+	  gcc_assert (i == 1);
+	  /* We don't know the current state of the register, so have to treat
+	     the clobber high as a full clobber.  */
+	  note_reg_clobber (regno);
 	}
       else
 	{
@@ -2342,6 +2349,8 @@ sched_analyze_reg (struct deps_desc *deps, int regno, machine_mode mode,
       else if (ref == USE)
 	note_reg_use (regno);
       else
+	/* For CLOBBER_HIGH, we don't know the current state of the register,
+	   so have to treat it as a full clobber.  */
 	note_reg_clobber (regno);
 
       /* Pseudos that are REG_EQUIV to something may be replaced
@@ -2419,7 +2428,7 @@ sched_analyze_1 (struct deps_desc *deps, rtx x, rtx_insn *insn)
     {
       if (GET_CODE (dest) == STRICT_LOW_PART
 	 || GET_CODE (dest) == ZERO_EXTRACT
-	 || df_read_modify_subreg_p (dest))
+	 || read_modify_subreg_p (dest))
         {
 	  /* These both read and modify the result.  We must handle
              them as writes to get proper dependencies for following
@@ -2761,7 +2770,7 @@ sched_analyze_2 (struct deps_desc *deps, rtx x, rtx_insn *insn)
 	  reg_pending_barrier = TRUE_BARRIER;
 
 	/* For all ASM_OPERANDS, we must traverse the vector of input operands.
-	   We can not just fall through here since then we would be confused
+	   We cannot just fall through here since then we would be confused
 	   by the ASM_INPUT rtx inside ASM_OPERANDS, which do not indicate
 	   traditional asms unlike their normal usage.  */
 
@@ -2834,34 +2843,38 @@ static void
 sched_macro_fuse_insns (rtx_insn *insn)
 {
   rtx_insn *prev;
+  /* No target hook would return true for debug insn as any of the
+     hook operand, and with very large sequences of only debug insns
+     where on each we call sched_macro_fuse_insns it has quadratic
+     compile time complexity.  */
+  if (DEBUG_INSN_P (insn))
+    return;
+  prev = prev_nonnote_nondebug_insn (insn);
+  if (!prev)
+    return;
 
   if (any_condjump_p (insn))
     {
       unsigned int condreg1, condreg2;
       rtx cc_reg_1;
-      targetm.fixed_condition_code_regs (&condreg1, &condreg2);
-      cc_reg_1 = gen_rtx_REG (CCmode, condreg1);
-      prev = prev_nonnote_nondebug_insn (insn);
-      if (!reg_referenced_p (cc_reg_1, PATTERN (insn))
-          || !prev
-          || !modified_in_p (cc_reg_1, prev))
-        return;
+      if (targetm.fixed_condition_code_regs (&condreg1, &condreg2))
+	{
+	  cc_reg_1 = gen_rtx_REG (CCmode, condreg1);
+	  if (reg_referenced_p (cc_reg_1, PATTERN (insn))
+	      && modified_in_p (cc_reg_1, prev))
+	    {
+	      if (targetm.sched.macro_fusion_pair_p (prev, insn))
+		SCHED_GROUP_P (insn) = 1;
+	      return;
+	    }
+	}
     }
-  else
+
+  if (single_set (insn) && single_set (prev))
     {
-      rtx insn_set = single_set (insn);
-
-      prev = prev_nonnote_nondebug_insn (insn);
-      if (!prev
-          || !insn_set
-          || !single_set (prev))
-        return;
-
+      if (targetm.sched.macro_fusion_pair_p (prev, insn))
+	SCHED_GROUP_P (insn) = 1;
     }
-
-  if (targetm.sched.macro_fusion_pair_p (prev, insn))
-    SCHED_GROUP_P (insn) = 1;
-
 }
 
 /* Get the implicit reg pending clobbers for INSN and save them in TEMP.  */
@@ -2895,7 +2908,8 @@ sched_analyze_insn (struct deps_desc *deps, rtx x, rtx_insn *insn)
 			 && code == SET);
 
   /* Group compare and branch insns for macro-fusion.  */
-  if (targetm.sched.macro_fusion_p
+  if (!deps->readonly
+      && targetm.sched.macro_fusion_p
       && targetm.sched.macro_fusion_p ())
     sched_macro_fuse_insns (insn);
 
@@ -2920,6 +2934,8 @@ sched_analyze_insn (struct deps_desc *deps, rtx x, rtx_insn *insn)
 	= alloc_INSN_LIST (insn, deps->sched_before_next_jump);
 
       /* Make sure epilogue insn is scheduled after preceding jumps.  */
+      add_dependence_list (insn, deps->last_pending_memory_flush, 1,
+			   REG_DEP_ANTI, true);
       add_dependence_list (insn, deps->pending_jump_insns, 1, REG_DEP_ANTI,
 			   true);
     }
@@ -2957,7 +2973,7 @@ sched_analyze_insn (struct deps_desc *deps, rtx x, rtx_insn *insn)
 	      sub = COND_EXEC_CODE (sub);
 	      code = GET_CODE (sub);
 	    }
-	  if (code == SET || code == CLOBBER)
+	  else if (code == SET || code == CLOBBER || code == CLOBBER_HIGH)
 	    sched_analyze_1 (deps, sub, insn);
 	  else
 	    sched_analyze_2 (deps, sub, insn);
@@ -2973,6 +2989,10 @@ sched_analyze_insn (struct deps_desc *deps, rtx x, rtx_insn *insn)
 	{
 	  if (GET_CODE (XEXP (link, 0)) == CLOBBER)
 	    sched_analyze_1 (deps, XEXP (link, 0), insn);
+	  else if (GET_CODE (XEXP (link, 0)) == CLOBBER_HIGH)
+	    /* We could support CLOBBER_HIGH and treat it in the same way as
+	      HARD_REGNO_CALL_PART_CLOBBERED, but no port needs that yet.  */
+	    gcc_unreachable ();
 	  else if (GET_CODE (XEXP (link, 0)) != SET)
 	    sched_analyze_2 (deps, XEXP (link, 0), insn);
 	}
@@ -2987,6 +3007,11 @@ sched_analyze_insn (struct deps_desc *deps, rtx x, rtx_insn *insn)
   if (JUMP_P (insn))
     {
       rtx_insn *next = next_nonnote_nondebug_insn (insn);
+      /* ??? For tablejumps, the barrier may appear not immediately after
+         the jump, but after a label and a jump_table_data insn.  */
+      if (next && LABEL_P (next) && NEXT_INSN (next)
+	  && JUMP_TABLE_DATA_P (NEXT_INSN (next)))
+	next = NEXT_INSN (NEXT_INSN (next));
       if (next && BARRIER_P (next))
 	reg_pending_barrier = MOVE_BARRIER;
       else
@@ -3710,7 +3735,8 @@ deps_analyze_insn (struct deps_desc *deps, rtx_insn *insn)
              Since we only have a choice between 'might be clobbered'
              and 'definitely not clobbered', we must include all
              partly call-clobbered registers here.  */
-            else if (HARD_REGNO_CALL_PART_CLOBBERED (i, reg_raw_mode[i])
+	    else if (targetm.hard_regno_call_part_clobbered (insn, i,
+							     reg_raw_mode[i])
                      || TEST_HARD_REG_BIT (regs_invalidated_by_call, i))
               SET_REGNO_REG_SET (reg_pending_clobbers, i);
           /* We don't know what set of fixed registers might be used
@@ -4583,7 +4609,7 @@ check_dep (dep_t dep, bool relaxed_p)
 		&& (ds & DEP_CONTROL)
 		&& !(ds & (DEP_OUTPUT | DEP_ANTI | DEP_TRUE)));
 
-  /* HARD_DEP can not appear in dep_status of a link.  */
+  /* HARD_DEP cannot appear in dep_status of a link.  */
   gcc_assert (!(ds & HARD_DEP));
 
   /* Check that dependence status is set correctly when speculation is not
@@ -4715,6 +4741,11 @@ parse_add_or_inc (struct mem_inc_info *mii, rtx_insn *insn, bool before_mem)
   bool regs_equal;
 
   if (RTX_FRAME_RELATED_P (insn) || !pat)
+    return false;
+
+  /* Do not allow breaking data dependencies for insns that are marked
+     with REG_STACK_CHECK.  */
+  if (find_reg_note (insn, REG_STACK_CHECK, NULL))
     return false;
 
   /* Result must be single reg.  */

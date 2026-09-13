@@ -1,6 +1,6 @@
 // { dg-do compile { target c++14 } }
 
-// Copyright (C) 2015-2017 Free Software Foundation, Inc.
+// Copyright (C) 2015-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -21,9 +21,8 @@
 
 using std::experimental::propagate_const;
 
-// { dg-error "requires a class or a pointer to an object type" "" { target *-*-* } 107 }
-// { dg-error "not a pointer-to-object type" "" { target *-*-* } 68 }
-// { dg-error "forming pointer to reference type" "" { target *-*-* } 189 }
-// { dg-error "forming pointer to reference type" "" { target *-*-* } 215 }
-
 propagate_const<void*> test1;
+
+// { dg-error "requires a class or a pointer to an object type" "" { target *-*-* } 0 }
+// { dg-prune-output "forming pointer to reference type" }
+// { dg-prune-output "not a pointer-to-object type" }

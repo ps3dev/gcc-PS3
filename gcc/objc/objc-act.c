@@ -1,5 +1,5 @@
 /* Implement classes and message passing for Objective C.
-   Copyright (C) 1992-2017 Free Software Foundation, Inc.
+   Copyright (C) 1992-2019 Free Software Foundation, Inc.
    Contributed by Steve Naroff.
 
 This file is part of GCC.
@@ -907,7 +907,7 @@ objc_add_property_declaration (location_t location, tree decl,
 
   if (TREE_CODE (TREE_TYPE (decl)) == ARRAY_TYPE)
     {
-      error_at (location, "property can not be an array");
+      error_at (location, "property cannot be an array");
       return;
     }
 
@@ -922,10 +922,10 @@ objc_add_property_declaration (location_t location, tree decl,
 	 describe a pair of accessor methods, so its type (which is
 	 the type of the return value of the getter and the first
 	 argument of the setter) can't be a bitfield (as return values
-	 and arguments of functions can not be bitfields).  The
+	 and arguments of functions cannot be bitfields).  The
 	 underlying instance variable could be a bitfield, but that is
 	 a different matter.  */
-      error_at (location, "property can not be a bit-field");
+      error_at (location, "property cannot be a bit-field");
       return;
     }
 #endif
@@ -1090,7 +1090,8 @@ objc_add_property_declaration (location_t location, tree decl,
       if (PROPERTY_NONATOMIC (x) != parsed_property_nonatomic)
 	{
 	  warning_at (location, 0,
-		      "'nonatomic' attribute of property %qD conflicts with previous declaration", decl);
+		      "%<nonatomic%> attribute of property %qD conflicts with "
+		      "previous declaration", decl);
 
 	  if (original_location != UNKNOWN_LOCATION)
 	    inform (original_location, "originally specified here");
@@ -1100,7 +1101,8 @@ objc_add_property_declaration (location_t location, tree decl,
       if (PROPERTY_GETTER_NAME (x) != parsed_property_getter_ident)
 	{
 	  warning_at (location, 0,
-		      "'getter' attribute of property %qD conflicts with previous declaration", decl);
+		      "%<getter%> attribute of property %qD conflicts with "
+		      "previous declaration", decl);
 
 	  if (original_location != UNKNOWN_LOCATION)
 	    inform (original_location, "originally specified here");
@@ -1113,7 +1115,8 @@ objc_add_property_declaration (location_t location, tree decl,
 	  if (PROPERTY_SETTER_NAME (x) != parsed_property_setter_ident)
 	    {
 	      warning_at (location, 0,
-			  "'setter' attribute of property %qD conflicts with previous declaration", decl);
+			  "%<setter%> attribute of property %qD conflicts with "
+			  "previous declaration", decl);
 
 	      if (original_location != UNKNOWN_LOCATION)
 		inform (original_location, "originally specified here");
@@ -1135,7 +1138,8 @@ objc_add_property_declaration (location_t location, tree decl,
       if (PROPERTY_READONLY (x) == 0  &&  property_readonly == 1)
 	{
 	  warning_at (location, 0,
-		      "'readonly' attribute of property %qD conflicts with previous declaration", decl);
+		      "%<readonly%> attribute of property %qD conflicts with "
+		      "previous declaration", decl);
 
 	  if (original_location != UNKNOWN_LOCATION)
 	    inform (original_location, "originally specified here");
@@ -1455,6 +1459,8 @@ objc_maybe_build_component_ref (tree object, tree property_ident)
 		 || TREE_CODE (t) == COMPONENT_REF)
 	    t = TREE_OPERAND (t, 0);
 
+	  STRIP_ANY_LOCATION_WRAPPER (t);
+
 	  if (t == UOBJC_SUPER_decl)
 	    interface_type = lookup_interface (CLASS_SUPER_NAME (implementation_template));
 	  else if (t == self_decl)
@@ -1741,7 +1747,7 @@ objc_build_setter_call (tree lhs, tree rhs)
 
   if (PROPERTY_READONLY (property_decl))
     {
-      error ("readonly property can not be set");
+      error ("readonly property cannot be set");
       return error_mark_node;
     }
   else
@@ -2051,7 +2057,7 @@ objc_start_method_definition (bool is_class_method, tree decl, tree attributes,
 #endif
 
   if (attributes)
-    warning_at (input_location, 0, "method attributes can not be specified in @implementation context");
+    warning_at (input_location, 0, "method attributes cannot be specified in @implementation context");
   else
     objc_decl_method_attributes (&decl, attributes, 0);
 
@@ -2944,16 +2950,24 @@ synth_module_prologue (void)
   objc_class_reference = xref_tag (RECORD_TYPE, objc_class_id);
 
   objc_object_type = build_pointer_type (objc_object_reference);
+  objc_instancetype_type = build_pointer_type (objc_object_reference);
   objc_class_type = build_pointer_type (objc_class_reference);
 
   objc_object_name = get_identifier (OBJECT_TYPEDEF_NAME);
+  objc_instancetype_name = get_identifier (INSTANCE_TYPEDEF_NAME);
   objc_class_name = get_identifier (CLASS_TYPEDEF_NAME);
 
-  /* Declare the 'id' and 'Class' typedefs.  */
+  /* Declare the 'id', 'instancetype' and 'Class' typedefs.  */
   type = lang_hooks.decls.pushdecl (build_decl (input_location,
 						TYPE_DECL,
 						objc_object_name,
 						objc_object_type));
+  TREE_NO_WARNING (type) = 1;
+
+  type = lang_hooks.decls.pushdecl (build_decl (input_location,
+						TYPE_DECL,
+						objc_instancetype_name,
+						objc_instancetype_type));
   TREE_NO_WARNING (type) = 1;
 
   type = lang_hooks.decls.pushdecl (build_decl (input_location,
@@ -4208,7 +4222,7 @@ objc_begin_catch_clause (tree decl)
   else if (TYPE_HAS_OBJC_INFO (TREE_TYPE (type))
 	   && TYPE_OBJC_PROTOCOL_LIST (TREE_TYPE (type)))
     {
-      error ("@catch parameter can not be protocol-qualified");
+      error ("@catch parameter cannot be protocol-qualified");
       type = error_mark_node;
     }
   else if (POINTER_TYPE_P (type) && objc_is_object_id (TREE_TYPE (type)))
@@ -4602,8 +4616,14 @@ check_ivars (tree inter, tree imp)
       t1 = TREE_TYPE (intdecls); t2 = TREE_TYPE (impdecls);
 
       if (!comptypes (t1, t2)
+#ifdef OBJCPLUS
+	  || !tree_int_cst_equal (DECL_BIT_FIELD_REPRESENTATIVE (intdecls),
+				  DECL_BIT_FIELD_REPRESENTATIVE (impdecls))
+#else
 	  || !tree_int_cst_equal (DECL_INITIAL (intdecls),
-				  DECL_INITIAL (impdecls)))
+				  DECL_INITIAL (impdecls))
+#endif
+	 )
 	{
 	  if (DECL_NAME (intdecls) == DECL_NAME (impdecls))
 	    {
@@ -4669,7 +4689,7 @@ adjust_type_for_id_default (tree type)
     TREE_VALUE (type) = objc_object_type;
   else if (TREE_CODE (TREE_VALUE (type)) == RECORD_TYPE
 	   && TYPED_OBJECT (TREE_VALUE (type)))
-    error ("can not use an object as parameter to a method");
+    error ("cannot use an object as parameter to a method");
 
   return type;
 }
@@ -4894,10 +4914,10 @@ objc_decl_method_attributes (tree *node, tree attributes, int flags)
 		  number = TREE_VALUE (second_argument);
 		  if (number
 		      && TREE_CODE (number) == INTEGER_CST
-		      && !wi::eq_p (number, 0))
+		      && wi::to_wide (number) != 0)
 		    TREE_VALUE (second_argument)
 		      = wide_int_to_tree (TREE_TYPE (number),
-					  wi::add (number, 2));
+					  wi::to_wide (number) + 2);
 
 		  /* This is the third argument, the "first-to-check",
 		     which specifies the index of the first argument to
@@ -4907,10 +4927,10 @@ objc_decl_method_attributes (tree *node, tree attributes, int flags)
 		  number = TREE_VALUE (third_argument);
 		  if (number
 		      && TREE_CODE (number) == INTEGER_CST
-		      && !wi::eq_p (number, 0))
+		      && wi::to_wide (number) != 0)
 		    TREE_VALUE (third_argument)
 		      = wide_int_to_tree (TREE_TYPE (number),
-					  wi::add (number, 2));
+					  wi::to_wide (number) + 2);
 		}
 	      filtered_attributes = chainon (filtered_attributes,
 					     new_attribute);
@@ -4943,10 +4963,10 @@ objc_decl_method_attributes (tree *node, tree attributes, int flags)
 		  /* Get the value of the argument and add 2.  */
 		  tree number = TREE_VALUE (argument);
 		  if (number && TREE_CODE (number) == INTEGER_CST
-		      && !wi::eq_p (number, 0))
+		      && wi::to_wide (number) != 0)
 		    TREE_VALUE (argument)
 		      = wide_int_to_tree (TREE_TYPE (number),
-					  wi::add (number, 2));
+					  wi::to_wide (number) + 2);
 		  argument = TREE_CHAIN (argument);
 		}
 
@@ -5332,6 +5352,8 @@ objc_finish_message_expr (tree receiver, tree sel_name, tree method_params,
   tree method_prototype = NULL_TREE, rprotos = NULL_TREE, rtype;
   tree retval, class_tree;
   int self, super, have_cast;
+
+  STRIP_ANY_LOCATION_WRAPPER (receiver);
 
   /* We have used the receiver, so mark it as read.  */
   mark_exp_read (receiver);
@@ -7215,7 +7237,7 @@ objc_synthesize_getter (tree klass, tree class_methods ATTRIBUTE_UNUSED, tree pr
 	  {
 	    /* This should never happen.  */
 	    error_at (location,
-		      "can not find instance variable associated with property");
+		      "cannot find instance variable associated with property");
 	    ret_val = error_mark_node;
 	    break;
 	  }
@@ -7411,7 +7433,7 @@ objc_synthesize_setter (tree klass, tree class_methods ATTRIBUTE_UNUSED, tree pr
 	if (!ivar || is_private (ivar))
 	  {
 	    error_at (location,
-		      "can not find instance variable associated with property");
+		      "cannot find instance variable associated with property");
 	    statement = error_mark_node;
 	    break;
 	  }
@@ -7628,7 +7650,8 @@ objc_add_synthesize_declaration_for_property (location_t location, tree interfac
 	  {
 	    location_t original_location = DECL_SOURCE_LOCATION (ivar);
 
-	    error_at (location, "'assign' property %qs is using bit-field instance variable %qs",
+	    error_at (location, "%<assign%> property %qs is using bit-field "
+		      "instance variable %qs",
 		      IDENTIFIER_POINTER (property_name),
 		      IDENTIFIER_POINTER (ivar_name));
 
@@ -7641,7 +7664,8 @@ objc_add_synthesize_declaration_for_property (location_t location, tree interfac
 	  {
 	    location_t original_location = DECL_SOURCE_LOCATION (ivar);
 
-	    error_at (location, "'atomic' property %qs is using bit-field instance variable %qs",
+	    error_at (location, "%<atomic%> property %qs is using bit-field "
+		      "instance variable %qs",
 		      IDENTIFIER_POINTER (property_name),
 		      IDENTIFIER_POINTER (ivar_name));
 
@@ -7717,7 +7741,7 @@ objc_add_synthesize_declaration (location_t location, tree property_and_ivar_lis
 
   if (TREE_CODE (objc_implementation_context) == CATEGORY_IMPLEMENTATION_TYPE)
     {
-      error_at (location, "%<@synthesize%> can not be used in categories");
+      error_at (location, "%<@synthesize%> cannot be used in categories");
       return;
     }
 
@@ -7997,7 +8021,7 @@ finish_class (tree klass)
 		    char *setter_name = (char *) alloca (length);
 		    tree ret_type, selector, arg_type, arg_name;
 
-		    strcpy (setter_name, full_setter_name);
+		    memcpy (setter_name, full_setter_name, length - 1);
 		    setter_name[length - 1] = '\0';
 		    ret_type = build_tree_list (NULL_TREE, void_type_node);
 		    arg_type = build_tree_list (NULL_TREE, TREE_TYPE (x));
@@ -8895,10 +8919,18 @@ gen_declaration (tree decl)
 	  strcat (errbuf, IDENTIFIER_POINTER (DECL_NAME (decl)));
 	}
 
-      if (DECL_INITIAL (decl)
-	  && TREE_CODE (DECL_INITIAL (decl)) == INTEGER_CST)
-	sprintf (errbuf + strlen (errbuf), ": " HOST_WIDE_INT_PRINT_DEC,
-		 TREE_INT_CST_LOW (DECL_INITIAL (decl)));
+#ifdef OBJCPLUS
+      tree w = DECL_BIT_FIELD_REPRESENTATIVE (decl);
+#else
+      tree w = DECL_INITIAL (decl);
+#endif
+      if (w)
+	{
+	  STRIP_ANY_LOCATION_WRAPPER (w);
+	  if (TREE_CODE (w) == INTEGER_CST)
+	    sprintf (errbuf + strlen (errbuf), ": " HOST_WIDE_INT_PRINT_DEC,
+		     TREE_INT_CST_LOW (w));
+	}
     }
 
   return errbuf;
@@ -10108,11 +10140,14 @@ objc_common_tree_size (enum tree_code code)
     case CLASS_METHOD_DECL:
     case INSTANCE_METHOD_DECL:
     case KEYWORD_DECL:
-    case PROPERTY_DECL:
-      return sizeof (struct tree_decl_non_common);
+    case PROPERTY_DECL:			return sizeof (tree_decl_non_common);
+    case CLASS_INTERFACE_TYPE:
+    case CLASS_IMPLEMENTATION_TYPE:
+    case CATEGORY_INTERFACE_TYPE:
+    case CATEGORY_IMPLEMENTATION_TYPE:
+    case PROTOCOL_INTERFACE_TYPE:	return sizeof (tree_type_non_common);
     default:
       gcc_unreachable ();
-  
     }
 }
 

@@ -1,4 +1,5 @@
-// { dg-options "-std=c++1z" }
+// { dg-do compile { target c++17 } }
+// { dg-options "" }
 
 namespace A __attribute ((visibility ("default"))) {}
 

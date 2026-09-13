@@ -1,4 +1,5 @@
 /* Test invalid intra-routine parallelism.  */
+/* See also variant 'routine-4-extern.c', moving the callees 'extern'.  */
 
 void gang (void);
 void worker (void);
@@ -35,7 +36,7 @@ void seq (void)
     red ++;
 }
 
-void vector (void) /* { dg-message "declared here" 1 } */
+void vector (void) /* { dg-message "declared here" "1" } */
 {
   gang ();  /* { dg-error "routine call uses" } */
   worker ();  /* { dg-error "routine call uses" } */
@@ -61,7 +62,7 @@ void vector (void) /* { dg-message "declared here" 1 } */
     red ++;
 }
 
-void worker (void) /* { dg-message "declared here" 2 } */
+void worker (void) /* { dg-message "declared here" "2" } */
 {
   gang ();  /* { dg-error "routine call uses" } */
   worker ();
@@ -87,7 +88,7 @@ void worker (void) /* { dg-message "declared here" 2 } */
     red ++;
 }
 
-void gang (void) /* { dg-message "declared here" 3 } */
+void gang (void) /* { dg-message "declared here" "3" } */
 {
   gang ();
   worker ();

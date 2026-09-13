@@ -1,5 +1,5 @@
 /* Global constant/copy propagation for RTL.
-   Copyright (C) 1997-2017 Free Software Foundation, Inc.
+   Copyright (C) 1997-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -839,7 +839,7 @@ find_avail_set (int regno, rtx_insn *insn, struct cprop_expr *set_ret[2])
        (set (reg X) (reg Y))
        (set (reg Y) (reg X))
 
-     This can not happen since the set of (reg Y) would have killed the
+     This cannot happen since the set of (reg Y) would have killed the
      set of (reg X) making it unavailable at the start of this block.  */
   while (1)
     {
@@ -1008,16 +1008,18 @@ static int
 constprop_register (rtx from, rtx src, rtx_insn *insn)
 {
   rtx sset;
+  rtx_insn *next_insn;
 
   /* Check for reg or cc0 setting instructions followed by
      conditional branch instructions first.  */
   if ((sset = single_set (insn)) != NULL
-      && NEXT_INSN (insn)
-      && any_condjump_p (NEXT_INSN (insn)) && onlyjump_p (NEXT_INSN (insn)))
+      && (next_insn = next_nondebug_insn (insn)) != NULL
+      && any_condjump_p (next_insn)
+      && onlyjump_p (next_insn))
     {
       rtx dest = SET_DEST (sset);
       if ((REG_P (dest) || CC0_P (dest))
-	  && cprop_jump (BLOCK_FOR_INSN (insn), insn, NEXT_INSN (insn),
+	  && cprop_jump (BLOCK_FOR_INSN (insn), insn, next_insn,
 			 from, src))
 	return 1;
     }
@@ -1161,7 +1163,7 @@ local_cprop_find_used_regs (rtx *xptr, void *data)
       return;
 
     case SUBREG:
-      if (df_read_modify_subreg_p (x))
+      if (read_modify_subreg_p (x))
 	return;
       break;
 

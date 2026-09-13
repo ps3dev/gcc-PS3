@@ -8,13 +8,22 @@ import (
 	"unsafe"
 )
 
-type mOS struct {
-	unused byte
-}
+type mOS struct{}
 
 //go:noescape
 //extern _umtx_op
 func sys_umtx_op(addr *uint32, mode int32, val uint32, uaddr1 uinptr, ts *umtx_time) int32
+
+func getPageSize() uintptr {
+	mib := [2]uint32{_CTL_HW, _HW_PAGESIZE}
+	out := uint32(0)
+	nout := unsafe.Sizeof(out)
+	ret := sysctl(&mib[0], 2, (*byte)(unsafe.Pointer(&out)), &nout, nil, 0)
+	if ret >= 0 {
+		return uintptr(out)
+	}
+	return 0
+}
 
 // FreeBSD's umtx_op syscall is effectively the same as Linux's futex, and
 // thus the code is largely similar. See Linux implementation
@@ -53,4 +62,43 @@ func futexwakeup(addr *uint32, cnt uint32) {
 	systemstack(func() {
 		print("umtx_wake_addr=", addr, " ret=", ret, "\n")
 	})
+}
+
+func sysargs(argc int32, argv **byte) {
+	n := argc + 1
+
+	// skip over argv, envp to get to auxv
+	for argv_index(argv, n) != nil {
+		n++
+	}
+
+	// skip NULL separator
+	n++
+
+	// now argv+n is auxv
+	auxv := (*[1 << 28]uintptr)(add(unsafe.Pointer(argv), uintptr(n)*sys.PtrSize))
+	sysauxv(auxv[:])
+}
+
+const (
+	_AT_NULL     = 0  // Terminates the vector
+	_AT_PAGESZ   = 6  // Page size in bytes
+	_AT_TIMEKEEP = 22 // Pointer to timehands.
+	_AT_HWCAP    = 25 // CPU feature flags
+	_AT_HWCAP2   = 26 // CPU feature flags 2
+)
+
+func sysauxv(auxv []uintptr) {
+	for i := 0; auxv[i] != _AT_NULL; i += 2 {
+		tag, val := auxv[i], auxv[i+1]
+		switch tag {
+		// _AT_NCPUS from auxv shouldn't be used due to golang.org/issue/15206
+		case _AT_PAGESZ:
+			physPageSize = val
+		case _AT_TIMEKEEP:
+			timekeepSharedPage = (*vdsoTimekeep)(unsafe.Pointer(val))
+		}
+
+		archauxv(tag, val)
+	}
 }

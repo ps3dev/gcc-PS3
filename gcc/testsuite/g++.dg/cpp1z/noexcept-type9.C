@@ -1,6 +1,5 @@
 // Test for PMF template args.
-// { dg-options -std=c++1z }
-// { dg-do compile }
+// { dg-do compile { target c++17 } }
 
 struct A
 {

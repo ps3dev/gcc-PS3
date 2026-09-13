@@ -6,7 +6,7 @@
  *                                                                          *
  *                              C Header File                               *
  *                                                                          *
- *          Copyright (C) 2002-2016, Free Software Foundation, Inc.         *
+ *          Copyright (C) 2002-2019, Free Software Foundation, Inc.         *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -56,18 +56,9 @@
 /* Note: windows.h on cygwin-64 includes x86intrin.h which uses malloc.
    That fails to compile, if malloc is poisoned, i.e. if !IN_RTS.  */
 #define _X86INTRIN_H_INCLUDED
+#define _EMMINTRIN_H_INCLUDED
 #endif
 #include <windows.h>
-
-#ifndef _O_U8TEXT
-#define _O_U8TEXT _O_TEXT
-#endif
-#ifndef _O_U16TEXT
-#define _O_U16TEXT _O_TEXT
-#endif
-#ifndef _O_WTEXT
-#define _O_WTEXT _O_TEXT
-#endif
 
 /* After including this file it is possible to use the character t as prefix
    to routines. If GNAT_UNICODE_SUPPORT is defined then the unicode enabled

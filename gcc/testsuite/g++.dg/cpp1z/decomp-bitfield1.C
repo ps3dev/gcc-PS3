@@ -1,5 +1,5 @@
 // Test of bit-fields.
-// { dg-options -std=c++1z }
+// { dg-do compile { target c++17 } }
 
 struct A { long i: 2; } a;
 

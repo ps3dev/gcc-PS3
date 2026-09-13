@@ -1,17 +1,167 @@
-2017-08-14  Release Manager
+2022-05-27  Release Manager
 
-	* GCC 7.2.0 released.
+	* GCC 9.5.0 released.
 
-2017-05-02  Release Manager
+2021-06-01  Release Manager
 
-	* GCC 7.1.0 released.
+	* GCC 9.4.0 released.
+
+2021-05-01  Iain Sandoe  <iain@sandoe.co.uk>
+	    Jakub Jelinek   <jakub@redhat.com>
+
+	PR target/97865
+	* configure: Regenerate.
+
+2020-04-19  Uroš Bizjak  <ubizjak@gmail.com>
+
+	* config/x86/fenv.c (__atomic_feraiseexcept) [__SSE_MATH__]:
+	Remove unneeded assignments to volatile memory.
+
+2020-03-12  Release Manager
+
+	* GCC 9.3.0 released.
+
+2019-08-12  Release Manager
+
+	* GCC 9.2.0 released.
+
+2019-05-03  Release Manager
+
+	* GCC 9.1.0 released.
+
+2019-01-01  Jakub Jelinek  <jakub@redhat.com>
+
+	Update copyright years.
+
+2018-10-31  Joseph Myers  <joseph@codesourcery.com>
+
+	PR bootstrap/82856
+	* Makefile.am: Include multilib.am.
+	* acinclude.m4: Use AC_LANG_SOURCE.
+	* configure.ac: Remove AC_PREREQ.
+	* testsuite/Makefile.am (RUNTEST): Remove quotes.
+	* Makefile.in, aclocal.m4, configure, testsuite/Makefile.in:
+	Regenerate.
+
+2018-06-21  Christophe Lyon  <christophe.lyon@linaro.org>
+
+	* config/arm/arm-config.h (__ARM_ARCH__): Remove definitions, use
+	__ARM_ARCH instead. Use __ARM_FEATURE_LDREX to define HAVE_STREX
+	and HAVE_STREXBHD
+
+2018-05-23  Florian Weimer  <fweimer@redhat.com>
+
+	PR libgcc/60790
+	x86: Do not assume ELF constructors run before IFUNC resolvers.
+	* config/x86/host-config.h (libat_feat1_ecx, libat_feat1_edx):
+	Remove declarations.
+	(__libat_feat1, __libat_feat1_init): Declare.
+	(FEAT1_REGISTER): Define.
+	(load_feat1): New function.
+	(IFUNC_COND_1): Adjust.
+	* config/x86/init.c (libat_feat1_ecx, libat_feat1_edx)
+	(init_cpuid): Remove definitions.
+	(__libat_feat1): New variable.
+	(__libat_feat1_init): New function.
+
+2018-05-02  Tom de Vries  <tom@codesourcery.com>
+
+	PR testsuite/85106
+	* testsuite/lib/libatomic.exp: Include scanltranstree.exp.
+
+2018-05-02  Tom de Vries  <tom@codesourcery.com>
+
+	PR testsuite/85106
+	* testsuite/lib/libatomic.exp: Include scanwpaipa.exp.
+
+2018-04-24  H.J. Lu  <hongjiu.lu@intel.com>
+
+	* configure: Regenerated.
+
+2018-04-19  Jakub Jelinek  <jakub@redhat.com>
+
+	* configure: Regenerated.
+
+2018-04-18  David Malcolm  <dmalcolm@redhat.com>
+
+	PR jit/85384
+	* configure: Regenerate.
+
+2018-03-09  Andreas Krebbel  <krebbel@linux.vnet.ibm.com>
+
+	* config/s390/exch_n.c: New file.
+	* configure.tgt: Add the config directory for s390.
+
+2018-02-14  Igor Tsimbalist  <igor.v.tsimbalist@intel.com>
+
+	PR target/84148
+	* configure: Regenerate.
+
+2018-01-03  Jakub Jelinek  <jakub@redhat.com>
+
+	Update copyright years.
+
+2017-12-14  Steve Ellcey  <sellcey@cavium.com>
+
+	* Makefile.am (IFUNC_OPTIONS): Change aarch64
+	option from -march=armv8.1-a to -march=armv8-a+lse.
+	* configure.ac (*aarch64*): Check to see if
+	compiler understands -march=armv8-a+lse option.
+	* configure.tgt (*aarch64*): Only set try_ifunc
+	if compiler understands -march=armv8-a+lse option.
+	* Makefile.in: Regenerate.
+	* testsuite/Makefile.in: Regenerate.
+	* configure: Regenerate.
+	* aclocal.m4: Regenerate.
+
+2017-12-04  Steve Ellcey  <sellcey@cavium.com>
+
+	* Makefile.am (ARCH_AARCH64_LINUX): Add IFUNC_OPTIONS and
+	libatomic_la_LIBADD.
+	* config/linux/aarch64/host-config.h: New file.
+	* configure.ac (IFUNC_RESOLVER_ARGS): Define.
+	(ARCH_AARCH64_LINUX): New conditional for IFUNC builds.
+	* configure.tgt (aarch64): Set ARCH and try_ifunc.
+	(aarch64*-*-linux*) Update config_path.
+	(aarch64*-*-linux*) Set IFUNC_RESOLVER_ARGS.
+	* libatomic_i.h (GEN_SELECTOR): Add IFUNC_RESOLVER_ARGS argument.
+	* Makefile.in: Regenerate.
+	* auto-config.h.in: Regenerate.
+	* configure: Regenerate.
+
+2017-11-17  Igor Tsimbalist  <igor.v.tsimbalist@intel.com>
+
+	* configure.ac: Set CET_FLAGS, update XCFLAGS.
+	* acinclude.m4: Add cet.m4 and enable.m4.
+	* configure: Regenerate.
+	* Makefile.in: Likewise.
+	* testsuite/Makefile.in: Likewise.
+
+2017-10-20  Richard Earnshaw  <rearnsha@arm.com>
+
+	* Makefile.am: (IFUNC_OPTIONS): Set the architecture to
+	-march=armv7-a+fp on Linux/Arm.
+	* Makefile.in: Regenerated.
+
+2017-10-02  Martin Sebor  <msebor@redhat.com>
+
+	PR c/81854
+	* acinclude.m4 (LIBAT_CHECK_IFUNC): Have ifunc resolver return
+	a function pointer rather than void* to avoid GCC 8 warnings.
+	* configure: Regenerate.
+	* libatomic_i.h: Declare ifunc resolvers to return function
+	pointers rather than void*.
+
+2017-05-12  Rainer Orth  <ro@CeBiTec.Uni-Bielefeld.DE>
+
+	* testsuite/lib/libatomic.exp: Load scanlang.exp.
 
 2017-02-06  Palmer Dabbelt <palmer@dabbelt.com>
 
 	* configure.tgt: Add RISC-V tuple.
 
 2017-02-01  Richard Henderson  <rth@redhat.com>
-            Torvald Riegel  <triegel@redhat.com>
+	    Torvald Riegel  <triegel@redhat.com>
 
 	* acinclude.m4: Add #define FAST_ATOMIC_LDST_*.
 	* auto-config.h.in: Regenerate.
@@ -313,7 +463,7 @@
 
 	* Initial commit.
 
-Copyright (C) 2012-2017 Free Software Foundation, Inc.
+Copyright (C) 2012-2019 Free Software Foundation, Inc.
 
 Copying and distribution of this file, with or without modification,
 are permitted in any medium without royalty provided the copyright

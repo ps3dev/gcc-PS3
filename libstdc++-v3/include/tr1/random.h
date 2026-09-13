@@ -1,6 +1,6 @@
 // random number generation -*- C++ -*-
 
-// Copyright (C) 2009-2017 Free Software Foundation, Inc.
+// Copyright (C) 2009-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -35,6 +35,8 @@
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
+_GLIBCXX_BEGIN_NAMESPACE_VERSION
+
 namespace tr1
 {
   // [5.1] Random number generation
@@ -50,8 +52,6 @@ namespace tr1
    */
   namespace __detail
   {
-  _GLIBCXX_BEGIN_NAMESPACE_VERSION
-
     template<typename _UIntType, int __w, 
 	     bool = __w < std::numeric_limits<_UIntType>::digits>
       struct _Shift
@@ -212,11 +212,7 @@ namespace tr1
       private:
 	_Engine* _M_g;
       };
-
-  _GLIBCXX_END_NAMESPACE_VERSION
   } // namespace __detail
-
-_GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   /**
    * Produces random numbers on a given distribution function using a
@@ -594,7 +590,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
       result_type
       min() const
-      { return 0; };
+      { return 0; }
 
       result_type
       max() const
@@ -1547,7 +1543,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 #endif
   };
 
-  /* @} */ // group tr1_random_generators
+  /// @} group tr1_random_generators
 
   /**
    * @addtogroup tr1_random_distributions Random Number Distributions
@@ -2050,7 +2046,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       bool      _M_easy;
     };
 
-  /* @} */ // group tr1_random_distributions_discrete
+  /// @} group tr1_random_distributions_discrete
 
   /**
    * @addtogroup tr1_random_distributions_continuous Continuous Distributions
@@ -2407,11 +2403,12 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       result_type _M_l_d;
     };
 
-  /* @} */ // group tr1_random_distributions_continuous
-  /* @} */ // group tr1_random_distributions
-  /* @} */ // group tr1_random
-_GLIBCXX_END_NAMESPACE_VERSION
+  /// @} group tr1_random_distributions_continuous
+  /// @} group tr1_random_distributions
+  /// @} group tr1_random
 }
+
+_GLIBCXX_END_NAMESPACE_VERSION
 }
 
 #endif // _GLIBCXX_TR1_RANDOM_H

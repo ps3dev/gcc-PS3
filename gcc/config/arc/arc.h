@@ -1,5 +1,5 @@
 /* Definitions of target machine for GNU compiler, Synopsys DesignWare ARC cpu.
-   Copyright (C) 1994-2017 Free Software Foundation, Inc.
+   Copyright (C) 1994-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -65,9 +65,9 @@ along with GCC; see the file COPYING3.  If not see
 %(subtarget_cpp_spec)"
 
 #undef CC1_SPEC
-#define CC1_SPEC "\
-%{EB:%{EL:%emay not use both -EB and -EL}} \
-%{EB:-mbig-endian} %{EL:-mlittle-endian} \
+#define CC1_SPEC "%{EB:%{EL:%emay not use both -EB and -EL}}	\
+%{EB:-mbig-endian} %{EL:-mlittle-endian}			\
+%{G*}								\
 "
 extern const char *arc_cpu_to_as (int argc, const char **argv);
 
@@ -140,9 +140,6 @@ extern const char *arc_cpu_to_as (int argc, const char **argv);
 
 /* Should we try to unalign likely taken branches without a delay slot.  */
 #define TARGET_UNALIGN_BRANCH (TARGET_ARC700 && !optimize_size)
-
-/* Should we upsize short delayed branches with a short delay insn?  */
-#define TARGET_UPSIZE_DBR (TARGET_ARC700 && !optimize_size)
 
 /* Should we add padding before a return insn to avoid mispredict?  */
 #define TARGET_PAD_RETURN (TARGET_ARC700 && !optimize_size)
@@ -271,13 +268,6 @@ if (GET_MODE_CLASS (MODE) == MODE_INT		\
 /* The best alignment to use in cases where we have a choice.  */
 #define FASTEST_ALIGNMENT 32
 
-/* Make strings word-aligned so strcpy from constants will be faster.  */
-#define CONSTANT_ALIGNMENT(EXP, ALIGN)  \
-  ((TREE_CODE (EXP) == STRING_CST	\
-    && (ALIGN) < FASTEST_ALIGNMENT)	\
-   ? FASTEST_ALIGNMENT : (ALIGN))
-
-
 /* Make arrays of chars word-aligned for the same reasons.  */
 #define LOCAL_ALIGNMENT(TYPE, ALIGN)             \
   (TREE_CODE (TYPE) == ARRAY_TYPE               \
@@ -295,7 +285,7 @@ if (GET_MODE_CLASS (MODE) == MODE_INT		\
 /* On the ARC the lower address bits are masked to 0 as necessary.  The chip
    won't croak when given an unaligned address, but the insn will still fail
    to produce the correct result.  */
-#define STRICT_ALIGNMENT 1
+#define STRICT_ALIGNMENT (!unaligned_access)
 
 /* Layout of source language data types.  */
 
@@ -322,8 +312,6 @@ if (GET_MODE_CLASS (MODE) == MODE_INT		\
 #undef WCHAR_TYPE_SIZE
 #define WCHAR_TYPE_SIZE 32
 
-#define PROGRAM_COUNTER_REGNO 63
-
 /* Standard register usage.  */
 
 /* Number of actual hardware registers.
@@ -337,7 +325,7 @@ if (GET_MODE_CLASS (MODE) == MODE_INT		\
    argument pointer.  */
 
 /* r63 is pc, r64-r127 = simd vregs, r128-r143 = simd dma config regs
-   r144, r145 = lp_start, lp_end
+   r144, r145 = ARG_POINTER, FRAME_POINTER
    and therefore the pseudo registers start from r146. */
 #define FIRST_PSEUDO_REGISTER 146
 
@@ -373,17 +361,16 @@ if (GET_MODE_CLASS (MODE) == MODE_INT		\
 
    By default, the extension registers are not available.  */
 /* Present implementations only have VR0-VR23 only.  */
-/* ??? FIXME: r27 and r31 should not be fixed registers.  */
 #define FIXED_REGISTERS \
 { 0, 0, 0, 0, 0, 0, 0, 0,	\
   0, 0, 0, 0, 0, 0, 0, 0,	\
   0, 0, 0, 0, 0, 0, 0, 0,	\
-  0, 0, 1, 1, 1, 1, 1, 1,	\
+  0, 0, 1, 0, 1, 1, 1, 1,	\
 				\
   1, 1, 1, 1, 1, 1, 1, 1,	\
   0, 0, 0, 0, 1, 1, 1, 1,	\
   1, 1, 1, 1, 1, 1, 1, 1,	\
-  1, 1, 1, 1, 0, 1, 1, 1,       \
+  1, 1, 1, 1, 1, 1, 1, 1,       \
 				\
   0, 0, 0, 0, 0, 0, 0, 0,       \
   0, 0, 0, 0, 0, 0, 0, 0,       \
@@ -410,7 +397,7 @@ if (GET_MODE_CLASS (MODE) == MODE_INT		\
   1, 1, 1, 1, 1, 1, 1, 1,	\
   1, 1, 1, 1, 1, 0, 0, 0,	\
   0, 0, 0, 0, 0, 0, 0, 0,	\
-  0, 0, 1, 1, 1, 1, 1, 1,	\
+  0, 0, 1, 0, 1, 1, 1, 1,	\
 				\
   1, 1, 1, 1, 1, 1, 1, 1,	\
   1, 1, 1, 1, 1, 1, 1, 1,	\
@@ -434,42 +421,34 @@ if (GET_MODE_CLASS (MODE) == MODE_INT		\
 /* If defined, an initializer for a vector of integers, containing the
    numbers of hard registers in the order in which GCC should
    prefer to use them (from most preferred to least).  */
-#define REG_ALLOC_ORDER \
-{ 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 1,			\
-  16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 				\
+#define REG_ALLOC_ORDER							\
+{									\
+  /* General registers.  */						\
+  2, 3, 12, 13, 14, 15, 1, 0, 4, 5, 6, 7, 8, 9, 10, 11,			\
+  16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 30,			\
+  /* Extension core registers.  */					\
   32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,	\
-  48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,		\
-  27, 28, 29, 30, 31, 63}
+  48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,			\
+  /* VR regs.  */							\
+  64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,	\
+  80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,	\
+  96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109,	\
+  110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, \
+  124, 125, 126, 127,							\
+  /* DMA registers.  */							\
+  128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, \
+  142, 143,								\
+  /* Register not used for general use.  */				\
+  62, FRAME_POINTER_REGNUM, ARG_POINTER_REGNUM,				\
+  SP_REG, ILINK1_REG, RETURN_ADDR_REGNUM, LP_COUNT, CC_REG, PCL_REG	\
+}
 
-/* Return number of consecutive hard regs needed starting at reg REGNO
-   to hold something of mode MODE.
-   This is ordinarily the length in words of a value of mode MODE
-   but can be less for certain modes in special long registers.  */
-#define HARD_REGNO_NREGS(REGNO, MODE) \
-((GET_MODE_SIZE (MODE) == 16 \
-  && REGNO >= ARC_FIRST_SIMD_VR_REG && REGNO <= ARC_LAST_SIMD_VR_REG) ? 1 \
- : (GET_MODE_SIZE (MODE) + UNITS_PER_WORD - 1) / UNITS_PER_WORD)
+/* Use different register alloc ordering for Thumb.  */
+#define ADJUST_REG_ALLOC_ORDER arc_adjust_reg_alloc_order ()
 
-/* Value is 1 if hard register REGNO can hold a value of machine-mode MODE.  */
-extern unsigned int arc_hard_regno_mode_ok[];
-extern unsigned int arc_mode_class[];
-#define HARD_REGNO_MODE_OK(REGNO, MODE) \
-((arc_hard_regno_mode_ok[REGNO] & arc_mode_class[MODE]) != 0)
-
-/* A C expression that is nonzero if it is desirable to choose
-   register allocation so as to avoid move instructions between a
-   value of mode MODE1 and a value of mode MODE2.
-
-   If `HARD_REGNO_MODE_OK (R, MODE1)' and `HARD_REGNO_MODE_OK (R,
-   MODE2)' are ever different for any R, then `MODES_TIEABLE_P (MODE1,
-   MODE2)' must be zero.  */
-
-/* Tie QI/HI/SI modes together.  */
-#define MODES_TIEABLE_P(MODE1, MODE2) \
-(GET_MODE_CLASS (MODE1) == MODE_INT		\
- && GET_MODE_CLASS (MODE2) == MODE_INT		\
- && GET_MODE_SIZE (MODE1) <= UNITS_PER_WORD	\
- && GET_MODE_SIZE (MODE2) <= UNITS_PER_WORD)
+/* Tell IRA to use the order we define rather than messing it up with its
+   own cost calculations.  */
+#define HONOR_REG_ALLOC_ORDER 1
 
 /* Internal macros to classify a register number as to whether it's a
    general purpose register for compact insns (r0-r3,r12-r15), or
@@ -510,25 +489,15 @@ enum reg_class
 {
    NO_REGS,
    R0_REGS,			/* 'x' */
-   GP_REG,			/* 'Rgp' */
-   FP_REG,			/* 'f' */
-   SP_REGS,			/* 'b' */
-   LPCOUNT_REG, 		/* 'l' */
-   LINK_REGS,	 		/* 'k' */
-   DOUBLE_REGS,			/* D0, D1 */
-   SIMD_VR_REGS,		/* VR00-VR63 */
-   SIMD_DMA_CONFIG_REGS,	/* DI0-DI7,DO0-DO7 */
-   ARCOMPACT16_REGS,		/* 'q' */
-   AC16_BASE_REGS,  		/* 'e' */
-   SIBCALL_REGS,		/* "Rsc" */
-   GENERAL_REGS,		/* 'r' */
-   MPY_WRITABLE_CORE_REGS,	/* 'W' */
-   WRITABLE_CORE_REGS,		/* 'w' */
-   CHEAP_CORE_REGS,		/* 'c' */
-   ALL_CORE_REGS,		/* 'Rac' */
-   R0R3_CD_REGS,		/* 'Rcd' */
    R0R1_CD_REGS,		/* 'Rsd' */
+   R0R3_CD_REGS,		/* 'Rcd' */
+   ARCOMPACT16_REGS,		/* 'q' */
+   SIBCALL_REGS,		/* "Rsc" */
    AC16_H_REGS,			/* 'h' */
+   DOUBLE_REGS,			/* 'D' */
+   GENERAL_REGS,		/* 'r' */
+   SIMD_VR_REGS,		/* 'v' */
+   SIMD_DMA_CONFIG_REGS,	/* 'd' */
    ALL_REGS,
    LIM_REG_CLASSES
 };
@@ -537,29 +506,19 @@ enum reg_class
 
 /* Give names of register classes as strings for dump file.   */
 #define REG_CLASS_NAMES	  \
-{                         \
-  "NO_REGS",           	  \
-  "R0_REGS",            	  \
-  "GP_REG",            	  \
-  "FP_REG",            	  \
-  "SP_REGS",		  \
-  "LPCOUNT_REG",	  \
-  "LINK_REGS",         	  \
-  "DOUBLE_REGS",          \
-  "SIMD_VR_REGS",         \
-  "SIMD_DMA_CONFIG_REGS", \
-  "ARCOMPACT16_REGS",  	  \
-  "AC16_BASE_REGS",       \
+{			  \
+  "NO_REGS",		  \
+  "R0_REGS",		  \
+  "R0R1_CD_REGS",	  \
+  "R0R3_CD_REGS",	  \
+  "ARCOMPACT16_REGS",	  \
   "SIBCALL_REGS",	  \
-  "GENERAL_REGS",      	  \
-  "MPY_WRITABLE_CORE_REGS",   \
-  "WRITABLE_CORE_REGS",   \
-  "CHEAP_CORE_REGS",	  \
-  "R0R3_CD_REGS", \
-  "R0R1_CD_REGS", \
-  "AC16_H_REGS",	    \
-  "ALL_CORE_REGS",	  \
-  "ALL_REGS"          	  \
+  "AC16_H_REGS",	  \
+  "DOUBLE_REGS",	  \
+  "GENERAL_REGS",	  \
+  "SIMD_VR_REGS",	  \
+  "SIMD_DMA_CONFIG_REGS", \
+  "ALL_REGS"		  \
 }
 
 /* Define which registers fit in which classes.
@@ -567,33 +526,19 @@ enum reg_class
    of length N_REG_CLASSES.  */
 
 #define REG_CLASS_CONTENTS \
-{													\
-  {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000},	     /* No Registers */			\
-  {0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000000},      /* 'x', r0 register , r0 */	\
-  {0x04000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000},      /* 'Rgp', Global Pointer, r26 */	\
-  {0x08000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000},      /* 'f', Frame Pointer, r27 */	\
-  {0x10000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000},      /* 'b', Stack Pointer, r28 */	\
-  {0x00000000, 0x10000000, 0x00000000, 0x00000000, 0x00000000},      /* 'l', LPCOUNT Register, r60 */	\
-  {0xe0000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000},      /* 'k', LINK Registers, r29-r31 */	\
-  {0x00000000, 0x00000f00, 0x00000000, 0x00000000, 0x00000000},      /* 'D', D1, D2 Registers */	\
-  {0x00000000, 0x00000000, 0xffffffff, 0xffffffff, 0x00000000},      /* 'V', VR00-VR63 Registers */	\
-  {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0000ffff},      /* 'V', DI0-7,DO0-7 Registers */	\
-  {0x0000f00f, 0x00000000, 0x00000000, 0x00000000, 0x00000000},	     /* 'q', r0-r3, r12-r15 */		\
-  {0x1000f00f, 0x00000000, 0x00000000, 0x00000000, 0x00000000},	     /* 'e', r0-r3, r12-r15, sp */	\
-  {0x1c001fff, 0x00000000, 0x00000000, 0x00000000, 0x00000000},    /* "Rsc", r0-r12 */ \
-  {0x9fffffff, 0xc0000000, 0x00000000, 0x00000000, 0x00000000},      /* 'r', r0-r28, blink, ap and pcl */	\
-  {0xffffffff, 0x00000000, 0x00000000, 0x00000000, 0x00000000},      /* 'W',  r0-r31 */ \
-  /* Include ap / pcl in WRITABLE_CORE_REGS for sake of symmetry.  As these \
-     registers are fixed, it does not affect the literal meaning of the \
-     constraints, but it makes it a superset of GENERAL_REGS, thus \
-     enabling some operations that would otherwise not be possible.  */ \
-  {0xffffffff, 0xd0000000, 0x00000000, 0x00000000, 0x00000000},      /* 'w', r0-r31, r60 */ \
-  {0xffffffff, 0xdfffffff, 0x00000000, 0x00000000, 0x00000000},      /* 'c', r0-r60, ap, pcl */ \
-  {0xffffffff, 0xdfffffff, 0x00000000, 0x00000000, 0x00000000},      /* 'Rac', r0-r60, ap, pcl */ \
-  {0x0000000f, 0x00000000, 0x00000000, 0x00000000, 0x00000000},      /* 'Rcd', r0-r3 */ \
-  {0x00000003, 0x00000000, 0x00000000, 0x00000000, 0x00000000},      /* 'Rsd', r0-r1 */ \
-  {0x9fffffff, 0x00000000, 0x00000000, 0x00000000, 0x00000000},      /* 'h',  r0-28, r30 */ \
-  {0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0x0003ffff}       /* All Registers */		\
+{									\
+  {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000}, /* NO_REGS.  */\
+  {0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000000}, /* 'x'.  */ \
+  {0x00000003, 0x00000000, 0x00000000, 0x00000000, 0x00000000}, /* 'Rsd'.  */ \
+  {0x0000000f, 0x00000000, 0x00000000, 0x00000000, 0x00000000}, /* 'Rcd'.  */ \
+  {0x0000f00f, 0x00000000, 0x00000000, 0x00000000, 0x00000000}, /* 'q'.  */ \
+  {0x00001fff, 0x00000000, 0x00000000, 0x00000000, 0x00000000}, /* 'Rsc'.  */ \
+  {0x9fffffff, 0x00000000, 0x00000000, 0x00000000, 0x00000000}, /* 'h'.  */ \
+  {0x00000000, 0x00000f00, 0x00000000, 0x00000000, 0x00000000}, /* 'D'.  */ \
+  {0xffffffff, 0x8fffffff, 0x00000000, 0x00000000, 0x00030000}, /* 'r'.  */ \
+  {0x00000000, 0x00000000, 0xffffffff, 0xffffffff, 0x00000000}, /* 'v'.  */ \
+  {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0000ffff}, /* 'd'.  */ \
+  {0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0x0003ffff} /* ALL_REGS.  */\
 }
 
 /* Local macros to mark the first and last regs of different classes.  */
@@ -630,7 +575,7 @@ extern enum reg_class arc_regno_reg_class[];
 /* The class value for valid base registers. A base register is one used in
    an address which is the register value plus a displacement.  */
 
-#define BASE_REG_CLASS (TARGET_MIXED_CODE ? AC16_BASE_REGS : GENERAL_REGS)
+#define BASE_REG_CLASS GENERAL_REGS
 
 /* These assume that REGNO is a hard or pseudo reg number.
    They give nonzero only if REGNO is a hard reg of the suitable class
@@ -638,9 +583,14 @@ extern enum reg_class arc_regno_reg_class[];
    Since they use reg_renumber, they are safe only once reg_renumber
    has been allocated, which happens in local-alloc.c.  */
 #define REGNO_OK_FOR_BASE_P(REGNO)					\
-  ((REGNO) < 29 || ((REGNO) == ARG_POINTER_REGNUM) || ((REGNO) == 63)	\
+  ((REGNO) < 29								\
+   || ((REGNO) == ARG_POINTER_REGNUM)					\
+   || ((REGNO) == FRAME_POINTER_REGNUM)					\
+   || ((REGNO) == PCL_REG)						\
    || ((unsigned) reg_renumber[REGNO] < 29)				\
-   || ((unsigned) (REGNO) == (unsigned) arc_tp_regno))
+   || ((unsigned) (REGNO) == (unsigned) arc_tp_regno)			\
+   || (fixed_regs[REGNO] == 0 && IN_RANGE (REGNO, 32, 59))		\
+   || (fixed_regs[REGNO] == 0 && (REGNO) == R30_REG))
 
 #define REGNO_OK_FOR_INDEX_P(REGNO) REGNO_OK_FOR_BASE_P(REGNO)
 
@@ -693,12 +643,6 @@ extern enum reg_class arc_regno_reg_class[];
    goes at a more negative offset in the frame.  */
 #define FRAME_GROWS_DOWNWARD 1
 
-/* Offset within stack frame to start allocating local variables at.
-   If FRAME_GROWS_DOWNWARD, this is the offset to the END of the
-   first local allocated.  Otherwise, it is the offset to the BEGINNING
-   of the first local allocated.  */
-#define STARTING_FRAME_OFFSET 0
-
 /* Offset from the stack pointer register to the first location at which
    outgoing arguments are placed.  */
 #define STACK_POINTER_OFFSET (0)
@@ -732,11 +676,12 @@ arc_return_addr_rtx(COUNT,FRAME)
 #define STACK_POINTER_REGNUM 28
 
 /* Base register for access to local variables of the function.  */
-#define FRAME_POINTER_REGNUM 27
+#define FRAME_POINTER_REGNUM 145
+#define HARD_FRAME_POINTER_REGNUM 27
 
 /* Base register for access to arguments of the function. This register
    will be eliminated into either fp or sp.  */
-#define ARG_POINTER_REGNUM 62
+#define ARG_POINTER_REGNUM 144
 
 #define RETURN_ADDR_REGNUM 31
 
@@ -768,7 +713,7 @@ arc_return_addr_rtx(COUNT,FRAME)
   ((CUM) = 0)
 
 /* The number of registers used for parameter passing.  Local to this file.  */
-#define MAX_ARC_PARM_REGS 8
+#define MAX_ARC_PARM_REGS (TARGET_RF16 ? 4 : 8)
 
 /* 1 if N is a possible register number for function argument passing.  */
 #define FUNCTION_ARG_REGNO_P(N) \
@@ -846,8 +791,9 @@ arc_return_addr_rtx(COUNT,FRAME)
 
 #define ELIMINABLE_REGS					\
 {{ARG_POINTER_REGNUM, STACK_POINTER_REGNUM},		\
- {ARG_POINTER_REGNUM, FRAME_POINTER_REGNUM},		\
- {FRAME_POINTER_REGNUM, STACK_POINTER_REGNUM}}
+ {ARG_POINTER_REGNUM, HARD_FRAME_POINTER_REGNUM},	\
+ {FRAME_POINTER_REGNUM, STACK_POINTER_REGNUM},	\
+ {FRAME_POINTER_REGNUM, HARD_FRAME_POINTER_REGNUM}}
 
 /* Define the offset between two registers, one to be eliminated, and the other
    its replacement, at the start of a routine.  */
@@ -855,22 +801,16 @@ extern int arc_initial_elimination_offset(int from, int to);
 #define INITIAL_ELIMINATION_OFFSET(FROM, TO, OFFSET)                    \
   (OFFSET) = arc_initial_elimination_offset ((FROM), (TO))
 
-/* Output assembler code to FILE to increment profiler label # LABELNO
-   for profiling a function entry.  */
-#define FUNCTION_PROFILER(FILE, LABELNO)			\
-  do {								\
-  if (flag_pic)							\
-    fprintf (FILE, "\tbl\t__mcount@plt\n");			\
-  else								\
-    fprintf (FILE, "\tbl\t__mcount\n");				\
-  } while (0);
+/* All the work done in PROFILE_HOOK, but still required.  */
+#undef FUNCTION_PROFILER
+#define FUNCTION_PROFILER(STREAM, LABELNO) do { } while (0)
 
 #define NO_PROFILE_COUNTERS  1
 
 /* Trampolines.  */
 
 /* Length in units of the trampoline for entering a nested function.  */
-#define TRAMPOLINE_SIZE 20
+#define TRAMPOLINE_SIZE 16
 
 /* Alignment required for a trampoline in bits .  */
 /* For actual data alignment we just need 32, no more than the stack;
@@ -899,10 +839,10 @@ extern int arc_initial_elimination_offset(int from, int to);
    a special predicate for the memory operand of stores, like for the SH.  */
 
 /* Recognize any constant value that is a valid address.  */
-#define CONSTANT_ADDRESS_P(X) \
-(flag_pic?arc_legitimate_pic_addr_p (X): \
-(GET_CODE (X) == LABEL_REF || GET_CODE (X) == SYMBOL_REF	\
- || GET_CODE (X) == CONST_INT || GET_CODE (X) == CONST))
+#define CONSTANT_ADDRESS_P(X)					\
+  (flag_pic ? (arc_legitimate_pic_addr_p (X) || LABEL_P (X)):	\
+   (GET_CODE (X) == LABEL_REF || GET_CODE (X) == SYMBOL_REF	\
+    || GET_CODE (X) == CONST_INT || GET_CODE (X) == CONST))
 
 /* Is the argument a const_int rtx, containing an exact power of 2 */
 #define  IS_POWEROF2_P(X) (! ( (X) & ((X) - 1)) && (X))
@@ -922,18 +862,15 @@ extern int arc_initial_elimination_offset(int from, int to);
 
 /* Nonzero if X is a hard reg that can be used as an index
    or if it is a pseudo reg.  */
-#define REG_OK_FOR_INDEX_P_NONSTRICT(X) \
-((unsigned) REGNO (X) >= FIRST_PSEUDO_REGISTER || \
- (unsigned) REGNO (X) < 29 || \
- (unsigned) REGNO (X) == 63 || \
- (unsigned) REGNO (X) == ARG_POINTER_REGNUM)
+#define REG_OK_FOR_INDEX_P_NONSTRICT(X)			\
+  ((unsigned) REGNO (X) >= FIRST_PSEUDO_REGISTER	\
+   || REGNO_OK_FOR_BASE_P (REGNO (X)))
+
 /* Nonzero if X is a hard reg that can be used as a base reg
    or if it is a pseudo reg.  */
-#define REG_OK_FOR_BASE_P_NONSTRICT(X) \
-((unsigned) REGNO (X) >= FIRST_PSEUDO_REGISTER || \
- (unsigned) REGNO (X) < 29 || \
- (unsigned) REGNO (X) == 63 || \
- (unsigned) REGNO (X) == ARG_POINTER_REGNUM)
+#define REG_OK_FOR_BASE_P_NONSTRICT(X)			\
+  ((unsigned) REGNO (X) >= FIRST_PSEUDO_REGISTER	\
+   || REGNO_OK_FOR_BASE_P (REGNO (X)))
 
 /* Nonzero if X is a hard reg that can be used as an index.  */
 #define REG_OK_FOR_INDEX_P_STRICT(X) REGNO_OK_FOR_INDEX_P (REGNO (X))
@@ -987,17 +924,6 @@ arc_select_cc_mode (OP, X, Y)
 #define REVERSIBLE_CC_MODE(MODE) 1 /*???*/
 
 /* Costs.  */
-
-/* Compute extra cost of moving data between one register class
-   and another.  */
-#define REGISTER_MOVE_COST(MODE, CLASS, TO_CLASS) \
-   arc_register_move_cost ((MODE), (CLASS), (TO_CLASS))
-
-/* Compute the cost of moving data between registers and memory.  */
-/* Memory is 3 times as expensive as registers.
-   ??? Is that the right way to look at it?  */
-#define MEMORY_MOVE_COST(MODE,CLASS,IN) \
-(GET_MODE_SIZE (MODE) <= UNITS_PER_WORD ? 6 : 12)
 
 /* The cost of a branch insn.  */
 /* ??? What's the right value here?  Branches are certainly more
@@ -1084,7 +1010,8 @@ arc_select_cc_mode (OP, X, Y)
    check it either.  You need not define this macro if all constants
    (including SYMBOL_REF) can be immediate operands when generating
    position independent code.  */
-#define LEGITIMATE_PIC_OPERAND_P(X)  (arc_legitimate_pic_operand_p(X))
+#define LEGITIMATE_PIC_OPERAND_P(X)  \
+  (!arc_raw_symbolic_reference_mentioned_p ((X), true))
 
 /* PIC and small data don't mix on ARC because they use the same register.  */
 #define SDATA_BASE_REGNUM 26
@@ -1249,7 +1176,7 @@ extern char rname56[], rname57[], rname58[], rname59[];
   "r32",  "r33",  "r34",  "r35",      "r36",    "r37",    "r38",   "r39",	\
    "d1",   "d1",   "d2",   "d2",      "r44",    "r45",    "r46",   "r47",	\
   "r48",  "r49",  "r50",  "r51",      "r52",    "r53",    "r54",   "r55",	\
-  rname56,rname57,rname58,rname59,"lp_count",    "cc",     "ap",   "pcl",	\
+  rname56,rname57,rname58,rname59,"lp_count",    "cc",   "limm",   "pcl",	\
   "vr0",  "vr1",  "vr2",  "vr3",      "vr4",    "vr5",    "vr6",   "vr7",       \
   "vr8",  "vr9", "vr10", "vr11",     "vr12",   "vr13",   "vr14",  "vr15",	\
  "vr16", "vr17", "vr18", "vr19",     "vr20",   "vr21",   "vr22",  "vr23",	\
@@ -1260,7 +1187,22 @@ extern char rname56[], rname57[], rname58[], rname59[];
  "vr56", "vr57", "vr58", "vr59",     "vr60",   "vr61",   "vr62",  "vr63",	\
   "dr0",  "dr1",  "dr2",  "dr3",      "dr4",    "dr5",    "dr6",   "dr7",	\
   "dr0",  "dr1",  "dr2",  "dr3",      "dr4",    "dr5",    "dr6",   "dr7",	\
-  "lp_start", "lp_end" \
+  "arg", "frame" \
+}
+
+#define ADDITIONAL_REGISTER_NAMES		\
+{						\
+  {"ilink",  29},				\
+  {"r29",    29},				\
+  {"r30",    30},				\
+  {"r40",    40},				\
+  {"r41",    41},				\
+  {"r42",    42},				\
+  {"r43",    43},				\
+  {"r56",    56},				\
+  {"r57",    57},				\
+  {"r58",    58},				\
+  {"r59",    59}				\
 }
 
 /* Entry to the insn conditionalizer.  */
@@ -1297,29 +1239,45 @@ do {							\
   ASM_GENERATE_INTERNAL_LABEL (label, "L", VALUE);	\
   fprintf (FILE, "\t.word ");				\
   assemble_name (FILE, label);				\
-  fprintf(FILE, "\n");					\
+  fprintf (FILE, "\n");					\
 } while (0)
 
 /* This is how to output an element of a case-vector that is relative.  */
-#define ASM_OUTPUT_ADDR_DIFF_ELT(FILE, BODY, VALUE, REL) \
-do {							\
-  char label[30];					\
-  ASM_GENERATE_INTERNAL_LABEL (label, "L", VALUE);	\
-  switch (GET_MODE (BODY))				\
-    {							\
-    case QImode: fprintf (FILE, "\t.byte "); break;	\
-    case HImode: fprintf (FILE, "\t.hword "); break;	\
-    case SImode: fprintf (FILE, "\t.word "); break;	\
-    default: gcc_unreachable ();			\
-    }							\
-  assemble_name (FILE, label);				\
-  fprintf (FILE, "-");					\
-  ASM_GENERATE_INTERNAL_LABEL (label, "L", REL);	\
-  assemble_name (FILE, label);				\
-  if (TARGET_COMPACT_CASESI)				\
-    fprintf (FILE, " + %d", 4 + arc_get_unalign ());	\
-  fprintf(FILE, "\n");                                  \
-} while (0)
+#define ASM_OUTPUT_ADDR_DIFF_ELT(FILE, BODY, VALUE, REL)	\
+  do {								\
+    char label[30];						\
+    ASM_GENERATE_INTERNAL_LABEL (label, "L", VALUE);		\
+    if (!TARGET_BI_BIH)						\
+      {								\
+	switch (GET_MODE (BODY))				\
+	  {							\
+	  case E_QImode: fprintf (FILE, "\t.byte "); break;	\
+	  case E_HImode: fprintf (FILE, "\t.hword "); break;	\
+	  case E_SImode: fprintf (FILE, "\t.word "); break;	\
+	  default: gcc_unreachable ();				\
+	  }							\
+	assemble_name (FILE, label);				\
+	fprintf (FILE, "-");					\
+	ASM_GENERATE_INTERNAL_LABEL (label, "L", REL);		\
+	assemble_name (FILE, label);				\
+	fprintf (FILE, "\n");					\
+      }								\
+    else							\
+      {								\
+      switch (GET_MODE (BODY))					\
+	{							\
+	case E_SImode: fprintf (FILE, "\tb\t@"); break;		\
+	case E_HImode:						\
+	case E_QImode: fprintf (FILE, "\tb_s\t@"); break;	\
+	default: gcc_unreachable ();				\
+	}							\
+      assemble_name (FILE, label);				\
+      fprintf(FILE, "\n");					\
+    }								\
+  } while (0)
+
+/* Defined to also emit an .align in elfos.h.  We don't want that.  */
+#undef ASM_OUTPUT_CASE_LABEL
 
 /* ADDR_DIFF_VECs are in the text section and thus can affect the
    current alignment.  */
@@ -1327,7 +1285,8 @@ do {							\
   do                                                    \
     {                                                   \
       if (GET_CODE (PATTERN (JUMPTABLE)) == ADDR_DIFF_VEC \
-	  && ((GET_MODE_SIZE (GET_MODE (PATTERN (JUMPTABLE))) \
+	  && ((GET_MODE_SIZE (as_a <scalar_int_mode>	\
+			      (GET_MODE (PATTERN (JUMPTABLE)))) \
 	       * XVECLEN (PATTERN (JUMPTABLE), 1) + 1)	\
 	      & 2))					\
       arc_toggle_unalign ();				\
@@ -1344,7 +1303,7 @@ do {							\
    of a loop.  */
 /* On the ARC, align loops to 4 byte boundaries unless doing all-out size
    optimization.  */
-#define LOOP_ALIGN JUMP_ALIGN
+#define LOOP_ALIGN(X) 0
 
 #define LABEL_ALIGN(LABEL) (arc_label_align (LABEL))
 
@@ -1363,10 +1322,6 @@ do { \
     chose what to output.  */
 #define ASM_OUTPUT_ALIGNED_DECL_LOCAL(STREAM, DECL, NAME, SIZE, ALIGNMENT) \
   arc_asm_output_aligned_decl_local (STREAM, DECL, NAME, SIZE, ALIGNMENT, 0)
-
-/* To translate the return value of arc_function_type into a register number
-   to jump through for function return.  */
-extern int arc_return_address_regs[4];
 
 /* Debugging information.  */
 
@@ -1405,8 +1360,9 @@ extern int arc_return_address_regs[4];
 
 /* Frame info.  */
 
-#define EH_RETURN_DATA_REGNO(N)	\
-  ((N) < 4 ? (N) : INVALID_REGNUM)
+#define EH_RETURN_DATA_REGNO(N)  ((N) < 2 ? (N) : INVALID_REGNUM)
+
+#define EH_RETURN_STACKADJ_RTX   gen_rtx_REG (Pmode, 2)
 
 /* Turn off splitting of long stabs.  */
 #define DBX_CONTIN_LENGTH 0
@@ -1417,35 +1373,34 @@ extern int arc_return_address_regs[4];
    for the index in the tablejump instruction.
    If we have pc relative case vectors, we start the case vector shortening
    with QImode.  */
-#define CASE_VECTOR_MODE \
-  ((optimize && (CASE_VECTOR_PC_RELATIVE || flag_pic)) ? QImode : Pmode)
+#define CASE_VECTOR_MODE						\
+  (TARGET_BI_BIH ? SImode						\
+   : (optimize && (CASE_VECTOR_PC_RELATIVE || flag_pic)) ? QImode : Pmode)
 
 /* Define as C expression which evaluates to nonzero if the tablejump
    instruction expects the table to contain offsets from the address of the
    table.
    Do not define this if the table should contain absolute addresses.  */
-#define CASE_VECTOR_PC_RELATIVE TARGET_CASE_VECTOR_PC_RELATIVE
+#define CASE_VECTOR_PC_RELATIVE					\
+  (TARGET_CASE_VECTOR_PC_RELATIVE || TARGET_BI_BIH)
 
-#define CASE_VECTOR_SHORTEN_MODE(MIN_OFFSET, MAX_OFFSET, BODY) \
-  CASE_VECTOR_SHORTEN_MODE_1 \
-    (MIN_OFFSET, TARGET_COMPACT_CASESI ? MAX_OFFSET + 6 : MAX_OFFSET, BODY)
+#define CASE_VECTOR_SHORTEN_MODE(MIN_OFFSET, MAX_OFFSET, BODY)		\
+  (TARGET_BI_BIH ?						\
+   ((MIN_OFFSET) >= -512 && (MAX_OFFSET) <= 508 ? HImode : SImode)	\
+   : ((MIN_OFFSET) >= 0 && (MAX_OFFSET) <= 255				\
+      ? (ADDR_DIFF_VEC_FLAGS (BODY).offset_unsigned = 1, QImode)	\
+      : (MIN_OFFSET) >= -128 && (MAX_OFFSET) <= 127			\
+      ? (ADDR_DIFF_VEC_FLAGS (BODY).offset_unsigned = 0, QImode)	\
+      : (MIN_OFFSET) >= 0 && (MAX_OFFSET) <= 65535			\
+      ? (ADDR_DIFF_VEC_FLAGS (BODY).offset_unsigned = 1, HImode)	\
+      : (MIN_OFFSET) >= -32768 && (MAX_OFFSET) <= 32767			\
+      ? (ADDR_DIFF_VEC_FLAGS (BODY).offset_unsigned = 0, HImode)	\
+      : SImode))
 
-#define CASE_VECTOR_SHORTEN_MODE_1(MIN_OFFSET, MAX_OFFSET, BODY) \
-((MIN_OFFSET) >= 0 && (MAX_OFFSET) <= 255 \
- ? (ADDR_DIFF_VEC_FLAGS (BODY).offset_unsigned = 1, QImode) \
- : (MIN_OFFSET) >= -128 && (MAX_OFFSET) <= 127 \
- ? (ADDR_DIFF_VEC_FLAGS (BODY).offset_unsigned = 0, QImode) \
- : (MIN_OFFSET) >= 0 && (MAX_OFFSET) <= 65535 \
- ? (ADDR_DIFF_VEC_FLAGS (BODY).offset_unsigned = 1, HImode) \
- : (MIN_OFFSET) >= -32768 && (MAX_OFFSET) <= 32767 \
- ? (ADDR_DIFF_VEC_FLAGS (BODY).offset_unsigned = 0, HImode) \
- : SImode)
-
-#define ADDR_VEC_ALIGN(VEC_INSN) \
-  (exact_log2 (GET_MODE_SIZE (GET_MODE (PATTERN (VEC_INSN)))))
-#undef ASM_OUTPUT_BEFORE_CASE_LABEL
-#define ASM_OUTPUT_BEFORE_CASE_LABEL(FILE, PREFIX, NUM, TABLE) \
-  ASM_OUTPUT_ALIGN ((FILE), ADDR_VEC_ALIGN (TABLE));
+#define ADDR_VEC_ALIGN(VEC_INSN)					\
+  (TARGET_BI_BIH ? 0							\
+   : exact_log2 (GET_MODE_SIZE (as_a <scalar_int_mode>			\
+				(GET_MODE (PATTERN (VEC_INSN))))))
 
 #define INSN_LENGTH_ALIGNMENT(INSN)		  \
   ((JUMP_TABLE_DATA_P (INSN)			  \
@@ -1476,10 +1431,6 @@ extern int arc_return_address_regs[4];
 */
 #define SHIFT_COUNT_TRUNCATED 1
 
-/* Value is 1 if truncating an integer of INPREC bits to OUTPREC bits
-   is done just by pretending it is already truncated.  */
-#define TRULY_NOOP_TRUNCATION(OUTPREC, INPREC) 1
-
 /* We assume that the store-condition-codes instructions store 0 for false
    and some other value for true.  This is the value stored for true.  */
 #define STORE_FLAG_VALUE 1
@@ -1500,17 +1451,38 @@ extern struct rtx_def *arc_compare_op0, *arc_compare_op1;
 
 /* ARC function types.   */
 enum arc_function_type {
-  ARC_FUNCTION_UNKNOWN, ARC_FUNCTION_NORMAL,
+  /* No function should have the unknown type.  This value is used to
+   indicate the that function type has not yet been computed.  */
+  ARC_FUNCTION_UNKNOWN  = 0,
+
+  /* The normal function type indicates that the function has the
+   standard prologue and epilogue.  */
+  ARC_FUNCTION_NORMAL  = 1 << 0,
   /* These are interrupt handlers.  The name corresponds to the register
      name that contains the return address.  */
-  ARC_FUNCTION_ILINK1, ARC_FUNCTION_ILINK2
+  ARC_FUNCTION_ILINK1  = 1 << 1,
+  ARC_FUNCTION_ILINK2  = 1 << 2,
+  /* Fast interrupt is only available on ARCv2 processors.  */
+  ARC_FUNCTION_FIRQ    = 1 << 3,
+  /* The naked function type indicates that the function does not have
+   prologue or epilogue, and that no stack frame is available.  */
+  ARC_FUNCTION_NAKED   = 1 << 4
 };
-#define ARC_INTERRUPT_P(TYPE) \
-((TYPE) == ARC_FUNCTION_ILINK1 || (TYPE) == ARC_FUNCTION_ILINK2)
 
-/* Compute the type of a function from its DECL.  Needed for EPILOGUE_USES.  */
-struct function;
-extern enum arc_function_type arc_compute_function_type (struct function *);
+/* Check if a function is an interrupt function.  */
+#define ARC_INTERRUPT_P(TYPE)					\
+  (((TYPE) & (ARC_FUNCTION_ILINK1 | ARC_FUNCTION_ILINK2		\
+	      | ARC_FUNCTION_FIRQ)) != 0)
+
+/* Check if a function is a fast interrupt function.  */
+#define ARC_FAST_INTERRUPT_P(TYPE) (((TYPE) & ARC_FUNCTION_FIRQ) != 0)
+
+/* Check if a function is normal, that is, has standard prologue and
+   epilogue.  */
+#define ARC_NORMAL_P(TYPE) (((TYPE) & ARC_FUNCTION_NORMAL) != 0)
+
+/* Check if a function is naked.  */
+#define ARC_NAKED_P(TYPE) (((TYPE) & ARC_FUNCTION_NAKED) != 0)
 
 /* Called by crtstuff.c to make calls to function FUNCTION that are defined in
    SECTION_OP, and then to switch back to text section.  */
@@ -1558,7 +1530,7 @@ extern enum arc_function_type arc_compute_function_type (struct function *);
   (((MODE) == CC_FP_GTmode || (MODE) == CC_FP_GEmode		 \
     || (MODE) == CC_FP_UNEQmode || (MODE) == CC_FP_ORDmode	 \
     || (MODE) == CC_FPXmode || (MODE) == CC_FPU_UNEQmode	 \
-    || (MODE) == CC_FPUmode)					 \
+    || (MODE) == CC_FPUmode || (MODE) == CC_FPUEmode)		 \
    ? reverse_condition_maybe_unordered ((CODE))			 \
    : reverse_condition ((CODE)))
 
@@ -1648,5 +1620,17 @@ enum
 /* Custom FP instructions used by QuarkSE EM cpu.  */
 #define TARGET_FPX_QUARK    (TARGET_EM && TARGET_SPFP		\
 			     && (arc_fpu_build == FPX_QK))
+/* DBNZ support is available for ARCv2 core3 and newer cpus.  */
+#define TARGET_DBNZ (TARGET_V2 && (arc_tune >= ARC_TUNE_CORE_3))
+
+/* BI/BIH feature macro.  */
+#define TARGET_BI_BIH (TARGET_BRANCH_INDEX && TARGET_CODE_DENSITY)
+
+/* The default option for BI/BIH instructions.  */
+#define DEFAULT_BRANCH_INDEX 0
+
+#ifndef TARGET_LRA
+#define TARGET_LRA arc_lra_p()
+#endif
 
 #endif /* GCC_ARC_H */

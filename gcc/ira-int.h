@@ -1,5 +1,5 @@
 /* Integrated Register Allocator (IRA) intercommunication header file.
-   Copyright (C) 2006-2017 Free Software Foundation, Inc.
+   Copyright (C) 2006-2019 Free Software Foundation, Inc.
    Contributed by Vladimir Makarov <vmakarov@redhat.com>.
 
 This file is part of GCC.
@@ -107,7 +107,7 @@ struct ira_loop_tree_node
 
   /* Allocnos in the loop corresponding to their regnos.  If it is
      NULL the loop does not form a separate register allocation region
-     (e.g. because it has abnormal enter/exit edges and we can not put
+     (e.g. because it has abnormal enter/exit edges and we cannot put
      code for register shuffling on the edges if a different
      allocation is used for a pseudo-register on different sides of
      the edges).  Caps are not in the map (remember we can have more
@@ -145,7 +145,7 @@ extern ira_loop_tree_node_t ira_loop_tree_root;
 extern int ira_loop_tree_height;
 
 /* All nodes representing basic blocks are referred through the
-   following array.  We can not use basic block member `aux' for this
+   following array.  We cannot use basic block member `aux' for this
    because it is used for insertion of insns on edges.  */
 extern ira_loop_tree_node_t ira_bb_nodes;
 
@@ -250,7 +250,7 @@ struct ira_object
      of other ira_objects that this one can conflict with.  */
   int min, max;
   /* Initial and accumulated hard registers conflicting with this
-     object and as a consequences can not be assigned to the allocno.
+     object and as a consequences cannot be assigned to the allocno.
      All non-allocatable hard regs and hard regs of register classes
      different from given allocno one are included in the sets.  */
   HARD_REG_SET conflict_hard_regs, total_conflict_hard_regs;
@@ -604,7 +604,7 @@ struct ira_spilled_reg_stack_slot
   /* RTL representation of the stack slot.  */
   rtx mem;
   /* Size of the stack slot.  */
-  unsigned int width;
+  poly_uint64_pod width;
 };
 
 /* The number of elements in the following array.  */
@@ -795,7 +795,7 @@ struct target_ira_int {
   struct costs *x_op_costs[MAX_RECOG_OPERANDS];
   struct costs *x_this_op_costs[MAX_RECOG_OPERANDS];
 
-  /* Hard registers that can not be used for the register allocator for
+  /* Hard registers that cannot be used for the register allocator for
      all functions of the current compilation unit.  */
   HARD_REG_SET x_no_unit_alloc_regs;
 
@@ -1393,7 +1393,7 @@ ira_hard_reg_set_intersection_p (int hard_regno, machine_mode mode,
   int i;
 
   gcc_assert (hard_regno >= 0);
-  for (i = hard_regno_nregs[hard_regno][mode] - 1; i >= 0; i--)
+  for (i = hard_regno_nregs (hard_regno, mode) - 1; i >= 0; i--)
     if (TEST_HARD_REG_BIT (hard_regset, hard_regno + i))
       return true;
   return false;
@@ -1421,7 +1421,7 @@ ira_hard_reg_in_set_p (int hard_regno, machine_mode mode,
   int i;
 
   ira_assert (hard_regno >= 0);
-  for (i = hard_regno_nregs[hard_regno][mode] - 1; i >= 0; i--)
+  for (i = hard_regno_nregs (hard_regno, mode) - 1; i >= 0; i--)
     if (!TEST_HARD_REG_BIT (hard_regset, hard_regno + i))
       return false;
   return true;

@@ -1,5 +1,5 @@
 // -*- C++ -*- Allocate exception objects.
-// Copyright (C) 2001-2017 Free Software Foundation, Inc.
+// Copyright (C) 2001-2019 Free Software Foundation, Inc.
 //
 // This file is part of GCC.
 //
@@ -86,7 +86,7 @@ namespace
     public:
       pool();
 
-      void *allocate (std::size_t);
+      _GLIBCXX_NODISCARD void *allocate (std::size_t);
       void free (void *);
 
       bool in_pool (void *);
@@ -162,7 +162,7 @@ namespace
       allocated_entry *x;
       if ((*e)->size - size >= sizeof (free_entry))
 	{
-	  // Slit block if it is too large.
+	  // Split block if it is too large.
 	  free_entry *f = reinterpret_cast <free_entry *>
 	      (reinterpret_cast <char *> (*e) + size);
 	  std::size_t sz = (*e)->size;

@@ -1,5 +1,5 @@
 /* Discovery of auto-inc and auto-dec instructions.
-   Copyright (C) 2006-2017 Free Software Foundation, Inc.
+   Copyright (C) 2006-2019 Free Software Foundation, Inc.
    Contributed by Kenneth Zadeck <zadeck@naturalbridge.com>
 
 This file is part of GCC.
@@ -36,6 +36,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-pass.h"
 #include "dbgcnt.h"
 #include "print-rtl.h"
+#include "valtrack.h"
 
 /* This pass was originally removed from flow.c. However there is
    almost nothing that remains of that code.
@@ -53,6 +54,21 @@ along with GCC; see the file COPYING3.  If not see
            ...
            *(a += c) pre
 
+        or, alternately,
+
+           a <- b + c
+           ...
+           *b
+
+        becomes
+
+           a <- b
+           ...
+           *(a += c) post
+
+        This uses a post-add, but it's handled as FORM_PRE_ADD because
+        the "increment" insn appears before the memory access.
+
 
       (2) FORM_PRE_INC
            a += c
@@ -61,6 +77,7 @@ along with GCC; see the file COPYING3.  If not see
 
         becomes
 
+           ...
            *(a += c) pre
 
 
@@ -75,8 +92,8 @@ along with GCC; see the file COPYING3.  If not see
         becomes
 
            b <- a
-           ...
            *(b += c) post
+           ...
 
 
       (4) FORM_POST_INC
@@ -87,6 +104,8 @@ along with GCC; see the file COPYING3.  If not see
         becomes
 
            *(a += c) post
+           ...
+
 
   There are three types of values of c.
 
@@ -152,14 +171,14 @@ enum gen_form
 static rtx mem_tmp;
 
 static enum inc_state
-set_inc_state (HOST_WIDE_INT val, int size)
+set_inc_state (HOST_WIDE_INT val, poly_int64 size)
 {
   if (val == 0)
     return INC_ZERO;
   if (val < 0)
-    return (val == -size) ? INC_NEG_SIZE : INC_NEG_ANY;
+    return known_eq (val, -size) ? INC_NEG_SIZE : INC_NEG_ANY;
   else
-    return (val == size) ? INC_POS_SIZE : INC_POS_ANY;
+    return known_eq (val, size) ? INC_POS_SIZE : INC_POS_ANY;
 }
 
 /* The DECISION_TABLE that describes what form, if any, the increment
@@ -393,6 +412,7 @@ dump_mem_insn (FILE *file)
    must be compared with the current block.
 */
 
+static rtx_insn **reg_next_debug_use = NULL;
 static rtx_insn **reg_next_use = NULL;
 static rtx_insn **reg_next_inc_use = NULL;
 static rtx_insn **reg_next_def = NULL;
@@ -451,6 +471,7 @@ attempt_change (rtx new_addr, rtx inc_reg)
   int regno;
   rtx mem = *mem_insn.mem_loc;
   machine_mode mode = GET_MODE (mem);
+  int align = MEM_ALIGN (mem);
   rtx new_mem;
   int old_cost = 0;
   int new_cost = 0;
@@ -458,6 +479,7 @@ attempt_change (rtx new_addr, rtx inc_reg)
 
   PUT_MODE (mem_tmp, mode);
   XEXP (mem_tmp, 0) = new_addr;
+  set_mem_align (mem_tmp, align);
 
   old_cost = (set_src_cost (mem, mode, speed)
 	      + set_rtx_cost (PATTERN (inc_insn.insn), speed));
@@ -508,24 +530,84 @@ attempt_change (rtx new_addr, rtx inc_reg)
 	 before the memory reference.  */
       gcc_assert (mov_insn);
       emit_insn_before (mov_insn, inc_insn.insn);
-      move_dead_notes (mov_insn, inc_insn.insn, inc_insn.reg0);
+      regno = REGNO (inc_insn.reg0);
+      /* ??? Could REGNO possibly be used in MEM_INSN other than in
+	 the MEM address, and still die there, so that move_dead_notes
+	 would incorrectly move the note?  */
+      if (reg_next_use[regno] == mem_insn.insn)
+	move_dead_notes (mov_insn, mem_insn.insn, inc_insn.reg0);
+      else
+	move_dead_notes (mov_insn, inc_insn.insn, inc_insn.reg0);
 
       regno = REGNO (inc_insn.reg_res);
+      if (reg_next_debug_use && reg_next_debug_use[regno]
+	  && BLOCK_FOR_INSN (reg_next_debug_use[regno]) == bb)
+	{
+	  rtx adjres = gen_rtx_PLUS (GET_MODE (inc_insn.reg_res),
+				     inc_insn.reg_res, inc_insn.reg1);
+	  if (dump_file)
+	    fprintf (dump_file, "adjusting debug insns\n");
+	  propagate_for_debug (PREV_INSN (reg_next_debug_use[regno]),
+			       mem_insn.insn,
+			       inc_insn.reg_res, adjres, bb);
+	  reg_next_debug_use[regno] = NULL;
+	}
       reg_next_def[regno] = mov_insn;
       reg_next_use[regno] = NULL;
+
       regno = REGNO (inc_insn.reg0);
+      if (reg_next_debug_use && reg_next_debug_use[regno]
+	  && BLOCK_FOR_INSN (reg_next_debug_use[regno]) == bb
+	  && find_reg_note (mov_insn, REG_DEAD, inc_insn.reg0))
+	{
+	  if (dump_file)
+	    fprintf (dump_file, "remapping debug insns\n");
+	  propagate_for_debug (PREV_INSN (reg_next_debug_use[regno]),
+			       mem_insn.insn,
+			       inc_insn.reg0, inc_insn.reg_res, bb);
+	  reg_next_debug_use[regno] = NULL;
+	}
       reg_next_use[regno] = mov_insn;
       df_recompute_luids (bb);
       break;
 
     case FORM_POST_INC:
       regno = REGNO (inc_insn.reg_res);
+      if (reg_next_debug_use && reg_next_debug_use[regno]
+	  && BLOCK_FOR_INSN (reg_next_debug_use[regno]) == bb)
+	{
+	  rtx adjres = gen_rtx_MINUS (GET_MODE (inc_insn.reg_res),
+				      inc_insn.reg_res, inc_insn.reg1);
+	  if (dump_file)
+	    fprintf (dump_file, "adjusting debug insns\n");
+	  propagate_for_debug (PREV_INSN (reg_next_debug_use[regno]),
+			       inc_insn.insn,
+			       inc_insn.reg_res, adjres, bb);
+	  reg_next_debug_use[regno] = NULL;
+	}
       if (reg_next_use[regno] == reg_next_inc_use[regno])
 	reg_next_inc_use[regno] = NULL;
 
       /* Fallthru.  */
     case FORM_PRE_INC:
       regno = REGNO (inc_insn.reg_res);
+      /* Despite the fall-through, we won't run this twice: we'll have
+	 already cleared reg_next_debug_use[regno] before falling
+	 through.  */
+      if (reg_next_debug_use && reg_next_debug_use[regno]
+	  && BLOCK_FOR_INSN (reg_next_debug_use[regno]) == bb)
+	{
+	  rtx adjres = gen_rtx_PLUS (GET_MODE (inc_insn.reg_res),
+				     inc_insn.reg_res, inc_insn.reg1);
+	  if (dump_file)
+	    fprintf (dump_file, "adjusting debug insns\n");
+	  propagate_for_debug (PREV_INSN (reg_next_debug_use[regno]),
+			       mem_insn.insn,
+			       inc_insn.reg_res, adjres, bb);
+	  if (DF_INSN_LUID (mem_insn.insn)
+	      < DF_INSN_LUID (reg_next_debug_use[regno]))
+	    reg_next_debug_use[regno] = NULL;
+	}
       reg_next_def[regno] = mem_insn.insn;
       reg_next_use[regno] = NULL;
 
@@ -540,10 +622,26 @@ attempt_change (rtx new_addr, rtx inc_reg)
 	 pointer for the main iteration has not yet hit that.  It is
 	 still pointing to the mem insn. */
       regno = REGNO (inc_insn.reg_res);
+      /* The pseudo is now set earlier, so it must have been dead in
+	 that range, and dead registers cannot be referenced in debug
+	 insns.  */
+      gcc_assert (!(reg_next_debug_use && reg_next_debug_use[regno]
+		    && BLOCK_FOR_INSN (reg_next_debug_use[regno]) == bb));
       reg_next_def[regno] = mem_insn.insn;
       reg_next_use[regno] = NULL;
 
       regno = REGNO (inc_insn.reg0);
+      if (reg_next_debug_use && reg_next_debug_use[regno]
+	  && BLOCK_FOR_INSN (reg_next_debug_use[regno]) == bb
+	  && find_reg_note (mov_insn, REG_DEAD, inc_insn.reg0))
+	{
+	  if (dump_file)
+	    fprintf (dump_file, "remapping debug insns\n");
+	  propagate_for_debug (PREV_INSN (reg_next_debug_use[regno]),
+			       inc_insn.insn,
+			       inc_insn.reg0, inc_insn.reg_res, bb);
+	  reg_next_debug_use[regno] = NULL;
+	}
       reg_next_use[regno] = mem_insn.insn;
       if ((reg_next_use[regno] == reg_next_inc_use[regno])
 	  || (reg_next_inc_use[regno] == inc_insn.insn))
@@ -601,7 +699,7 @@ try_merge (void)
     inc_insn.reg_res : mem_insn.reg0;
 
   /* The width of the mem being accessed.  */
-  int size = GET_MODE_SIZE (GET_MODE (mem));
+  poly_int64 size = GET_MODE_SIZE (GET_MODE (mem));
   rtx_insn *last_insn = NULL;
   machine_mode reg_mode = GET_MODE (inc_reg);
 
@@ -769,6 +867,12 @@ parse_add_or_inc (rtx_insn *insn, bool before_mem)
   inc_insn.pat = pat;
   inc_insn.reg_res = SET_DEST (pat);
   inc_insn.reg0 = XEXP (SET_SRC (pat), 0);
+
+  /* Block any auto increment of the frame pointer since it expands into
+     an addition and cannot be removed by copy propagation.  */
+  if (inc_insn.reg0 == frame_pointer_rtx)
+    return false;
+
   if (rtx_equal_p (inc_insn.reg_res, inc_insn.reg0))
     inc_insn.form = before_mem ? FORM_PRE_INC : FORM_POST_INC;
   else
@@ -819,13 +923,15 @@ parse_add_or_inc (rtx_insn *insn, bool before_mem)
 
 /* A recursive function that checks all of the mem uses in
    ADDRESS_OF_X to see if any single one of them is compatible with
-   what has been found in inc_insn.
+   what has been found in inc_insn.  To avoid accidental matches, we
+   will only find MEMs with FINDREG, be it inc_insn.reg_res, be it
+   inc_insn.reg0.
 
    -1 is returned for success.  0 is returned if nothing was found and
    1 is returned for failure. */
 
 static int
-find_address (rtx *address_of_x)
+find_address (rtx *address_of_x, rtx findreg)
 {
   rtx x = *address_of_x;
   enum rtx_code code = GET_CODE (x);
@@ -834,9 +940,10 @@ find_address (rtx *address_of_x)
   int value = 0;
   int tem;
 
-  if (code == MEM && rtx_equal_p (XEXP (x, 0), inc_insn.reg_res))
+  if (code == MEM && findreg == inc_insn.reg_res
+      && rtx_equal_p (XEXP (x, 0), inc_insn.reg_res))
     {
-      /* Match with *reg0.  */
+      /* Match with *reg_res.  */
       mem_insn.mem_loc = address_of_x;
       mem_insn.reg0 = inc_insn.reg_res;
       mem_insn.reg1_is_const = true;
@@ -844,7 +951,21 @@ find_address (rtx *address_of_x)
       mem_insn.reg1 = GEN_INT (0);
       return -1;
     }
-  if (code == MEM && GET_CODE (XEXP (x, 0)) == PLUS
+  if (code == MEM && inc_insn.reg1_is_const && inc_insn.reg0
+      && findreg == inc_insn.reg0
+      && rtx_equal_p (XEXP (x, 0), inc_insn.reg0))
+    {
+      /* Match with *reg0, assumed to be equivalent to
+         *(reg_res - reg1_val); callers must check whether this is the case.  */
+      mem_insn.mem_loc = address_of_x;
+      mem_insn.reg0 = inc_insn.reg_res;
+      mem_insn.reg1_is_const = true;
+      mem_insn.reg1_val = -inc_insn.reg1_val;
+      mem_insn.reg1 = GEN_INT (mem_insn.reg1_val);
+      return -1;
+    }
+  if (code == MEM && findreg == inc_insn.reg_res
+      && GET_CODE (XEXP (x, 0)) == PLUS
       && rtx_equal_p (XEXP (XEXP (x, 0), 0), inc_insn.reg_res))
     {
       rtx b = XEXP (XEXP (x, 0), 1);
@@ -873,7 +994,7 @@ find_address (rtx *address_of_x)
     {
       /* If REG occurs inside a MEM used in a bit-field reference,
 	 that is unacceptable.  */
-      if (find_address (&XEXP (x, 0)))
+      if (find_address (&XEXP (x, 0), findreg))
 	return 1;
     }
 
@@ -885,7 +1006,7 @@ find_address (rtx *address_of_x)
     {
       if (fmt[i] == 'e')
 	{
-	  tem = find_address (&XEXP (x, i));
+	  tem = find_address (&XEXP (x, i), findreg);
 	  /* If this is the first use, let it go so the rest of the
 	     insn can be checked.  */
 	  if (value == 0)
@@ -899,7 +1020,7 @@ find_address (rtx *address_of_x)
 	  int j;
 	  for (j = XVECLEN (x, i) - 1; j >= 0; j--)
 	    {
-	      tem = find_address (&XVECEXP (x, i, j));
+	      tem = find_address (&XVECEXP (x, i, j), findreg);
 	      /* If this is the first use, let it go so the rest of
 		 the insn can be checked.  */
 	      if (value == 0)
@@ -1305,7 +1426,20 @@ merge_in_block (int max_reg, basic_block bb)
       bool insn_is_add_or_inc = true;
 
       if (!NONDEBUG_INSN_P (insn))
-	continue;
+	{
+	  if (DEBUG_BIND_INSN_P (insn))
+	    {
+	      df_insn_info *insn_info = DF_INSN_INFO_GET (insn);
+	      df_ref use;
+
+	      if (dump_file)
+		dump_insn_slim (dump_file, insn);
+
+	      FOR_EACH_INSN_INFO_USE (use, insn_info)
+		reg_next_debug_use[DF_REF_REGNO (use)] = insn;
+	    }
+	  continue;
+	}
 
       /* This continue is deliberate.  We do not want the uses of the
 	 jump put into reg_next_use because it is not considered safe to
@@ -1354,7 +1488,106 @@ merge_in_block (int max_reg, basic_block bb)
 		  if (dump_file)
 		    dump_inc_insn (dump_file);
 
-		  if (ok && find_address (&PATTERN (mem_insn.insn)) == -1)
+		  if (ok && find_address (&PATTERN (mem_insn.insn),
+					  inc_insn.reg_res) == -1)
+		    {
+		      if (dump_file)
+			dump_mem_insn (dump_file);
+		      if (try_merge ())
+			{
+			  success_in_block++;
+			  insn_is_add_or_inc = false;
+			}
+		    }
+		}
+
+	      if (insn_is_add_or_inc
+		  /* find_address will only recognize an address
+		     with a reg0 that's not reg_res when
+		     reg1_is_const, so cut it off early if we
+		     already know it won't match.  */
+		  && inc_insn.reg1_is_const
+		  && inc_insn.reg0
+		  && inc_insn.reg0 != inc_insn.reg_res)
+		{
+		  /* If we identified an inc_insn that uses two
+		     different pseudos, it's of the form
+
+		     (set reg_res (plus reg0 reg1))
+
+		     where reg1 is a constant (*).
+
+		     The next use of reg_res was not identified by
+		     find_address as a mem_insn that we could turn
+		     into auto-inc, so see if we find a suitable
+		     MEM in the next use of reg0, as long as it's
+		     before any subsequent use of reg_res:
+
+		     ... (mem (... reg0 ...)) ...
+
+		     ... reg_res ...
+
+		     In this case, we can turn the plus into a
+		     copy, and the reg0 in the MEM address into a
+		     post_inc of reg_res:
+
+		     (set reg_res reg0)
+
+		     ... (mem (... (post_add reg_res reg1) ...)) ...
+
+		     reg_res will then have the correct value at
+		     subsequent uses, and reg0 will remain
+		     unchanged.
+
+		     (*) We could support non-const reg1, but then
+		     we'd have to check that reg1 remains
+		     unchanged all the way to the modified MEM,
+		     and we'd have to extend find_address to
+		     represent a non-const negated reg1.  */
+		  regno = REGNO (inc_insn.reg0);
+		  rtx_insn *reg0_use = get_next_ref (regno, bb,
+						     reg_next_use);
+
+		  /* Give up if the next use of reg0 is after the next
+		     use of reg_res (same insn is ok; we might have
+		     found a MEM with reg_res before, and that failed,
+		     but now we try reg0, which might work), or defs
+		     of reg_res (same insn is not ok, we'd introduce
+		     another def in the same insn) or reg0.  */
+		  if (reg0_use)
+		    {
+		      int luid = DF_INSN_LUID (reg0_use);
+
+		      /* It might seem pointless to introduce an
+			 auto-inc if there's no subsequent use of
+			 reg_res (i.e., mem_insn.insn == NULL), but
+			 the next use might be in the next iteration
+			 of a loop, and it won't hurt if we make the
+			 change even if it's not needed.  */
+		      if (mem_insn.insn
+			  && luid > DF_INSN_LUID (mem_insn.insn))
+			reg0_use = NULL;
+
+		      rtx_insn *other_insn
+			= get_next_ref (REGNO (inc_insn.reg_res), bb,
+					reg_next_def);
+
+		      if (other_insn && luid >= DF_INSN_LUID (other_insn))
+			reg0_use = NULL;
+
+		      other_insn
+			= get_next_ref (REGNO (inc_insn.reg0), bb,
+					reg_next_def);
+
+		      if (other_insn && luid > DF_INSN_LUID (other_insn))
+			reg0_use = NULL;
+		    }
+
+		  mem_insn.insn = reg0_use;
+
+		  if (mem_insn.insn
+		      && find_address (&PATTERN (mem_insn.insn),
+				       inc_insn.reg0) == -1)
 		    {
 		      if (dump_file)
 			dump_mem_insn (dump_file);
@@ -1384,6 +1617,8 @@ merge_in_block (int max_reg, basic_block bb)
 	  /* Need to update next use.  */
 	  FOR_EACH_INSN_INFO_DEF (def, insn_info)
 	    {
+	      if (reg_next_debug_use)
+		reg_next_debug_use[DF_REF_REGNO (def)] = NULL;
 	      reg_next_use[DF_REF_REGNO (def)] = NULL;
 	      reg_next_inc_use[DF_REF_REGNO (def)] = NULL;
 	      reg_next_def[DF_REF_REGNO (def)] = insn;
@@ -1391,6 +1626,13 @@ merge_in_block (int max_reg, basic_block bb)
 
 	  FOR_EACH_INSN_INFO_USE (use, insn_info)
 	    {
+	      if (reg_next_debug_use)
+		/* This may seem surprising, but we know we may only
+		   modify the value of a REG between an insn and the
+		   next nondebug use thereof.  Any debug uses after
+		   the next nondebug use can be left alone, the REG
+		   will hold the expected value there.  */
+		reg_next_debug_use[DF_REF_REGNO (use)] = NULL;
 	      reg_next_use[DF_REF_REGNO (use)] = insn;
 	      if (insn_is_add_or_inc)
 		reg_next_inc_use[DF_REF_REGNO (use)] = insn;
@@ -1410,6 +1652,8 @@ merge_in_block (int max_reg, basic_block bb)
     {
       /* In this case, we must clear these vectors since the trick of
 	 testing if the stale insn in the block will not work.  */
+      if (reg_next_debug_use)
+	memset (reg_next_debug_use, 0, max_reg * sizeof (rtx));
       memset (reg_next_use, 0, max_reg * sizeof (rtx));
       memset (reg_next_inc_use, 0, max_reg * sizeof (rtx));
       memset (reg_next_def, 0, max_reg * sizeof (rtx));
@@ -1473,12 +1717,18 @@ pass_inc_dec::execute (function *fun ATTRIBUTE_UNUSED)
   df_note_add_problem ();
   df_analyze ();
 
+  if (MAY_HAVE_DEBUG_BIND_INSNS)
+    reg_next_debug_use = XCNEWVEC (rtx_insn *, max_reg);
+  else
+    /* An earlier function may have had debug binds.  */
+    reg_next_debug_use = NULL;
   reg_next_use = XCNEWVEC (rtx_insn *, max_reg);
   reg_next_inc_use = XCNEWVEC (rtx_insn *, max_reg);
   reg_next_def = XCNEWVEC (rtx_insn *, max_reg);
   FOR_EACH_BB_FN (bb, fun)
     merge_in_block (max_reg, bb);
 
+  free (reg_next_debug_use);
   free (reg_next_use);
   free (reg_next_inc_use);
   free (reg_next_def);

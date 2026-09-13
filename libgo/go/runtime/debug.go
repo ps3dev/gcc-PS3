@@ -15,9 +15,10 @@ import (
 // The number of logical CPUs on the local machine can be queried with NumCPU.
 // This call will go away when the scheduler improves.
 func GOMAXPROCS(n int) int {
-	if n > _MaxGomaxprocs {
-		n = _MaxGomaxprocs
+	if GOARCH == "wasm" && n > 1 {
+		n = 1 // WebAssembly has no threads yet, so only one CPU is possible.
 	}
+
 	lock(&sched.lock)
 	ret := int(gomaxprocs)
 	unlock(&sched.lock)
@@ -39,7 +40,9 @@ func GOMAXPROCS(n int) int {
 // The set of available CPUs is checked by querying the operating system
 // at process startup. Changes to operating system CPU allocation after
 // process startup are not reflected.
-func NumCPU() int
+func NumCPU() int {
+	return int(ncpu)
+}
 
 // NumCgoCall returns the number of cgo calls made by the current process.
 func NumCgoCall() int64 {
@@ -52,6 +55,7 @@ func NumCgoCall() int64 {
 
 // NumGoroutine returns the number of goroutines that currently exist.
 func NumGoroutine() int {
+	waitForSystemGoroutines()
 	return int(gcount())
 }
 

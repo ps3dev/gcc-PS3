@@ -1,5 +1,5 @@
 /* Interprocedural semantic function equality pass
-   Copyright (C) 2014-2017 Free Software Foundation, Inc.
+   Copyright (C) 2014-2019 Free Software Foundation, Inc.
 
    Contributed by Jan Hubicka <hubicka@ucw.cz> and Martin Liska <mliska@suse.cz>
 
@@ -141,6 +141,8 @@ public:
   unsigned int index;
 };
 
+typedef std::pair<symtab_node *, symtab_node *> symtab_pair;
+
 /* Semantic item is a base class that encapsulates all shared functionality
    for both semantic function and variable items.  */
 class sem_item
@@ -253,9 +255,6 @@ protected:
 					            symtab_node *n2,
 					            bool address);
 
-  /* Compare two attribute lists.  */
-  static bool compare_attributes (const_tree list1, const_tree list2);
-
   /* Hash properties compared by compare_referenced_symbol_properties.  */
   void hash_referenced_symbol_properties (symtab_node *ref,
 					  inchash::hash &hstate,
@@ -279,6 +278,9 @@ private:
   /* Initialize internal data structures. Bitmap STACK is used for
      bitmap memory allocation process.  */
   void setup (bitmap_obstack *stack);
+
+  /* Because types can be arbitrarily large, avoid quadratic bottleneck.  */
+  static hash_map<const_tree, hashval_t> m_type_hash_cache;
 }; // class sem_item
 
 class sem_function: public sem_item
@@ -522,9 +524,6 @@ public:
   /* Gets a congruence class group based on given HASH value and TYPE.  */
   congruence_class_group *get_group_by_hash (hashval_t hash,
       sem_item_type type);
-
-  /* Because types can be arbitrarily large, avoid quadratic bottleneck.  */
-  hash_map<const_tree, hashval_t> m_type_hash_cache;
 private:
 
   /* For each semantic item, append hash values of references.  */
@@ -563,6 +562,12 @@ private:
      processed.  */
   bool merge_classes (unsigned int prev_class_count);
 
+  /* Fixup points to analysis info.  */
+  void fixup_points_to_sets (void);
+
+  /* Fixup points to set PT.  */
+  void fixup_pt_set (struct pt_solution *pt);
+
   /* Adds a newly created congruence class CLS to worklist.  */
   void worklist_push (congruence_class *cls);
 
@@ -593,6 +598,9 @@ private:
   static bool traverse_congruence_split (congruence_class * const &cls,
 					 bitmap const &b,
 					 traverse_split_pair *pair);
+
+  /* Compare function for sorting pairs in do_congruence_step_f.  */
+  static int sort_congruence_split (const void *, const void *);
 
   /* Reads a section from LTO stream file FILE_DATA. Input block for DATA
      contains LEN bytes.  */
@@ -632,6 +640,10 @@ private:
 
   /* Bitmap stack.  */
   bitmap_obstack m_bmstack;
+
+  /* Vector of merged variables.  Needed for fixup of points-to-analysis
+     info.  */
+  vec <symtab_pair> m_merged_variables;
 }; // class sem_item_optimizer
 
 } // ipa_icf namespace

@@ -1,5 +1,5 @@
 // Testcase from P0305R1
-// { dg-options -std=c++1z }
+// { dg-do compile { target c++17 } }
 
 #include <string>
 #include <map>

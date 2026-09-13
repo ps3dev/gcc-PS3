@@ -5,6 +5,7 @@
 package runtime
 
 import (
+	"internal/cpu"
 	"runtime/internal/sys"
 	"unsafe"
 )
@@ -57,18 +58,15 @@ const (
 func memhash0(p unsafe.Pointer, h uintptr) uintptr {
 	return h
 }
+
 func memhash8(p unsafe.Pointer, h uintptr) uintptr {
 	return memhash(p, h, 1)
 }
+
 func memhash16(p unsafe.Pointer, h uintptr) uintptr {
 	return memhash(p, h, 2)
 }
-func memhash32(p unsafe.Pointer, h uintptr) uintptr {
-	return memhash(p, h, 4)
-}
-func memhash64(p unsafe.Pointer, h uintptr) uintptr {
-	return memhash(p, h, 8)
-}
+
 func memhash128(p unsafe.Pointer, h uintptr) uintptr {
 	return memhash(p, h, 16)
 }
@@ -131,7 +129,7 @@ func c128hash(p unsafe.Pointer, h uintptr) uintptr {
 	return f64hash(unsafe.Pointer(&x[1]), f64hash(unsafe.Pointer(&x[0]), h))
 }
 
-func interhash(p unsafe.Pointer, h uintptr, size uintptr) uintptr {
+func interhash(p unsafe.Pointer, h uintptr) uintptr {
 	a := (*iface)(p)
 	tab := a.tab
 	if tab == nil {
@@ -140,7 +138,7 @@ func interhash(p unsafe.Pointer, h uintptr, size uintptr) uintptr {
 	t := *(**_type)(tab)
 	fn := t.hashfn
 	if fn == nil {
-		panic(errorString("hash of unhashable type " + *t.string))
+		panic(errorString("hash of unhashable type " + t.string()))
 	}
 	if isDirectIface(t) {
 		return c1 * fn(unsafe.Pointer(&a.data), h^c0)
@@ -157,7 +155,7 @@ func nilinterhash(p unsafe.Pointer, h uintptr) uintptr {
 	}
 	fn := t.hashfn
 	if fn == nil {
-		panic(errorString("hash of unhashable type " + *t.string))
+		panic(errorString("hash of unhashable type " + t.string()))
 	}
 	if isDirectIface(t) {
 		return c1 * fn(unsafe.Pointer(&a.data), h^c0)
@@ -199,10 +197,10 @@ func c128equal(p, q unsafe.Pointer) bool {
 func strequal(p, q unsafe.Pointer) bool {
 	return *(*string)(p) == *(*string)(q)
 }
-func interequal(p, q unsafe.Pointer, size uintptr) bool {
+func interequal(p, q unsafe.Pointer) bool {
 	return ifaceeq(*(*iface)(p), *(*iface)(q))
 }
-func nilinterequal(p, q unsafe.Pointer, size uintptr) bool {
+func nilinterequal(p, q unsafe.Pointer) bool {
 	return efaceeq(*(*eface)(p), *(*eface)(q))
 }
 func efaceeq(x, y eface) bool {
@@ -215,7 +213,7 @@ func efaceeq(x, y eface) bool {
 	}
 	eq := t.equalfn
 	if eq == nil {
-		panic(errorString("comparing uncomparable type " + *t.string))
+		panic(errorString("comparing uncomparable type " + t.string()))
 	}
 	if isDirectIface(t) {
 		return x.data == y.data
@@ -236,7 +234,7 @@ func ifaceeq(x, y iface) bool {
 	}
 	eq := t.equalfn
 	if eq == nil {
-		panic(errorString("comparing uncomparable type " + *t.string))
+		panic(errorString("comparing uncomparable type " + t.string()))
 	}
 	if isDirectIface(t) {
 		return x.data == y.data
@@ -254,7 +252,7 @@ func ifacevaleq(x iface, t *_type, p unsafe.Pointer) bool {
 	}
 	eq := t.equalfn
 	if eq == nil {
-		panic(errorString("comparing uncomparable type " + *t.string))
+		panic(errorString("comparing uncomparable type " + t.string()))
 	}
 	if isDirectIface(t) {
 		return x.data == p
@@ -275,7 +273,7 @@ func ifaceefaceeq(x iface, y eface) bool {
 	}
 	eq := xt.equalfn
 	if eq == nil {
-		panic(errorString("comparing uncomparable type " + *xt.string))
+		panic(errorString("comparing uncomparable type " + xt.string()))
 	}
 	if isDirectIface(xt) {
 		return x.data == y.data
@@ -292,7 +290,7 @@ func efacevaleq(x eface, t *_type, p unsafe.Pointer) bool {
 	}
 	eq := t.equalfn
 	if eq == nil {
-		panic(errorString("comparing uncomparable type " + *t.string))
+		panic(errorString("comparing uncomparable type " + t.string()))
 	}
 	if isDirectIface(t) {
 		return x.data == p
@@ -361,25 +359,55 @@ var _ = nilinterequal
 var _ = pointerhash
 var _ = pointerequal
 
+// Testing adapters for hash quality tests (see hash_test.go)
+func stringHash(s string, seed uintptr) uintptr {
+	return strhash(noescape(unsafe.Pointer(&s)), seed)
+}
+
+func bytesHash(b []byte, seed uintptr) uintptr {
+	s := (*slice)(unsafe.Pointer(&b))
+	return memhash(s.array, seed, uintptr(s.len))
+}
+
+func int32Hash(i uint32, seed uintptr) uintptr {
+	return memhash32(noescape(unsafe.Pointer(&i)), seed)
+}
+
+func int64Hash(i uint64, seed uintptr) uintptr {
+	return memhash64(noescape(unsafe.Pointer(&i)), seed)
+}
+
+func efaceHash(i interface{}, seed uintptr) uintptr {
+	return nilinterhash(noescape(unsafe.Pointer(&i)), seed)
+}
+
+func ifaceHash(i interface {
+	F()
+}, seed uintptr) uintptr {
+	return interhash(noescape(unsafe.Pointer(&i)), seed)
+}
+
 const hashRandomBytes = sys.PtrSize / 4 * 64
 
-// used in asm_{386,amd64}.s to seed the hash function
+// used in asm_{386,amd64,arm64}.s to seed the hash function
 var aeskeysched [hashRandomBytes]byte
 
 // used in hash{32,64}.go to seed the hash function
 var hashkey [4]uintptr
 
 func alginit() {
-	// Install aes hash algorithm if we have the instructions we need
+	// Install AES hash algorithms if the instructions needed are present.
 	if (GOARCH == "386" || GOARCH == "amd64") &&
 		GOOS != "nacl" &&
 		support_aes &&
-		cpuid_ecx&(1<<25) != 0 && // aes (aesenc)
-		cpuid_ecx&(1<<9) != 0 && // sse3 (pshufb)
-		cpuid_ecx&(1<<19) != 0 { // sse4.1 (pinsr{d,q})
-		useAeshash = true
-		// Initialize with random data so hash collisions will be hard to engineer.
-		getRandomData(aeskeysched[:])
+		cpu.X86.HasAES && // AESENC
+		cpu.X86.HasSSSE3 && // PSHUFB
+		cpu.X86.HasSSE41 { // PINSR{D,Q}
+		initAlgAES()
+		return
+	}
+	if GOARCH == "arm64" && cpu.ARM64.HasAES {
+		initAlgAES()
 		return
 	}
 	getRandomData((*[len(hashkey) * sys.PtrSize]byte)(unsafe.Pointer(&hashkey))[:])
@@ -387,4 +415,10 @@ func alginit() {
 	hashkey[1] |= 1
 	hashkey[2] |= 1
 	hashkey[3] |= 1
+}
+
+func initAlgAES() {
+	useAeshash = true
+	// Initialize with random data so hash collisions will be hard to engineer.
+	getRandomData(aeskeysched[:])
 }

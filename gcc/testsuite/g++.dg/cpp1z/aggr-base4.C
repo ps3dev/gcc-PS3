@@ -1,5 +1,4 @@
-// { dg-options -std=c++1z }
-// { dg-do run }
+// { dg-do run { target c++17 } }
 
 struct derived;
 struct base { };

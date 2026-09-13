@@ -1,5 +1,5 @@
 /* AddressSanitizer, a fast memory error detector.
-   Copyright (C) 2012-2017 Free Software Foundation, Inc.
+   Copyright (C) 2012-2019 Free Software Foundation, Inc.
    Contributed by Kostya Serebryany <kcc@google.com>
 
 This file is part of GCC.
@@ -47,6 +47,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "varasm.h"
 #include "stor-layout.h"
 #include "tree-iterator.h"
+#include "stringpool.h"
+#include "attribs.h"
 #include "asan.h"
 #include "dojump.h"
 #include "explow.h"
@@ -55,11 +57,13 @@ along with GCC; see the file COPYING3.  If not see
 #include "langhooks.h"
 #include "cfgloop.h"
 #include "gimple-builder.h"
+#include "gimple-fold.h"
 #include "ubsan.h"
 #include "params.h"
 #include "builtins.h"
 #include "fnmatch.h"
 #include "tree-inline.h"
+#include "tree-eh.h"
 
 /* AddressSanitizer finds out-of-bounds and use-after-free bugs
    with <2x slowdown on average.
@@ -245,11 +249,12 @@ along with GCC; see the file COPYING3.  If not see
 static unsigned HOST_WIDE_INT asan_shadow_offset_value;
 static bool asan_shadow_offset_computed;
 static vec<char *> sanitized_sections;
+static tree last_alloca_addr;
 
 /* Set of variable declarations that are going to be guarded by
    use-after-scope sanitizer.  */
 
-static hash_set<tree> *asan_handled_variables = NULL;
+hash_set<tree> *asan_handled_variables = NULL;
 
 hash_set <tree> *asan_used_labels = NULL;
 
@@ -305,9 +310,13 @@ asan_mark_p (gimple *stmt, enum asan_mark_flags flag)
 bool
 asan_sanitize_stack_p (void)
 {
-  return ((flag_sanitize & SANITIZE_ADDRESS)
-	  && ASAN_STACK
-	  && !asan_no_sanitize_address_p ());
+  return (sanitize_flags_p (SANITIZE_ADDRESS) && ASAN_STACK);
+}
+
+bool
+asan_sanitize_allocas_p (void)
+{
+  return (asan_sanitize_stack_p () && ASAN_PROTECT_ALLOCAS);
 }
 
 /* Checks whether section SEC should be sanitized.  */
@@ -531,11 +540,219 @@ get_mem_ref_of_assignment (const gassign *assignment,
   return true;
 }
 
+/* Return address of last allocated dynamic alloca.  */
+
+static tree
+get_last_alloca_addr ()
+{
+  if (last_alloca_addr)
+    return last_alloca_addr;
+
+  last_alloca_addr = create_tmp_reg (ptr_type_node, "last_alloca_addr");
+  gassign *g = gimple_build_assign (last_alloca_addr, null_pointer_node);
+  edge e = single_succ_edge (ENTRY_BLOCK_PTR_FOR_FN (cfun));
+  gsi_insert_on_edge_immediate (e, g);
+  return last_alloca_addr;
+}
+
+/* Insert __asan_allocas_unpoison (top, bottom) call before
+   __builtin_stack_restore (new_sp) call.
+   The pseudocode of this routine should look like this:
+     top = last_alloca_addr;
+     bot = new_sp;
+     __asan_allocas_unpoison (top, bot);
+     last_alloca_addr = new_sp;
+     __builtin_stack_restore (new_sp);
+   In general, we can't use new_sp as bot parameter because on some
+   architectures SP has non zero offset from dynamic stack area.  Moreover, on
+   some architectures this offset (STACK_DYNAMIC_OFFSET) becomes known for each
+   particular function only after all callees were expanded to rtl.
+   The most noticeable example is PowerPC{,64}, see
+   http://refspecs.linuxfoundation.org/ELF/ppc64/PPC-elf64abi.html#DYNAM-STACK.
+   To overcome the issue we use following trick: pass new_sp as a second
+   parameter to __asan_allocas_unpoison and rewrite it during expansion with
+   new_sp + (virtual_dynamic_stack_rtx - sp) later in
+   expand_asan_emit_allocas_unpoison function.  */
+
+static void
+handle_builtin_stack_restore (gcall *call, gimple_stmt_iterator *iter)
+{
+  if (!iter || !asan_sanitize_allocas_p ())
+    return;
+
+  tree last_alloca = get_last_alloca_addr ();
+  tree restored_stack = gimple_call_arg (call, 0);
+  tree fn = builtin_decl_implicit (BUILT_IN_ASAN_ALLOCAS_UNPOISON);
+  gimple *g = gimple_build_call (fn, 2, last_alloca, restored_stack);
+  gsi_insert_before (iter, g, GSI_SAME_STMT);
+  g = gimple_build_assign (last_alloca, restored_stack);
+  gsi_insert_before (iter, g, GSI_SAME_STMT);
+}
+
+/* Deploy and poison redzones around __builtin_alloca call.  To do this, we
+   should replace this call with another one with changed parameters and
+   replace all its uses with new address, so
+       addr = __builtin_alloca (old_size, align);
+   is replaced by
+       left_redzone_size = max (align, ASAN_RED_ZONE_SIZE);
+   Following two statements are optimized out if we know that
+   old_size & (ASAN_RED_ZONE_SIZE - 1) == 0, i.e. alloca doesn't need partial
+   redzone.
+       misalign = old_size & (ASAN_RED_ZONE_SIZE - 1);
+       partial_redzone_size = ASAN_RED_ZONE_SIZE - misalign;
+       right_redzone_size = ASAN_RED_ZONE_SIZE;
+       additional_size = left_redzone_size + partial_redzone_size +
+                         right_redzone_size;
+       new_size = old_size + additional_size;
+       new_alloca = __builtin_alloca (new_size, max (align, 32))
+       __asan_alloca_poison (new_alloca, old_size)
+       addr = new_alloca + max (align, ASAN_RED_ZONE_SIZE);
+       last_alloca_addr = new_alloca;
+   ADDITIONAL_SIZE is added to make new memory allocation contain not only
+   requested memory, but also left, partial and right redzones as well as some
+   additional space, required by alignment.  */
+
+static void
+handle_builtin_alloca (gcall *call, gimple_stmt_iterator *iter)
+{
+  if (!iter || !asan_sanitize_allocas_p ())
+    return;
+
+  gassign *g;
+  gcall *gg;
+  const HOST_WIDE_INT redzone_mask = ASAN_RED_ZONE_SIZE - 1;
+
+  tree last_alloca = get_last_alloca_addr ();
+  tree callee = gimple_call_fndecl (call);
+  tree lhs = gimple_call_lhs (call);
+  tree old_size = gimple_call_arg (call, 0);
+  tree ptr_type = lhs ? TREE_TYPE (lhs) : ptr_type_node;
+  tree partial_size = NULL_TREE;
+  unsigned int align
+    = DECL_FUNCTION_CODE (callee) == BUILT_IN_ALLOCA
+      ? 0 : tree_to_uhwi (gimple_call_arg (call, 1));
+
+  bool throws = false;
+  edge e = NULL;
+  if (stmt_can_throw_internal (cfun, call))
+    {
+      if (!lhs)
+	return;
+      throws = true;
+      e = find_fallthru_edge (gsi_bb (*iter)->succs);
+    }
+
+  /* If ALIGN > ASAN_RED_ZONE_SIZE, we embed left redzone into first ALIGN
+     bytes of allocated space.  Otherwise, align alloca to ASAN_RED_ZONE_SIZE
+     manually.  */
+  align = MAX (align, ASAN_RED_ZONE_SIZE * BITS_PER_UNIT);
+
+  tree alloca_rz_mask = build_int_cst (size_type_node, redzone_mask);
+  tree redzone_size = build_int_cst (size_type_node, ASAN_RED_ZONE_SIZE);
+
+  /* Extract lower bits from old_size.  */
+  wide_int size_nonzero_bits = get_nonzero_bits (old_size);
+  wide_int rz_mask
+    = wi::uhwi (redzone_mask, wi::get_precision (size_nonzero_bits));
+  wide_int old_size_lower_bits = wi::bit_and (size_nonzero_bits, rz_mask);
+
+  /* If alloca size is aligned to ASAN_RED_ZONE_SIZE, we don't need partial
+     redzone.  Otherwise, compute its size here.  */
+  if (wi::ne_p (old_size_lower_bits, 0))
+    {
+      /* misalign = size & (ASAN_RED_ZONE_SIZE - 1)
+         partial_size = ASAN_RED_ZONE_SIZE - misalign.  */
+      g = gimple_build_assign (make_ssa_name (size_type_node, NULL),
+			       BIT_AND_EXPR, old_size, alloca_rz_mask);
+      gsi_insert_before (iter, g, GSI_SAME_STMT);
+      tree misalign = gimple_assign_lhs (g);
+      g = gimple_build_assign (make_ssa_name (size_type_node, NULL), MINUS_EXPR,
+			       redzone_size, misalign);
+      gsi_insert_before (iter, g, GSI_SAME_STMT);
+      partial_size = gimple_assign_lhs (g);
+    }
+
+  /* additional_size = align + ASAN_RED_ZONE_SIZE.  */
+  tree additional_size = build_int_cst (size_type_node, align / BITS_PER_UNIT
+							+ ASAN_RED_ZONE_SIZE);
+  /* If alloca has partial redzone, include it to additional_size too.  */
+  if (partial_size)
+    {
+      /* additional_size += partial_size.  */
+      g = gimple_build_assign (make_ssa_name (size_type_node), PLUS_EXPR,
+			       partial_size, additional_size);
+      gsi_insert_before (iter, g, GSI_SAME_STMT);
+      additional_size = gimple_assign_lhs (g);
+    }
+
+  /* new_size = old_size + additional_size.  */
+  g = gimple_build_assign (make_ssa_name (size_type_node), PLUS_EXPR, old_size,
+			   additional_size);
+  gsi_insert_before (iter, g, GSI_SAME_STMT);
+  tree new_size = gimple_assign_lhs (g);
+
+  /* Build new __builtin_alloca call:
+       new_alloca_with_rz = __builtin_alloca (new_size, align).  */
+  tree fn = builtin_decl_implicit (BUILT_IN_ALLOCA_WITH_ALIGN);
+  gg = gimple_build_call (fn, 2, new_size,
+			  build_int_cst (size_type_node, align));
+  tree new_alloca_with_rz = make_ssa_name (ptr_type, gg);
+  gimple_call_set_lhs (gg, new_alloca_with_rz);
+  if (throws)
+    {
+      gimple_call_set_lhs (call, NULL);
+      gsi_replace (iter, gg, true);
+    }
+  else
+    gsi_insert_before (iter, gg, GSI_SAME_STMT);
+
+  /* new_alloca = new_alloca_with_rz + align.  */
+  g = gimple_build_assign (make_ssa_name (ptr_type), POINTER_PLUS_EXPR,
+			   new_alloca_with_rz,
+			   build_int_cst (size_type_node,
+					  align / BITS_PER_UNIT));
+  gimple_stmt_iterator gsi = gsi_none ();
+  if (throws)
+    {
+      gsi_insert_on_edge_immediate (e, g);
+      gsi = gsi_for_stmt (g);
+    }
+  else
+    gsi_insert_before (iter, g, GSI_SAME_STMT);
+  tree new_alloca = gimple_assign_lhs (g);
+
+  /* Poison newly created alloca redzones:
+      __asan_alloca_poison (new_alloca, old_size).  */
+  fn = builtin_decl_implicit (BUILT_IN_ASAN_ALLOCA_POISON);
+  gg = gimple_build_call (fn, 2, new_alloca, old_size);
+  if (throws)
+    gsi_insert_after (&gsi, gg, GSI_NEW_STMT);
+  else
+    gsi_insert_before (iter, gg, GSI_SAME_STMT);
+
+  /* Save new_alloca_with_rz value into last_alloca to use it during
+     allocas unpoisoning.  */
+  g = gimple_build_assign (last_alloca, new_alloca_with_rz);
+  if (throws)
+    gsi_insert_after (&gsi, g, GSI_NEW_STMT);
+  else
+    gsi_insert_before (iter, g, GSI_SAME_STMT);
+
+  /* Finally, replace old alloca ptr with NEW_ALLOCA.  */
+  if (throws)
+    {
+      g = gimple_build_assign (lhs, new_alloca);
+      gsi_insert_after (&gsi, g, GSI_NEW_STMT);
+    }
+  else
+    replace_call_with_value (iter, new_alloca);
+}
+
 /* Return the memory references contained in a gimple statement
    representing a builtin call that has to do with memory access.  */
 
 static bool
-get_mem_refs_of_builtin_call (const gcall *call,
+get_mem_refs_of_builtin_call (gcall *call,
 			      asan_mem_ref *src0,
 			      tree *src0_len,
 			      bool *src0_is_store,
@@ -546,7 +763,8 @@ get_mem_refs_of_builtin_call (const gcall *call,
 			      tree *dst_len,
 			      bool *dst_is_store,
 			      bool *dest_is_deref,
-			      bool *intercepted_p)
+			      bool *intercepted_p,
+			      gimple_stmt_iterator *iter = NULL)
 {
   gcc_checking_assert (gimple_call_builtin_p (call, BUILT_IN_NORMAL));
 
@@ -605,6 +823,13 @@ get_mem_refs_of_builtin_call (const gcall *call,
       len = gimple_call_lhs (call);
       break;
 
+    case BUILT_IN_STACK_RESTORE:
+      handle_builtin_stack_restore (call, iter);
+      break;
+
+    CASE_BUILT_IN_ALLOCA:
+      handle_builtin_alloca (call, iter);
+      break;
     /* And now the __atomic* and __sync builtins.
        These are handled differently from the classical memory memory
        access builtins above.  */
@@ -966,20 +1191,6 @@ asan_pp_string (pretty_printer *pp)
   return build1 (ADDR_EXPR, shadow_ptr_types[0], ret);
 }
 
-/* Return a CONST_INT representing 4 subsequent shadow memory bytes.  */
-
-static rtx
-asan_shadow_cst (unsigned char shadow_bytes[4])
-{
-  int i;
-  unsigned HOST_WIDE_INT val = 0;
-  gcc_assert (WORDS_BIG_ENDIAN == BYTES_BIG_ENDIAN);
-  for (i = 0; i < 4; i++)
-    val |= (unsigned HOST_WIDE_INT) shadow_bytes[BYTES_BIG_ENDIAN ? 3 - i : i]
-	   << (BITS_PER_UNIT * i);
-  return gen_int_mode (val, SImode);
-}
-
 /* Clear shadow memory at SHADOW_MEM, LEN bytes.  Can't call a library call here
    though.  */
 
@@ -990,6 +1201,7 @@ asan_clear_shadow (rtx shadow_mem, HOST_WIDE_INT len)
   rtx_code_label *top_label;
   rtx end, addr, tmp;
 
+  gcc_assert ((len & 3) == 0);
   start_sequence ();
   clear_storage (shadow_mem, GEN_INT (len), BLOCK_OP_NORMAL);
   insns = get_insns ();
@@ -1003,7 +1215,6 @@ asan_clear_shadow (rtx shadow_mem, HOST_WIDE_INT len)
       return;
     }
 
-  gcc_assert ((len & 3) == 0);
   top_label = gen_label_rtx ();
   addr = copy_to_mode_reg (Pmode, XEXP (shadow_mem, 0));
   shadow_mem = adjust_automodify_address (shadow_mem, SImode, addr, 0);
@@ -1018,7 +1229,9 @@ asan_clear_shadow (rtx shadow_mem, HOST_WIDE_INT len)
   emit_cmp_and_jump_insns (addr, end, LT, NULL_RTX, Pmode, true, top_label);
   jump = get_last_insn ();
   gcc_assert (JUMP_P (jump));
-  add_int_reg_note (jump, REG_BR_PROB, REG_BR_PROB_BASE * 80 / 100);
+  add_reg_br_prob_note (jump,
+			profile_probability::guessed_always ()
+			   .apply_scale (80, 100));
 }
 
 void
@@ -1036,7 +1249,146 @@ asan_function_start (void)
 static unsigned HOST_WIDE_INT
 shadow_mem_size (unsigned HOST_WIDE_INT size)
 {
+  /* It must be possible to align stack variables to granularity
+     of shadow memory.  */
+  gcc_assert (BITS_PER_UNIT
+	      * ASAN_SHADOW_GRANULARITY <= MAX_SUPPORTED_STACK_ALIGNMENT);
+
   return ROUND_UP (size, ASAN_SHADOW_GRANULARITY) / ASAN_SHADOW_GRANULARITY;
+}
+
+/* Always emit 4 bytes at a time.  */
+#define RZ_BUFFER_SIZE 4
+
+/* ASAN redzone buffer container that handles emission of shadow bytes.  */
+struct asan_redzone_buffer
+{
+  /* Constructor.  */
+  asan_redzone_buffer (rtx shadow_mem, HOST_WIDE_INT prev_offset):
+    m_shadow_mem (shadow_mem), m_prev_offset (prev_offset),
+    m_original_offset (prev_offset), m_shadow_bytes (RZ_BUFFER_SIZE)
+  {}
+
+  /* Emit VALUE shadow byte at a given OFFSET.  */
+  void emit_redzone_byte (HOST_WIDE_INT offset, unsigned char value);
+
+  /* Emit RTX emission of the content of the buffer.  */
+  void flush_redzone_payload (void);
+
+private:
+  /* Flush if the content of the buffer is full
+     (equal to RZ_BUFFER_SIZE).  */
+  void flush_if_full (void);
+
+  /* Memory where we last emitted a redzone payload.  */
+  rtx m_shadow_mem;
+
+  /* Relative offset where we last emitted a redzone payload.  */
+  HOST_WIDE_INT m_prev_offset;
+
+  /* Relative original offset.  Used for checking only.  */
+  HOST_WIDE_INT m_original_offset;
+
+public:
+  /* Buffer with redzone payload.  */
+  auto_vec<unsigned char> m_shadow_bytes;
+};
+
+/* Emit VALUE shadow byte at a given OFFSET.  */
+
+void
+asan_redzone_buffer::emit_redzone_byte (HOST_WIDE_INT offset,
+					unsigned char value)
+{
+  gcc_assert ((offset & (ASAN_SHADOW_GRANULARITY - 1)) == 0);
+  gcc_assert (offset >= m_prev_offset);
+
+  HOST_WIDE_INT off
+    = m_prev_offset + ASAN_SHADOW_GRANULARITY * m_shadow_bytes.length ();
+  if (off == offset)
+    /* Consecutive shadow memory byte.  */;
+  else if (offset < m_prev_offset + (HOST_WIDE_INT) (ASAN_SHADOW_GRANULARITY
+						     * RZ_BUFFER_SIZE)
+	   && !m_shadow_bytes.is_empty ())
+    {
+      /* Shadow memory byte with a small gap.  */
+      for (; off < offset; off += ASAN_SHADOW_GRANULARITY)
+	m_shadow_bytes.safe_push (0);
+    }
+  else
+    {
+      if (!m_shadow_bytes.is_empty ())
+	flush_redzone_payload ();
+
+      /* Maybe start earlier in order to use aligned store.  */
+      HOST_WIDE_INT align = (offset - m_prev_offset) % ASAN_RED_ZONE_SIZE;
+      if (align)
+	{
+	  offset -= align;
+	  for (unsigned i = 0; i < align / BITS_PER_UNIT; i++)
+	    m_shadow_bytes.safe_push (0);
+	}
+
+      /* Adjust m_prev_offset and m_shadow_mem.  */
+      HOST_WIDE_INT diff = offset - m_prev_offset;
+      m_shadow_mem = adjust_address (m_shadow_mem, VOIDmode,
+				     diff >> ASAN_SHADOW_SHIFT);
+      m_prev_offset = offset;
+    }
+  m_shadow_bytes.safe_push (value);
+  flush_if_full ();
+}
+
+/* Emit RTX emission of the content of the buffer.  */
+
+void
+asan_redzone_buffer::flush_redzone_payload (void)
+{
+  gcc_assert (WORDS_BIG_ENDIAN == BYTES_BIG_ENDIAN);
+
+  if (m_shadow_bytes.is_empty ())
+    return;
+
+  /* Be sure we always emit to an aligned address.  */
+  gcc_assert (((m_prev_offset - m_original_offset)
+	      & (ASAN_RED_ZONE_SIZE - 1)) == 0);
+
+  /* Fill it to RZ_BUFFER_SIZE bytes with zeros if needed.  */
+  unsigned l = m_shadow_bytes.length ();
+  for (unsigned i = 0; i <= RZ_BUFFER_SIZE - l; i++)
+    m_shadow_bytes.safe_push (0);
+
+  if (dump_file && (dump_flags & TDF_DETAILS))
+    fprintf (dump_file,
+	     "Flushing rzbuffer at offset %" PRId64 " with: ", m_prev_offset);
+
+  unsigned HOST_WIDE_INT val = 0;
+  for (unsigned i = 0; i < RZ_BUFFER_SIZE; i++)
+    {
+      unsigned char v
+	= m_shadow_bytes[BYTES_BIG_ENDIAN ? RZ_BUFFER_SIZE - i - 1 : i];
+      val |= (unsigned HOST_WIDE_INT)v << (BITS_PER_UNIT * i);
+      if (dump_file && (dump_flags & TDF_DETAILS))
+	fprintf (dump_file, "%02x ", v);
+    }
+
+  if (dump_file && (dump_flags & TDF_DETAILS))
+    fprintf (dump_file, "\n");
+
+  rtx c = gen_int_mode (val, SImode);
+  m_shadow_mem = adjust_address (m_shadow_mem, SImode, 0);
+  emit_move_insn (m_shadow_mem, c);
+  m_shadow_bytes.truncate (0);
+}
+
+/* Flush if the content of the buffer is full
+   (equal to RZ_BUFFER_SIZE).  */
+
+void
+asan_redzone_buffer::flush_if_full (void)
+{
+  if (m_shadow_bytes.length () == RZ_BUFFER_SIZE)
+    flush_redzone_payload ();
 }
 
 /* Insert code to protect stack vars.  The prologue sequence should be emitted
@@ -1060,11 +1412,10 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
   rtx_code_label *lab;
   rtx_insn *insns;
   char buf[32];
-  unsigned char shadow_bytes[4];
   HOST_WIDE_INT base_offset = offsets[length - 1];
   HOST_WIDE_INT base_align_bias = 0, offset, prev_offset;
   HOST_WIDE_INT asan_frame_size = offsets[0] - base_offset;
-  HOST_WIDE_INT last_offset;
+  HOST_WIDE_INT last_offset, last_size, last_size_aligned;
   int l;
   unsigned char cur_shadow_byte = ASAN_STACK_MAGIC_LEFT;
   tree str_cst, decl, id;
@@ -1072,6 +1423,9 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
 
   if (shadow_ptr_types[0] == NULL_TREE)
     asan_init_shadow_ptr_types ();
+
+  expanded_location cfun_xloc
+    = expand_location (DECL_SOURCE_LOCATION (current_function_decl));
 
   /* First of all, prepare the description string.  */
   pretty_printer asan_pp;
@@ -1085,15 +1439,30 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
       pp_space (&asan_pp);
       pp_wide_integer (&asan_pp, offsets[l - 1] - offsets[l]);
       pp_space (&asan_pp);
+
+      expanded_location xloc
+	= expand_location (DECL_SOURCE_LOCATION (decl));
+      char location[32];
+
+      if (xloc.file == cfun_xloc.file)
+	sprintf (location, ":%d", xloc.line);
+      else
+	location[0] = '\0';
+
       if (DECL_P (decl) && DECL_NAME (decl))
 	{
-	  pp_decimal_int (&asan_pp, IDENTIFIER_LENGTH (DECL_NAME (decl)));
+	  unsigned idlen
+	    = IDENTIFIER_LENGTH (DECL_NAME (decl)) + strlen (location);
+	  pp_decimal_int (&asan_pp, idlen);
 	  pp_space (&asan_pp);
 	  pp_tree_identifier (&asan_pp, DECL_NAME (decl));
+	  pp_string (&asan_pp, location);
 	}
       else
 	pp_string (&asan_pp, "9 <unknown>");
-      pp_space (&asan_pp);
+
+      if (l > 2)
+	pp_space (&asan_pp);
     }
   str_cst = asan_pp_string (&asan_pp);
 
@@ -1111,13 +1480,15 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
 	base_align_bias = ((asan_frame_size + alignb - 1)
 			   & ~(alignb - HOST_WIDE_INT_1)) - asan_frame_size;
     }
+
   /* Align base if target is STRICT_ALIGNMENT.  */
   if (STRICT_ALIGNMENT)
-    base = expand_binop (Pmode, and_optab, base,
-			 gen_int_mode (-((GET_MODE_ALIGNMENT (SImode)
-					  << ASAN_SHADOW_SHIFT)
-					 / BITS_PER_UNIT), Pmode), NULL_RTX,
-			 1, OPTAB_DIRECT);
+    {
+      const HOST_WIDE_INT align
+	= (GET_MODE_ALIGNMENT (SImode) / BITS_PER_UNIT) << ASAN_SHADOW_SHIFT;
+      base = expand_binop (Pmode, and_optab, base, gen_int_mode (-align, Pmode),
+			   NULL_RTX, 1, OPTAB_DIRECT);
+    }
 
   if (use_after_return_class == -1 && pbase)
     emit_move_insn (pbase, base);
@@ -1147,22 +1518,22 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
       emit_move_insn (orig_base, base);
       ret = expand_normal (asan_detect_stack_use_after_return);
       lab = gen_label_rtx ();
-      int very_likely = REG_BR_PROB_BASE - (REG_BR_PROB_BASE / 2000 - 1);
       emit_cmp_and_jump_insns (ret, const0_rtx, EQ, NULL_RTX,
-			       VOIDmode, 0, lab, very_likely);
+			       VOIDmode, 0, lab,
+			       profile_probability::very_likely ());
       snprintf (buf, sizeof buf, "__asan_stack_malloc_%d",
 		use_after_return_class);
       ret = init_one_libfunc (buf);
-      ret = emit_library_call_value (ret, NULL_RTX, LCT_NORMAL, ptr_mode, 1,
+      ret = emit_library_call_value (ret, NULL_RTX, LCT_NORMAL, ptr_mode,
 				     GEN_INT (asan_frame_size
 					      + base_align_bias),
 				     TYPE_MODE (pointer_sized_int_node));
       /* __asan_stack_malloc_[n] returns a pointer to fake stack if succeeded
 	 and NULL otherwise.  Check RET value is NULL here and jump over the
 	 BASE reassignment in this case.  Otherwise, reassign BASE to RET.  */
-      int very_unlikely = REG_BR_PROB_BASE / 2000 - 1;
       emit_cmp_and_jump_insns (ret, const0_rtx, EQ, NULL_RTX,
-			       VOIDmode, 0, lab, very_unlikely);
+			       VOIDmode, 0, lab,
+			       profile_probability:: very_unlikely ());
       ret = convert_memory_address (Pmode, ret);
       emit_move_insn (base, ret);
       emit_label (lab);
@@ -1194,7 +1565,7 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
   TREE_ASM_WRITTEN (id) = 1;
   emit_move_insn (mem, expand_normal (build_fold_addr_expr (decl)));
   shadow_base = expand_binop (Pmode, lshr_optab, base,
-			      GEN_INT (ASAN_SHADOW_SHIFT),
+			      gen_int_shift_amount (Pmode, ASAN_SHADOW_SHIFT),
 			      NULL_RTX, 1, OPTAB_DIRECT);
   shadow_base
     = plus_constant (Pmode, shadow_base,
@@ -1207,46 +1578,43 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
   if (STRICT_ALIGNMENT)
     set_mem_align (shadow_mem, (GET_MODE_ALIGNMENT (SImode)));
   prev_offset = base_offset;
+
+  asan_redzone_buffer rz_buffer (shadow_mem, prev_offset);
   for (l = length; l; l -= 2)
     {
       if (l == 2)
 	cur_shadow_byte = ASAN_STACK_MAGIC_RIGHT;
       offset = offsets[l - 1];
-      if ((offset - base_offset) & (ASAN_RED_ZONE_SIZE - 1))
+
+      bool extra_byte = (offset - base_offset) & (ASAN_SHADOW_GRANULARITY - 1);
+      /* If a red-zone is not aligned to ASAN_SHADOW_GRANULARITY then
+	 the previous stack variable has size % ASAN_SHADOW_GRANULARITY != 0.
+	 In that case we have to emit one extra byte that will describe
+	 how many bytes (our of ASAN_SHADOW_GRANULARITY) can be accessed.  */
+      if (extra_byte)
 	{
-	  int i;
 	  HOST_WIDE_INT aoff
 	    = base_offset + ((offset - base_offset)
-			     & ~(ASAN_RED_ZONE_SIZE - HOST_WIDE_INT_1));
-	  shadow_mem = adjust_address (shadow_mem, VOIDmode,
-				       (aoff - prev_offset)
-				       >> ASAN_SHADOW_SHIFT);
-	  prev_offset = aoff;
-	  for (i = 0; i < 4; i++, aoff += ASAN_SHADOW_GRANULARITY)
-	    if (aoff < offset)
-	      {
-		if (aoff < offset - (HOST_WIDE_INT)ASAN_SHADOW_GRANULARITY + 1)
-		  shadow_bytes[i] = 0;
-		else
-		  shadow_bytes[i] = offset - aoff;
-	      }
-	    else
-	      shadow_bytes[i] = ASAN_STACK_MAGIC_MIDDLE;
-	  emit_move_insn (shadow_mem, asan_shadow_cst (shadow_bytes));
-	  offset = aoff;
+			     & ~(ASAN_SHADOW_GRANULARITY - HOST_WIDE_INT_1));
+	  rz_buffer.emit_redzone_byte (aoff, offset - aoff);
+	  offset = aoff + ASAN_SHADOW_GRANULARITY;
 	}
-      while (offset <= offsets[l - 2] - ASAN_RED_ZONE_SIZE)
+
+      /* Calculate size of red zone payload.  */
+      while (offset < offsets[l - 2])
 	{
-	  shadow_mem = adjust_address (shadow_mem, VOIDmode,
-				       (offset - prev_offset)
-				       >> ASAN_SHADOW_SHIFT);
-	  prev_offset = offset;
-	  memset (shadow_bytes, cur_shadow_byte, 4);
-	  emit_move_insn (shadow_mem, asan_shadow_cst (shadow_bytes));
-	  offset += ASAN_RED_ZONE_SIZE;
+	  rz_buffer.emit_redzone_byte (offset, cur_shadow_byte);
+	  offset += ASAN_SHADOW_GRANULARITY;
 	}
+
       cur_shadow_byte = ASAN_STACK_MAGIC_MIDDLE;
     }
+
+  /* As the automatic variables are aligned to
+     ASAN_RED_ZONE_SIZE / ASAN_SHADOW_GRANULARITY, the buffer should be
+     flushed here.  */
+  gcc_assert (rz_buffer.m_shadow_bytes.is_empty ());
+
   do_pending_stack_adjust ();
 
   /* Construct epilogue sequence.  */
@@ -1257,9 +1625,9 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
     {
       rtx_code_label *lab2 = gen_label_rtx ();
       char c = (char) ASAN_STACK_MAGIC_USE_AFTER_RET;
-      int very_likely = REG_BR_PROB_BASE - (REG_BR_PROB_BASE / 2000 - 1);
       emit_cmp_and_jump_insns (orig_base, base, EQ, NULL_RTX,
-			       VOIDmode, 0, lab2, very_likely);
+			       VOIDmode, 0, lab2,
+			       profile_probability::very_likely ());
       shadow_mem = gen_rtx_MEM (BLKmode, shadow_base);
       set_mem_alias_set (shadow_mem, asan_shadow_set);
       mem = gen_rtx_MEM (ptr_mode, base);
@@ -1269,8 +1637,25 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
       if (use_after_return_class < 5
 	  && can_store_by_pieces (sz, builtin_memset_read_str, &c,
 				  BITS_PER_UNIT, true))
-	store_by_pieces (shadow_mem, sz, builtin_memset_read_str, &c,
-			 BITS_PER_UNIT, true, 0);
+	{
+	  /* Emit:
+	       memset(ShadowBase, kAsanStackAfterReturnMagic, ShadowSize);
+	       **SavedFlagPtr(FakeStack, class_id) = 0
+	  */
+	  store_by_pieces (shadow_mem, sz, builtin_memset_read_str, &c,
+			   BITS_PER_UNIT, true, RETURN_BEGIN);
+
+	  unsigned HOST_WIDE_INT offset
+	    = (1 << (use_after_return_class + 6));
+	  offset -= GET_MODE_SIZE (ptr_mode);
+	  mem = gen_rtx_MEM (ptr_mode, base);
+	  mem = adjust_address (mem, ptr_mode, offset);
+	  rtx addr = gen_reg_rtx (ptr_mode);
+	  emit_move_insn (addr, mem);
+	  addr = convert_memory_address (Pmode, addr);
+	  mem = gen_rtx_MEM (QImode, addr);
+	  emit_move_insn (mem, const0_rtx);
+	}
       else if (use_after_return_class >= 5
 	       || !set_storage_via_setmem (shadow_mem,
 					   GEN_INT (sz),
@@ -1283,7 +1668,7 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
 	  ret = init_one_libfunc (buf);
 	  rtx addr = convert_memory_address (ptr_mode, base);
 	  rtx orig_addr = convert_memory_address (ptr_mode, orig_base);
-	  emit_library_call (ret, LCT_NORMAL, ptr_mode, 3, addr, ptr_mode,
+	  emit_library_call (ret, LCT_NORMAL, ptr_mode, addr, ptr_mode,
 			     GEN_INT (asan_frame_size + base_align_bias),
 			     TYPE_MODE (pointer_sized_int_node),
 			     orig_addr, ptr_mode);
@@ -1299,58 +1684,61 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
   if (STRICT_ALIGNMENT)
     set_mem_align (shadow_mem, (GET_MODE_ALIGNMENT (SImode)));
 
-  /* Unpoison shadow memory of a stack at the very end of a function.
-     As we're poisoning stack variables at the end of their scope,
-     shadow memory must be properly unpoisoned here.  The easiest approach
-     would be to collect all variables that should not be unpoisoned and
-     we unpoison shadow memory of the whole stack except ranges
-     occupied by these variables.  */
+  prev_offset = base_offset;
   last_offset = base_offset;
-  HOST_WIDE_INT current_offset = last_offset;
-  if (length)
+  last_size = 0;
+  last_size_aligned = 0;
+  for (l = length; l; l -= 2)
     {
-      HOST_WIDE_INT var_end_offset = 0;
-      HOST_WIDE_INT stack_start = offsets[length - 1];
-      gcc_assert (last_offset == stack_start);
-
-      for (int l = length - 2; l > 0; l -= 2)
+      offset = base_offset + ((offsets[l - 1] - base_offset)
+			      & ~(ASAN_RED_ZONE_SIZE - HOST_WIDE_INT_1));
+      if (last_offset + last_size_aligned < offset)
 	{
-	  HOST_WIDE_INT var_offset = offsets[l];
-	  current_offset = var_offset;
-	  var_end_offset = offsets[l - 1];
-	  HOST_WIDE_INT rounded_size = ROUND_UP (var_end_offset - var_offset,
-					     BITS_PER_UNIT);
+	  shadow_mem = adjust_address (shadow_mem, VOIDmode,
+				       (last_offset - prev_offset)
+				       >> ASAN_SHADOW_SHIFT);
+	  prev_offset = last_offset;
+	  asan_clear_shadow (shadow_mem, last_size_aligned >> ASAN_SHADOW_SHIFT);
+	  last_offset = offset;
+	  last_size = 0;
+	}
+      else
+	last_size = offset - last_offset;
+      last_size += base_offset + ((offsets[l - 2] - base_offset)
+				  & ~(ASAN_MIN_RED_ZONE_SIZE - HOST_WIDE_INT_1))
+		   - offset;
 
-	  /* Should we unpoison the variable?  */
+      /* Unpoison shadow memory that corresponds to a variable that is 
+	 is subject of use-after-return sanitization.  */
+      if (l > 2)
+	{
+	  decl = decls[l / 2 - 2];
 	  if (asan_handled_variables != NULL
 	      && asan_handled_variables->contains (decl))
 	    {
+	      HOST_WIDE_INT size = offsets[l - 3] - offsets[l - 2];
 	      if (dump_file && (dump_flags & TDF_DETAILS))
 		{
 		  const char *n = (DECL_NAME (decl)
 				   ? IDENTIFIER_POINTER (DECL_NAME (decl))
 				   : "<unknown>");
 		  fprintf (dump_file, "Unpoisoning shadow stack for variable: "
-			   "%s (%" PRId64 "B)\n", n,
-			   var_end_offset - var_offset);
+			   "%s (%" PRId64 " B)\n", n, size);
 		}
 
-	      unsigned HOST_WIDE_INT s
-		= shadow_mem_size (current_offset - last_offset);
-	      asan_clear_shadow (shadow_mem, s);
-	      HOST_WIDE_INT shift
-		= shadow_mem_size (current_offset - last_offset + rounded_size);
-	      shadow_mem = adjust_address (shadow_mem, VOIDmode, shift);
-	      last_offset = var_offset + rounded_size;
-	      current_offset = last_offset;
+		last_size += size & ~(ASAN_MIN_RED_ZONE_SIZE - HOST_WIDE_INT_1);
 	    }
-
 	}
-
-      /* Handle last redzone.  */
-      current_offset = offsets[0];
-      asan_clear_shadow (shadow_mem,
-			 shadow_mem_size (current_offset - last_offset));
+      last_size_aligned
+	= ((last_size + (ASAN_RED_ZONE_SIZE - HOST_WIDE_INT_1))
+	   & ~(ASAN_RED_ZONE_SIZE - HOST_WIDE_INT_1));
+    }
+  if (last_size_aligned)
+    {
+      shadow_mem = adjust_address (shadow_mem, VOIDmode,
+				   (last_offset - prev_offset)
+				   >> ASAN_SHADOW_SHIFT);
+      asan_clear_shadow (shadow_mem, last_size_aligned >> ASAN_SHADOW_SHIFT);
     }
 
   /* Clean-up set with instrumented stack variables.  */
@@ -1364,6 +1752,29 @@ asan_emit_stack_protection (rtx base, rtx pbase, unsigned int alignb,
     emit_label (lab);
 
   insns = get_insns ();
+  end_sequence ();
+  return insns;
+}
+
+/* Emit __asan_allocas_unpoison (top, bot) call.  The BASE parameter corresponds
+   to BOT argument, for TOP virtual_stack_dynamic_rtx is used.  NEW_SEQUENCE
+   indicates whether we're emitting new instructions sequence or not.  */
+
+rtx_insn *
+asan_emit_allocas_unpoison (rtx top, rtx bot, rtx_insn *before)
+{
+  if (before)
+    push_to_sequence (before);
+  else
+    start_sequence ();
+  rtx ret = init_one_libfunc ("__asan_allocas_unpoison");
+  top = convert_memory_address (ptr_mode, top);
+  bot = convert_memory_address (ptr_mode, bot);
+  ret = emit_library_call_value (ret, NULL_RTX, LCT_NORMAL, ptr_mode,
+				 top, ptr_mode, bot, ptr_mode);
+
+  do_pending_stack_adjust ();
+  rtx_insn *insns = get_insns ();
   end_sequence ();
   return insns;
 }
@@ -1393,7 +1804,7 @@ is_odr_indicator (tree decl)
    ASAN_RED_ZONE_SIZE bytes.  */
 
 bool
-asan_protect_global (tree decl)
+asan_protect_global (tree decl, bool ignore_decl_rtl_set_p)
 {
   if (!ASAN_GLOBALS)
     return false;
@@ -1415,7 +1826,13 @@ asan_protect_global (tree decl)
       || DECL_THREAD_LOCAL_P (decl)
       /* Externs will be protected elsewhere.  */
       || DECL_EXTERNAL (decl)
-      || !DECL_RTL_SET_P (decl)
+      /* PR sanitizer/81697: For architectures that use section anchors first
+	 call to asan_protect_global may occur before DECL_RTL (decl) is set.
+	 We should ignore DECL_RTL_SET_P then, because otherwise the first call
+	 to asan_protect_global will return FALSE and the following calls on the
+	 same decl after setting DECL_RTL (decl) will return TRUE and we'll end
+	 up with inconsistency at runtime.  */
+      || (!DECL_RTL_SET_P (decl) && !ignore_decl_rtl_set_p)
       /* Comdat vars pose an ABI problem, we can't know if
 	 the var that is selected by the linker will have
 	 padding or not.  */
@@ -1433,28 +1850,31 @@ asan_protect_global (tree decl)
 	  && !section_sanitized_p (DECL_SECTION_NAME (decl)))
       || DECL_SIZE (decl) == 0
       || ASAN_RED_ZONE_SIZE * BITS_PER_UNIT > MAX_OFILE_ALIGNMENT
+      || TREE_CODE (DECL_SIZE_UNIT (decl)) != INTEGER_CST
       || !valid_constant_size_p (DECL_SIZE_UNIT (decl))
       || DECL_ALIGN_UNIT (decl) > 2 * ASAN_RED_ZONE_SIZE
       || TREE_TYPE (decl) == ubsan_get_source_location_type ()
       || is_odr_indicator (decl))
     return false;
 
-  rtl = DECL_RTL (decl);
-  if (!MEM_P (rtl) || GET_CODE (XEXP (rtl, 0)) != SYMBOL_REF)
-    return false;
-  symbol = XEXP (rtl, 0);
+  if (!ignore_decl_rtl_set_p || DECL_RTL_SET_P (decl))
+    {
 
-  if (CONSTANT_POOL_ADDRESS_P (symbol)
-      || TREE_CONSTANT_POOL_ADDRESS_P (symbol))
-    return false;
+      rtl = DECL_RTL (decl);
+      if (!MEM_P (rtl) || GET_CODE (XEXP (rtl, 0)) != SYMBOL_REF)
+	return false;
+      symbol = XEXP (rtl, 0);
+
+      if (CONSTANT_POOL_ADDRESS_P (symbol)
+	  || TREE_CONSTANT_POOL_ADDRESS_P (symbol))
+	return false;
+    }
 
   if (lookup_attribute ("weakref", DECL_ATTRIBUTES (decl)))
     return false;
 
-#ifndef ASM_OUTPUT_DEF
-  if (asan_needs_local_alias (decl))
+  if (!TARGET_SUPPORTS_ALIASES && asan_needs_local_alias (decl))
     return false;
-#endif
 
   return true;
 }
@@ -1586,18 +2006,18 @@ create_cond_insert_point (gimple_stmt_iterator *iter,
 
   /* Set up the newly created 'then block'.  */
   e = make_edge (cond_bb, then_bb, EDGE_TRUE_VALUE);
-  int fallthrough_probability
+  profile_probability fallthrough_probability
     = then_more_likely_p
-    ? PROB_VERY_UNLIKELY
-    : PROB_ALWAYS - PROB_VERY_UNLIKELY;
-  e->probability = PROB_ALWAYS - fallthrough_probability;
+    ? profile_probability::very_unlikely ()
+    : profile_probability::very_likely ();
+  e->probability = fallthrough_probability.invert ();
+  then_bb->count = e->count ();
   if (create_then_fallthru_edge)
     make_single_succ_edge (then_bb, fallthru_bb, EDGE_FALLTHRU);
 
   /* Set up the fallthrough basic block.  */
   e = find_edge (cond_bb, fallthru_bb);
   e->flags = EDGE_FALSE_VALUE;
-  e->count = cond_bb->count;
   e->probability = fallthrough_probability;
 
   /* Update dominance info for the newly created then_bb; note that
@@ -1855,7 +2275,7 @@ instrument_derefs (gimple_stmt_iterator *iter, tree t,
   if (size_in_bytes <= 0)
     return;
 
-  HOST_WIDE_INT bitsize, bitpos;
+  poly_int64 bitsize, bitpos;
   tree offset;
   machine_mode mode;
   int unsignedp, reversep, volatilep = 0;
@@ -1873,19 +2293,19 @@ instrument_derefs (gimple_stmt_iterator *iter, tree t,
       return;
     }
 
-  if (bitpos % BITS_PER_UNIT
-      || bitsize != size_in_bytes * BITS_PER_UNIT)
+  if (!multiple_p (bitpos, BITS_PER_UNIT)
+      || maybe_ne (bitsize, size_in_bytes * BITS_PER_UNIT))
     return;
 
   if (VAR_P (inner) && DECL_HARD_REGISTER (inner))
     return;
 
+  poly_int64 decl_size;
   if (VAR_P (inner)
       && offset == NULL_TREE
-      && bitpos >= 0
       && DECL_SIZE (inner)
-      && tree_fits_shwi_p (DECL_SIZE (inner))
-      && bitpos + bitsize <= tree_to_shwi (DECL_SIZE (inner)))
+      && poly_int_tree_p (DECL_SIZE (inner), &decl_size)
+      && known_subrange_p (bitpos, bitsize, 0, decl_size))
     {
       if (DECL_THREAD_LOCAL_P (inner))
 	return;
@@ -2005,7 +2425,7 @@ instrument_builtin_call (gimple_stmt_iterator *iter)
 				    &src0, &src0_len, &src0_is_store,
 				    &src1, &src1_len, &src1_is_store,
 				    &dest, &dest_len, &dest_is_store,
-				    &dest_is_deref, &intercepted_p))
+				    &dest_is_deref, &intercepted_p, iter))
     {
       if (dest_is_deref)
 	{
@@ -2297,6 +2717,7 @@ asan_global_struct (void)
   TYPE_FIELDS (ret) = fields[0];
   TYPE_NAME (ret) = type_decl;
   TYPE_STUB_DECL (ret) = type_decl;
+  TYPE_ARTIFICIAL (ret) = 1;
   layout_type (ret);
   return ret;
 }
@@ -2315,9 +2736,12 @@ create_odr_indicator (tree decl, tree type)
   /* DECL_NAME theoretically might be NULL.  Bail out with 0 in this case.  */
   if (decl_name == NULL_TREE)
     return build_int_cst (uptr, 0);
-  size_t len = strlen (IDENTIFIER_POINTER (decl_name)) + sizeof ("__odr_asan_");
+  const char *dname = IDENTIFIER_POINTER (decl_name);
+  if (HAS_DECL_ASSEMBLER_NAME_P (decl))
+    dname = targetm.strip_name_encoding (dname);
+  size_t len = strlen (dname) + sizeof ("__odr_asan_");
   name = XALLOCAVEC (char, len);
-  snprintf (name, len, "__odr_asan_%s", IDENTIFIER_POINTER (decl_name));
+  snprintf (name, len, "__odr_asan_%s", dname);
 #ifndef NO_DOT_IN_LABEL
   name[sizeof ("__odr_asan") - 1] = '.';
 #elif !defined(NO_DOLLAR_IN_LABEL)
@@ -2494,6 +2918,29 @@ initialize_sanitizer_builtins (void)
   tree BT_FN_SIZE_CONST_PTR_INT
     = build_function_type_list (size_type_node, const_ptr_type_node,
 				integer_type_node, NULL_TREE);
+
+  tree BT_FN_VOID_UINT8_UINT8
+    = build_function_type_list (void_type_node, unsigned_char_type_node,
+				unsigned_char_type_node, NULL_TREE);
+  tree BT_FN_VOID_UINT16_UINT16
+    = build_function_type_list (void_type_node, uint16_type_node,
+				uint16_type_node, NULL_TREE);
+  tree BT_FN_VOID_UINT32_UINT32
+    = build_function_type_list (void_type_node, uint32_type_node,
+				uint32_type_node, NULL_TREE);
+  tree BT_FN_VOID_UINT64_UINT64
+    = build_function_type_list (void_type_node, uint64_type_node,
+				uint64_type_node, NULL_TREE);
+  tree BT_FN_VOID_FLOAT_FLOAT
+    = build_function_type_list (void_type_node, float_type_node,
+				float_type_node, NULL_TREE);
+  tree BT_FN_VOID_DOUBLE_DOUBLE
+    = build_function_type_list (void_type_node, double_type_node,
+				double_type_node, NULL_TREE);
+  tree BT_FN_VOID_UINT64_PTR
+    = build_function_type_list (void_type_node, uint64_type_node,
+				ptr_type_node, NULL_TREE);
+
   tree BT_FN_BOOL_VPTR_PTR_IX_INT_INT[5];
   tree BT_FN_IX_CONST_VPTR_INT[5];
   tree BT_FN_IX_VPTR_IX_INT[5];
@@ -2569,14 +3016,17 @@ initialize_sanitizer_builtins (void)
 #define ATTR_PURE_NOTHROW_LEAF_LIST ECF_PURE | ATTR_NOTHROW_LEAF_LIST
 #undef DEF_BUILTIN_STUB
 #define DEF_BUILTIN_STUB(ENUM, NAME)
-#undef DEF_SANITIZER_BUILTIN
-#define DEF_SANITIZER_BUILTIN(ENUM, NAME, TYPE, ATTRS) \
+#undef DEF_SANITIZER_BUILTIN_1
+#define DEF_SANITIZER_BUILTIN_1(ENUM, NAME, TYPE, ATTRS)		\
   do {									\
     decl = add_builtin_function ("__builtin_" NAME, TYPE, ENUM,		\
 				 BUILT_IN_NORMAL, NAME, NULL_TREE);	\
     set_call_expr_flags (decl, ATTRS);					\
     set_builtin_decl (ENUM, decl, true);				\
-  } while (0);
+  } while (0)
+#undef DEF_SANITIZER_BUILTIN
+#define DEF_SANITIZER_BUILTIN(ENUM, NAME, TYPE, ATTRS)	\
+  DEF_SANITIZER_BUILTIN_1 (ENUM, NAME, TYPE, ATTRS);
 
 #include "sanitizer.def"
 
@@ -2585,10 +3035,11 @@ initialize_sanitizer_builtins (void)
      DEF_SANITIZER_BUILTIN here only as a convenience macro.  */
   if ((flag_sanitize & SANITIZE_OBJECT_SIZE)
       && !builtin_decl_implicit_p (BUILT_IN_OBJECT_SIZE))
-    DEF_SANITIZER_BUILTIN (BUILT_IN_OBJECT_SIZE, "object_size",
-			   BT_FN_SIZE_CONST_PTR_INT,
-			   ATTR_PURE_NOTHROW_LEAF_LIST)
+    DEF_SANITIZER_BUILTIN_1 (BUILT_IN_OBJECT_SIZE, "object_size",
+			     BT_FN_SIZE_CONST_PTR_INT,
+			     ATTR_PURE_NOTHROW_LEAF_LIST);
 
+#undef DEF_SANITIZER_BUILTIN_1
 #undef DEF_SANITIZER_BUILTIN
 #undef DEF_BUILTIN_STUB
 }
@@ -2707,6 +3158,9 @@ asan_finish_file (void)
       TREE_CONSTANT (ctor) = 1;
       TREE_STATIC (ctor) = 1;
       DECL_INITIAL (var) = ctor;
+      SET_DECL_ALIGN (var, MAX (DECL_ALIGN (var),
+				ASAN_SHADOW_GRANULARITY * BITS_PER_UNIT));
+
       varpool_node::finalize_decl (var);
 
       tree fn = builtin_decl_implicit (BUILT_IN_ASAN_REGISTER_GLOBALS);
@@ -2802,9 +3256,13 @@ asan_expand_mark_ifn (gimple_stmt_iterator *iter)
     decl = TREE_OPERAND (decl, 0);
 
   gcc_checking_assert (TREE_CODE (decl) == VAR_DECL);
-  if (asan_handled_variables == NULL)
-    asan_handled_variables = new hash_set<tree> (16);
-  asan_handled_variables->add (decl);
+
+  if (is_poison)
+    {
+      if (asan_handled_variables == NULL)
+	asan_handled_variables = new hash_set<tree> (16);
+      asan_handled_variables->add (decl);
+    }
   tree len = gimple_call_arg (g, 2);
 
   gcc_assert (tree_fits_shwi_p (len));
@@ -2820,7 +3278,10 @@ asan_expand_mark_ifn (gimple_stmt_iterator *iter)
   /* Generate direct emission if size_in_bytes is small.  */
   if (size_in_bytes <= ASAN_PARAM_USE_AFTER_SCOPE_DIRECT_EMISSION_THRESHOLD)
     {
-      unsigned HOST_WIDE_INT shadow_size = shadow_mem_size (size_in_bytes);
+      const unsigned HOST_WIDE_INT shadow_size
+	= shadow_mem_size (size_in_bytes);
+      const unsigned int shadow_align
+	= (get_pointer_alignment (base) / BITS_PER_UNIT) >> ASAN_SHADOW_SHIFT;
 
       tree shadow = build_shadow_mem_access (iter, loc, base_addr,
 					     shadow_ptr_types[0], true);
@@ -2828,9 +3289,11 @@ asan_expand_mark_ifn (gimple_stmt_iterator *iter)
       for (unsigned HOST_WIDE_INT offset = 0; offset < shadow_size;)
 	{
 	  unsigned size = 1;
-	  if (shadow_size - offset >= 4)
+	  if (shadow_size - offset >= 4
+	      && (!STRICT_ALIGNMENT || shadow_align >= 4))
 	    size = 4;
-	  else if (shadow_size - offset >= 2)
+	  else if (shadow_size - offset >= 2
+		   && (!STRICT_ALIGNMENT || shadow_align >= 2))
 	    size = 2;
 
 	  unsigned HOST_WIDE_INT last_chunk_size = 0;
@@ -3158,6 +3621,10 @@ asan_expand_poison_ifn (gimple_stmt_iterator *iter,
 	      {
 		edge e = gimple_phi_arg_edge (phi, i);
 
+		/* Do not insert on an edge we can't split.  */
+		if (e->flags & EDGE_ABNORMAL)
+		  continue;
+
 		if (call_to_insert == NULL)
 		  call_to_insert = gimple_copy (call);
 
@@ -3191,15 +3658,14 @@ asan_instrument (void)
   if (shadow_ptr_types[0] == NULL_TREE)
     asan_init_shadow_ptr_types ();
   transform_statements ();
+  last_alloca_addr = NULL_TREE;
   return 0;
 }
 
 static bool
 gate_asan (void)
 {
-  return (flag_sanitize & SANITIZE_ADDRESS) != 0
-	  && !lookup_attribute ("no_sanitize_address",
-				DECL_ATTRIBUTES (current_function_decl));
+  return sanitize_flags_p (SANITIZE_ADDRESS);
 }
 
 namespace {

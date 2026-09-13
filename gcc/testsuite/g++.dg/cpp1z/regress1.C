@@ -1,5 +1,5 @@
 // PR c++/67114
-// { dg-options -std=c++1z }
+// { dg-do compile { target c++17 } }
 
 typedef unsigned uint32_t;
 class A {

@@ -1,6 +1,6 @@
 // Bitmap Allocator. -*- C++ -*-
 
-// Copyright (C) 2004-2017 Free Software Foundation, Inc.
+// Copyright (C) 2004-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -31,7 +31,7 @@
 
 #include <utility> // For std::pair.
 #include <bits/functexcept.h> // For __throw_bad_alloc().
-#include <functional> // For greater_equal, and less_equal.
+#include <bits/stl_function.h> // For greater_equal, and less_equal.
 #include <new> // For operator new.
 #include <debug/debug.h> // _GLIBCXX_DEBUG_ASSERT
 #include <ext/concurrence.h>
@@ -44,12 +44,13 @@
 
 namespace __gnu_cxx _GLIBCXX_VISIBILITY(default)
 {
+_GLIBCXX_BEGIN_NAMESPACE_VERSION
+
   using std::size_t;
   using std::ptrdiff_t;
 
   namespace __detail
   {
-  _GLIBCXX_BEGIN_NAMESPACE_VERSION
     /** @class  __mini_vector bitmap_allocator.h bitmap_allocator.h
      *
      *  @brief  __mini_vector<> is a stripped down version of the
@@ -89,7 +90,7 @@ namespace __gnu_cxx _GLIBCXX_VISIBILITY(default)
 	_M_space_left() const throw()
 	{ return _M_end_of_storage - _M_finish; }
 
-	pointer
+	_GLIBCXX_NODISCARD pointer
 	allocate(size_type __n)
 	{ return static_cast<pointer>(::operator new(__n * sizeof(_Tp))); }
 
@@ -501,11 +502,7 @@ namespace __gnu_cxx _GLIBCXX_VISIBILITY(default)
       size_t __mask = 1 << __pos;
       *__pbmap |= __mask;
     }
-
-  _GLIBCXX_END_NAMESPACE_VERSION
   } // namespace __detail
-
-_GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   /** @brief  Generic Version of the bsf instruction.
    */
@@ -757,7 +754,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       /** @brief  Responsible for exponentially growing the internal
        *  memory pool.
        *
-       *  @throw  std::bad_alloc. If memory can not be allocated.
+       *  @throw  std::bad_alloc. If memory cannot be allocated.
        *
        *  Complexity: O(1), but internally depends upon the
        *  complexity of the function free_list::_M_get. The part where
@@ -813,7 +810,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       /** @brief  Allocates memory for a single object of size
        *  sizeof(_Tp).
        *
-       *  @throw  std::bad_alloc. If memory can not be allocated.
+       *  @throw  std::bad_alloc. If memory cannot be allocated.
        *
        *  Complexity: Worst case complexity is O(N), but that
        *  is hardly ever hit. If and when this particular case is
@@ -1012,7 +1009,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       ~bitmap_allocator() _GLIBCXX_USE_NOEXCEPT
       { }
 
-      pointer 
+      _GLIBCXX_NODISCARD pointer 
       allocate(size_type __n)
       {
 	if (__n > this->max_size())
@@ -1036,7 +1033,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  }
       }
 
-      pointer 
+      _GLIBCXX_NODISCARD pointer 
       allocate(size_type __n, typename bitmap_allocator<void>::const_pointer)
       { return allocate(__n); }
 
@@ -1134,4 +1131,3 @@ _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace __gnu_cxx
 
 #endif 
-

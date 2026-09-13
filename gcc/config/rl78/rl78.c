@@ -1,5 +1,5 @@
 /* Subroutines used for code generation on Renesas RL78 processors.
-   Copyright (C) 2011-2017 Free Software Foundation, Inc.
+   Copyright (C) 2011-2019 Free Software Foundation, Inc.
    Contributed by Red Hat.
 
    This file is part of GCC.
@@ -18,6 +18,8 @@
    along with GCC; see the file COPYING3.  If not see
    <http://www.gnu.org/licenses/>.  */
 
+#define IN_TARGET_CODE 1
+
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
@@ -29,6 +31,7 @@
 #include "memmodel.h"
 #include "tm_p.h"
 #include "stringpool.h"
+#include "attribs.h"
 #include "optabs.h"
 #include "emit-rtl.h"
 #include "recog.h"
@@ -77,6 +80,9 @@ static const char * const word_regnames[] =
   "sp", "ap", "psw", "es", "cs"
 };
 
+/* used by rl78_addsi3_internal for formatting insns output */
+static char fmt_buffer[1024];
+
 /* Structure for G13 MDUC registers.  */
 struct mduc_reg_type
 {
@@ -86,12 +92,12 @@ struct mduc_reg_type
 
 struct mduc_reg_type  mduc_regs[] =
 {
-  {0xf00e8, QImode},
-  {0xffff0, HImode},
-  {0xffff2, HImode},
-  {0xf2224, HImode},
-  {0xf00e0, HImode},
-  {0xf00e2, HImode}
+  {0xf00e8, E_QImode},
+  {0xffff0, E_HImode},
+  {0xffff2, E_HImode},
+  {0xf2224, E_HImode},
+  {0xf00e0, E_HImode},
+  {0xf00e2, E_HImode}
 };
 
 struct GTY(()) machine_function
@@ -222,7 +228,7 @@ move_elim_pass (void)
     }
 
   if (dump_file)
-    print_rtl_with_bb (dump_file, get_insns (), 0);
+    print_rtl_with_bb (dump_file, get_insns (), TDF_NONE);
 
   return 0;
 }
@@ -359,12 +365,14 @@ rl78_option_override (void)
   if (TARGET_ES0
       && strcmp (lang_hooks.name, "GNU C")
       && strcmp (lang_hooks.name, "GNU C11")
+      && strcmp (lang_hooks.name, "GNU C17")
+      && strcmp (lang_hooks.name, "GNU C2X")
       && strcmp (lang_hooks.name, "GNU C89")
       && strcmp (lang_hooks.name, "GNU C99")
       /* Compiling with -flto results in a language of GNU GIMPLE being used... */
       && strcmp (lang_hooks.name, "GNU GIMPLE"))
     /* Address spaces are currently only supported by C.  */
-    error ("-mes0 can only be used with C");
+    error ("%<-mes0%> can only be used with C");
 
   if (TARGET_SAVE_MDUC_REGISTERS && !(TARGET_G13 || RL78_MUL_G13))
     warning (0, "mduc registers only saved for G13 target");
@@ -382,8 +390,10 @@ rl78_option_override (void)
 	{
 	case MUL_UNINIT: rl78_mul_type = MUL_NONE; break;
 	case MUL_NONE:   break;
-	case MUL_G13:  	 error ("-mmul=g13 cannot be used with -mcpu=g10"); break;
-	case MUL_G14:  	 error ("-mmul=g14 cannot be used with -mcpu=g10"); break;
+	case MUL_G13:  	 error ("%<-mmul=g13%> cannot be used with "
+				"%<-mcpu=g10%>"); break;
+	case MUL_G14:  	 error ("%<-mmul=g14%> cannot be used with "
+				"%<-mcpu=g10%>"); break;
 	}
       break;
 
@@ -394,7 +404,8 @@ rl78_option_override (void)
 	case MUL_NONE:   break;
 	case MUL_G13:  	break;
 	  /* The S2 core does not have mul/div instructions.  */
-	case MUL_G14: 	error ("-mmul=g14 cannot be used with -mcpu=g13"); break;
+	case MUL_G14: 	error ("%<-mmul=g14%> cannot be used with "
+			       "%<-mcpu=g13%>"); break;
 	}
       break;
 
@@ -406,7 +417,8 @@ rl78_option_override (void)
 	case MUL_G14:  	break;
 	/* The G14 core does not have the hardware multiply peripheral used by the
 	   G13 core, hence you cannot use G13 multipliy routines on G14 hardware.  */
-	case MUL_G13: 	error ("-mmul=g13 cannot be used with -mcpu=g14"); break;
+	case MUL_G13: 	error ("%<-mmul=g13%> cannot be used with "
+			       "%<-mcpu=g14%>"); break;
 	}
       break;
     }
@@ -448,9 +460,11 @@ rl78_real_insns_ok (void)
   return false;
 }
 
-/* Implements HARD_REGNO_NREGS.  */
-int
-rl78_hard_regno_nregs (int regno, machine_mode mode)
+#undef TARGET_HARD_REGNO_NREGS
+#define TARGET_HARD_REGNO_NREGS rl78_hard_regno_nregs
+
+static unsigned int
+rl78_hard_regno_nregs (unsigned int regno, machine_mode mode)
 {
   int rs = register_sizes[regno];
   if (rs < 1)
@@ -458,34 +472,48 @@ rl78_hard_regno_nregs (int regno, machine_mode mode)
   return ((GET_MODE_SIZE (mode) + rs - 1) / rs);
 }
 
-/* Implements HARD_REGNO_MODE_OK.  */
-int
-rl78_hard_regno_mode_ok (int regno, machine_mode mode)
+#undef TARGET_HARD_REGNO_MODE_OK
+#define TARGET_HARD_REGNO_MODE_OK rl78_hard_regno_mode_ok
+
+static bool
+rl78_hard_regno_mode_ok (unsigned int regno, machine_mode mode)
 {
   int s = GET_MODE_SIZE (mode);
 
   if (s < 1)
-    return 0;
+    return false;
   /* These are not to be used by gcc.  */
   if (regno == 23 || regno == ES_REG || regno == CS_REG)
-    return 0;
+    return false;
   /* $fp can always be accessed as a 16-bit value.  */
   if (regno == FP_REG && s == 2)
-    return 1;
+    return true;
   if (regno < SP_REG)
     {
       /* Since a reg-reg move is really a reg-mem move, we must
 	 enforce alignment.  */
       if (s > 1 && (regno % 2))
-	return 0;
-      return 1;
+	return false;
+      return true;
     }
   if (s == CC_REGNUM)
     return (mode == BImode);
   /* All other registers must be accessed in their natural sizes.  */
   if (s == register_sizes [regno])
-    return 1;
-  return 0;
+    return true;
+  return false;
+}
+
+#undef TARGET_MODES_TIEABLE_P
+#define TARGET_MODES_TIEABLE_P rl78_modes_tieable_p
+
+static bool
+rl78_modes_tieable_p (machine_mode mode1, machine_mode mode2)
+{
+  return ((GET_MODE_CLASS (mode1) == MODE_FLOAT
+	   || GET_MODE_CLASS (mode1) == MODE_COMPLEX_FLOAT)
+	  == (GET_MODE_CLASS (mode2) == MODE_FLOAT
+	      || GET_MODE_CLASS (mode2) == MODE_COMPLEX_FLOAT));
 }
 
 /* Simplify_gen_subreg() doesn't handle memory references the way we
@@ -539,7 +567,7 @@ rl78_expand_movsi (rtx *operands)
 
 /* Generate code to move an SImode value.  */
 void
-rl78_split_movsi (rtx *operands, enum machine_mode omode)
+rl78_split_movsi (rtx *operands, machine_mode omode)
 {
   rtx op00, op02, op10, op12;
 
@@ -576,6 +604,18 @@ rl78_split_movsi (rtx *operands, enum machine_mode omode)
       operands[3] = op02;
       operands[5] = op12;
     }
+}
+
+void
+rl78_split_movdi (rtx *operands, enum machine_mode omode)
+{
+    rtx op00, op04, op10, op14;
+    op00 = rl78_subreg (SImode, operands[0], omode, 0);
+    op04 = rl78_subreg (SImode, operands[0], omode, 4);
+    op10 = rl78_subreg (SImode, operands[1], omode, 0);
+    op14 = rl78_subreg (SImode, operands[1], omode, 4);
+    emit_insn (gen_movsi (op00, op10));
+    emit_insn (gen_movsi (op04, op14));
 }
 
 /* Used by various two-operand expanders which cannot accept all
@@ -769,12 +809,11 @@ is_brk_interrupt_func (const_tree decl)
 static tree
 rl78_handle_func_attribute (tree * node,
 			    tree   name,
-			    tree   args,
+			    tree   args ATTRIBUTE_UNUSED,
 			    int    flags ATTRIBUTE_UNUSED,
 			    bool * no_add_attrs)
 {
   gcc_assert (DECL_P (* node));
-  gcc_assert (args == NULL_TREE);
 
   if (TREE_CODE (* node) != FUNCTION_DECL)
     {
@@ -825,7 +864,29 @@ rl78_handle_saddr_attribute (tree * node,
 
   if (TREE_CODE (* node) == FUNCTION_DECL)
     {
-      warning (OPT_Wattributes, "%qE attribute doesn't apply to functions",
+      warning (OPT_Wattributes, "%qE attribute doesn%'t apply to functions",
+	       name);
+      * no_add_attrs = true;
+    }
+
+  return NULL_TREE;
+}
+
+/* Check "vector" attribute.  */
+
+static tree
+rl78_handle_vector_attribute (tree * node,
+			    tree   name,
+			    tree   args,
+			    int    flags ATTRIBUTE_UNUSED,
+			    bool * no_add_attrs)
+{
+  gcc_assert (DECL_P (* node));
+  gcc_assert (args != NULL_TREE);
+
+  if (TREE_CODE (* node) != FUNCTION_DECL)
+    {
+      warning (OPT_Wattributes, "%qE attribute only applies to functions",
 	       name);
       * no_add_attrs = true;
     }
@@ -839,17 +900,19 @@ rl78_handle_saddr_attribute (tree * node,
 /* Table of RL78-specific attributes.  */
 const struct attribute_spec rl78_attribute_table[] =
 {
-  /* Name, min_len, max_len, decl_req, type_req, fn_type_req, handler,
-     affects_type_identity.  */
-  { "interrupt",      0, 0, true, false, false, rl78_handle_func_attribute,
-    false },
-  { "brk_interrupt",  0, 0, true, false, false, rl78_handle_func_attribute,
-    false },
-  { "naked",          0, 0, true, false, false, rl78_handle_naked_attribute,
-    false },
-  { "saddr",          0, 0, true, false, false, rl78_handle_saddr_attribute,
-    false },
-  { NULL,             0, 0, false, false, false, NULL, false }
+  /* Name, min_len, max_len, decl_req, type_req, fn_type_req,
+     affects_type_identity, handler, exclude.  */
+  { "interrupt",      0, -1, true, false, false, false,
+    rl78_handle_func_attribute, NULL },
+  { "brk_interrupt",  0, 0, true, false, false, false,
+    rl78_handle_func_attribute, NULL },
+  { "naked",          0, 0, true, false, false, false,
+    rl78_handle_naked_attribute, NULL },
+  { "saddr",          0, 0, true, false, false, false,
+    rl78_handle_saddr_attribute, NULL },
+  { "vector",         1, -1, true, false, false, false,
+	rl78_handle_vector_attribute, NULL },
+  { NULL,             0, 0, false, false, false, false, NULL, NULL }
 };
 
 
@@ -997,7 +1060,7 @@ rl78_hl_b_c_addr_p (rtx op)
 #undef  TARGET_ADDR_SPACE_ADDRESS_MODE
 #define TARGET_ADDR_SPACE_ADDRESS_MODE rl78_addr_space_address_mode
 
-static enum machine_mode
+static scalar_int_mode
 rl78_addr_space_address_mode (addr_space_t addrspace)
 {
   switch (addrspace)
@@ -1037,7 +1100,7 @@ rl78_far_p (rtx x)
 #undef  TARGET_ADDR_SPACE_POINTER_MODE
 #define TARGET_ADDR_SPACE_POINTER_MODE rl78_addr_space_pointer_mode
 
-static machine_mode
+static scalar_int_mode
 rl78_addr_space_pointer_mode (addr_space_t addrspace)
 {
   switch (addrspace)
@@ -1058,7 +1121,7 @@ rl78_addr_space_pointer_mode (addr_space_t addrspace)
 #define TARGET_VALID_POINTER_MODE rl78_valid_pointer_mode
 
 static bool
-rl78_valid_pointer_mode (machine_mode m)
+rl78_valid_pointer_mode (scalar_int_mode m)
 {
   return (m == HImode || m == SImode);
 }
@@ -1548,13 +1611,72 @@ rl78_expand_eh_epilogue (rtx x ATTRIBUTE_UNUSED)
 #undef  TARGET_ASM_FUNCTION_PROLOGUE
 #define TARGET_ASM_FUNCTION_PROLOGUE	rl78_start_function
 
+static void
+add_vector_labels (FILE *file, const char *aname)
+{
+  tree vec_attr;
+  tree val_attr;
+  const char *vname = "vect";
+  const char *s;
+  int vnum;
+
+  /* This node is for the vector/interrupt tag itself */
+  vec_attr = lookup_attribute (aname, DECL_ATTRIBUTES (current_function_decl));
+  if (!vec_attr)
+    return;
+
+  /* Now point it at the first argument */
+  vec_attr = TREE_VALUE (vec_attr);
+
+  /* Iterate through the arguments.  */
+  while (vec_attr)
+    {
+      val_attr = TREE_VALUE (vec_attr);
+      switch (TREE_CODE (val_attr))
+	{
+	case STRING_CST:
+	  s = TREE_STRING_POINTER (val_attr);
+	  goto string_id_common;
+
+	case IDENTIFIER_NODE:
+	  s = IDENTIFIER_POINTER (val_attr);
+
+	string_id_common:
+	  if (strcmp (s, "$default") == 0)
+	    {
+	      fprintf (file, "\t.global\t$tableentry$default$%s\n", vname);
+	      fprintf (file, "$tableentry$default$%s:\n", vname);
+	    }
+	  else
+	    vname = s;
+	  break;
+
+	case INTEGER_CST:
+	  vnum = TREE_INT_CST_LOW (val_attr);
+
+	  fprintf (file, "\t.global\t$tableentry$%d$%s\n", vnum, vname);
+	  fprintf (file, "$tableentry$%d$%s:\n", vnum, vname);
+	  break;
+
+	default:
+	  ;
+	}
+
+      vec_attr = TREE_CHAIN (vec_attr);
+    }
+
+}
+
 /* We don't use this to actually emit the function prologue.  We use
    this to insert a comment in the asm file describing the
    function.  */
 static void
-rl78_start_function (FILE *file, HOST_WIDE_INT hwi_local ATTRIBUTE_UNUSED)
+rl78_start_function (FILE *file)
 {
   int i;
+  
+  add_vector_labels (file, "interrupt");
+  add_vector_labels (file, "vector");
 
   if (cfun->machine->framesize == 0)
     return;
@@ -2618,38 +2740,44 @@ insn_ok_now (rtx_insn * insn)
 	    if (GET_CODE (OP (i)) == MEM
 		&& GET_MODE (XEXP (OP (i), 0)) == SImode
 		&& GET_CODE (XEXP (OP (i), 0)) != UNSPEC)
-	      return false;
+	      goto not_ok;
 
 	  return true;
 	}
     }
-  else
-    {
-      /* We need to re-recog the insn with virtual registers to get
-	 the operands.  */
-      cfun->machine->virt_insns_ok = 1;
-      if (recog (pattern, insn, 0) > -1)
-	{
-	  extract_insn (insn);
-	  if (constrain_operands (0, get_preferred_alternatives (insn)))
-	    {
-	      cfun->machine->virt_insns_ok = 0;
-	      return false;
-	    }
-	}
+
+  /* INSN is not OK as-is.  It may not be recognized in real mode or
+     it might not have satisfied its constraints in real mode.  Either
+     way it will require fixups.
+
+     It is vital we always re-recognize at this point as some insns
+     have fewer operands in real mode than virtual mode.  If we do
+     not re-recognize, then the recog_data will refer to real mode
+     operands and we may read invalid data.  Usually this isn't a
+     problem, but once in a while the data we read is bogus enough
+     to cause a segfault or other undesirable behavior.  */
+ not_ok:
+
+  /* We need to re-recog the insn with virtual registers to get
+     the operands.  */
+    INSN_CODE (insn) = -1;
+    cfun->machine->virt_insns_ok = 1;
+    if (recog (pattern, insn, 0) > -1)
+      {
+	extract_insn (insn);
+	/* In theory this should always be true.  */
+	if (constrain_operands (0, get_preferred_alternatives (insn)))
+	  {
+	    cfun->machine->virt_insns_ok = 0;
+	    return false;
+	  }
+      }
 
 #if DEBUG_ALLOC
-      fprintf (stderr, "\033[41;30m Unrecognized *virtual* insn \033[0m\n");
-      debug_rtx (insn);
-#endif
-      gcc_unreachable ();
-    }
-
-#if DEBUG_ALLOC
-  fprintf (stderr, "\033[31m");
+  fprintf (stderr, "\033[41;30m Unrecognized *virtual* insn \033[0m\n");
   debug_rtx (insn);
-  fprintf (stderr, "\033[0m");
 #endif
+  gcc_unreachable ();
   return false;
 }
 
@@ -3772,16 +3900,21 @@ static void
 rl78_note_reg_set (char *dead, rtx d, rtx insn)
 {
   int r, i;
-
+  bool is_dead;
   if (GET_CODE (d) == MEM)
     rl78_note_reg_uses (dead, XEXP (d, 0), insn);
 
   if (GET_CODE (d) != REG)
     return;
 
+  /* Do not mark the reg unused unless all QImode parts of it are dead.  */
   r = REGNO (d);
-  if (dead [r])
-    add_reg_note (insn, REG_UNUSED, gen_rtx_REG (GET_MODE (d), r));
+  is_dead = true;
+  for (i = 0; i < GET_MODE_SIZE (GET_MODE (d)); i ++)
+	  if (!dead [r + i])
+		  is_dead = false;
+  if(is_dead)
+	add_reg_note (insn, REG_UNUSED, gen_rtx_REG (GET_MODE (d), r));
   if (dump_file)
     fprintf (dump_file, "note set reg %d size %d\n", r, GET_MODE_SIZE (GET_MODE (d)));
   for (i = 0; i < GET_MODE_SIZE (GET_MODE (d)); i ++)
@@ -4195,7 +4328,7 @@ rl78_reorg (void)
   if (dump_file)
     {
       fprintf (dump_file, "\n================DEVIRT:=AFTER=ALLOC=PHYSICAL=REGISTERS================\n");
-      print_rtl_with_bb (dump_file, get_insns (), 0);
+      print_rtl_with_bb (dump_file, get_insns (), TDF_NONE);
     }
 
   rl78_propogate_register_origins ();
@@ -4204,7 +4337,7 @@ rl78_reorg (void)
   if (dump_file)
     {
       fprintf (dump_file, "\n================DEVIRT:=AFTER=PROPOGATION=============================\n");
-      print_rtl_with_bb (dump_file, get_insns (), 0);
+      print_rtl_with_bb (dump_file, get_insns (), TDF_NONE);
       fprintf (dump_file, "\n======================================================================\n");
     }
 
@@ -4637,7 +4770,7 @@ rl78_asm_out_integer (rtx x, unsigned int size, int aligned_p)
 #undef  TARGET_UNWIND_WORD_MODE
 #define TARGET_UNWIND_WORD_MODE rl78_unwind_word_mode
 
-static machine_mode
+static scalar_int_mode
 rl78_unwind_word_mode (void)
 {
   return HImode;
@@ -4751,6 +4884,8 @@ rl78_flags_already_set (rtx op, rtx operand)
 const char *
 rl78_addsi3_internal (rtx * operands, unsigned int alternative)
 {
+  const char *addH2 = "addw ax, %H2\n\t";
+
   /* If we are adding in a constant symbolic address when -mes0
      is active then we know that the address must be <64K and
      that it is invalid to access anything above 64K relative to
@@ -4762,16 +4897,77 @@ rl78_addsi3_internal (rtx * operands, unsigned int alternative)
       && ! TREE_SIDE_EFFECTS (SYMBOL_REF_DECL (operands[2])))
     return "movw ax, %h1\n\taddw ax, %h2\n\tmovw %h0, ax";
 
+  if(CONST_INT_P(operands[2]))
+  {
+    if((INTVAL(operands[2]) & 0xFFFF0000) == 0)
+    {
+        addH2 = "";
+    }
+    else if((INTVAL(operands[2]) & 0xFFFF0000) == 0x00010000)
+    {
+        addH2 = "incw ax\n\t";
+    }
+    else if((INTVAL(operands[2]) & 0xFFFF0000) == 0xFFFF0000)
+    {
+        addH2 = "decw ax\n\t";
+    }
+  }
+
   switch (alternative)
     {
     case 0:
     case 1:
-      return "movw ax, %h1\n\taddw ax, %h2\n\tmovw %h0, ax\n\tmovw ax, %H1\n\tsknc\n\tincw ax\n\taddw ax, %H2\n\tmovw %H0, ax";
+	  snprintf(fmt_buffer, sizeof(fmt_buffer),
+               "movw ax, %%h1\n\taddw ax, %%h2\n\tmovw %%h0, ax\n\tmovw ax, %%H1\n\tsknc\n\tincw ax\n\t%smovw %%H0,ax", addH2);
+	  break;
     case 2:
-      return "movw ax, %h1\n\taddw ax,%h2\n\tmovw bc, ax\n\tmovw ax, %H1\n\tsknc\n\tincw ax\n\taddw ax, %H2\n\tmovw %H0, ax\n\tmovw ax, bc\n\tmovw %h0, ax";
+	  snprintf(fmt_buffer, sizeof(fmt_buffer),
+               "movw ax, %%h1\n\taddw ax, %%h2\n\tmovw bc, ax\n\tmovw ax, %%H1\n\tsknc\n\tincw ax\n\t%smovw %%H0, ax\n\tmovw ax, bc\n\tmovw %%h0, ax", addH2);
+ 	  break;
     default:
       gcc_unreachable ();
     }
+
+  return fmt_buffer;
+}
+
+rtx
+rl78_emit_libcall (const char *name, enum rtx_code code,
+                   enum machine_mode dmode, enum machine_mode smode,
+                   int noperands, rtx *operands)
+{
+  rtx ret;
+  rtx_insn *insns;
+  rtx libcall;
+  rtx equiv;
+
+  start_sequence ();
+  libcall = gen_rtx_SYMBOL_REF (Pmode, name);
+
+  switch (noperands)
+    {
+    case 2:
+      ret = emit_library_call_value (libcall, NULL_RTX, LCT_CONST,
+                                     dmode, operands[1], smode);
+      equiv = gen_rtx_fmt_e (code, dmode, operands[1]);
+      break;
+
+    case 3:
+      ret = emit_library_call_value (libcall, NULL_RTX,
+                                     LCT_CONST, dmode,
+                                     operands[1], smode, operands[2],
+                                     smode);
+      equiv = gen_rtx_fmt_ee (code, dmode, operands[1], operands[2]);
+      break;
+
+    default:
+      gcc_unreachable ();
+    }
+
+  insns = get_insns ();
+  end_sequence ();
+  emit_libcall_block (insns, operands[0], ret, equiv);
+  return ret;
 }
 
 

@@ -1,5 +1,5 @@
 /* Implementation of the RANDOM intrinsics
-   Copyright (C) 2002-2017 Free Software Foundation, Inc.
+   Copyright (C) 2002-2019 Free Software Foundation, Inc.
    Contributed by Lars Segerlund <seger@linuxmail.org>,
    Steve Kargl and Janne Blomqvist.
 
@@ -37,6 +37,9 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #include <sys/stat.h>
 #include <fcntl.h>
 #include "time_1.h"
+#ifdef HAVE_SYS_RANDOM_H
+#include <sys/random.h>
+#endif
 
 #ifdef __MINGW32__
 #define HAVE_GETPID 1
@@ -259,7 +262,7 @@ jump (xorshift1024star_state* rs)
   };
 
   uint64_t t[16] = { 0 };
-  for(unsigned int i = 0; i < sizeof JUMP / sizeof *JUMP; i++)
+  for(size_t i = 0; i < sizeof JUMP / sizeof *JUMP; i++)
     for(int b = 0; b < 64; b++)
       {
 	if (JUMP[i] & 1ULL << b)
@@ -272,29 +275,18 @@ jump (xorshift1024star_state* rs)
 }
 
 
-/* Super-simple LCG generator used in getosrandom () if /dev/urandom
-   doesn't exist.  */
+/* Splitmix64 recommended by xorshift author for initializing.  After
+   getting one uint64_t value from the OS, this is used to fill in the
+   rest of the state.  */
 
-#define M 2147483647 /* 2^31 - 1 (A large prime number) */
-#define A 16807      /* Prime root of M, passes statistical tests and produces a full cycle */
-#define Q 127773 /* M / A (To avoid overflow on A * seed) */
-#define R 2836   /* M % A (To avoid overflow on A * seed) */
-
-__attribute__((unused)) static uint32_t
-lcg_parkmiller(uint32_t seed)
+static uint64_t
+splitmix64 (uint64_t x)
 {
-    uint32_t hi = seed / Q;
-    uint32_t lo = seed % Q;
-    int32_t test = A * lo - R * hi;
-    if (test <= 0)
-        test += M;
-    return test;
+  uint64_t z = (x += 0x9e3779b97f4a7c15);
+  z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9;
+  z = (z ^ (z >> 27)) * 0x94d049bb133111eb;
+  return z ^ (z >> 31);
 }
-
-#undef M
-#undef A
-#undef Q
-#undef R
 
 
 /* Get some random bytes from the operating system in order to seed
@@ -306,15 +298,14 @@ getosrandom (void *buf, size_t buflen)
   /* rand_s is available in MinGW-w64 but not plain MinGW.  */
 #if defined(__MINGW64_VERSION_MAJOR)
   unsigned int* b = buf;
-  for (unsigned i = 0; i < buflen / sizeof (unsigned int); i++)
+  for (size_t i = 0; i < buflen / sizeof (unsigned int); i++)
     rand_s (&b[i]);
   return buflen;
 #else
-  /*
-     TODO: When glibc adds a wrapper for the getrandom() system call
-     on Linux, one could use that.
-
-     TODO: One could use getentropy() on OpenBSD.  */
+#ifdef HAVE_GETENTROPY
+  if (getentropy (buf, buflen) == 0)
+    return buflen;
+#endif
   int flags = O_RDONLY;
 #ifdef O_CLOEXEC
   flags |= O_CLOEXEC;
@@ -326,7 +317,7 @@ getosrandom (void *buf, size_t buflen)
       close (fd);
       return res;
     }
-  uint32_t seed = 1234567890;
+  uint64_t seed = 0x047f7684e9fc949dULL;
   time_t secs;
   long usecs;
   if (gf_gettime (&secs, &usecs) == 0)
@@ -338,13 +329,9 @@ getosrandom (void *buf, size_t buflen)
   pid_t pid = getpid();
   seed ^= pid;
 #endif
-  uint32_t* ub = buf;
-  for (size_t i = 0; i < buflen / sizeof (uint32_t); i++)
-    {
-      ub[i] = seed;
-      seed = lcg_parkmiller (seed);
-    }
-  return buflen;
+  size_t size = buflen < sizeof (uint64_t) ? buflen : sizeof (uint64_t);
+  memcpy (buf, &seed, size);
+  return size;
 #endif /* __MINGW64_VERSION_MAJOR  */
 }
 
@@ -359,7 +346,13 @@ init_rand_state (xorshift1024star_state* rs, const bool locked)
     __gthread_mutex_lock (&random_lock);
   if (!master_init)
     {
-      getosrandom (master_state, sizeof (master_state));
+      uint64_t os_seed;
+      getosrandom (&os_seed, sizeof (os_seed));
+      for (uint64_t i = 0; i < sizeof (master_state) / sizeof (uint64_t); i++)
+	{
+	  os_seed = splitmix64 (os_seed);
+	  master_state[i] = os_seed;
+	}
       njumps = 0;
       master_init = true;
     }
@@ -462,14 +455,12 @@ arandom_r4 (gfc_array_r4 *x)
   index_type dim;
   GFC_REAL_4 *dest;
   xorshift1024star_state* rs = get_rand_state();
-  int n;
-
 
   dest = x->base_addr;
 
   dim = GFC_DESCRIPTOR_RANK (x);
 
-  for (n = 0; n < dim; n++)
+  for (index_type n = 0; n < dim; n++)
     {
       count[n] = 0;
       stride[n] = GFC_DESCRIPTOR_STRIDE(x,n);
@@ -494,7 +485,7 @@ arandom_r4 (gfc_array_r4 *x)
       dest += stride0;
       count[0]++;
       /* Advance to the next source element.  */
-      n = 0;
+      index_type n = 0;
       while (count[n] == extent[n])
         {
           /* When we get to the end of a dimension, reset it and increment
@@ -531,13 +522,12 @@ arandom_r8 (gfc_array_r8 *x)
   index_type dim;
   GFC_REAL_8 *dest;
   xorshift1024star_state* rs = get_rand_state();
-  int n;
 
   dest = x->base_addr;
 
   dim = GFC_DESCRIPTOR_RANK (x);
 
-  for (n = 0; n < dim; n++)
+  for (index_type n = 0; n < dim; n++)
     {
       count[n] = 0;
       stride[n] = GFC_DESCRIPTOR_STRIDE(x,n);
@@ -561,7 +551,7 @@ arandom_r8 (gfc_array_r8 *x)
       dest += stride0;
       count[0]++;
       /* Advance to the next source element.  */
-      n = 0;
+      index_type n = 0;
       while (count[n] == extent[n])
         {
           /* When we get to the end of a dimension, reset it and increment
@@ -600,13 +590,12 @@ arandom_r10 (gfc_array_r10 *x)
   index_type dim;
   GFC_REAL_10 *dest;
   xorshift1024star_state* rs = get_rand_state();
-  int n;
 
   dest = x->base_addr;
 
   dim = GFC_DESCRIPTOR_RANK (x);
 
-  for (n = 0; n < dim; n++)
+  for (index_type n = 0; n < dim; n++)
     {
       count[n] = 0;
       stride[n] = GFC_DESCRIPTOR_STRIDE(x,n);
@@ -630,7 +619,7 @@ arandom_r10 (gfc_array_r10 *x)
       dest += stride0;
       count[0]++;
       /* Advance to the next source element.  */
-      n = 0;
+      index_type n = 0;
       while (count[n] == extent[n])
         {
           /* When we get to the end of a dimension, reset it and increment
@@ -671,13 +660,12 @@ arandom_r16 (gfc_array_r16 *x)
   index_type dim;
   GFC_REAL_16 *dest;
   xorshift1024star_state* rs = get_rand_state();
-  int n;
 
   dest = x->base_addr;
 
   dim = GFC_DESCRIPTOR_RANK (x);
 
-  for (n = 0; n < dim; n++)
+  for (index_type n = 0; n < dim; n++)
     {
       count[n] = 0;
       stride[n] = GFC_DESCRIPTOR_STRIDE(x,n);
@@ -702,7 +690,7 @@ arandom_r16 (gfc_array_r16 *x)
       dest += stride0;
       count[0]++;
       /* Advance to the next source element.  */
-      n = 0;
+      index_type n = 0;
       while (count[n] == extent[n])
         {
           /* When we get to the end of a dimension, reset it and increment
@@ -751,7 +739,7 @@ static const uint64_t xor_keys[] = {
 static void
 scramble_seed (uint64_t *dest, const uint64_t *src)
 {
-  for (int i = 0; i < (int) SZU64; i++)
+  for (size_t i = 0; i < SZU64; i++)
     dest[i] = src[i] ^ xor_keys[i];
 }
 

@@ -1,5 +1,6 @@
 // PR c++/66937
-// { dg-options "-std=c++1z -fconcepts" }
+// { dg-do compile { target c++17 } }
+// { dg-options "-fconcepts" }
 
 #include <tuple>
 

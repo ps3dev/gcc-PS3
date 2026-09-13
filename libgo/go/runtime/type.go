@@ -9,20 +9,39 @@ package runtime
 import "unsafe"
 
 type _type struct {
+	size       uintptr
+	ptrdata    uintptr
+	hash       uint32
 	kind       uint8
 	align      int8
 	fieldAlign uint8
 	_          uint8
-	size       uintptr
-	hash       uint32
 
 	hashfn  func(unsafe.Pointer, uintptr) uintptr
 	equalfn func(unsafe.Pointer, unsafe.Pointer) bool
 
-	gc     unsafe.Pointer
-	string *string
+	gcdata  *byte
+	_string *string
 	*uncommontype
 	ptrToThis *_type
+}
+
+func (t *_type) string() string {
+	return *t._string
+}
+
+// pkgpath returns the path of the package where t was defined, if
+// available. This is not the same as the reflect package's PkgPath
+// method, in that it returns the package path for struct and interface
+// types, not just named types.
+func (t *_type) pkgpath() string {
+	if u := t.uncommontype; u != nil {
+		if u.pkgPath == nil {
+			return ""
+		}
+		return *u.pkgPath
+	}
+	return ""
 }
 
 // Return whether two type descriptors are equal.
@@ -37,7 +56,7 @@ func eqtype(t1, t2 *_type) bool {
 	case t1.kind != t2.kind || t1.hash != t2.hash:
 		return false
 	default:
-		return *t1.string == *t2.string
+		return t1.string() == t2.string()
 	}
 }
 
@@ -67,18 +86,32 @@ type interfacetype struct {
 }
 
 type maptype struct {
-	typ           _type
-	key           *_type
-	elem          *_type
-	bucket        *_type // internal type representing a hash bucket
-	hmap          *_type // internal type representing a hmap
-	keysize       uint8  // size of key slot
-	indirectkey   bool   // store ptr to key instead of key itself
-	valuesize     uint8  // size of value slot
-	indirectvalue bool   // store ptr to value instead of value itself
-	bucketsize    uint16 // size of bucket
-	reflexivekey  bool   // true if k==k for all keys
-	needkeyupdate bool   // true if we need to update key on an overwrite
+	typ        _type
+	key        *_type
+	elem       *_type
+	bucket     *_type // internal type representing a hash bucket
+	keysize    uint8  // size of key slot
+	valuesize  uint8  // size of value slot
+	bucketsize uint16 // size of bucket
+	flags      uint32
+}
+
+// Note: flag values must match those used in the TMAP case
+// in ../cmd/compile/internal/gc/reflect.go:dtypesym.
+func (mt *maptype) indirectkey() bool { // store ptr to key instead of key itself
+	return mt.flags&1 != 0
+}
+func (mt *maptype) indirectvalue() bool { // store ptr to value instead of value itself
+	return mt.flags&2 != 0
+}
+func (mt *maptype) reflexivekey() bool { // true if k==k for all keys
+	return mt.flags&4 != 0
+}
+func (mt *maptype) needkeyupdate() bool { // true if we need to update key on an overwrite
+	return mt.flags&8 != 0
+}
+func (mt *maptype) hashMightPanic() bool { // true if hash function might panic
+	return mt.flags&16 != 0
 }
 
 type arraytype struct {
@@ -112,11 +145,19 @@ type ptrtype struct {
 }
 
 type structfield struct {
-	name    *string // nil for embedded fields
-	pkgPath *string // nil for exported Names; otherwise import path
-	typ     *_type  // type of field
-	tag     *string // nil if no tag
-	offset  uintptr // byte offset of field within struct
+	name       *string // nil for embedded fields
+	pkgPath    *string // nil for exported Names; otherwise import path
+	typ        *_type  // type of field
+	tag        *string // nil if no tag
+	offsetAnon uintptr // byte offset of field<<1 | isAnonymous
+}
+
+func (f *structfield) offset() uintptr {
+	return f.offsetAnon >> 1
+}
+
+func (f *structfield) anon() bool {
+	return f.offsetAnon&1 != 0
 }
 
 type structtype struct {

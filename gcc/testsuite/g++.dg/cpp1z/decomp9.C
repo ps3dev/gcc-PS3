@@ -1,5 +1,4 @@
-// { dg-do run }
-// { dg-options -std=c++1z }
+// { dg-do run { target c++17 } }
 
 #define assert(X) do { if (!(X)) __builtin_abort(); } while (0)
 

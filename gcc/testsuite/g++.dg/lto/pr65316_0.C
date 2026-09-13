@@ -1,6 +1,8 @@
 // { dg-lto-do link }
-// { dg-lto-options { { -flto -std=c++11 -g2 -fno-lto-odr-type-merging -O2 } } }
+// { dg-require-effective-target lto_incremental }
+// { dg-lto-options { { -flto -std=c++11 -g2 -fno-lto-odr-type-merging -O2 -Wno-return-type } } }
 // { dg-extra-ld-options "-r -nostdlib -O2 -fno-lto-odr-type-merging" }
+
 namespace std
 {
   typedef long unsigned int size_t;

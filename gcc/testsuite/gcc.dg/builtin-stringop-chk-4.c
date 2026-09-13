@@ -77,32 +77,11 @@ signed_range (ptrdiff_t min, ptrdiff_t max)
 #define UR(min, max)   unsigned_range (min, max)
 #define SR(min, max)   signed_range (min, max)
 
-/* UReturn a pointer to constant string whose length is at least MINLEN
+/* Return a pointer to constant string whose length is at least MINLEN
    and at most 10.  */
-static inline const char*
-string_range (size_t minlen)
-{
-  static const char str[] = "0123456789";
-
-  const size_t len = unsigned_range (minlen, sizeof str - 1);
-
-  switch (len)
-    {
-    case 10: return "0123456789";
-    case  9: return "012345678";
-    case  8: return "01234567";
-    case  7: return "0123456";
-    case  6: return "012345";
-    case  5: return "01234";
-    case  4: return "0123";
-    case  3: return "012";
-    case  2: return "01";
-    case  1: return "0";
-    case  0: return "";
-    }
-}
-
-#define S(minlen)   string_range (minlen)
+#define S(minlen)				\
+  (minlen == random_unsigned_value ()		\
+   ? "0123456789" + 10 - minlen : "0123456789")
 
 /* Test memcpy with a number of bytes bounded by a known range.  */
 
@@ -122,14 +101,14 @@ void test_memcpy_range (void *d, const void *s)
 
   memcpy (buf + size_max, s, UR (1, 2));  /* { dg-warning "writing between 1 and 2 bytes into a region of size 0 overflows the destination" "excessive pointer offset" { xfail *-*-* } } */
 
-  memcpy (buf, s, UR (ssize_max, size_max));   /* { dg-warning "writing between \[0-9\]+ and \[0-9\]+ bytes into a region of size 5 overflows the destination" } */
-  memcpy (buf, s, UR (ssize_max + 1, size_max));  /* { dg-warning "specified size between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
-  memcpy (buf, s, UR (size_max - 1, size_max));  /* { dg-warning "specified size between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
+  memcpy (buf, s, UR (ssize_max, size_max));   /* { dg-warning "writing \[0-9\]+ or more bytes into a region of size 5 overflows the destination" } */
+  memcpy (buf, s, UR (ssize_max + 1, size_max));  /* { dg-warning "specified \(bound|size\) between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
+  memcpy (buf, s, UR (size_max - 1, size_max));  /* { dg-warning "specified \(bound|size\) between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
 
   /* Exercise memcpy into a destination of unknown size with excessive
      number of bytes.  */
   memcpy (d, s, UR (ssize_max, size_max));
-  memcpy (d, s, UR (ssize_max + 1, size_max));   /* { dg-warning "specified size between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
+  memcpy (d, s, UR (ssize_max + 1, size_max));   /* { dg-warning "specified \(bound|size\) between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
 
   memcpy (buf, s, SR (-1, 1));
   memcpy (buf, s, SR (-3, 2));
@@ -145,8 +124,8 @@ void test_memcpy_range (void *d, const void *s)
   memcpy (d, s, SR (-9, 5));
   memcpy (d, s, SR (-11, 6));
 
-  memcpy (buf, s, SR (-2, -1));   /* { dg-warning "specified size between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
-  memcpy (d, s, SR (-2, -1));   /* { dg-warning "specified size between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
+  memcpy (buf, s, SR (-2, -1));   /* { dg-warning "specified \(bound|size\) between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
+  memcpy (d, s, SR (-2, -1));   /* { dg-warning "specified \(bound|size\) between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
 
   /* Even though the following calls are bounded by the range of N's
      type they must not cause a warning for obvious reasons.  */
@@ -207,14 +186,14 @@ void test_mempcpy_range (void *d, const void *s)
 
   mempcpy (buf, s, UR (6, 7));  /* { dg-warning "writing between 6 and 7 bytes into a region of size 5 overflows the destination" } */
 
-  mempcpy (buf, s, UR (ssize_max, size_max));   /* { dg-warning "writing between \[0-9\]+ and \[0-9\]+ bytes into a region of size 5 overflows the destination" } */
-  mempcpy (buf, s, UR (ssize_max + 1, size_max));  /* { dg-warning "specified size between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
-  mempcpy (buf, s, UR (size_max - 1, size_max));  /* { dg-warning "specified size between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
+  mempcpy (buf, s, UR (ssize_max, size_max));   /* { dg-warning "writing \[0-9\]+ or more bytes into a region of size 5 overflows the destination" } */
+  mempcpy (buf, s, UR (ssize_max + 1, size_max));  /* { dg-warning "specified \(bound|size\) between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
+  mempcpy (buf, s, UR (size_max - 1, size_max));  /* { dg-warning "specified \(bound|size\) between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
 
   /* Exercise mempcpy into a destination of unknown size with excessive
      number of bytes.  */
   mempcpy (d, s, UR (ssize_max, size_max));
-  mempcpy (d, s, UR (ssize_max + 1, size_max));   /* { dg-warning "specified size between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
+  mempcpy (d, s, UR (ssize_max + 1, size_max));   /* { dg-warning "specified \(bound|size\) between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
 }
 
 /* Test memset with a number of bytes bounded by a known range.  */
@@ -233,14 +212,14 @@ void test_memset_range (void *d)
 
   memset (buf, 0, UR (6, 7));  /* { dg-warning "writing between 6 and 7 bytes into a region of size 5 overflows the destination" } */
 
-  memset (buf, 0, UR (ssize_max, size_max));   /* { dg-warning "writing between \[0-9\]+ and \[0-9\]+ bytes into a region of size 5 overflows the destination" } */
-  memset (buf, 0, UR (ssize_max + 1, size_max));  /* { dg-warning "specified size between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
-  memset (buf, 0, UR (size_max - 1, size_max));  /* { dg-warning "specified size between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
+  memset (buf, 0, UR (ssize_max, size_max));   /* { dg-warning "writing \[0-9\]+ or more bytes into a region of size 5 overflows the destination" } */
+  memset (buf, 0, UR (ssize_max + 1, size_max));  /* { dg-warning "specified \(bound|size\) between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
+  memset (buf, 0, UR (size_max - 1, size_max));  /* { dg-warning "specified \(bound|size\) between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
 
   /* Exercise memset into a destination of unknown size with excessive
      number of bytes.  */
   memset (d, 0, UR (ssize_max, size_max));
-  memset (d, 0, UR (ssize_max + 1, size_max));   /* { dg-warning "specified size between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
+  memset (d, 0, UR (ssize_max + 1, size_max));   /* { dg-warning "specified \(bound|size\) between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
 }
 
 /* Test bzero with a number of bytes bounded by a known range.  */
@@ -259,14 +238,14 @@ void test_bzero_range (void *d)
 
   bzero (buf, UR (6, 7));  /* { dg-warning "writing between 6 and 7 bytes into a region of size 5 overflows the destination" } */
 
-  bzero (buf, UR (ssize_max, size_max));   /* { dg-warning "writing between \[0-9\]+ and \[0-9\]+ bytes into a region of size 5 overflows the destination" } */
-  bzero (buf, UR (ssize_max + 1, size_max));  /* { dg-warning "specified size between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
-  bzero (buf, UR (size_max - 1, size_max));  /* { dg-warning "specified size between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
+  bzero (buf, UR (ssize_max, size_max));   /* { dg-warning "writing \[0-9\]+ or more bytes into a region of size 5 overflows the destination" } */
+  bzero (buf, UR (ssize_max + 1, size_max));  /* { dg-warning "specified \(bound|size\) between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
+  bzero (buf, UR (size_max - 1, size_max));  /* { dg-warning "specified \(bound|size\) between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
 
   /* Exercise bzero into a destination of unknown size with excessive
      number of bytes.  */
   bzero (d, UR (ssize_max, size_max));
-  bzero (d, UR (ssize_max + 1, size_max));   /* { dg-warning "specified size between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
+  bzero (d, UR (ssize_max + 1, size_max));   /* { dg-warning "specified \(bound|size\) between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
 }
 
 /* Test strcat with an argument referencing a non-constant string of
@@ -281,7 +260,7 @@ void test_strcat_range (void)
   strcat (buf, S (2));
   strcat (buf, S (3));
   strcat (buf, S (4));
-  strcat (buf, S (5));   /* { dg-warning "writing 6 bytes into a region of size 5 " } */
+  strcat (buf, S (5));   /* { dg-warning "writing between 6 and 11 bytes into a region of size 5 " } */
 
   {
     /* The implementation of the warning isn't smart enough to determine
@@ -320,10 +299,10 @@ void test_strcpy (const char *src)
   strcpy (a.a + 2, src);    /* { dg-warning "writing at least 1 byte into a region of size 0 " "strcpy into empty substring" { xfail *-*-* } } */
 
   /* This does work.  */
-  strcpy (a.a + 5, src);    /* { dg-warning "writing at least 1 byte into a region of size 0 " } */
+  strcpy (a.a + 5, src);    /* { dg-warning "writing 1 or more bytes into a region of size 0 " } */
 
   /* As does this.  */
-  strcpy (a.a + 17, src);    /* { dg-warning "writing at least 1 byte into a region of size 0 " } */
+  strcpy (a.a + 17, src);    /* { dg-warning "writing 1 or more bytes into a region of size 0 " } */
 }
 
 /* Test strcpy with a non-constant source string of length in a known
@@ -337,16 +316,16 @@ void test_strcpy_range (void)
   strcpy (buf, S (1));
   strcpy (buf, S (2));
   strcpy (buf, S (4));
-  strcpy (buf, S (5));   /* { dg-warning "writing 6 bytes into a region of size 5 " } */
-  strcpy (buf, S (6));   /* { dg-warning "writing 7 bytes into a region of size 5 " } */
-  strcpy (buf, S (7));   /* { dg-warning "writing 8 bytes into a region of size 5 " } */
-  strcpy (buf, S (8));   /* { dg-warning "writing 9 bytes into a region of size 5 " } */
-  strcpy (buf, S (9));   /* { dg-warning "writing 10 bytes into a region of size 5 " } */
-  strcpy (buf, S (10));   /* { dg-warning "writing 11 bytes into a region of size 5 " } */
+  strcpy (buf, S (5));   /* { dg-warning "writing between 6 and 11 bytes into a region of size 5 " } */
+  strcpy (buf, S (6));   /* { dg-warning "writing between 7 and 11 bytes" } */
+  strcpy (buf, S (7));   /* { dg-warning "writing between 8 and 11 bytes" } */
+  strcpy (buf, S (8));   /* { dg-warning "writing between 9 and 11 bytes" } */
+  strcpy (buf, S (9));   /* { dg-warning "writing between 10 and 11 bytes" } */
+  strcpy (buf, S (10));   /* { dg-warning "writing 11 bytes" } */
 
-  strcpy (buf + 5, S (0));   /* { dg-warning "writing 1 byte into a region of size 0 " } */
+  strcpy (buf + 5, S (0));   /* { dg-warning "writing between 1 and 11 bytes" } */
 
-  strcpy (buf + 17, S (0));   /* { dg-warning "writing 1 byte into a region of size 0 " } */
+  strcpy (buf + 17, S (0));   /* { dg-warning "writing between 1 and 11 bytes " } */
 }
 
 /* Test strncat with an argument referencing a non-constant string of
@@ -364,31 +343,31 @@ void test_strncat_range (void)
 
   strncat (buf + 5, S (0), 0);
 
-  strncat (buf + 5, S (0), 1);   /* { dg-warning "specified bound 1 exceeds the size 0 of the destination " } */
-  strncat (buf + 5, S (1), 1);   /* { dg-warning "specified bound 1 exceeds the size 0 of the destination " } */
+  strncat (buf + 5, S (0), 1);   /* { dg-warning "specified \(bound|size\) 1 exceeds destination size 0" } */
+  strncat (buf + 5, S (1), 1);   /* { dg-warning "specified \(bound|size\) 1 exceeds destination size 0" } */
 
   /* Strncat always appends a terminating null after copying the N
      characters so the following triggers a warning pointing out
      that specifying sizeof(buf) as the upper bound may cause
      the nul to overflow the destination.  */
-  strncat (buf, S (0), 5);   /* { dg-warning "specified bound 5 equals the size of the destination" } */
-  strncat (buf, S (0), 6);   /* { dg-warning "specified bound 6 exceeds the size 5 of the destination" } */
+  strncat (buf, S (0), 5);   /* { dg-warning "specified \(bound|size\) 5 equals destination size" } */
+  strncat (buf, S (0), 6);   /* { dg-warning "specified \(bound|size\) 6 exceeds destination size 5" } */
 
   strncat (buf, S (1), 0);
   strncat (buf, S (1), 1);
   strncat (buf, S (1), 2);
   strncat (buf, S (1), 3);
   strncat (buf, S (1), 4);
-  strncat (buf, S (1), 5);   /* { dg-warning "specified bound 5 equals the size of the destination" } */
-  strncat (buf, S (1), 6);   /* { dg-warning "specified bound 6 exceeds the size 5 of the destination" } */
-  strncat (buf, S (2), 6);   /* { dg-warning "specified bound 6 exceeds the size 5 of the destination" } */
+  strncat (buf, S (1), 5);   /* { dg-warning "specified \(bound|size\) 5 equals destination size" } */
+  strncat (buf, S (1), 6);   /* { dg-warning "specified \(bound|size\) 6 exceeds destination size 5" } */
+  strncat (buf, S (2), 6);   /* { dg-warning "specified \(bound|size\) 6 exceeds destination size 5" } */
 
   /* The following could just as well say "writing 6 bytes into a region
      of size 5.  Either would be correct and probably equally as clear
      in this case.  But when the length of the source string is not known
      at all then the bound warning seems clearer.  */
-  strncat (buf, S (5), 6);   /* { dg-warning "specified bound 6 exceeds the size 5 of the destination " } */
-  strncat (buf, S (7), 6);   /* { dg-warning "specified bound 6 exceeds the size 5 of the destination" } */
+  strncat (buf, S (5), 6);   /* { dg-warning "specified \(bound|size\) 6 exceeds destination size 5" } */
+  strncat (buf, S (7), 6);   /* { dg-warning "specified \(bound|size\) 6 exceeds destination size 5" } */
 
   {
     /* The implementation of the warning isn't smart enough to determine
@@ -413,17 +392,17 @@ void test_strncat_chk_range (char *d)
   strncat_chk (buf, S (0), 2);
   strncat_chk (buf, S (0), 3);
   strncat_chk (buf, S (0), 4);
-  strncat_chk (buf, S (0), 5);   /* { dg-warning "specified bound 5 equals the size of the destination " } */
+  strncat_chk (buf, S (0), 5);   /* { dg-warning "specified \(bound|size\) 5 equals destination size" } */
 
   strncat_chk (buf, S (5), 1);
   strncat_chk (buf, S (5), 2);
   strncat_chk (buf, S (5), 3);
   strncat_chk (buf, S (5), 4);
-  strncat_chk (buf, S (5), 5);   /* { dg-warning "specified bound 5 equals the size of the destination " } */
+  strncat_chk (buf, S (5), 5);   /* { dg-warning "specified \(bound|size\) 5 equals destination size" } */
 
-  strncat_chk (buf, S (5), 10);   /* { dg-warning "specified bound \[0-9\]+ exceeds the size 5 of the destination " } */
+  strncat_chk (buf, S (5), 10);   /* { dg-warning "specified \(bound|size\) \[0-9\]+ exceeds destination size 5" } */
 
-  strncat_chk (d, S (5), size_max);   /* { dg-warning "specified bound \[0-9\]+ exceeds maximum object size " } */
+  strncat_chk (d, S (5), size_max);   /* { dg-warning "specified \(bound|size\) \[0-9\]+ exceeds maximum object size " } */
 }
 
 /* Test strncpy with a non-constant source string of length in a known
@@ -447,15 +426,15 @@ void test_strncpy_string_range (char *d)
 
   strncpy (buf, S (1), ssize_max - 1);   /* { dg-warning "writing \[0-9\]+ bytes into a region of size 5" } */
   strncpy (buf, S (2), ssize_max);   /* { dg-warning "writing \[0-9\]+ bytes into a region of size 5" } */
-  strncpy (buf, S (3), ssize_max + 1);   /* { dg-warning "specified size \[0-9\]+ exceeds maximum object size" } */
-  strncpy (buf, S (4), size_max);   /* { dg-warning "specified size \[0-9\]+ exceeds maximum object size" } */
+  strncpy (buf, S (3), ssize_max + 1);   /* { dg-warning "specified \(bound|size\) \[0-9\]+ exceeds maximum object size" } */
+  strncpy (buf, S (4), size_max);   /* { dg-warning "specified \(bound|size\) \[0-9\]+ exceeds maximum object size" } */
 
   /* Exercise strncpy into a destination of unknown size with a valid
      and invalid constant number of bytes.  */
   strncpy (d, S (1), ssize_max - 1);
   strncpy (d, S (2), ssize_max);
-  strncpy (d, S (3), ssize_max + 1);   /* { dg-warning "specified size \[0-9\]+ exceeds maximum object size" } */
-  strncpy (d, S (4), size_max);   /* { dg-warning "specified size \[0-9\]+ exceeds maximum object size" } */
+  strncpy (d, S (3), ssize_max + 1);   /* { dg-warning "specified \(bound|size\) \[0-9\]+ exceeds maximum object size" } */
+  strncpy (d, S (4), size_max);   /* { dg-warning "specified \(bound|size\) \[0-9\]+ exceeds maximum object size" } */
 }
 
 /* Test strncpy with a non-constant source string of length in a known
@@ -491,9 +470,9 @@ void test_strncpy_string_count_range (char *dst, const char *src)
 
   strncpy (buf, S (0), UR (6, 7));   /* { dg-warning "writing between 6 and 7 bytes into a region of size 5 " } */
   strncpy (buf, S (1), UR (7, 8));   /* { dg-warning "writing between 7 and 8 bytes into a region of size 5 " } */
-  strncpy (buf, S (2), UR (ssize_max, ssize_max + 1));   /* { dg-warning "writing between \[0-9\]+ and \[0-9\]+ bytes into a region of size 5 " } */
+  strncpy (buf, S (2), UR (ssize_max, ssize_max + 1));   /* { dg-warning "writing \[0-9\]+ or more bytes into a region of size 5 " } */
 
-  strncpy (buf, S (2), UR (ssize_max + 1, ssize_max + 2));   /* { dg-warning "specified size between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
+  strncpy (buf, S (2), UR (ssize_max + 1, ssize_max + 2));   /* { dg-warning "specified \(bound|size\) between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
 
   strncpy (buf + 5, S (0), UR (0, 1));
   strncpy (buf + 5, S (1), UR (0, 1));
@@ -521,5 +500,5 @@ void test_strncpy_string_count_range (char *dst, const char *src)
 
   strncpy (dst, S (3), UR (ssize_max, ssize_max + 1));
 
-  strncpy (dst, S (4), UR (ssize_max + 1, ssize_max + 2));   /* { dg-warning "specified size between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
+  strncpy (dst, S (4), UR (ssize_max + 1, ssize_max + 2));   /* { dg-warning "specified \(bound|size\) between \[0-9\]+ and \[0-9\]+ exceeds maximum object size" } */
 }

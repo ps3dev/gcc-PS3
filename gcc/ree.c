@@ -1,5 +1,5 @@
 /* Redundant Extension Elimination pass for the GNU compiler.
-   Copyright (C) 2010-2017 Free Software Foundation, Inc.
+   Copyright (C) 2010-2019 Free Software Foundation, Inc.
    Contributed by Ilya Enkovich (ilya.enkovich@intel.com)
 
    Based on the Redundant Zero-extension elimination pass contributed by
@@ -226,6 +226,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "memmodel.h"
 #include "tm_p.h"
 #include "optabs.h"
+#include "regs.h"
 #include "emit-rtl.h"
 #include "recog.h"
 #include "cfgrtl.h"
@@ -268,7 +269,7 @@ update_reg_equal_equiv_notes (rtx_insn *insn, machine_mode new_mode,
 	  /* Update equivalency constants.  Recall that RTL constants are
 	     sign-extended.  */
 	  if (GET_CODE (orig_src) == CONST_INT
-	      && HOST_BITS_PER_WIDE_INT >= GET_MODE_BITSIZE (new_mode))
+	      && HWI_COMPUTABLE_MODE_P (new_mode))
 	    {
 	      if (INTVAL (orig_src) >= 0 || code == SIGN_EXTEND)
 		/* Nothing needed.  */;
@@ -319,7 +320,7 @@ combine_set_extension (ext_cand *cand, rtx_insn *curr_insn, rtx *orig_set)
   rtx orig_src = SET_SRC (*orig_set);
   machine_mode orig_mode = GET_MODE (SET_DEST (*orig_set));
   rtx new_set;
-  rtx cand_pat = PATTERN (cand->insn);
+  rtx cand_pat = single_set (cand->insn);
 
   /* If the extension's source/destination registers are not the same
      then we need to change the original load to reference the destination
@@ -336,7 +337,7 @@ combine_set_extension (ext_cand *cand, rtx_insn *curr_insn, rtx *orig_set)
   /* Merge constants by directly moving the constant into the register under
      some conditions.  Recall that RTL constants are sign-extended.  */
   if (GET_CODE (orig_src) == CONST_INT
-      && HOST_BITS_PER_WIDE_INT >= GET_MODE_BITSIZE (cand->mode))
+      && HWI_COMPUTABLE_MODE_P (cand->mode))
     {
       if (INTVAL (orig_src) >= 0 || cand->code == SIGN_EXTEND)
 	new_set = gen_rtx_SET (new_reg, orig_src);
@@ -427,7 +428,8 @@ transform_ifelse (ext_cand *cand, rtx_insn *def_insn)
   srcreg2 = XEXP (SET_SRC (set_insn), 2);
   /* If the conditional move already has the right or wider mode,
      there is nothing to do.  */
-  if (GET_MODE_SIZE (GET_MODE (dstreg)) >= GET_MODE_SIZE (cand->mode))
+  if (GET_MODE_UNIT_SIZE (GET_MODE (dstreg))
+      >= GET_MODE_UNIT_SIZE (cand->mode))
     return true;
 
   map_srcreg = gen_rtx_REG (cand->mode, REGNO (srcreg));
@@ -717,8 +719,8 @@ merge_def_and_ext (ext_cand *cand, rtx_insn *def_insn, ext_state *state)
 	      && state->modified[INSN_UID (def_insn)].mode
 		 == ext_src_mode)))
     {
-      if (GET_MODE_SIZE (GET_MODE (SET_DEST (*sub_rtx)))
-	  >= GET_MODE_SIZE (cand->mode))
+      if (GET_MODE_UNIT_SIZE (GET_MODE (SET_DEST (*sub_rtx)))
+	  >= GET_MODE_UNIT_SIZE (cand->mode))
 	return true;
       /* If def_insn is already scheduled to be deleted, don't attempt
 	 to modify it.  */
@@ -776,10 +778,14 @@ combine_reaching_defs (ext_cand *cand, const_rtx set_pat, ext_state *state)
   /* If the destination operand of the extension is a different
      register than the source operand, then additional restrictions
      are needed.  Note we have to handle cases where we have nested
-     extensions in the source operand.  */
+     extensions in the source operand.
+
+     Candidate insns are known to be single_sets, via the test in
+     find_removable_extensions.  So we continue to use single_set here
+     rather than get_sub_rtx.  */
+  rtx set = single_set (cand->insn);
   bool copy_needed
-    = (REGNO (SET_DEST (PATTERN (cand->insn)))
-       != REGNO (get_extended_src_reg (SET_SRC (PATTERN (cand->insn)))));
+    = (REGNO (SET_DEST (set)) != REGNO (get_extended_src_reg (SET_SRC (set))));
   if (copy_needed)
     {
       /* Considering transformation of
@@ -814,17 +820,16 @@ combine_reaching_defs (ext_cand *cand, const_rtx set_pat, ext_state *state)
       if (state->modified[INSN_UID (cand->insn)].kind != EXT_MODIFIED_NONE)
 	return false;
 
-      machine_mode dst_mode = GET_MODE (SET_DEST (PATTERN (cand->insn)));
-      rtx src_reg = get_extended_src_reg (SET_SRC (PATTERN (cand->insn)));
+      machine_mode dst_mode = GET_MODE (SET_DEST (set));
+      rtx src_reg = get_extended_src_reg (SET_SRC (set));
 
       /* Ensure we can use the src_reg in dst_mode (needed for
 	 the (set (reg1) (reg2)) insn mentioned above).  */
-      if (!HARD_REGNO_MODE_OK (REGNO (src_reg), dst_mode))
+      if (!targetm.hard_regno_mode_ok (REGNO (src_reg), dst_mode))
 	return false;
 
       /* Ensure the number of hard registers of the copy match.  */
-      if (HARD_REGNO_NREGS (REGNO (src_reg), dst_mode)
-	  != HARD_REGNO_NREGS (REGNO (src_reg), GET_MODE (src_reg)))
+      if (hard_regno_nregs (REGNO (src_reg), dst_mode) != REG_NREGS (src_reg))
 	return false;
 
       /* There's only one reaching def.  */
@@ -851,34 +856,33 @@ combine_reaching_defs (ext_cand *cand, const_rtx set_pat, ext_state *state)
 	  || !REG_P (SET_DEST (*dest_sub_rtx)))
 	return false;
 
-      rtx tmp_reg = gen_rtx_REG (GET_MODE (SET_DEST (PATTERN (cand->insn))),
+      rtx tmp_reg = gen_rtx_REG (GET_MODE (SET_DEST (set)),
 				 REGNO (SET_DEST (*dest_sub_rtx)));
-      if (reg_overlap_mentioned_p (tmp_reg, SET_DEST (PATTERN (cand->insn))))
+      if (reg_overlap_mentioned_p (tmp_reg, SET_DEST (set)))
 	return false;
 
       /* On RISC machines we must make sure that changing the mode of SRC_REG
 	 as destination register will not affect its reaching uses, which may
 	 read its value in a larger mode because DEF_INSN implicitly sets it
 	 in word mode.  */
-      const unsigned int prec
+      poly_int64 prec
 	= GET_MODE_PRECISION (GET_MODE (SET_DEST (*dest_sub_rtx)));
-      if (WORD_REGISTER_OPERATIONS && prec < BITS_PER_WORD)
+      if (WORD_REGISTER_OPERATIONS && known_lt (prec, BITS_PER_WORD))
 	{
 	  struct df_link *uses = get_uses (def_insn, src_reg);
 	  if (!uses)
 	    return false;
 
 	  for (df_link *use = uses; use; use = use->next)
-	    if (GET_MODE_PRECISION (GET_MODE (*DF_REF_LOC (use->ref))) > prec)
+	    if (paradoxical_subreg_p (GET_MODE (*DF_REF_LOC (use->ref)),
+				      GET_MODE (SET_DEST (*dest_sub_rtx))))
 	      return false;
 	}
 
       /* The destination register of the extension insn must not be
 	 used or set between the def_insn and cand->insn exclusive.  */
-      if (reg_used_between_p (SET_DEST (PATTERN (cand->insn)),
-			      def_insn, cand->insn)
-	  || reg_set_between_p (SET_DEST (PATTERN (cand->insn)),
-				def_insn, cand->insn))
+      if (reg_used_between_p (SET_DEST (set), def_insn, cand->insn)
+	  || reg_set_between_p (SET_DEST (set), def_insn, cand->insn))
 	return false;
 
       /* We must be able to copy between the two registers.   Generate,
@@ -892,14 +896,13 @@ combine_reaching_defs (ext_cand *cand, const_rtx set_pat, ext_state *state)
 	 is different than in the code to emit the copy as we have not
 	 modified the defining insn yet.  */
       start_sequence ();
-      rtx pat = PATTERN (cand->insn);
-      rtx new_dst = gen_rtx_REG (GET_MODE (SET_DEST (pat)),
-                                 REGNO (get_extended_src_reg (SET_SRC (pat))));
-      rtx new_src = gen_rtx_REG (GET_MODE (SET_DEST (pat)),
-                                 REGNO (SET_DEST (pat)));
+      rtx new_dst = gen_rtx_REG (GET_MODE (SET_DEST (set)),
+                                 REGNO (get_extended_src_reg (SET_SRC (set))));
+      rtx new_src = gen_rtx_REG (GET_MODE (SET_DEST (set)),
+                                 REGNO (SET_DEST (set)));
       emit_move_insn (new_dst, new_src);
 
-      rtx_insn *insn = get_insns();
+      rtx_insn *insn = get_insns ();
       end_sequence ();
       if (NEXT_INSN (insn))
 	return false;
@@ -908,24 +911,95 @@ combine_reaching_defs (ext_cand *cand, const_rtx set_pat, ext_state *state)
       extract_insn (insn);
       if (!constrain_operands (1, get_preferred_alternatives (insn, bb)))
 	return false;
-    }
 
+      while (REG_P (SET_SRC (*dest_sub_rtx))
+	     && (REGNO (SET_SRC (*dest_sub_rtx)) == REGNO (SET_DEST (set))))
+	{
+	  /* Considering transformation of
+	     (set (reg2) (expression))
+	     ...
+	     (set (reg1) (reg2))
+	     ...
+	     (set (reg2) (any_extend (reg1)))
+
+	     into
+
+	     (set (reg2) (any_extend (expression)))
+	     (set (reg1) (reg2))
+	     ...  */
+	  struct df_link *defs
+	    = get_defs (def_insn, SET_SRC (*dest_sub_rtx), NULL);
+	  if (defs == NULL || defs->next)
+	    break;
+
+	  /* There is only one reaching def.  */
+	  rtx_insn *def_insn2 = DF_REF_INSN (defs->ref);
+
+	  /* The defining statement must not have been modified either.  */
+	  if (state->modified[INSN_UID (def_insn2)].kind != EXT_MODIFIED_NONE)
+	    break;
+
+	  /* The def_insn2 and candidate insn must be in the same
+	     block and def_insn follows def_insn2.  */
+	  if (bb != BLOCK_FOR_INSN (def_insn2)
+	      || DF_INSN_LUID (def_insn2) > DF_INSN_LUID (def_insn))
+	    break;
+
+	  rtx *dest_sub_rtx2 = get_sub_rtx (def_insn2);
+	  if (dest_sub_rtx2 == NULL
+	      || !REG_P (SET_DEST (*dest_sub_rtx2)))
+	    break;
+
+	  /* On RISC machines we must make sure that changing the mode of
+	     SRC_REG as destination register will not affect its reaching
+	     uses, which may read its value in a larger mode because DEF_INSN
+	     implicitly sets it in word mode.  */
+	  if (WORD_REGISTER_OPERATIONS && known_lt (prec, BITS_PER_WORD))
+	    {
+	      struct df_link *uses = get_uses (def_insn2, SET_DEST (set));
+	      if (!uses)
+		break;
+
+	      df_link *use;
+	      rtx dest2 = SET_DEST (*dest_sub_rtx2);
+	      for (use = uses; use; use = use->next)
+		if (paradoxical_subreg_p (GET_MODE (*DF_REF_LOC (use->ref)),
+					  GET_MODE (dest2)))
+		  break;
+	      if (use)
+		break;
+	    }
+
+	  /* The destination register of the extension insn must not be
+	     used or set between the def_insn2 and def_insn exclusive.
+	     Likewise for the other reg, i.e. check both reg1 and reg2
+	     in the above comment.  */
+	  if (reg_used_between_p (SET_DEST (set), def_insn2, def_insn)
+	      || reg_set_between_p (SET_DEST (set), def_insn2, def_insn)
+	      || reg_used_between_p (src_reg, def_insn2, def_insn)
+	      || reg_set_between_p (src_reg, def_insn2, def_insn))
+	    break;
+
+	  state->defs_list[0] = def_insn2;
+	  break;
+	}
+    }
 
   /* If cand->insn has been already modified, update cand->mode to a wider
      mode if possible, or punt.  */
   if (state->modified[INSN_UID (cand->insn)].kind != EXT_MODIFIED_NONE)
     {
       machine_mode mode;
-      rtx set;
 
       if (state->modified[INSN_UID (cand->insn)].kind
 	  != (cand->code == ZERO_EXTEND
 	      ? EXT_MODIFIED_ZEXT : EXT_MODIFIED_SEXT)
 	  || state->modified[INSN_UID (cand->insn)].mode != cand->mode
-	  || (set = single_set (cand->insn)) == NULL_RTX)
+	  || (set == NULL_RTX))
 	return false;
       mode = GET_MODE (SET_DEST (set));
-      gcc_assert (GET_MODE_SIZE (mode) >= GET_MODE_SIZE (cand->mode));
+      gcc_assert (GET_MODE_UNIT_SIZE (mode)
+		  >= GET_MODE_UNIT_SIZE (cand->mode));
       cand->mode = mode;
     }
 
@@ -1130,13 +1204,12 @@ add_removable_extension (const_rtx expr, rtx_insn *insn,
 
       /* Fourth, if the extended version occupies more registers than the
 	 original and the source of the extension is the same hard register
-	 as the destination of the extension, then we can not eliminate
+	 as the destination of the extension, then we cannot eliminate
 	 the extension without deep analysis, so just punt.
 
 	 We allow this when the registers are different because the
 	 code in combine_reaching_defs will handle that case correctly.  */
-      if ((HARD_REGNO_NREGS (REGNO (dest), mode)
-	   != HARD_REGNO_NREGS (REGNO (reg), GET_MODE (reg)))
+      if (hard_regno_nregs (REGNO (dest), mode) != REG_NREGS (reg)
 	  && reg_overlap_mentioned_p (dest, reg))
 	return;
 
@@ -1245,9 +1318,9 @@ find_and_remove_re (void)
 	     we do not allow the optimization of extensions where
 	     the source and destination registers do not match.  Thus
 	     checking REG_P here is correct.  */
-	  if (REG_P (XEXP (SET_SRC (PATTERN (curr_cand->insn)), 0))
-	      && (REGNO (SET_DEST (PATTERN (curr_cand->insn)))
-		  != REGNO (XEXP (SET_SRC (PATTERN (curr_cand->insn)), 0))))
+	  rtx set = single_set (curr_cand->insn);
+	  if (REG_P (XEXP (SET_SRC (set), 0))
+	      && (REGNO (SET_DEST (set)) != REGNO (XEXP (SET_SRC (set), 0))))
 	    {
               reinsn_copy_list.safe_push (curr_cand->insn);
               reinsn_copy_list.safe_push (state.defs_list[0]);
@@ -1281,13 +1354,13 @@ find_and_remove_re (void)
 	 defining insn was used to eliminate a second extension
 	 that was wider than the first.  */
       rtx sub_rtx = *get_sub_rtx (def_insn);
-      rtx pat = PATTERN (curr_insn);
+      rtx set = single_set (curr_insn);
       rtx new_dst = gen_rtx_REG (GET_MODE (SET_DEST (sub_rtx)),
-				 REGNO (XEXP (SET_SRC (pat), 0)));
+				 REGNO (XEXP (SET_SRC (set), 0)));
       rtx new_src = gen_rtx_REG (GET_MODE (SET_DEST (sub_rtx)),
-				 REGNO (SET_DEST (pat)));
-      rtx set = gen_rtx_SET (new_dst, new_src);
-      emit_insn_after (set, def_insn);
+				 REGNO (SET_DEST (set)));
+      rtx new_set = gen_rtx_SET (new_dst, new_src);
+      emit_insn_after (new_set, def_insn);
     }
 
   /* Delete all useless extensions here in one sweep.  */

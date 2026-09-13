@@ -10,9 +10,9 @@ int main(int argc, char **argv)
     case 2:
       return 2;
     case 3:
-      __builtin_unreachable();
+      __builtin_abort();
     case 4:
-      __builtin_unreachable();
+      __builtin_abort();
     default:
       return 5;
     }
@@ -20,5 +20,5 @@ int main(int argc, char **argv)
   return 10;
 }
 
-/* { dg-final { scan-tree-dump-times "combined heuristics of edge\[^:\]*: 33.3%" 3 "profile_estimate"} } */
-/* { dg-final { scan-tree-dump-times "combined heuristics of edge\[^:\]*: 0.0%" 2 "profile_estimate"} } */
+/* { dg-final { scan-tree-dump-times "33.33%" 3 "profile_estimate"} } */
+/* { dg-final { scan-tree-dump-times "0.00%" 3 "profile_estimate"} } */

@@ -1,7 +1,6 @@
 # Process this file with autoconf to produce a configure script, like so:
 # aclocal -I ../config && autoconf && autoheader && automake
 
-AC_PREREQ(2.64)
 AC_INIT([GNU Offloading and Multi Processing Runtime Library], 1.0,,[libgomp])
 AC_CONFIG_HEADER(config.h)
 
@@ -219,6 +218,7 @@ m4_include([plugin/configfrag.ac])
 
 # Check for functions needed.
 AC_CHECK_FUNCS(getloadavg clock_gettime strtoull)
+AC_CHECK_FUNCS(aligned_alloc posix_memalign memalign _aligned_malloc)
 
 # Check for broken semaphore implementation on darwin.
 # sem_init returns: sem_init error: Function not implemented.
@@ -266,6 +266,41 @@ if test $ac_cv_func_clock_gettime = no; then
 	       [Define to 1 if you have the `clock_gettime' function.])])
 fi
 
+# Check for uname.
+AC_COMPILE_IFELSE(
+ [AC_LANG_PROGRAM(
+  [#include <string.h>
+   #include <stdlib.h>
+   #include <sys/utsname.h>],
+  [struct utsname buf;
+   volatile size_t len = 0;
+   if (!uname (buf))
+     len = strlen (buf.nodename);])],
+  AC_DEFINE(HAVE_UNAME, 1,
+[	Define if uname is supported and struct utsname has nodename field.]))
+
+# Check for gethostname.
+AC_COMPILE_IFELSE(
+ [AC_LANG_PROGRAM(
+  [#include <unistd.h>],
+  [
+changequote(,)dnl
+   char buf[256];
+   if (gethostname (buf, sizeof (buf) - 1) == 0)
+     buf[255] = '\0';
+changequote([,])dnl
+  ])],
+  AC_DEFINE(HAVE_GETHOSTNAME, 1,
+[	Define if gethostname is supported.]))
+
+# Check for getpid.
+AC_COMPILE_IFELSE(
+ [AC_LANG_PROGRAM(
+  [#include <unistd.h>],
+  [int pid = getpid ();])],
+  AC_DEFINE(HAVE_GETPID, 1,
+[	Define if getpid is supported.]))
+
 # See if we support thread-local storage.
 GCC_CHECK_TLS
 
@@ -292,6 +327,11 @@ CFLAGS="$save_CFLAGS $XCFLAGS"
 LIBGOMP_CHECK_SYNC_BUILTINS
 
 XCFLAGS="$XCFLAGS$XPCFLAGS"
+
+# Add CET specific flags if CET is enabled
+GCC_CET_FLAGS(CET_FLAGS)
+XCFLAGS="$XCFLAGS $CET_FLAGS"
+FCFLAGS="$FCFLAGS $CET_FLAGS"
 
 AC_SUBST(config_path)
 AC_SUBST(XCFLAGS)

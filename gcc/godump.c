@@ -1,5 +1,5 @@
 /* Output Go language descriptions of types.
-   Copyright (C) 2008-2017 Free Software Foundation, Inc.
+   Copyright (C) 2008-2019 Free Software Foundation, Inc.
    Written by Ian Lance Taylor <iant@google.com>.
 
 This file is part of GCC.
@@ -31,7 +31,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "system.h"
 #include "coretypes.h"
 #include "tree.h"
-#include "wide-int-print.h"
 #include "diagnostic-core.h"
 #include "debug.h"
 #include "stor-layout.h"
@@ -56,6 +55,8 @@ static FILE *go_dump_file;
 /* A queue of decls to output.  */
 
 static GTY(()) vec<tree, va_gc> *queue;
+
+struct godump_str_hash : string_hash, ggc_remove <const char *> {};
 
 /* A hash table of macros we have seen.  */
 
@@ -504,7 +505,8 @@ static void
 go_early_global_decl (tree decl)
 {
   go_decl (decl);
-  real_debug_hooks->early_global_decl (decl);
+  if (TREE_CODE (decl) != FUNCTION_DECL || DECL_STRUCT_FUNCTION (decl) != NULL)
+    real_debug_hooks->early_global_decl (decl);
 }
 
 /* A global variable decl.  */
@@ -542,7 +544,7 @@ struct godump_container
 
   /* Types which may potentially have to be defined as dummy
      types.  */
-  hash_set<const char *> pot_dummy_types;
+  hash_set<const char *, false, godump_str_hash> pot_dummy_types;
 
   /* Go keywords.  */
   htab_t keyword_hash;
@@ -961,7 +963,7 @@ go_format_type (struct godump_container *container, tree type,
 		   unions.  */
 		if (!is_anon_substructure)
 		  {
-		    if ((DECL_NAME (field) == NULL))
+		    if (DECL_NAME (field) == NULL)
 		      *p_art_i = go_append_artificial_name (ob, *p_art_i);
 		    else
 		      go_append_decl_name
@@ -1159,7 +1161,7 @@ go_output_typedef (struct godump_container *container, tree decl)
 	    snprintf (buf, sizeof buf, HOST_WIDE_INT_PRINT_UNSIGNED,
 		      tree_to_uhwi (TREE_VALUE (element)));
 	  else
-	    print_hex (element, buf);
+	    print_hex (wi::to_wide (element), buf);
 
 	  mhval->value = xstrdup (buf);
 	  *slot = mhval;
@@ -1181,7 +1183,7 @@ go_output_typedef (struct godump_container *container, tree decl)
 	return;
       *slot = CONST_CAST (void *, (const void *) type);
 
-      if (!go_format_type (container, TREE_TYPE (decl), false, false, NULL,
+      if (!go_format_type (container, TREE_TYPE (decl), true, false, NULL,
 			   false))
 	{
 	  fprintf (go_dump_file, "// ");

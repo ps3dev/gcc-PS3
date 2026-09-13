@@ -1,6 +1,6 @@
 // unique_ptr implementation -*- C++ -*-
 
-// Copyright (C) 2008-2017 Free Software Foundation, Inc.
+// Copyright (C) 2008-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -48,7 +48,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    */
 
 #if _GLIBCXX_USE_DEPRECATED
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
   template<typename> class auto_ptr;
+#pragma GCC diagnostic pop
 #endif
 
   /// Primary template of default_delete, used by unique_ptr
@@ -136,6 +139,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
       using pointer = typename _Ptr<_Tp, _Dp>::type;
 
+      static_assert( !is_rvalue_reference<_Dp>::value,
+		     "unique_ptr's deleter type must be a function object type"
+		     " or an lvalue reference type" );
+
       __uniq_ptr_impl() = default;
       __uniq_ptr_impl(pointer __p) : _M_t() { _M_ptr() = __p; }
 
@@ -148,6 +155,14 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       _Dp&       _M_deleter() { return std::get<1>(_M_t); }
       const _Dp& _M_deleter() const { return std::get<1>(_M_t); }
 
+      void
+      swap(__uniq_ptr_impl& __rhs) noexcept
+      {
+	using std::swap;
+	swap(this->_M_ptr(), __rhs._M_ptr());
+	swap(this->_M_deleter(), __rhs._M_deleter());
+      }
+
     private:
       tuple<pointer, _Dp> _M_t;
     };
@@ -156,9 +171,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   template <typename _Tp, typename _Dp = default_delete<_Tp>>
     class unique_ptr
     {
-      template <class _Up>
-      using _DeleterConstraint =
-	typename __uniq_ptr_impl<_Tp, _Up>::_DeleterConstraint::type;
+      template <typename _Up>
+	using _DeleterConstraint =
+	  typename __uniq_ptr_impl<_Tp, _Up>::_DeleterConstraint::type;
 
       __uniq_ptr_impl<_Tp, _Dp> _M_t;
 
@@ -167,27 +182,23 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       using element_type  = _Tp;
       using deleter_type  = _Dp;
 
+    private:
       // helper template for detecting a safe conversion from another
       // unique_ptr
       template<typename _Up, typename _Ep>
 	using __safe_conversion_up = __and_<
-	        is_convertible<typename unique_ptr<_Up, _Ep>::pointer, pointer>,
-                __not_<is_array<_Up>>,
-                __or_<__and_<is_reference<deleter_type>,
-                             is_same<deleter_type, _Ep>>,
-                      __and_<__not_<is_reference<deleter_type>>,
-                             is_convertible<_Ep, deleter_type>>
-                >
-              >;
+	  is_convertible<typename unique_ptr<_Up, _Ep>::pointer, pointer>,
+	  __not_<is_array<_Up>>
+        >;
 
+    public:
       // Constructors.
 
       /// Default constructor, creates a unique_ptr that owns nothing.
-      template <typename _Up = _Dp,
-		typename = _DeleterConstraint<_Up>>
+      template<typename _Del = _Dp, typename = _DeleterConstraint<_Del>>
 	constexpr unique_ptr() noexcept
 	: _M_t()
-        { }
+	{ }
 
       /** Takes ownership of a pointer.
        *
@@ -195,8 +206,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
        *
        * The deleter will be value-initialized.
        */
-      template <typename _Up = _Dp,
-		typename = _DeleterConstraint<_Up>>
+      template<typename _Del = _Dp, typename = _DeleterConstraint<_Del>>
 	explicit
 	unique_ptr(pointer __p) noexcept
 	: _M_t(__p)
@@ -209,28 +219,37 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
        *
        * The deleter will be initialized with @p __d
        */
-      unique_ptr(pointer __p,
-	  typename conditional<is_reference<deleter_type>::value,
-	    deleter_type, const deleter_type&>::type __d) noexcept
-      : _M_t(__p, __d) { }
+      template<typename _Del = deleter_type,
+	       typename = _Require<is_copy_constructible<_Del>>>
+	unique_ptr(pointer __p, const deleter_type& __d) noexcept
+	: _M_t(__p, __d) { }
 
       /** Takes ownership of a pointer.
        *
        * @param __p  A pointer to an object of @c element_type
-       * @param __d  An rvalue reference to a deleter.
+       * @param __d  An rvalue reference to a (non-reference) deleter.
        *
        * The deleter will be initialized with @p std::move(__d)
        */
-      unique_ptr(pointer __p,
-	  typename remove_reference<deleter_type>::type&& __d) noexcept
-      : _M_t(std::move(__p), std::move(__d))
-      { static_assert(!std::is_reference<deleter_type>::value,
-		      "rvalue deleter bound to reference"); }
+      template<typename _Del = deleter_type,
+	       typename = _Require<is_move_constructible<_Del>>>
+	unique_ptr(pointer __p,
+		   __enable_if_t<!is_lvalue_reference<_Del>::value,
+				 _Del&&> __d) noexcept
+	: _M_t(__p, std::move(__d))
+	{ }
+
+      template<typename _Del = deleter_type,
+	       typename _DelUnref = typename remove_reference<_Del>::type>
+	unique_ptr(pointer,
+		   __enable_if_t<is_lvalue_reference<_Del>::value,
+				 _DelUnref&&>) = delete;
 
       /// Creates a unique_ptr that owns nothing.
-      template <typename _Up = _Dp,
-		typename = _DeleterConstraint<_Up>>
-	constexpr unique_ptr(nullptr_t) noexcept : unique_ptr() { }
+      template<typename _Del = _Dp, typename = _DeleterConstraint<_Del>>
+	constexpr unique_ptr(nullptr_t) noexcept
+	: _M_t()
+	{ }
 
       // Move constructors.
 
@@ -254,18 +273,23 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	{ }
 
 #if _GLIBCXX_USE_DEPRECATED
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
       /// Converting constructor from @c auto_ptr
       template<typename _Up, typename = _Require<
 	       is_convertible<_Up*, _Tp*>, is_same<_Dp, default_delete<_Tp>>>>
 	unique_ptr(auto_ptr<_Up>&& __u) noexcept;
+#pragma GCC diagnostic pop
 #endif
 
       /// Destructor, invokes the deleter if the stored pointer is not null.
       ~unique_ptr() noexcept
       {
+	static_assert(__is_invocable<deleter_type&, pointer>::value,
+		      "unique_ptr's deleter must be invocable with a pointer");
 	auto& __ptr = _M_t._M_ptr();
 	if (__ptr != nullptr)
-	  get_deleter()(__ptr);
+	  get_deleter()(std::move(__ptr));
 	__ptr = pointer();
       }
 
@@ -370,18 +394,20 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       void
       reset(pointer __p = pointer()) noexcept
       {
+	static_assert(__is_invocable<deleter_type&, pointer>::value,
+		      "unique_ptr's deleter must be invocable with a pointer");
 	using std::swap;
 	swap(_M_t._M_ptr(), __p);
 	if (__p != pointer())
-	  get_deleter()(__p);
+	  get_deleter()(std::move(__p));
       }
 
       /// Exchange the pointer and deleter with another object.
       void
       swap(unique_ptr& __u) noexcept
       {
-	using std::swap;
-	swap(_M_t, __u._M_t);
+	static_assert(__is_swappable<_Dp>::value, "deleter must be swappable");
+	_M_t.swap(__u._M_t);
       }
 
       // Disable copy from lvalue.
@@ -419,16 +445,14 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       // helper template for detecting a safe conversion from another
       // unique_ptr
       template<typename _Up, typename _Ep,
-               typename _Up_up = unique_ptr<_Up, _Ep>,
-	       typename _Up_element_type = typename _Up_up::element_type>
+               typename _UPtr = unique_ptr<_Up, _Ep>,
+	       typename _UP_pointer = typename _UPtr::pointer,
+	       typename _UP_element_type = typename _UPtr::element_type>
 	using __safe_conversion_up = __and_<
           is_array<_Up>,
           is_same<pointer, element_type*>,
-          is_same<typename _Up_up::pointer, _Up_element_type*>,
-          is_convertible<_Up_element_type(*)[], element_type(*)[]>,
-          __or_<__and_<is_reference<deleter_type>, is_same<deleter_type, _Ep>>,
-                __and_<__not_<is_reference<deleter_type>>,
-                       is_convertible<_Ep, deleter_type>>>
+          is_same<_UP_pointer, _UP_element_type*>,
+          is_convertible<_UP_element_type(*)[], element_type(*)[]>
         >;
 
       // helper template for detecting a safe conversion from a raw pointer
@@ -448,11 +472,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       // Constructors.
 
       /// Default constructor, creates a unique_ptr that owns nothing.
-      template <typename _Up = _Dp,
-		typename = _DeleterConstraint<_Up>>
+      template<typename _Del = _Dp, typename = _DeleterConstraint<_Del>>
 	constexpr unique_ptr() noexcept
 	: _M_t()
-        { }
+	{ }
 
       /** Takes ownership of a pointer.
        *
@@ -479,12 +502,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
        *
        * The deleter will be initialized with @p __d
        */
-      template<typename _Up,
-               typename = typename enable_if<
-                 __safe_conversion_raw<_Up>::value, bool>::type>
-      unique_ptr(_Up __p,
-                 typename conditional<is_reference<deleter_type>::value,
-                 deleter_type, const deleter_type&>::type __d) noexcept
+      template<typename _Up, typename _Del = deleter_type,
+	       typename = _Require<__safe_conversion_raw<_Up>,
+				   is_copy_constructible<_Del>>>
+      unique_ptr(_Up __p, const deleter_type& __d) noexcept
       : _M_t(__p, __d) { }
 
       /** Takes ownership of a pointer.
@@ -495,26 +516,37 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
        *
        * The deleter will be initialized with @p std::move(__d)
        */
-      template<typename _Up,
-               typename = typename enable_if<
-                 __safe_conversion_raw<_Up>::value, bool>::type>
-      unique_ptr(_Up __p, typename
-		 remove_reference<deleter_type>::type&& __d) noexcept
-      : _M_t(std::move(__p), std::move(__d))
-      { static_assert(!is_reference<deleter_type>::value,
-		      "rvalue deleter bound to reference"); }
+      template<typename _Up, typename _Del = deleter_type,
+	       typename = _Require<__safe_conversion_raw<_Up>,
+				   is_move_constructible<_Del>>>
+	unique_ptr(_Up __p,
+		   __enable_if_t<!is_lvalue_reference<_Del>::value,
+				 _Del&&> __d) noexcept
+	: _M_t(std::move(__p), std::move(__d))
+	{ }
+
+      template<typename _Up, typename _Del = deleter_type,
+	       typename _DelUnref = typename remove_reference<_Del>::type,
+	       typename = _Require<__safe_conversion_raw<_Up>>>
+	unique_ptr(_Up,
+		   __enable_if_t<is_lvalue_reference<_Del>::value,
+				 _DelUnref&&>) = delete;
 
       /// Move constructor.
       unique_ptr(unique_ptr&& __u) noexcept
       : _M_t(__u.release(), std::forward<deleter_type>(__u.get_deleter())) { }
 
       /// Creates a unique_ptr that owns nothing.
-      template <typename _Up = _Dp,
-		typename = _DeleterConstraint<_Up>>
-	constexpr unique_ptr(nullptr_t) noexcept : unique_ptr() { }
+      template<typename _Del = _Dp, typename = _DeleterConstraint<_Del>>
+	constexpr unique_ptr(nullptr_t) noexcept
+	: _M_t()
+        { }
 
-      template<typename _Up, typename _Ep,
-	       typename = _Require<__safe_conversion_up<_Up, _Ep>>>
+      template<typename _Up, typename _Ep, typename = _Require<
+	       __safe_conversion_up<_Up, _Ep>,
+	       typename conditional<is_reference<_Dp>::value,
+				    is_same<_Ep, _Dp>,
+				    is_convertible<_Ep, _Dp>>::type>>
 	unique_ptr(unique_ptr<_Up, _Ep>&& __u) noexcept
 	: _M_t(__u.release(), std::forward<_Ep>(__u.get_deleter()))
 	{ }
@@ -649,8 +681,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       void
       swap(unique_ptr& __u) noexcept
       {
-	using std::swap;
-	swap(_M_t, __u._M_t);
+	static_assert(__is_swappable<_Dp>::value, "deleter must be swappable");
+	_M_t.swap(__u._M_t);
       }
 
       // Disable copy from lvalue.
@@ -679,41 +711,41 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   template<typename _Tp, typename _Dp,
 	   typename _Up, typename _Ep>
-    inline bool
+    _GLIBCXX_NODISCARD inline bool
     operator==(const unique_ptr<_Tp, _Dp>& __x,
 	       const unique_ptr<_Up, _Ep>& __y)
     { return __x.get() == __y.get(); }
 
   template<typename _Tp, typename _Dp>
-    inline bool
+    _GLIBCXX_NODISCARD inline bool
     operator==(const unique_ptr<_Tp, _Dp>& __x, nullptr_t) noexcept
     { return !__x; }
 
   template<typename _Tp, typename _Dp>
-    inline bool
+    _GLIBCXX_NODISCARD inline bool
     operator==(nullptr_t, const unique_ptr<_Tp, _Dp>& __x) noexcept
     { return !__x; }
 
   template<typename _Tp, typename _Dp,
 	   typename _Up, typename _Ep>
-    inline bool
+    _GLIBCXX_NODISCARD inline bool
     operator!=(const unique_ptr<_Tp, _Dp>& __x,
 	       const unique_ptr<_Up, _Ep>& __y)
     { return __x.get() != __y.get(); }
 
   template<typename _Tp, typename _Dp>
-    inline bool
+    _GLIBCXX_NODISCARD inline bool
     operator!=(const unique_ptr<_Tp, _Dp>& __x, nullptr_t) noexcept
     { return (bool)__x; }
 
   template<typename _Tp, typename _Dp>
-    inline bool
+    _GLIBCXX_NODISCARD inline bool
     operator!=(nullptr_t, const unique_ptr<_Tp, _Dp>& __x) noexcept
     { return (bool)__x; }
 
   template<typename _Tp, typename _Dp,
 	   typename _Up, typename _Ep>
-    inline bool
+    _GLIBCXX_NODISCARD inline bool
     operator<(const unique_ptr<_Tp, _Dp>& __x,
 	      const unique_ptr<_Up, _Ep>& __y)
     {
@@ -724,67 +756,67 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     }
 
   template<typename _Tp, typename _Dp>
-    inline bool
+    _GLIBCXX_NODISCARD inline bool
     operator<(const unique_ptr<_Tp, _Dp>& __x, nullptr_t)
     { return std::less<typename unique_ptr<_Tp, _Dp>::pointer>()(__x.get(),
 								 nullptr); }
 
   template<typename _Tp, typename _Dp>
-    inline bool
+    _GLIBCXX_NODISCARD inline bool
     operator<(nullptr_t, const unique_ptr<_Tp, _Dp>& __x)
     { return std::less<typename unique_ptr<_Tp, _Dp>::pointer>()(nullptr,
 								 __x.get()); }
 
   template<typename _Tp, typename _Dp,
 	   typename _Up, typename _Ep>
-    inline bool
+    _GLIBCXX_NODISCARD inline bool
     operator<=(const unique_ptr<_Tp, _Dp>& __x,
 	       const unique_ptr<_Up, _Ep>& __y)
     { return !(__y < __x); }
 
   template<typename _Tp, typename _Dp>
-    inline bool
+    _GLIBCXX_NODISCARD inline bool
     operator<=(const unique_ptr<_Tp, _Dp>& __x, nullptr_t)
     { return !(nullptr < __x); }
 
   template<typename _Tp, typename _Dp>
-    inline bool
+    _GLIBCXX_NODISCARD inline bool
     operator<=(nullptr_t, const unique_ptr<_Tp, _Dp>& __x)
     { return !(__x < nullptr); }
 
   template<typename _Tp, typename _Dp,
 	   typename _Up, typename _Ep>
-    inline bool
+    _GLIBCXX_NODISCARD inline bool
     operator>(const unique_ptr<_Tp, _Dp>& __x,
 	      const unique_ptr<_Up, _Ep>& __y)
     { return (__y < __x); }
 
   template<typename _Tp, typename _Dp>
-    inline bool
+    _GLIBCXX_NODISCARD inline bool
     operator>(const unique_ptr<_Tp, _Dp>& __x, nullptr_t)
     { return std::less<typename unique_ptr<_Tp, _Dp>::pointer>()(nullptr,
 								 __x.get()); }
 
   template<typename _Tp, typename _Dp>
-    inline bool
+    _GLIBCXX_NODISCARD inline bool
     operator>(nullptr_t, const unique_ptr<_Tp, _Dp>& __x)
     { return std::less<typename unique_ptr<_Tp, _Dp>::pointer>()(__x.get(),
 								 nullptr); }
 
   template<typename _Tp, typename _Dp,
 	   typename _Up, typename _Ep>
-    inline bool
+    _GLIBCXX_NODISCARD inline bool
     operator>=(const unique_ptr<_Tp, _Dp>& __x,
 	       const unique_ptr<_Up, _Ep>& __y)
     { return !(__x < __y); }
 
   template<typename _Tp, typename _Dp>
-    inline bool
+    _GLIBCXX_NODISCARD inline bool
     operator>=(const unique_ptr<_Tp, _Dp>& __x, nullptr_t)
     { return !(__x < nullptr); }
 
   template<typename _Tp, typename _Dp>
-    inline bool
+    _GLIBCXX_NODISCARD inline bool
     operator>=(nullptr_t, const unique_ptr<_Tp, _Dp>& __x)
     { return !(nullptr < __x); }
 
@@ -836,7 +868,21 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     make_unique(_Args&&...) = delete;
 #endif
 
-  // @} group pointer_abstractions
+  /// @} group pointer_abstractions
+
+#if __cplusplus >= 201703L
+  namespace __detail::__variant
+  {
+    template<typename> struct _Never_valueless_alt; // see <variant>
+
+    // Provide the strong exception-safety guarantee when emplacing a
+    // unique_ptr into a variant.
+    template<typename _Tp, typename _Del>
+      struct _Never_valueless_alt<std::unique_ptr<_Tp, _Del>>
+      : std::true_type
+      { };
+  }  // namespace __detail::__variant
+#endif // C++17
 
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace

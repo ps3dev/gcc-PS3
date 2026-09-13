@@ -6,7 +6,7 @@
  *                                                                          *
  *                          C Implementation File                           *
  *                                                                          *
- *          Copyright (C) 1992-2016, Free Software Foundation, Inc.         *
+ *          Copyright (C) 1992-2019, Free Software Foundation, Inc.         *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -301,19 +301,31 @@ compare_arrays (location_t loc, tree result_type, tree a1, tree a2)
      in order to suppress the comparison of the data at the end.  */
   while (TREE_CODE (t1) == ARRAY_TYPE && TREE_CODE (t2) == ARRAY_TYPE)
     {
-      tree lb1 = TYPE_MIN_VALUE (TYPE_DOMAIN (t1));
-      tree ub1 = TYPE_MAX_VALUE (TYPE_DOMAIN (t1));
-      tree lb2 = TYPE_MIN_VALUE (TYPE_DOMAIN (t2));
-      tree ub2 = TYPE_MAX_VALUE (TYPE_DOMAIN (t2));
-      tree length1 = size_binop (PLUS_EXPR, size_binop (MINUS_EXPR, ub1, lb1),
+      tree dom1 = TYPE_DOMAIN (t1);
+      tree dom2 = TYPE_DOMAIN (t2);
+      tree length1 = size_binop (PLUS_EXPR,
+				 size_binop (MINUS_EXPR,
+					     TYPE_MAX_VALUE (dom1),
+					     TYPE_MIN_VALUE (dom1)),
 				 size_one_node);
-      tree length2 = size_binop (PLUS_EXPR, size_binop (MINUS_EXPR, ub2, lb2),
+      tree length2 = size_binop (PLUS_EXPR,
+				 size_binop (MINUS_EXPR,
+					     TYPE_MAX_VALUE (dom2),
+					     TYPE_MIN_VALUE (dom2)),
 				 size_one_node);
+      tree ind1 = TYPE_INDEX_TYPE (dom1);
+      tree ind2 = TYPE_INDEX_TYPE (dom2);
+      tree base_type = maybe_character_type (get_base_type (ind1));
+      tree lb1 = convert (base_type, TYPE_MIN_VALUE (ind1));
+      tree ub1 = convert (base_type, TYPE_MAX_VALUE (ind1));
+      tree lb2 = convert (base_type, TYPE_MIN_VALUE (ind2));
+      tree ub2 = convert (base_type, TYPE_MAX_VALUE (ind2));
       tree comparison, this_a1_is_null, this_a2_is_null;
 
-      /* If the length of the first array is a constant, swap our operands
-	 unless the length of the second array is the constant zero.  */
-      if (TREE_CODE (length1) == INTEGER_CST && !integer_zerop (length2))
+      /* If the length of the first array is a constant and that of the second
+	 array is not, swap our operands to have the constant second.  */
+      if (TREE_CODE (length1) == INTEGER_CST
+	  && TREE_CODE (length2) != INTEGER_CST)
 	{
 	  tree tem;
 	  bool btem;
@@ -333,17 +345,12 @@ compare_arrays (location_t loc, tree result_type, tree a1, tree a2)
 	 last < first holds.  */
       if (integer_zerop (length2))
 	{
-	  tree b = get_base_type (TYPE_INDEX_TYPE (TYPE_DOMAIN (t1)));
-
 	  length_zero_p = true;
 
-	  ub1
-	    = convert (b, TYPE_MAX_VALUE (TYPE_INDEX_TYPE (TYPE_DOMAIN (t1))));
-	  lb1
-	    = convert (b, TYPE_MIN_VALUE (TYPE_INDEX_TYPE (TYPE_DOMAIN (t1))));
+	  lb1 = SUBSTITUTE_PLACEHOLDER_IN_EXPR (lb1, a1);
+	  ub1 = SUBSTITUTE_PLACEHOLDER_IN_EXPR (ub1, a1);
 
 	  comparison = fold_build2_loc (loc, LT_EXPR, result_type, ub1, lb1);
-	  comparison = SUBSTITUTE_PLACEHOLDER_IN_EXPR (comparison, a1);
 	  if (EXPR_P (comparison))
 	    SET_EXPR_LOCATION (comparison, loc);
 
@@ -356,24 +363,17 @@ compare_arrays (location_t loc, tree result_type, tree a1, tree a2)
 	 just use its length computed from the actual stored bounds.  */
       else if (TREE_CODE (length2) == INTEGER_CST)
 	{
-	  tree b = get_base_type (TYPE_INDEX_TYPE (TYPE_DOMAIN (t1)));
-
-	  ub1
-	    = convert (b, TYPE_MAX_VALUE (TYPE_INDEX_TYPE (TYPE_DOMAIN (t1))));
-	  lb1
-	    = convert (b, TYPE_MIN_VALUE (TYPE_INDEX_TYPE (TYPE_DOMAIN (t1))));
-	  /* Note that we know that UB2 and LB2 are constant and hence
+	  /* Note that we know that LB2 and UB2 are constant and hence
 	     cannot contain a PLACEHOLDER_EXPR.  */
-	  ub2
-	    = convert (b, TYPE_MAX_VALUE (TYPE_INDEX_TYPE (TYPE_DOMAIN (t2))));
-	  lb2
-	    = convert (b, TYPE_MIN_VALUE (TYPE_INDEX_TYPE (TYPE_DOMAIN (t2))));
+	  lb1 = SUBSTITUTE_PLACEHOLDER_IN_EXPR (lb1, a1);
+	  ub1 = SUBSTITUTE_PLACEHOLDER_IN_EXPR (ub1, a1);
 
 	  comparison
 	    = fold_build2_loc (loc, EQ_EXPR, result_type,
-			       build_binary_op (MINUS_EXPR, b, ub1, lb1),
-			       build_binary_op (MINUS_EXPR, b, ub2, lb2));
-	  comparison = SUBSTITUTE_PLACEHOLDER_IN_EXPR (comparison, a1);
+			       build_binary_op (MINUS_EXPR, base_type,
+						ub1, lb1),
+			       build_binary_op (MINUS_EXPR, base_type,
+						ub2, lb2));
 	  if (EXPR_P (comparison))
 	    SET_EXPR_LOCATION (comparison, loc);
 
@@ -391,26 +391,20 @@ compare_arrays (location_t loc, tree result_type, tree a1, tree a2)
 
 	  comparison
 	    = fold_build2_loc (loc, EQ_EXPR, result_type, length1, length2);
+	  if (EXPR_P (comparison))
+	    SET_EXPR_LOCATION (comparison, loc);
 
-	  /* If the length expression is of the form (cond ? val : 0), assume
-	     that cond is equivalent to (length != 0).  That's guaranteed by
-	     construction of the array types in gnat_to_gnu_entity.  */
-	  if (TREE_CODE (length1) == COND_EXPR
-	      && integer_zerop (TREE_OPERAND (length1, 2)))
-	    this_a1_is_null
-	      = invert_truthvalue_loc (loc, TREE_OPERAND (length1, 0));
-	  else
-	    this_a1_is_null = fold_build2_loc (loc, EQ_EXPR, result_type,
-					       length1, size_zero_node);
+	  lb1 = SUBSTITUTE_PLACEHOLDER_IN_EXPR (lb1, a1);
+	  ub1 = SUBSTITUTE_PLACEHOLDER_IN_EXPR (ub1, a1);
 
-	  /* Likewise for the second array.  */
-	  if (TREE_CODE (length2) == COND_EXPR
-	      && integer_zerop (TREE_OPERAND (length2, 2)))
-	    this_a2_is_null
-	      = invert_truthvalue_loc (loc, TREE_OPERAND (length2, 0));
-	  else
-	    this_a2_is_null = fold_build2_loc (loc, EQ_EXPR, result_type,
-					       length2, size_zero_node);
+	  this_a1_is_null
+	    = fold_build2_loc (loc, LT_EXPR, result_type, ub1, lb1);
+
+	  lb2 = SUBSTITUTE_PLACEHOLDER_IN_EXPR (lb2, a2);
+	  ub2 = SUBSTITUTE_PLACEHOLDER_IN_EXPR (ub2, a2);
+
+	  this_a2_is_null
+	    = fold_build2_loc (loc, LT_EXPR, result_type, ub2, lb2);
 	}
 
       /* Append expressions for this dimension to the final expressions.  */
@@ -800,7 +794,8 @@ build_load_modify_store (tree dest, tree src, Node_Id gnat_node)
 		{
 		  unsigned int size = tree_to_uhwi (TYPE_SIZE (type));
 		  type = copy_type (type);
-		  SET_TYPE_MODE (type, mode_for_size (size, MODE_INT, 0));
+		  machine_mode mode = int_mode_for_size (size, 0).else_blk ();
+		  SET_TYPE_MODE (type, mode);
 		}
 
 	      /* Create the temporary by inserting a SAVE_EXPR.  */
@@ -860,9 +855,7 @@ build_binary_op (enum tree_code op_code, tree result_type,
       && TYPE_JUSTIFIED_MODULAR_P (operation_type))
     operation_type = TREE_TYPE (TYPE_FIELDS (operation_type));
 
-  if (operation_type
-      && TREE_CODE (operation_type) == INTEGER_TYPE
-      && TYPE_EXTRA_SUBTYPE_P (operation_type))
+  if (operation_type && TYPE_IS_EXTRA_SUBTYPE_P (operation_type))
     operation_type = get_base_type (operation_type);
 
   modulus = (operation_type
@@ -1438,8 +1431,8 @@ build_unary_op (enum tree_code op_code, tree result_type, tree operand)
 	       the offset to the field.  Otherwise, do this the normal way.  */
 	  if (op_code == ATTR_ADDR_EXPR)
 	    {
-	      HOST_WIDE_INT bitsize;
-	      HOST_WIDE_INT bitpos;
+	      poly_int64 bitsize;
+	      poly_int64 bitpos;
 	      tree offset, inner;
 	      machine_mode mode;
 	      int unsignedp, reversep, volatilep;
@@ -1459,8 +1452,9 @@ build_unary_op (enum tree_code op_code, tree result_type, tree operand)
 	      if (!offset)
 		offset = size_zero_node;
 
-	      offset = size_binop (PLUS_EXPR, offset,
-				   size_int (bitpos / BITS_PER_UNIT));
+	      offset
+		= size_binop (PLUS_EXPR, offset,
+			      size_int (bits_to_bytes_round_down (bitpos)));
 
 	      /* Take the address of INNER, convert it to a pointer to our type
 		 and add the offset.  */
@@ -1786,9 +1780,10 @@ build_call_n_expr (tree fndecl, int n, ...)
    MSG gives the exception's identity for the call to Local_Raise, if any.  */
 
 static tree
-build_goto_raise (tree label, int msg)
+build_goto_raise (Entity_Id gnat_label, int msg)
 {
-  tree gnu_result = build1 (GOTO_EXPR, void_type_node, label);
+  tree gnu_label = gnat_to_gnu_entity (gnat_label, NULL_TREE, false);
+  tree gnu_result = build1 (GOTO_EXPR, void_type_node, gnu_label);
   Entity_Id local_raise = Get_Local_Raise_Call_Entity ();
 
   /* If Local_Raise is present, build Local_Raise (Exception'Identity).  */
@@ -1806,6 +1801,7 @@ build_goto_raise (tree label, int msg)
 	= build2 (COMPOUND_EXPR, void_type_node, gnu_call, gnu_result);
     }
 
+  TREE_USED (gnu_label) = 1;
   return gnu_result;
 }
 
@@ -1858,13 +1854,13 @@ expand_sloc (Node_Id gnat_node, tree *filename, tree *line, tree *col)
 tree
 build_call_raise (int msg, Node_Id gnat_node, char kind)
 {
+  Entity_Id gnat_label = get_exception_label (kind);
   tree fndecl = gnat_raise_decls[msg];
-  tree label = get_exception_label (kind);
   tree filename, line;
 
   /* If this is to be done as a goto, handle that case.  */
-  if (label)
-    return build_goto_raise (label, msg);
+  if (Present (gnat_label))
+    return build_goto_raise (gnat_label, msg);
 
   expand_sloc (gnat_node, &filename, &line, NULL);
 
@@ -1882,13 +1878,13 @@ build_call_raise (int msg, Node_Id gnat_node, char kind)
 tree
 build_call_raise_column (int msg, Node_Id gnat_node, char kind)
 {
+  Entity_Id gnat_label = get_exception_label (kind);
   tree fndecl = gnat_raise_decls_ext[msg];
-  tree label = get_exception_label (kind);
   tree filename, line, col;
 
   /* If this is to be done as a goto, handle that case.  */
-  if (label)
-    return build_goto_raise (label, msg);
+  if (Present (gnat_label))
+    return build_goto_raise (gnat_label, msg);
 
   expand_sloc (gnat_node, &filename, &line, &col);
 
@@ -1907,13 +1903,13 @@ tree
 build_call_raise_range (int msg, Node_Id gnat_node, char kind,
 			tree index, tree first, tree last)
 {
+  Entity_Id gnat_label = get_exception_label (kind);
   tree fndecl = gnat_raise_decls_ext[msg];
-  tree label = get_exception_label (kind);
   tree filename, line, col;
 
   /* If this is to be done as a goto, handle that case.  */
-  if (label)
-    return build_goto_raise (label, msg);
+  if (Present (gnat_label))
+    return build_goto_raise (gnat_label, msg);
 
   expand_sloc (gnat_node, &filename, &line, &col);
 
@@ -1934,8 +1930,8 @@ build_call_raise_range (int msg, Node_Id gnat_node, char kind,
 static int
 compare_elmt_bitpos (const PTR rt1, const PTR rt2)
 {
-  const constructor_elt * const elmt1 = (const constructor_elt * const) rt1;
-  const constructor_elt * const elmt2 = (const constructor_elt * const) rt2;
+  const constructor_elt * const elmt1 = (const constructor_elt *) rt1;
+  const constructor_elt * const elmt2 = (const constructor_elt *) rt2;
   const_tree const field1 = elmt1->index;
   const_tree const field2 = elmt2->index;
   const int ret
@@ -2349,6 +2345,12 @@ build_allocator (tree type, tree init, tree result_type, Entity_Id gnat_proc,
   if (init && TREE_CODE (init) == NULL_EXPR)
     return build1 (NULL_EXPR, result_type, TREE_OPERAND (init, 0));
 
+  /* If we are just annotating types, also return a NULL_EXPR.  */
+  else if (type_annotate_only)
+    return build1 (NULL_EXPR, result_type,
+		   build_call_raise (CE_Range_Check_Failed, gnat_node,
+				     N_Raise_Constraint_Error));
+
   /* If the initializer, if present, is a COND_EXPR, deal with each branch.  */
   else if (init && TREE_CODE (init) == COND_EXPR)
     return build3 (COND_EXPR, result_type, TREE_OPERAND (init, 0),
@@ -2421,16 +2423,13 @@ build_allocator (tree type, tree init, tree result_type, Entity_Id gnat_proc,
     size = TYPE_SIZE_UNIT (TREE_TYPE (init));
 
   /* If the size is still self-referential, reference the initializing
-     expression, if it is present.  If not, this must have been a
-     call to allocate a library-level object, in which case we use
-     the maximum size.  */
-  if (CONTAINS_PLACEHOLDER_P (size))
-    {
-      if (!ignore_init_type && init)
-	size = substitute_placeholder_in_expr (size, init);
-      else
-	size = max_size (size, true);
-    }
+     expression, if it is present.  If not, this must have been a call
+     to allocate a library-level object, in which case we just use the
+     maximum size.  */
+  if (!ignore_init_type && init)
+    size = SUBSTITUTE_PLACEHOLDER_IN_EXPR (size, init);
+  else if (CONTAINS_PLACEHOLDER_P (size))
+    size = max_size (size, true);
 
   /* If the size overflows, pass -1 so Storage_Error will be raised.  */
   if (TREE_CODE (size) == INTEGER_CST && !valid_constant_size_p (size))

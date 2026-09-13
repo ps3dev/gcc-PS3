@@ -8,10 +8,17 @@ import (
 	"bytes"
 	"fmt"
 	"regexp"
+	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
+
+func init() {
+	// Make benchmark tests run 10* faster.
+	benchTime.d = 100 * time.Millisecond
+}
 
 func TestTestContext(t *T) {
 	const (
@@ -161,7 +168,7 @@ func TestTRun(t *T) {
 --- FAIL: failure in parallel test propagates upwards (N.NNs)
     --- FAIL: failure in parallel test propagates upwards/#00 (N.NNs)
         --- FAIL: failure in parallel test propagates upwards/#00/par (N.NNs)
-		`,
+        `,
 		f: func(t *T) {
 			t.Run("", func(t *T) {
 				t.Parallel()
@@ -203,8 +210,8 @@ func TestTRun(t *T) {
 		desc: "skipping after error",
 		output: `
 --- FAIL: skipping after error (N.NNs)
-	sub_test.go:NNN: an error
-	sub_test.go:NNN: skipped`,
+    sub_test.go:NNN: an error
+    sub_test.go:NNN: skipped`,
 		f: func(t *T) {
 			t.Error("an error")
 			t.Skip("skipped")
@@ -309,6 +316,81 @@ func TestTRun(t *T) {
 			t.Skip()
 		},
 	}, {
+		desc: "subtest calls error on parent",
+		ok:   false,
+		output: `
+--- FAIL: subtest calls error on parent (N.NNs)
+    sub_test.go:NNN: first this
+    sub_test.go:NNN: and now this!
+    sub_test.go:NNN: oh, and this too`,
+		maxPar: 1,
+		f: func(t *T) {
+			t.Errorf("first this")
+			outer := t
+			t.Run("", func(t *T) {
+				outer.Errorf("and now this!")
+			})
+			t.Errorf("oh, and this too")
+		},
+	}, {
+		desc: "subtest calls fatal on parent",
+		ok:   false,
+		output: `
+--- FAIL: subtest calls fatal on parent (N.NNs)
+    sub_test.go:NNN: first this
+    sub_test.go:NNN: and now this!
+    --- FAIL: subtest calls fatal on parent/#00 (N.NNs)
+        testing.go:NNN: test executed panic(nil) or runtime.Goexit: subtest may have called FailNow on a parent test`,
+		maxPar: 1,
+		f: func(t *T) {
+			outer := t
+			t.Errorf("first this")
+			t.Run("", func(t *T) {
+				outer.Fatalf("and now this!")
+			})
+			t.Errorf("Should not reach here.")
+		},
+	}, {
+		desc: "subtest calls error on ancestor",
+		ok:   false,
+		output: `
+--- FAIL: subtest calls error on ancestor (N.NNs)
+    sub_test.go:NNN: Report to ancestor
+    --- FAIL: subtest calls error on ancestor/#00 (N.NNs)
+        sub_test.go:NNN: Still do this
+    sub_test.go:NNN: Also do this`,
+		maxPar: 1,
+		f: func(t *T) {
+			outer := t
+			t.Run("", func(t *T) {
+				t.Run("", func(t *T) {
+					outer.Errorf("Report to ancestor")
+				})
+				t.Errorf("Still do this")
+			})
+			t.Errorf("Also do this")
+		},
+	}, {
+		desc: "subtest calls fatal on ancestor",
+		ok:   false,
+		output: `
+--- FAIL: subtest calls fatal on ancestor (N.NNs)
+    sub_test.go:NNN: Nope`,
+		maxPar: 1,
+		f: func(t *T) {
+			outer := t
+			t.Run("", func(t *T) {
+				for i := 0; i < 4; i++ {
+					t.Run("", func(t *T) {
+						outer.Fatalf("Nope")
+					})
+					t.Errorf("Don't do this")
+				}
+				t.Errorf("And neither do this")
+			})
+			t.Errorf("Nor this")
+		},
+	}, {
 		desc:   "panic on goroutine fail after test exit",
 		ok:     false,
 		maxPar: 4,
@@ -328,6 +410,29 @@ func TestTRun(t *T) {
 			})
 			ch <- true
 			<-ch
+		},
+	}, {
+		desc: "log in finished sub test logs to parent",
+		ok:   false,
+		output: `
+		--- FAIL: log in finished sub test logs to parent (N.NNs)
+    sub_test.go:NNN: message2
+    sub_test.go:NNN: message1
+    sub_test.go:NNN: error`,
+		maxPar: 1,
+		f: func(t *T) {
+			ch := make(chan bool)
+			t.Run("sub", func(t2 *T) {
+				go func() {
+					<-ch
+					t2.Log("message1")
+					ch <- true
+				}()
+			})
+			t.Log("message2")
+			ch <- true
+			<-ch
+			t.Errorf("error")
 		},
 	}}
 	for _, tc := range testCases {
@@ -421,7 +526,7 @@ func TestBRun(t *T) {
 		chatty: true,
 		output: `
 --- SKIP: root
-	sub_test.go:NNN: skipping`,
+    sub_test.go:NNN: skipping`,
 		f: func(b *B) { b.Skip("skipping") },
 	}, {
 		desc:   "chatty with recursion",
@@ -439,8 +544,8 @@ func TestBRun(t *T) {
 		failed: true,
 		output: `
 --- FAIL: root
-	sub_test.go:NNN: an error
-	sub_test.go:NNN: skipped`,
+    sub_test.go:NNN: an error
+    sub_test.go:NNN: skipped`,
 		f: func(b *B) {
 			b.Error("an error")
 			b.Skip("skipped")
@@ -455,8 +560,14 @@ func TestBRun(t *T) {
 					_ = append([]byte(nil), buf[:]...)
 				}
 			}
-			b.Run("", func(b *B) { alloc(b) })
-			b.Run("", func(b *B) { alloc(b) })
+			b.Run("", func(b *B) {
+				alloc(b)
+				b.ReportAllocs()
+			})
+			b.Run("", func(b *B) {
+				alloc(b)
+				b.ReportAllocs()
+			})
 			// runtime.MemStats sometimes reports more allocations than the
 			// benchmark is responsible for. Luckily the point of this test is
 			// to ensure that the results are not underreported, so we can
@@ -482,7 +593,7 @@ func TestBRun(t *T) {
 				chatty: tc.chatty,
 			},
 			benchFunc: func(b *B) { ok = b.Run("test", tc.f) }, // Use Run to catch failure.
-			benchTime: time.Microsecond,
+			benchTime: benchTimeFlag{d: 1 * time.Microsecond},
 		}
 		root.runN(1)
 		if ok != !tc.failed {
@@ -505,8 +616,9 @@ func TestBRun(t *T) {
 }
 
 func makeRegexp(s string) string {
-	s = strings.Replace(s, ":NNN:", `:\d\d\d:`, -1)
-	s = strings.Replace(s, "(N.NNs)", `\(\d*\.\d*s\)`, -1)
+	s = regexp.QuoteMeta(s)
+	s = strings.ReplaceAll(s, ":NNN:", `:\d\d\d:`)
+	s = strings.ReplaceAll(s, "N\\.NNs", `\d*\.\d*s`)
 	return s
 }
 
@@ -515,6 +627,26 @@ func TestBenchmarkOutput(t *T) {
 	// normal case.
 	Benchmark(func(b *B) { b.Error("do not print this output") })
 	Benchmark(func(b *B) {})
+}
+
+func TestBenchmarkStartsFrom1(t *T) {
+	var first = true
+	Benchmark(func(b *B) {
+		if first && b.N != 1 {
+			panic(fmt.Sprintf("Benchmark() first N=%v; want 1", b.N))
+		}
+		first = false
+	})
+}
+
+func TestBenchmarkReadMemStatsBeforeFirstRun(t *T) {
+	var first = true
+	Benchmark(func(b *B) {
+		if first && (b.startAllocs == 0 || b.startBytes == 0) {
+			panic(fmt.Sprintf("ReadMemStats not called before first run"))
+		}
+		first = false
+	})
 }
 
 func TestParallelSub(t *T) {
@@ -530,5 +662,110 @@ func TestParallelSub(t *T) {
 	close(block)
 	for i := 0; i < 10; i++ {
 		<-c
+	}
+}
+
+type funcWriter func([]byte) (int, error)
+
+func (fw funcWriter) Write(b []byte) (int, error) { return fw(b) }
+
+func TestRacyOutput(t *T) {
+	var runs int32  // The number of running Writes
+	var races int32 // Incremented for each race detected
+	raceDetector := func(b []byte) (int, error) {
+		// Check if some other goroutine is concurrently calling Write.
+		if atomic.LoadInt32(&runs) > 0 {
+			atomic.AddInt32(&races, 1) // Race detected!
+		}
+		atomic.AddInt32(&runs, 1)
+		defer atomic.AddInt32(&runs, -1)
+		runtime.Gosched() // Increase probability of a race
+		return len(b), nil
+	}
+
+	var wg sync.WaitGroup
+	root := &T{
+		common:  common{w: funcWriter(raceDetector), chatty: true},
+		context: newTestContext(1, newMatcher(regexp.MatchString, "", "")),
+	}
+	root.Run("", func(t *T) {
+		for i := 0; i < 100; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				t.Run(fmt.Sprint(i), func(t *T) {
+					t.Logf("testing run %d", i)
+				})
+			}(i)
+		}
+	})
+	wg.Wait()
+
+	if races > 0 {
+		t.Errorf("detected %d racy Writes", races)
+	}
+}
+
+// The late log message did not include the test name.  Issue 29388.
+func TestLogAfterComplete(t *T) {
+	ctx := newTestContext(1, newMatcher(regexp.MatchString, "", ""))
+	var buf bytes.Buffer
+	t1 := &T{
+		common: common{
+			// Use a buffered channel so that tRunner can write
+			// to it although nothing is reading from it.
+			signal: make(chan bool, 1),
+			w:      &buf,
+		},
+		context: ctx,
+	}
+
+	c1 := make(chan bool)
+	c2 := make(chan string)
+	tRunner(t1, func(t *T) {
+		t.Run("TestLateLog", func(t *T) {
+			go func() {
+				defer close(c2)
+				defer func() {
+					p := recover()
+					if p == nil {
+						c2 <- "subtest did not panic"
+						return
+					}
+					s, ok := p.(string)
+					if !ok {
+						c2 <- fmt.Sprintf("subtest panic with unexpected value %v", p)
+						return
+					}
+					const want = "Log in goroutine after TestLateLog has completed"
+					if !strings.Contains(s, want) {
+						c2 <- fmt.Sprintf("subtest panic %q does not contain %q", s, want)
+					}
+				}()
+
+				<-c1
+				t.Log("log after test")
+			}()
+		})
+	})
+	close(c1)
+
+	if s := <-c2; s != "" {
+		t.Error(s)
+	}
+}
+
+func TestBenchmark(t *T) {
+	res := Benchmark(func(b *B) {
+		for i := 0; i < 5; i++ {
+			b.Run("", func(b *B) {
+				for i := 0; i < b.N; i++ {
+					time.Sleep(time.Millisecond)
+				}
+			})
+		}
+	})
+	if res.NsPerOp() < 4000000 {
+		t.Errorf("want >5ms; got %v", time.Duration(res.NsPerOp()))
 	}
 }

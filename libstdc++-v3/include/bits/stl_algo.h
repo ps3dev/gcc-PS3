@@ -1,6 +1,6 @@
 // Algorithm implementation -*- C++ -*-
 
-// Copyright (C) 2001-2017 Free Software Foundation, Inc.
+// Copyright (C) 2001-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -180,7 +180,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     _InputIterator
     __find_if_not_n(_InputIterator __first, _Distance& __len, _Predicate __pred)
     {
-      for (; __len; --__len, ++__first)
+      for (; __len; --__len,  (void) ++__first)
 	if (!__pred(__first))
 	  break;
       return __first;
@@ -526,7 +526,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     { return __last == _GLIBCXX_STD_A::find_if(__first, __last, __pred); }
 
   /**
-   *  @brief  Checks that a predicate is false for at least an element
+   *  @brief  Checks that a predicate is true for at least one element
    *          of a sequence.
    *  @ingroup non_mutating_algorithms
    *  @param  __first   An input iterator.
@@ -802,6 +802,12 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       __glibcxx_function_requires(_InputIteratorConcept<_InputIterator>)
       __glibcxx_function_requires(_OutputIteratorConcept<_OutputIterator,
 	    typename iterator_traits<_InputIterator>::value_type>)
+
+      if (__n <= 0)
+	return __result;
+
+      __glibcxx_requires_can_increment(__first, __n);
+      __glibcxx_requires_can_increment(__result, __n);
 
       return std::__copy_n(__first, __n, __result,
 			   std::__iterator_category(__first));
@@ -1253,7 +1259,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     {
       if (__first == __middle)
 	return __last;
-      else if (__last  == __middle)
+      else if (__last == __middle)
 	return __first;
 
       _ForwardIterator __first2 = __middle;
@@ -1298,7 +1304,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
       if (__first == __middle)
 	return __last;
-      else if (__last  == __middle)
+      else if (__last == __middle)
 	return __first;
 
       std::__reverse(__first,  __middle, bidirectional_iterator_tag());
@@ -1336,7 +1342,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
       if (__first == __middle)
 	return __last;
-      else if (__last  == __middle)
+      else if (__last == __middle)
 	return __first;
 
       typedef typename iterator_traits<_RandomAccessIterator>::difference_type
@@ -1601,9 +1607,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 					   __right_len,
 					   __buffer, __buffer_size);
 
-      std::rotate(__left_split, __middle, __right_split);
-      std::advance(__left_split, std::distance(__middle, __right_split));
-      return __left_split;
+      return std::rotate(__left_split, __middle, __right_split);
     }
 
   template<typename _ForwardIterator, typename _Predicate>
@@ -1621,7 +1625,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       typedef typename iterator_traits<_ForwardIterator>::difference_type
 	_DistanceType;
 
-      _Temporary_buffer<_ForwardIterator, _ValueType> __buf(__first, __last);
+      _Temporary_buffer<_ForwardIterator, _ValueType>
+	__buf(__first, std::distance(__first, __last));
       return
 	std::__stable_partition_adaptive(__first, __last, __pred,
 					 _DistanceType(__buf.requested_size()),
@@ -2401,11 +2406,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	    return __last;
 	}
       else
-	{
-	  std::rotate(__first, __middle, __last);
-	  std::advance(__first, std::distance(__middle, __last));
-	  return __first;
-	}
+	return std::rotate(__first, __middle, __last);
     }
 
   /// This is a helper function for the merge routines.
@@ -2512,9 +2513,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	  __len11 = std::distance(__first, __first_cut);
 	}
 
-      std::rotate(__first_cut, __middle, __second_cut);
-      _BidirectionalIterator __new_middle = __first_cut;
-      std::advance(__new_middle, std::distance(__middle, __second_cut));
+      _BidirectionalIterator __new_middle
+	= std::rotate(__first_cut, __middle, __second_cut);
       std::__merge_without_buffer(__first, __first_cut, __new_middle,
 				  __len11, __len22, __comp);
       std::__merge_without_buffer(__new_middle, __second_cut, __last,
@@ -2540,7 +2540,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       const _DistanceType __len2 = std::distance(__middle, __last);
 
       typedef _Temporary_buffer<_BidirectionalIterator, _ValueType> _TmpBuf;
-      _TmpBuf __buf(__first, __last);
+      _TmpBuf __buf(__first, __len1 + __len2);
 
       if (__buf.begin() == 0)
 	std::__merge_without_buffer
@@ -3857,8 +3857,6 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
 #endif // C++11
 
-_GLIBCXX_END_NAMESPACE_VERSION
-
 _GLIBCXX_BEGIN_NAMESPACE_ALGO
 
   /**
@@ -3884,6 +3882,45 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
 	__f(*__first);
       return __f; // N.B. [alg.foreach] says std::move(f) but it's redundant.
     }
+
+#if __cplusplus >= 201703L
+  /**
+   *  @brief Apply a function to every element of a sequence.
+   *  @ingroup non_mutating_algorithms
+   *  @param  __first  An input iterator.
+   *  @param  __n      A value convertible to an integer.
+   *  @param  __f      A unary function object.
+   *  @return   `__first+__n`
+   *
+   *  Applies the function object `__f` to each element in the range
+   *  `[first, first+n)`.  `__f` must not modify the order of the sequence.
+   *  If `__f` has a return value it is ignored.
+  */
+  template<typename _InputIterator, typename _Size, typename _Function>
+    _InputIterator
+    for_each_n(_InputIterator __first, _Size __n, _Function __f)
+    {
+      typename iterator_traits<_InputIterator>::difference_type __n2 = __n;
+      using _Cat = typename iterator_traits<_InputIterator>::iterator_category;
+      if constexpr (is_base_of_v<random_access_iterator_tag, _Cat>)
+	{
+	  if (__n2 <= 0)
+	    return __first;
+	  auto __last = __first + __n2;
+	  std::for_each(__first, __last, std::move(__f));
+	  return __last;
+	}
+      else
+	{
+	  while (__n2-->0)
+	    {
+	      __f(*__first);
+	      ++__first;
+	    }
+	  return __first;
+	}
+    }
+#endif // C++17
 
   /**
    *  @brief Find the first occurrence of a value in a sequence.
@@ -4464,7 +4501,7 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
 	    __typeof__(__gen())>)
 
       for (__decltype(__n + 0) __niter = __n;
-	   __niter > 0; --__niter, ++__first)
+	   __niter > 0; --__niter, (void) ++__first)
 	*__first = __gen();
       return __first;
     }
@@ -5000,7 +5037,7 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
 	_DistanceType;
 
       typedef _Temporary_buffer<_RandomAccessIterator, _ValueType> _TmpBuf;
-      _TmpBuf __buf(__first, __last);
+      _TmpBuf __buf(__first, std::distance(__first, __last));
 
       if (__buf.begin() == 0)
 	std::__inplace_stable_sort(__first, __last, __comp);
@@ -5117,6 +5154,7 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
    *  @param  __last1   End of first range.
    *  @param  __first2  Start of second range.
    *  @param  __last2   End of second range.
+   *  @param  __result  Start of output range.
    *  @return  End of the output range.
    *  @ingroup set_algorithms
    *
@@ -5165,6 +5203,7 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
    *  @param  __last1   End of first range.
    *  @param  __first2  Start of second range.
    *  @param  __last2   End of second range.
+   *  @param  __result  Start of output range.
    *  @param  __comp    The comparison functor.
    *  @return  End of the output range.
    *  @ingroup set_algorithms
@@ -5237,6 +5276,7 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
    *  @param  __last1   End of first range.
    *  @param  __first2  Start of second range.
    *  @param  __last2   End of second range.
+   *  @param  __result  Start of output range.
    *  @return  End of the output range.
    *  @ingroup set_algorithms
    *
@@ -5283,6 +5323,7 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
    *  @param  __last1   End of first range.
    *  @param  __first2  Start of second range.
    *  @param  __last2   End of second range.
+   *  @param  __result  Start of output range.
    *  @param  __comp    The comparison functor.
    *  @return  End of the output range.
    *  @ingroup set_algorithms
@@ -5355,6 +5396,7 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
    *  @param  __last1   End of first range.
    *  @param  __first2  Start of second range.
    *  @param  __last2   End of second range.
+   *  @param  __result  Start of output range.
    *  @return  End of the output range.
    *  @ingroup set_algorithms
    *
@@ -5403,6 +5445,7 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
    *  @param  __last1   End of first range.
    *  @param  __first2  Start of second range.
    *  @param  __last2   End of second range.
+   *  @param  __result  Start of output range.
    *  @param  __comp    The comparison functor.
    *  @return  End of the output range.
    *  @ingroup set_algorithms
@@ -5485,6 +5528,7 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
    *  @param  __last1   End of first range.
    *  @param  __first2  Start of second range.
    *  @param  __last2   End of second range.
+   *  @param  __result  Start of output range.
    *  @return  End of the output range.
    *  @ingroup set_algorithms
    *
@@ -5533,6 +5577,7 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
    *  @param  __last1   End of first range.
    *  @param  __first2  Start of second range.
    *  @param  __last2   End of second range.
+   *  @param  __result  Start of output range.
    *  @param  __comp    The comparison functor.
    *  @return  End of the output range.
    *  @ingroup set_algorithms
@@ -5748,6 +5793,9 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
       using _Gen = remove_reference_t<_UniformRandomBitGenerator>;
       using __uc_type = common_type_t<typename _Gen::result_type, _USize>;
 
+      if (__first == __last)
+	return __out;
+
       __distrib_type __d{};
       _Size __unsampled_sz = std::distance(__first, __last);
       __n = std::min(__n, __unsampled_sz);
@@ -5831,6 +5879,7 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
 #endif // C++14
 
 _GLIBCXX_END_NAMESPACE_ALGO
+_GLIBCXX_END_NAMESPACE_VERSION
 } // namespace std
 
 #endif /* _STL_ALGO_H */

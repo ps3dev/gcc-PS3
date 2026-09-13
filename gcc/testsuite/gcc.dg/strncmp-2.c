@@ -40,6 +40,7 @@ static void test_driver_strncmp (void (test_strncmp)(const char *, const char *,
     e = lib_memcmp(buf1,p2,sz);
     (*test_memcmp)(buf1,p2,e);
   }
+  mprotect (buf2+pgsz,pgsz,PROT_READ|PROT_WRITE);
   free(buf2);
 }
 
@@ -81,6 +82,15 @@ DEF_TEST(13)
 DEF_TEST(14)
 DEF_TEST(15)
 DEF_TEST(16)
+DEF_TEST(32)
+DEF_TEST(64)
+DEF_TEST(65)
+DEF_TEST(66)
+DEF_TEST(67)
+DEF_TEST(68)
+DEF_TEST(69)
+DEF_TEST(70)
+DEF_TEST(71)
 
 int
 main(int argc, char **argv)
@@ -101,5 +111,14 @@ main(int argc, char **argv)
   RUN_TEST(14);
   RUN_TEST(15);
   RUN_TEST(16);
+  RUN_TEST(32);
+  RUN_TEST(64);
+  RUN_TEST(65);
+  RUN_TEST(66);
+  RUN_TEST(67);
+  RUN_TEST(68);
+  RUN_TEST(69);
+  RUN_TEST(70);
+  RUN_TEST(71);
   return 0;
 }

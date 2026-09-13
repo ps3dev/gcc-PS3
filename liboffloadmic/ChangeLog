@@ -1,10 +1,52 @@
-2017-08-14  Release Manager
+2022-05-27  Release Manager
 
-	* GCC 7.2.0 released.
+	* GCC 9.5.0 released.
 
-2017-05-02  Release Manager
+2021-06-01  Release Manager
 
-	* GCC 7.1.0 released.
+	* GCC 9.4.0 released.
+
+2020-03-12  Release Manager
+
+	* GCC 9.3.0 released.
+
+2019-08-12  Release Manager
+
+	* GCC 9.2.0 released.
+
+2019-05-03  Release Manager
+
+	* GCC 9.1.0 released.
+
+2019-01-09  Sandra Loosemore  <sandra@codesourcery.com>
+
+	PR other/16615
+
+	* include/coi/common/COIResult_common.h: Mechanically replace
+	"can not" with "cannot".
+	* include/coi/source/COIBuffer_source.h: Likewise.
+
+2018-12-14  Thomas Schwinge  <thomas@codesourcery.com>
+
+	* runtime/offload.h (omp_target_is_present, omp_target_memcpy)
+	(omp_target_memcpy_rect, omp_target_associate_ptr)
+	(omp_target_disassociate_ptr): Adjust to libgomp changes.
+
+2018-10-31  Joseph Myers  <joseph@codesourcery.com>
+
+	PR bootstrap/82856
+	* Makefile.am: Include multilib.am.
+	* configure.ac: Remove AC_PREREQ.
+	* plugin/Makefile.am: Include multilib.am.
+	* plugin/configure.ac: Remove AC_PREREQ.
+	* Makefile.in, aclocal.m4, configure, plugin/Makefile.in,
+	plugin/aclocal.m4, plugin/configure: Regenerate.
+
+2018-04-18  David Malcolm  <dmalcolm@redhat.com>
+
+	PR jit/85384
+	* configure: Regenerate.
+	* plugin/configure: Regenerate.
 
 2017-01-31  Thomas Schwinge  <thomas@codesourcery.com>
 
@@ -645,7 +687,7 @@
 	* runtime/orsl-lite/version.txt: Ditto.
 	* runtime/use_mpss2.txt: Ditto.
 
-Copyright (C) 2014-2017 Free Software Foundation, Inc.
+Copyright (C) 2014-2018 Free Software Foundation, Inc.
 
 Copying and distribution of this file, with or without modification,
 are permitted in any medium without royalty provided the copyright

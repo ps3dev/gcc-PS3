@@ -1,9 +1,9 @@
 ## Makefile for the toplevel directory of the libssp library.
 ##
-## Copyright (C) 2005-2017 Free Software Foundation, Inc.
+## Copyright (C) 2005-2019 Free Software Foundation, Inc.
 ##
 
-AUTOMAKE_OPTIONS = 1.9.5 foreign
+AUTOMAKE_OPTIONS = foreign
 ACLOCAL_AMFLAGS = -I .. -I ../config
 MAINT_CHARSET = latin1
 
@@ -34,6 +34,7 @@ version_dep =
 endif
 
 AM_CFLAGS = -Wall
+AM_CFLAGS += $(XCFLAGS)
 
 toolexeclib_LTLIBRARIES = libssp.la libssp_nonshared.la
 
@@ -53,7 +54,7 @@ libssp_la_LDFLAGS = -version-info `grep -v '^\#' $(srcdir)/libtool-version` \
 
 libssp_nonshared_la_SOURCES = \
 	ssp-local.c
-libssp_nonshared_la_CFLAGS = -prefer-pic
+libssp_nonshared_la_CFLAGS = -prefer-pic $(XCFLAGS)
 libssp_nonshared_la_LIBADD = 
 libssp_nonshared_la_DEPENDENCIES = $(libssp_nonshared_la_LIBADD)
 libssp_nonshared_la_LDFLAGS = -static
@@ -106,3 +107,4 @@ MAKEOVERRIDES=
 
 ## ################################################################
 
+include $(top_srcdir)/../multilib.am

@@ -1,5 +1,4 @@
-// { dg-options -std=c++1z }
-// { dg-do run }
+// { dg-do run { target c++17 } }
 
 #ifndef __STDCPP_DEFAULT_NEW_ALIGNMENT__
 #error __STDCPP_DEFAULT_NEW_ALIGNMENT__ not defined

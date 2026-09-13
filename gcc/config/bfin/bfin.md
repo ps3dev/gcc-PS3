@@ -1,5 +1,5 @@
 ;;- Machine description for Blackfin for GNU compiler
-;;  Copyright (C) 2005-2017 Free Software Foundation, Inc.
+;;  Copyright (C) 2005-2019 Free Software Foundation, Inc.
 ;;  Contributed by Analog Devices.
 
 ;; This file is part of GCC.
@@ -557,6 +557,7 @@
    %0 = %x1; %0 = %w1;
    %w0 = %1; %x0 = %1;"
   [(set_attr "type" "move,mcst,mcld")
+   (set_attr "length" "4,*,*")
    (set_attr "seq_insns" "*,multi,multi")])
 
 (define_insn "load_accumulator"
@@ -1578,7 +1579,7 @@
 
       emit_library_call_value (umulsi3_highpart_libfunc,
 			       operands[0], LCT_NORMAL, SImode,
-			       2, operands[1], SImode, operands[2], SImode);
+			       operands[1], SImode, operands[2], SImode);
     }
   DONE;
 })
@@ -1628,7 +1629,7 @@
 
       emit_library_call_value (smulsi3_highpart_libfunc,
 			       operands[0], LCT_NORMAL, SImode,
-			       2, operands[1], SImode, operands[2], SImode);
+			       operands[1], SImode, operands[2], SImode);
     }
   DONE;
 })

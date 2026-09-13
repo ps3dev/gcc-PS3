@@ -1,4 +1,5 @@
-// { dg-options "-std=c++1z -I${srcdir}/g++.dg/cpp1y -I${srcdir}/g++.dg/cpp1y/testinc" }
+// { dg-do compile { target c++17 } }
+// { dg-options "-I${srcdir}/g++.dg/cpp1y -I${srcdir}/g++.dg/cpp1y/testinc" }
 
 //  C++98 features:
 
@@ -104,6 +105,12 @@
 #  error "__cpp_alias_templates"
 #elif __cpp_alias_templates != 200704
 #  error "__cpp_alias_templates != 200704"
+#endif
+
+#ifndef __cpp_threadsafe_static_init
+#  error "__cpp_threadsafe_static_init"
+#elif __cpp_threadsafe_static_init != 200806
+#  error "__cpp_threadsafe_static_init != 200806"
 #endif
 
 //  C++14 features:
@@ -352,8 +359,8 @@
 
 #ifndef __cpp_deduction_guides
 #  error "__cpp_deduction_guides"
-#elif __cpp_deduction_guides != 201606
-#  error "__cpp_deduction_guides != 201606"
+#elif __cpp_deduction_guides != 201703
+#  error "__cpp_deduction_guides != 201703"
 #endif
 
 #ifndef __cpp_if_constexpr
@@ -408,6 +415,18 @@
 #  error "__cpp_variadic_using"
 #elif __cpp_variadic_using != 201611
 #  error "__cpp_variadic_using != 201611"
+#endif
+
+#ifndef __cpp_guaranteed_copy_elision
+#  error "__cpp_guaranteed_copy_elision"
+#elif __cpp_guaranteed_copy_elision != 201606
+#  error "__cpp_guaranteed_copy_elision != 201606"
+#endif
+
+#ifndef __cpp_nontype_template_parameter_auto
+#  error "__cpp_nontype_template_parameter_auto"
+#elif __cpp_nontype_template_parameter_auto != 201606
+#  error "__cpp_nontype_template_parameter_auto != 201606"
 #endif
 
 #ifdef __has_cpp_attribute

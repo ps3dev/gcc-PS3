@@ -1,5 +1,5 @@
 /* Interprocedural Identical Code Folding pass
-   Copyright (C) 2014-2017 Free Software Foundation, Inc.
+   Copyright (C) 2014-2019 Free Software Foundation, Inc.
 
    Contributed by Jan Hubicka <hubicka@ucw.cz> and Martin Liska <mliska@suse.cz>
 
@@ -37,6 +37,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "ipa-utils.h"
 #include "tree-eh.h"
 #include "builtins.h"
+#include "attribs.h"
 
 #include "ipa-icf-gimple.h"
 
@@ -361,10 +362,14 @@ func_checker::compare_cst_or_decl (tree t1, tree t2)
       }
     case LABEL_DECL:
       {
+	if (t1 == t2)
+	  return true;
+
 	int *bb1 = m_label_bb_map.get (t1);
 	int *bb2 = m_label_bb_map.get (t2);
 
-	return return_with_debug (*bb1 == *bb2);
+	/* Labels can point to another function (non-local GOTOs).  */
+	return return_with_debug (bb1 != NULL && bb2 != NULL && *bb1 == *bb2);
       }
     case PARM_DECL:
     case RESULT_DECL:
@@ -459,7 +464,7 @@ func_checker::compare_operand (tree t1, tree t2)
 	  return return_false_with_msg ("");
 
 	/* Type of the offset on MEM_REF does not matter.  */
-	return wi::to_offset  (y1) == wi::to_offset  (y2);
+	return known_eq (wi::to_poly_offset (y1), wi::to_poly_offset (y2));
       }
     case COMPONENT_REF:
       {
@@ -539,11 +544,8 @@ func_checker::compare_operand (tree t1, tree t2)
     }
 }
 
-/* Compares two tree list operands T1 and T2 and returns true if these
-   two trees are semantically equivalent.  */
-
 bool
-func_checker::compare_tree_list_operand (tree t1, tree t2)
+func_checker::compare_asm_inputs_outputs (tree t1, tree t2)
 {
   gcc_assert (TREE_CODE (t1) == TREE_LIST);
   gcc_assert (TREE_CODE (t2) == TREE_LIST);
@@ -554,6 +556,16 @@ func_checker::compare_tree_list_operand (tree t1, tree t2)
 	return false;
 
       if (!compare_operand (TREE_VALUE (t1), TREE_VALUE (t2)))
+	return return_false ();
+
+      tree p1 = TREE_PURPOSE (t1);
+      tree p2 = TREE_PURPOSE (t2);
+
+      gcc_assert (TREE_CODE (p1) == TREE_LIST);
+      gcc_assert (TREE_CODE (p2) == TREE_LIST);
+
+      if (strcmp (TREE_STRING_POINTER (TREE_VALUE (p1)),
+		  TREE_STRING_POINTER (TREE_VALUE (p2))) != 0)
 	return return_false ();
 
       t2 = TREE_CHAIN (t2);
@@ -629,8 +641,8 @@ func_checker::compare_bb (sem_bb *bb1, sem_bb *bb2)
   gimple_stmt_iterator gsi1, gsi2;
   gimple *s1, *s2;
 
-  gsi1 = gsi_start_bb_nondebug (bb1->bb);
-  gsi2 = gsi_start_bb_nondebug (bb2->bb);
+  gsi1 = gsi_start_nondebug_bb (bb1->bb);
+  gsi2 = gsi_start_nondebug_bb (bb2->bb);
 
   while (!gsi_end_p (gsi1))
     {
@@ -743,8 +755,7 @@ func_checker::compare_gimple_call (gcall *s1, gcall *s2)
       || gimple_call_return_slot_opt_p (s1) != gimple_call_return_slot_opt_p (s2)
       || gimple_call_from_thunk_p (s1) != gimple_call_from_thunk_p (s2)
       || gimple_call_va_arg_pack_p (s1) != gimple_call_va_arg_pack_p (s2)
-      || gimple_call_alloca_for_var_p (s1) != gimple_call_alloca_for_var_p (s2)
-      || gimple_call_with_bounds_p (s1) != gimple_call_with_bounds_p (s2))
+      || gimple_call_alloca_for_var_p (s1) != gimple_call_alloca_for_var_p (s2))
     return false;
 
   if (gimple_call_internal_p (s1)
@@ -757,6 +768,9 @@ func_checker::compare_gimple_call (gcall *s1, gcall *s2)
       || (!fntype1 && fntype2)
       || (fntype1 && !types_compatible_p (fntype1, fntype2)))
     return return_false_with_msg ("call function types are not compatible");
+
+  if (fntype1 && fntype2 && comp_type_attributes (fntype1, fntype2) != 1)
+    return return_false_with_msg ("different fntype attributes");
 
   tree chain1 = gimple_call_chain (s1);
   tree chain2 = gimple_call_chain (s2);
@@ -983,6 +997,9 @@ func_checker::compare_gimple_asm (const gasm *g1, const gasm *g2)
   if (gimple_asm_input_p (g1) != gimple_asm_input_p (g2))
     return false;
 
+  if (gimple_asm_inline_p (g1) != gimple_asm_inline_p (g2))
+    return false;
+
   if (gimple_asm_ninputs (g1) != gimple_asm_ninputs (g2))
     return false;
 
@@ -1004,7 +1021,7 @@ func_checker::compare_gimple_asm (const gasm *g1, const gasm *g2)
       tree input1 = gimple_asm_input_op (g1, i);
       tree input2 = gimple_asm_input_op (g2, i);
 
-      if (!compare_tree_list_operand (input1, input2))
+      if (!compare_asm_inputs_outputs (input1, input2))
 	return return_false_with_msg ("ASM input is different");
     }
 
@@ -1013,7 +1030,7 @@ func_checker::compare_gimple_asm (const gasm *g1, const gasm *g2)
       tree output1 = gimple_asm_output_op (g1, i);
       tree output2 = gimple_asm_output_op (g2, i);
 
-      if (!compare_tree_list_operand (output1, output2))
+      if (!compare_asm_inputs_outputs (output1, output2))
 	return return_false_with_msg ("ASM output is different");
     }
 

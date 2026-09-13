@@ -1,5 +1,5 @@
 /* RTL utility routines.
-   Copyright (C) 1987-2017 Free Software Foundation, Inc.
+   Copyright (C) 1987-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -89,7 +89,8 @@ const char * const rtx_format[NUM_RTX_CODE] = {
      "b" is a pointer to a bitmap header.
      "B" is a basic block pointer.
      "t" is a tree pointer.
-     "r" a register.  */
+     "r" a register.
+     "p" is a poly_uint16 offset.  */
 
 #define DEF_RTL_EXPR(ENUM, NAME, FORMAT, CLASS)   FORMAT ,
 #include "rtl.def"		/* rtl expressions are defined here */
@@ -105,12 +106,23 @@ const enum rtx_class rtx_class[NUM_RTX_CODE] = {
 #undef DEF_RTL_EXPR
 };
 
+/* Whether rtxs with the given code code store data in the hwint field.  */
+
+#define RTX_CODE_HWINT_P_1(ENUM)					\
+    ((ENUM) == CONST_INT || (ENUM) == CONST_DOUBLE			\
+     || (ENUM) == CONST_FIXED || (ENUM) == CONST_WIDE_INT)
+#ifdef GENERATOR_FILE
+#define RTX_CODE_HWINT_P(ENUM)						\
+    (RTX_CODE_HWINT_P_1 (ENUM) || (ENUM) == EQ_ATTR_ALT)
+#else
+#define RTX_CODE_HWINT_P RTX_CODE_HWINT_P_1
+#endif
+
 /* Indexed by rtx code, gives the size of the rtx in bytes.  */
 
 const unsigned char rtx_code_size[NUM_RTX_CODE] = {
 #define DEF_RTL_EXPR(ENUM, NAME, FORMAT, CLASS)				\
-  (((ENUM) == CONST_INT || (ENUM) == CONST_DOUBLE			\
-    || (ENUM) == CONST_FIXED || (ENUM) == CONST_WIDE_INT)		\
+  (RTX_CODE_HWINT_P (ENUM)						\
    ? RTX_HDR_SIZE + (sizeof FORMAT - 1) * sizeof (HOST_WIDE_INT)	\
    : (ENUM) == REG							\
    ? RTX_HDR_SIZE + sizeof (reg_info)					\
@@ -136,10 +148,10 @@ const char * const reg_note_name[REG_NOTE_MAX] =
 #undef DEF_REG_NOTE
 };
 
-static int rtx_alloc_counts[(int) LAST_AND_UNUSED_RTX_CODE];
-static int rtx_alloc_sizes[(int) LAST_AND_UNUSED_RTX_CODE];
-static int rtvec_alloc_counts;
-static int rtvec_alloc_sizes;
+static size_t rtx_alloc_counts[(int) LAST_AND_UNUSED_RTX_CODE];
+static size_t rtx_alloc_sizes[(int) LAST_AND_UNUSED_RTX_CODE];
+static size_t rtvec_alloc_counts;
+static size_t rtvec_alloc_sizes;
 
 
 /* Allocate an rtx vector of N elements.
@@ -189,6 +201,10 @@ rtx_size (const_rtx x)
 	    + sizeof (struct hwivec_def)
 	    + ((CONST_WIDE_INT_NUNITS (x) - 1)
 	       * sizeof (HOST_WIDE_INT)));
+  if (CONST_POLY_INT_P (x))
+    return (RTX_HDR_SIZE
+	    + sizeof (struct const_poly_int_def)
+	    + CONST_POLY_INT_COEFFS (x).extra_size ());
   if (GET_CODE (x) == SYMBOL_REF && SYMBOL_REF_HAS_BLOCK_INFO_P (x))
     return RTX_HDR_SIZE + sizeof (struct block_symbol);
   return RTX_CODE_SIZE (GET_CODE (x));
@@ -223,7 +239,7 @@ rtx_alloc_stat_v (RTX_CODE code MEM_STAT_DECL, int extra)
    all the rest is initialized to zero.  */
 
 rtx
-rtx_alloc_stat (RTX_CODE code MEM_STAT_DECL)
+rtx_alloc (RTX_CODE code MEM_STAT_DECL)
 {
   return rtx_alloc_stat_v (code PASS_MEM_STAT, 0);
 }
@@ -254,9 +270,10 @@ shared_const_p (const_rtx orig)
 
   /* CONST can be shared if it contains a SYMBOL_REF.  If it contains
      a LABEL_REF, it isn't sharable.  */
+  poly_int64 offset;
   return (GET_CODE (XEXP (orig, 0)) == PLUS
 	  && GET_CODE (XEXP (XEXP (orig, 0), 0)) == SYMBOL_REF
-	  && CONST_INT_P (XEXP (XEXP (orig, 0), 1)));
+	  && poly_int_rtx_p (XEXP (XEXP (orig, 0), 1), &offset));
 }
 
 
@@ -297,6 +314,10 @@ copy_rtx (rtx orig)
 	  && ORIGINAL_REGNO (XEXP (orig, 0)) == REGNO (XEXP (orig, 0)))
 	return orig;
       break;
+
+    case CLOBBER_HIGH:
+	gcc_assert (REG_P (XEXP (orig, 0)));
+	return orig;
 
     case CONST:
       if (shared_const_p (orig))
@@ -341,6 +362,7 @@ copy_rtx (rtx orig)
       case 't':
       case 'w':
       case 'i':
+      case 'p':
       case 's':
       case 'S':
       case 'T':
@@ -359,7 +381,7 @@ copy_rtx (rtx orig)
 /* Create a new copy of an rtx.  Only copy just one level.  */
 
 rtx
-shallow_copy_rtx_stat (const_rtx orig MEM_STAT_DECL)
+shallow_copy_rtx (const_rtx orig MEM_STAT_DECL)
 {
   const unsigned int size = rtx_size (orig);
   rtx const copy = ggc_alloc_rtx_def_stat (size PASS_MEM_STAT);
@@ -453,6 +475,11 @@ rtx_equal_p_cb (const_rtx x, const_rtx y, rtx_equal_p_callback_function cb)
     CASE_CONST_UNIQUE:
       return 0;
 
+    case CONST_VECTOR:
+      if (!same_vector_encodings_p (x, y))
+	return false;
+      break;
+
     case DEBUG_IMPLICIT_PTR:
       return DEBUG_IMPLICIT_PTR_DECL (x)
 	     == DEBUG_IMPLICIT_PTR_DECL (y);
@@ -493,6 +520,11 @@ rtx_equal_p_cb (const_rtx x, const_rtx y, rtx_equal_p_callback_function cb)
 #endif
 	      return 0;
 	    }
+	  break;
+
+	case 'p':
+	  if (maybe_ne (SUBREG_BYTE (x), SUBREG_BYTE (y)))
+	    return 0;
 	  break;
 
 	case 'V':
@@ -590,6 +622,11 @@ rtx_equal_p (const_rtx x, const_rtx y)
     CASE_CONST_UNIQUE:
       return 0;
 
+    case CONST_VECTOR:
+      if (!same_vector_encodings_p (x, y))
+	return false;
+      break;
+
     case DEBUG_IMPLICIT_PTR:
       return DEBUG_IMPLICIT_PTR_DECL (x)
 	     == DEBUG_IMPLICIT_PTR_DECL (y);
@@ -630,6 +667,11 @@ rtx_equal_p (const_rtx x, const_rtx y)
 #endif
 	      return 0;
 	    }
+	  break;
+
+	case 'p':
+	  if (maybe_ne (SUBREG_BYTE (x), SUBREG_BYTE (y)))
+	    return 0;
 	  break;
 
 	case 'V':
@@ -714,6 +756,8 @@ classify_insn (rtx x)
     return CALL_INSN;
   if (ANY_RETURN_P (x))
     return JUMP_INSN;
+  if (GET_CODE (x) == ASM_OPERANDS && ASM_OPERANDS_LABEL_VEC (x))
+    return JUMP_INSN;
   if (GET_CODE (x) == SET)
     {
       if (GET_CODE (SET_DEST (x)) == PC)
@@ -740,6 +784,9 @@ classify_insn (rtx x)
 	  return CALL_INSN;
       if (has_return_p)
 	return JUMP_INSN;
+      if (GET_CODE (XVECEXP (x, 0, 0)) == ASM_OPERANDS
+	  && ASM_OPERANDS_LABEL_VEC (XVECEXP (x, 0, 0)))
+	return JUMP_INSN;
     }
 #ifdef GENERATOR_FILE
   if (GET_CODE (x) == MATCH_OPERAND
@@ -753,10 +800,20 @@ classify_insn (rtx x)
   return INSN;
 }
 
+/* Comparator of indices based on rtx_alloc_counts.  */
+
+static int
+rtx_count_cmp (const void *p1, const void *p2)
+{
+  const unsigned *n1 = (const unsigned *)p1;
+  const unsigned *n2 = (const unsigned *)p2;
+
+  return rtx_alloc_counts[*n1] - rtx_alloc_counts[*n2];
+}
+
 void
 dump_rtx_statistics (void)
 {
-  int i;
   int total_counts = 0;
   int total_sizes = 0;
 
@@ -766,27 +823,41 @@ dump_rtx_statistics (void)
       return;
     }
 
-  fprintf (stderr, "\nRTX Kind               Count      Bytes\n");
-  fprintf (stderr, "---------------------------------------\n");
-  for (i = 0; i < LAST_AND_UNUSED_RTX_CODE; i++)
-    if (rtx_alloc_counts[i])
-      {
-        fprintf (stderr, "%-20s %7d %10d\n", GET_RTX_NAME (i),
-                 rtx_alloc_counts[i], rtx_alloc_sizes[i]);
-        total_counts += rtx_alloc_counts[i];
-        total_sizes += rtx_alloc_sizes[i];
-      }
+  fprintf (stderr, "\nRTX Kind                   Count     Bytes\n");
+  fprintf (stderr, "-------------------------------------------\n");
+
+  auto_vec<unsigned> indices (LAST_AND_UNUSED_RTX_CODE);
+  for (unsigned i = 0; i < LAST_AND_UNUSED_RTX_CODE; i++)
+    indices.quick_push (i);
+  indices.qsort (rtx_count_cmp);
+
+  for (unsigned i = 0; i < LAST_AND_UNUSED_RTX_CODE; i++)
+    {
+      unsigned j = indices[i];
+      if (rtx_alloc_counts[j])
+	{
+	  fprintf (stderr, "%-24s " PRsa (6) " " PRsa (9) "\n",
+		   GET_RTX_NAME (j),
+		   SIZE_AMOUNT (rtx_alloc_counts[j]),
+		   SIZE_AMOUNT (rtx_alloc_sizes[j]));
+	  total_counts += rtx_alloc_counts[j];
+	  total_sizes += rtx_alloc_sizes[j];
+	}
+    }
+
   if (rtvec_alloc_counts)
     {
-      fprintf (stderr, "%-20s %7d %10d\n", "rtvec",
-               rtvec_alloc_counts, rtvec_alloc_sizes);
+      fprintf (stderr, "%-24s " PRsa (6) " " PRsa (9) "\n", "rtvec",
+	       SIZE_AMOUNT (rtvec_alloc_counts),
+	       SIZE_AMOUNT (rtvec_alloc_sizes));
       total_counts += rtvec_alloc_counts;
       total_sizes += rtvec_alloc_sizes;
     }
-  fprintf (stderr, "---------------------------------------\n");
-  fprintf (stderr, "%-20s %7d %10d\n",
-           "Total", total_counts, total_sizes);
-  fprintf (stderr, "---------------------------------------\n");
+  fprintf (stderr, "-----------------------------------------------\n");
+  fprintf (stderr, "%-24s " PRsa (6) " " PRsa (9) "\n",
+	   "Total", SIZE_AMOUNT (total_counts),
+	   SIZE_AMOUNT (total_sizes));
+  fprintf (stderr, "-----------------------------------------------\n");
 }
 
 #if defined ENABLE_RTL_CHECKING && (GCC_VERSION >= 2007)
@@ -837,6 +908,17 @@ rtl_check_failed_code2 (const_rtx r, enum rtx_code code1, enum rtx_code code2,
     ("RTL check: expected code '%s' or '%s', have '%s' in %s, at %s:%d",
      GET_RTX_NAME (code1), GET_RTX_NAME (code2), GET_RTX_NAME (GET_CODE (r)),
      func, trim_filename (file), line);
+}
+
+void
+rtl_check_failed_code3 (const_rtx r, enum rtx_code code1, enum rtx_code code2,
+			enum rtx_code code3, const char *file, int line,
+			const char *func)
+{
+  internal_error
+    ("RTL check: expected code '%s', '%s' or '%s', have '%s' in %s, at %s:%d",
+     GET_RTX_NAME (code1), GET_RTX_NAME (code2), GET_RTX_NAME (code3),
+     GET_RTX_NAME (GET_CODE (r)), func, trim_filename (file), line);
 }
 
 void

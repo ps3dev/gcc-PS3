@@ -1,10 +1,10 @@
-// { dg-options -std=c++1z }
+// { dg-do compile { target c++17 } }
 
 template <template <class> class T>
 void f()
 {
   T t = 42;			// { dg-error "B" }
-};
+}
 
 template <class T>
 struct A

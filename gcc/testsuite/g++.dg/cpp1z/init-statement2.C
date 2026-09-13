@@ -1,4 +1,5 @@
-// { dg-options -std=c++1z }
+// { dg-do compile { target c++17 } }
+// { dg-options "" }
 // Test C++17 selection statements with initializer, basic use.
 
 extern int foo (void);

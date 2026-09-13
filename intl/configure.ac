@@ -1,10 +1,10 @@
-AC_PREREQ(2.64)
 AC_INIT
+AC_USE_SYSTEM_EXTENSIONS
 AC_CONFIG_SRCDIR(gettext.c)
 AC_CONFIG_HEADER(config.h)
 AC_CONFIG_MACRO_DIR(../config)
 AM_GNU_GETTEXT_VERSION(0.12.1)
-AM_GNU_GETTEXT
+AM_GNU_GETTEXT([], [need-ngettext])
 
 # This replaces the extensive use of DEFS in the original Makefile.in.
 AC_DEFINE(IN_LIBINTL, 1, [Define because this is libintl.])
@@ -46,6 +46,12 @@ case $USE_INCLUDED_LIBINTL in
     INCINTL='-I${top_builddir}/../intl'
     ;;
 esac
+
+AC_ARG_ENABLE(host-shared,
+[AS_HELP_STRING([--enable-host-shared],
+		[build host code as shared libraries])],
+[PICFLAG=-fPIC], [PICFLAG=])
+AC_SUBST(PICFLAG)
 
 AC_CONFIG_FILES(Makefile config.intl)
 AC_OUTPUT

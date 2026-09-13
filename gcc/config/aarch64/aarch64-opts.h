@@ -1,4 +1,4 @@
-/* Copyright (C) 2011-2017 Free Software Foundation, Inc.
+/* Copyright (C) 2011-2019 Free Software Foundation, Inc.
    Contributed by ARM Ltd.
 
    This file is part of GCC.
@@ -79,6 +79,23 @@ enum aarch64_function_type {
   AARCH64_FUNCTION_NON_LEAF,
   /* All functions.  */
   AARCH64_FUNCTION_ALL
+};
+
+/* SVE vector register sizes.  */
+enum aarch64_sve_vector_bits_enum {
+  SVE_SCALABLE,
+  SVE_NOT_IMPLEMENTED = SVE_SCALABLE,
+  SVE_128 = 128,
+  SVE_256 = 256,
+  SVE_512 = 512,
+  SVE_1024 = 1024,
+  SVE_2048 = 2048
+};
+
+/* Where to get the canary for the stack protector.  */
+enum stack_protector_guard {
+  SSP_SYSREG,			/* per-thread canary in special system register */
+  SSP_GLOBAL			/* global canary */
 };
 
 #endif

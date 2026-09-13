@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build darwin dragonfly freebsd linux netbsd openbsd solaris
+// +build aix darwin dragonfly freebsd hurd linux netbsd openbsd solaris
 
 // Fork, exec, wait, etc.
 
@@ -163,9 +163,10 @@ func SetNonblock(fd int, nonblocking bool) (err error) {
 // Credential holds user and group identities to be assumed
 // by a child process started by StartProcess.
 type Credential struct {
-	Uid    uint32   // User ID.
-	Gid    uint32   // Group ID.
-	Groups []uint32 // Supplementary group IDs.
+	Uid         uint32   // User ID.
+	Gid         uint32   // Group ID.
+	Groups      []uint32 // Supplementary group IDs.
+	NoSetGroups bool     // If true, don't set supplementary groups
 }
 
 // ProcAttr holds attributes that will be applied to a new process started
@@ -292,6 +293,14 @@ func StartProcess(argv0 string, argv []string, attr *ProcAttr) (pid int, handle 
 	return pid, 0, err
 }
 
+// Implemented in runtime package.
+func runtime_BeforeExec()
+func runtime_AfterExec()
+
+// execveLibc is non-nil on OS using libc syscall, set to execve in exec_libc.go; this
+// avoids a build dependency for other platforms.
+var execveDarwin func(path *byte, argv **byte, envp **byte) error
+
 // Exec invokes the execve(2) system call.
 func Exec(argv0 string, argv []string, envv []string) (err error) {
 	argv0p, err := BytePtrFromString(argv0)
@@ -306,6 +315,21 @@ func Exec(argv0 string, argv []string, envv []string) (err error) {
 	if err != nil {
 		return err
 	}
-	err1 := raw_execve(argv0p, &argvp[0], &envvp[0])
-	return Errno(err1)
+	runtime_BeforeExec()
+
+	var err1 error
+	if runtime.GOOS == "solaris" || runtime.GOOS == "aix" || runtime.GOOS == "hurd" {
+		// RawSyscall should never be used on Solaris or AIX.
+		err1 = raw_execve(argv0p, &argvp[0], &envvp[0])
+	} else if runtime.GOOS == "darwin" {
+		// Similarly on Darwin.
+		err1 = execveDarwin(argv0p, &argvp[0], &envvp[0])
+	} else {
+		_, _, err1 = RawSyscall(SYS_EXECVE,
+			uintptr(unsafe.Pointer(argv0p)),
+			uintptr(unsafe.Pointer(&argvp[0])),
+			uintptr(unsafe.Pointer(&envvp[0])))
+	}
+	runtime_AfterExec()
+	return err1
 }

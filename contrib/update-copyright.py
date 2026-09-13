@@ -1,6 +1,6 @@
 #!/usr/bin/python
 #
-# Copyright (C) 2013-2017 Free Software Foundation, Inc.
+# Copyright (C) 2013-2018 Free Software Foundation, Inc.
 #
 # This script is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -574,6 +574,7 @@ class TestsuiteFilter (GenericFilter):
                 '.c',
                 '.C',
                 '.cc',
+                '.d',
                 '.h',
                 '.hs',
                 '.f',
@@ -591,6 +592,8 @@ class TestsuiteFilter (GenericFilter):
         # Similarly params/README.
         if filename == 'README' and os.path.basename (dir) == 'params':
             return True
+        if filename == 'pdt_5.f03' and os.path.basename (dir) == 'gfortran.dg':
+	    return True
         return GenericFilter.skip_file (self, dir, filename)
 
 class LibCppFilter (GenericFilter):
@@ -612,6 +615,25 @@ class LibGCCFilter (GenericFilter):
         self.skip_dirs |= set ([
                 # Imported from GLIBC.
                 'soft-fp',
+                ])
+
+class LibPhobosFilter (GenericFilter):
+    def __init__ (self):
+        GenericFilter.__init__ (self)
+
+        self.skip_files |= set ([
+                # Source module imported from upstream.
+                'object.d',
+                ])
+
+        self.skip_dirs |= set ([
+                # Contains sources imported from upstream.
+                'core',
+                'etc',
+                'gc',
+                'gcstub',
+                'rt',
+                'std',
                 ])
 
 class LibStdCxxFilter (GenericFilter):
@@ -664,6 +686,7 @@ class GCCCopyright (Copyright):
         self.add_external_author ('Cavium Networks.')
         self.add_external_author ('Faraday Technology Corp.')
         self.add_external_author ('Florida State University')
+        self.add_external_author ('Gerard Jungman')
         self.add_external_author ('Greg Colvin and Beman Dawes.')
         self.add_external_author ('Hewlett-Packard Company')
         self.add_external_author ('Intel Corporation')
@@ -680,6 +703,7 @@ class GCCCopyright (Copyright):
         self.add_external_author ('Silicon Graphics')
         self.add_external_author ('Stephen L. Moshier')
         self.add_external_author ('Sun Microsystems, Inc. All rights reserved.')
+        self.add_external_author ('The D Language Foundation, All Rights Reserved')
         self.add_external_author ('The Go Authors.  All rights reserved.')
         self.add_external_author ('The Go Authors. All rights reserved.')
         self.add_external_author ('The Go Authors.')
@@ -706,7 +730,6 @@ class GCCCmdLine (CmdLine):
         self.add_dir ('libatomic')
         self.add_dir ('libbacktrace')
         self.add_dir ('libcc1')
-        # libcilkrts is imported from upstream.
         self.add_dir ('libcpp', LibCppFilter())
         self.add_dir ('libdecnumber')
         # libffi is imported from upstream.
@@ -719,6 +742,7 @@ class GCCCmdLine (CmdLine):
         self.add_dir ('libitm')
         self.add_dir ('libobjc')
         # liboffloadmic is imported from upstream.
+        self.add_dir ('libphobos', LibPhobosFilter())
         self.add_dir ('libquadmath')
         # libsanitizer is imported from upstream.
         self.add_dir ('libssp')
@@ -744,6 +768,7 @@ class GCCCmdLine (CmdLine):
             'libiberty',
             'libitm',
             'libobjc',
+            'libphobos',
             'libssp',
             'libstdc++-v3',
             'libvtv',

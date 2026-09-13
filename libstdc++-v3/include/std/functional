@@ -1,6 +1,6 @@
 // <functional> -*- C++ -*-
 
-// Copyright (C) 2001-2017 Free Software Foundation, Inc.
+// Copyright (C) 2001-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -55,7 +55,8 @@
 #include <type_traits>
 #include <bits/functional_hash.h>
 #include <bits/invoke.h>
-#include <bits/std_function.h>
+#include <bits/refwrap.h>	// std::reference_wrapper and _Mem_fn_traits
+#include <bits/std_function.h>	// std::function
 #if __cplusplus > 201402L
 # include <unordered_map>
 # include <vector>
@@ -81,68 +82,6 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 			   std::forward<_Args>(__args)...);
     }
 #endif
-
-  template<typename... _Types>
-    struct _Pack : integral_constant<size_t, sizeof...(_Types)>
-    { };
-
-  template<typename _From, typename _To, bool = _From::value == _To::value>
-    struct _AllConvertible : false_type
-    { };
-
-  template<typename... _From, typename... _To>
-    struct _AllConvertible<_Pack<_From...>, _Pack<_To...>, true>
-    : __and_<is_convertible<_From, _To>...>
-    { };
-
-  template<typename _Tp1, typename _Tp2>
-    using _NotSame = __not_<is_same<typename std::decay<_Tp1>::type,
-				    typename std::decay<_Tp2>::type>>;
-
-  template<typename _Signature>
-    struct _Mem_fn_traits;
-
-  template<typename _Res, typename _Class, typename... _ArgTypes>
-    struct _Mem_fn_traits_base
-    {
-      using __result_type = _Res;
-      using __maybe_type
-	= _Maybe_unary_or_binary_function<_Res, _Class*, _ArgTypes...>;
-      using __arity = integral_constant<size_t, sizeof...(_ArgTypes)>;
-    };
-
-#define _GLIBCXX_MEM_FN_TRAITS2(_CV, _REF, _LVAL, _RVAL)		\
-  template<typename _Res, typename _Class, typename... _ArgTypes>	\
-    struct _Mem_fn_traits<_Res (_Class::*)(_ArgTypes...) _CV _REF>	\
-    : _Mem_fn_traits_base<_Res, _CV _Class, _ArgTypes...>		\
-    {									\
-      using __vararg = false_type;					\
-    };									\
-  template<typename _Res, typename _Class, typename... _ArgTypes>	\
-    struct _Mem_fn_traits<_Res (_Class::*)(_ArgTypes... ...) _CV _REF>	\
-    : _Mem_fn_traits_base<_Res, _CV _Class, _ArgTypes...>		\
-    {									\
-      using __vararg = true_type;					\
-    };
-
-#define _GLIBCXX_MEM_FN_TRAITS(_REF, _LVAL, _RVAL)		\
-  _GLIBCXX_MEM_FN_TRAITS2(		, _REF, _LVAL, _RVAL)	\
-  _GLIBCXX_MEM_FN_TRAITS2(const		, _REF, _LVAL, _RVAL)	\
-  _GLIBCXX_MEM_FN_TRAITS2(volatile	, _REF, _LVAL, _RVAL)	\
-  _GLIBCXX_MEM_FN_TRAITS2(const volatile, _REF, _LVAL, _RVAL)
-
-_GLIBCXX_MEM_FN_TRAITS( , true_type, true_type)
-_GLIBCXX_MEM_FN_TRAITS(&, true_type, false_type)
-_GLIBCXX_MEM_FN_TRAITS(&&, false_type, true_type)
-
-#if __cplusplus > 201402L
-_GLIBCXX_MEM_FN_TRAITS(noexcept, true_type, true_type)
-_GLIBCXX_MEM_FN_TRAITS(& noexcept, true_type, false_type)
-_GLIBCXX_MEM_FN_TRAITS(&& noexcept, false_type, true_type)
-#endif
-
-#undef _GLIBCXX_MEM_FN_TRAITS
-#undef _GLIBCXX_MEM_FN_TRAITS2
 
   template<typename _MemFunPtr,
 	   bool __is_mem_fn = is_member_function_pointer<_MemFunPtr>::value>
@@ -259,15 +198,12 @@ _GLIBCXX_MEM_FN_TRAITS(&& noexcept, false_type, true_type)
    */
   template<int _Num> struct _Placeholder { };
 
-  _GLIBCXX_END_NAMESPACE_VERSION
-
   /** @namespace std::placeholders
    *  @brief ISO C++11 entities sub-namespace for functional.
    *  @ingroup binders
    */
   namespace placeholders
   {
-  _GLIBCXX_BEGIN_NAMESPACE_VERSION
   /* Define a large number of placeholders. There is no way to
    * simplify this with variadic templates, because we're introducing
    * unique names for each.
@@ -301,10 +237,7 @@ _GLIBCXX_MEM_FN_TRAITS(&& noexcept, false_type, true_type)
     extern const _Placeholder<27> _27;
     extern const _Placeholder<28> _28;
     extern const _Placeholder<29> _29;
-  _GLIBCXX_END_NAMESPACE_VERSION
   }
-
-  _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   /**
    *  Partial specialization of is_placeholder that provides the placeholder
@@ -903,6 +836,106 @@ _GLIBCXX_MEM_FN_TRAITS(&& noexcept, false_type, true_type)
 					  std::forward<_BoundArgs>(__args)...);
     }
 
+#if __cplusplus > 201703L
+#define __cpp_lib_bind_front 201907L
+
+  template<typename _Fd, typename... _BoundArgs>
+    struct _Bind_front
+    {
+      static_assert(is_move_constructible_v<_Fd>);
+      static_assert((is_move_constructible_v<_BoundArgs> && ...));
+
+      // First parameter is to ensure this constructor is never used
+      // instead of the copy/move constructor.
+      template<typename _Fn, typename... _Args>
+	explicit constexpr
+	_Bind_front(int, _Fn&& __fn, _Args&&... __args)
+	noexcept(__and_<is_nothrow_constructible<_Fd, _Fn>,
+			is_nothrow_constructible<_BoundArgs, _Args>...>::value)
+	: _M_fd(std::forward<_Fn>(__fn)),
+	  _M_bound_args(std::forward<_Args>(__args)...)
+	{ static_assert(sizeof...(_Args) == sizeof...(_BoundArgs)); }
+
+      _Bind_front(const _Bind_front&) = default;
+      _Bind_front(_Bind_front&&) = default;
+      _Bind_front& operator=(const _Bind_front&) = default;
+      _Bind_front& operator=(_Bind_front&&) = default;
+      ~_Bind_front() = default;
+
+      template<typename... _CallArgs>
+	constexpr
+	invoke_result_t<_Fd&, _BoundArgs&..., _CallArgs...>
+	operator()(_CallArgs&&... __call_args) &
+	noexcept(is_nothrow_invocable_v<_Fd&, _BoundArgs&..., _CallArgs...>)
+	{
+	  return _S_call(*this, _BoundIndices(),
+	      std::forward<_CallArgs>(__call_args)...);
+	}
+
+      template<typename... _CallArgs>
+	constexpr
+	invoke_result_t<const _Fd&, const _BoundArgs&..., _CallArgs...>
+	operator()(_CallArgs&&... __call_args) const &
+	noexcept(is_nothrow_invocable_v<const _Fd&, const _BoundArgs&...,
+					_CallArgs...>)
+	{
+	  return _S_call(*this, _BoundIndices(),
+	      std::forward<_CallArgs>(__call_args)...);
+	}
+
+      template<typename... _CallArgs>
+	constexpr
+	invoke_result_t<_Fd, _BoundArgs..., _CallArgs...>
+	operator()(_CallArgs&&... __call_args) &&
+	noexcept(is_nothrow_invocable_v<_Fd, _BoundArgs..., _CallArgs...>)
+	{
+	  return _S_call(std::move(*this), _BoundIndices(),
+	      std::forward<_CallArgs>(__call_args)...);
+	}
+
+      template<typename... _CallArgs>
+	constexpr
+	invoke_result_t<const _Fd, const _BoundArgs..., _CallArgs...>
+	operator()(_CallArgs&&... __call_args) const &&
+	noexcept(is_nothrow_invocable_v<const _Fd, const _BoundArgs...,
+					_CallArgs...>)
+	{
+	  return _S_call(std::move(*this), _BoundIndices(),
+	      std::forward<_CallArgs>(__call_args)...);
+	}
+
+    private:
+      using _BoundIndices = index_sequence_for<_BoundArgs...>;
+
+      template<typename _Tp, size_t... _Ind, typename... _CallArgs>
+	static constexpr
+	decltype(auto)
+	_S_call(_Tp&& __g, index_sequence<_Ind...>, _CallArgs&&... __call_args)
+	{
+	  return std::invoke(std::forward<_Tp>(__g)._M_fd,
+	      std::get<_Ind>(std::forward<_Tp>(__g)._M_bound_args)...,
+	      std::forward<_CallArgs>(__call_args)...);
+	}
+
+      _Fd _M_fd;
+      std::tuple<_BoundArgs...> _M_bound_args;
+    };
+
+  template<typename _Fn, typename... _Args>
+    using _Bind_front_t
+      = _Bind_front<decay_t<_Fn>, decay_t<_Args>...>;
+
+  template<typename _Fn, typename... _Args>
+    _Bind_front_t<_Fn, _Args...>
+    bind_front(_Fn&& __fn, _Args&&... __args)
+    noexcept(is_nothrow_constructible_v<_Bind_front_t<_Fn, _Args...>,
+					int, _Fn, _Args...>)
+    {
+      return _Bind_front_t<_Fn, _Args...>(0, std::forward<_Fn>(__fn),
+					  std::forward<_Args>(__args)...);
+    }
+#endif
+
 #if __cplusplus >= 201402L
   /// Generalized negator.
   template<typename _Fn>
@@ -931,7 +964,8 @@ _GLIBCXX_MEM_FN_TRAITS(&& noexcept, false_type, true_type)
       template<typename... _Args>					\
 	decltype(_S_not<__inv_res_t<_Fn _QUALS, _Args...>>())		\
 	operator()(_Args&&... __args) _QUALS				\
-	noexcept(noexcept(_S_not<__inv_res_t<_Fn _QUALS, _Args...>>()))	\
+	noexcept(__is_nothrow_invocable<_Fn _QUALS, _Args...>::value	\
+	    && noexcept(_S_not<__inv_res_t<_Fn _QUALS, _Args...>>()))	\
 	{								\
 	  return !std::__invoke(std::forward< _Fn _QUALS >(_M_fn),	\
 				std::forward<_Args>(__args)...);	\
@@ -940,13 +974,35 @@ _GLIBCXX_MEM_FN_TRAITS(&& noexcept, false_type, true_type)
       _GLIBCXX_NOT_FN_CALL_OP( const & )
       _GLIBCXX_NOT_FN_CALL_OP( && )
       _GLIBCXX_NOT_FN_CALL_OP( const && )
-#undef _GLIBCXX_NOT_FN_CALL
+#undef _GLIBCXX_NOT_FN_CALL_OP
 
     private:
       _Fn _M_fn;
     };
 
-#if __cplusplus > 201402L
+  template<typename _Tp, typename _Pred>
+    struct __is_byte_like : false_type { };
+
+  template<typename _Tp>
+    struct __is_byte_like<_Tp, equal_to<_Tp>>
+    : __bool_constant<sizeof(_Tp) == 1 && is_integral<_Tp>::value> { };
+
+  template<typename _Tp>
+    struct __is_byte_like<_Tp, equal_to<void>>
+    : __bool_constant<sizeof(_Tp) == 1 && is_integral<_Tp>::value> { };
+
+#if __cplusplus >= 201703L
+  // Declare std::byte (full definition is in <cstddef>).
+  enum class byte : unsigned char;
+
+  template<>
+    struct __is_byte_like<byte, equal_to<byte>>
+    : true_type { };
+
+  template<>
+    struct __is_byte_like<byte, equal_to<void>>
+    : true_type { };
+
 #define __cpp_lib_not_fn 201603
   /// [func.not_fn] Function template not_fn
   template<typename _Fn>
@@ -1055,20 +1111,13 @@ _GLIBCXX_MEM_FN_TRAITS(&& noexcept, false_type, true_type)
       tuple<_GLIBCXX_STD_C::array<_Tp, _Len>, _Pred> _M_bad_char;
     };
 
-  template<typename _Pred>
-    struct __is_std_equal_to : false_type { };
-
-  template<>
-    struct __is_std_equal_to<equal_to<void>> : true_type { };
-
   // Use __boyer_moore_array_base when pattern consists of narrow characters
-  // and uses std::equal_to as the predicate.
+  // (or std::byte) and uses std::equal_to as the predicate.
   template<typename _RAIter, typename _Hash, typename _Pred,
            typename _Val = typename iterator_traits<_RAIter>::value_type,
 	   typename _Diff = typename iterator_traits<_RAIter>::difference_type>
     using __boyer_moore_base_t
-      = conditional_t<sizeof(_Val) == 1 && is_integral<_Val>::value
-		      && __is_std_equal_to<_Pred>::value,
+      = conditional_t<__is_byte_like<_Val, _Pred>::value,
 		      __boyer_moore_array_base<_Diff, 256, _Pred>,
 		      __boyer_moore_map_base<_Val, _Diff, _Hash, _Pred>>;
 

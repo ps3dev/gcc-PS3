@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8" /><title>Configure</title><meta name="generator" content="DocBook XSL-NS Stylesheets V1.78.1" /><meta name="keywords" content="ISO C++, configure, options" /><meta name="keywords" content="ISO C++, library" /><meta name="keywords" content="ISO C++, runtime, library" /><link rel="home" href="../index.html" title="The GNU C++ Library" /><link rel="up" href="setup.html" title="Chapter 2. Setup" /><link rel="prev" href="setup.html" title="Chapter 2. Setup" /><link rel="next" href="make.html" title="Make" /></head><body><div class="navheader"><table width="100%" summary="Navigation header"><tr><th colspan="3" align="center">Configure</th></tr><tr><td width="20%" align="left"><a accesskey="p" href="setup.html">Prev</a> </td><th width="60%" align="center">Chapter 2. Setup</th><td width="20%" align="right"> <a accesskey="n" href="make.html">Next</a></td></tr></table><hr /></div><div class="section"><div class="titlepage"><div><div><h2 class="title" style="clear: both"><a id="manual.intro.setup.configure"></a>Configure</h2></div></div></div><p>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8" /><title>Configure</title><meta name="generator" content="DocBook XSL Stylesheets Vsnapshot" /><meta name="keywords" content="ISO C++, configure, options" /><meta name="keywords" content="ISO C++, library" /><meta name="keywords" content="ISO C++, runtime, library" /><link rel="home" href="../index.html" title="The GNU C++ Library" /><link rel="up" href="setup.html" title="Chapter 2. Setup" /><link rel="prev" href="setup.html" title="Chapter 2. Setup" /><link rel="next" href="make.html" title="Make" /></head><body><div class="navheader"><table width="100%" summary="Navigation header"><tr><th colspan="3" align="center">Configure</th></tr><tr><td width="20%" align="left"><a accesskey="p" href="setup.html">Prev</a> </td><th width="60%" align="center">Chapter 2. Setup</th><td width="20%" align="right"> <a accesskey="n" href="make.html">Next</a></td></tr></table><hr /></div><div class="section"><div class="titlepage"><div><div><h2 class="title" style="clear: both"><a id="manual.intro.setup.configure"></a>Configure</h2></div></div></div><p>
   When configuring libstdc++, you'll have to configure the entire
   <span class="emphasis"><em>gccsrcdir</em></span> directory. Consider using the
   toplevel gcc configuration option
@@ -110,7 +110,8 @@
 	the build directory, will do much the same thing, without the
 	configuration difference and without building everything twice:
 	<code class="code">make CXXFLAGS='-g3 -O0 -fno-inline' all</code>
-     </p></dd><dt><span class="term"><code class="code">--enable-libstdcxx-debug-flags=FLAGS</code></span></dt><dd><p>This option is only valid when <code class="code"> --enable-debug </code>
+     </p></dd><dt><span class="term"><code class="code">--enable-libstdcxx-debug-flags=FLAGS</code></span></dt><dd><p>This option is only valid when
+	<code class="code">--enable-libstdcxx-debug</code>
 	is also specified, and applies to the debug builds only. With
 	this option, you can pass a specific string of flags to the
 	compiler to use when building the debug versions of libstdc++.
@@ -238,7 +239,25 @@
      use <code class="option">OPTION=gcc4-compatible</code> to set it to
      <code class="literal">0</code>.
      This option does not change the library ABI.
-   </p></dd><dt><span class="term"><code class="code">--enable-vtable-verify</code>[default]</span></dt><dd><p>Use <code class="code">-fvtable-verify=std</code> to compile the C++
+   </p></dd><dt><span class="term"><code class="code">--with-libstdcxx-lock-policy=OPTION</code></span></dt><dd><p>Sets the lock policy that controls how
+        <code class="classname">shared_ptr</code> reference counting is
+        synchronized.
+        The choice OPTION=atomic enables use of atomics for updates to
+        <code class="classname">shared_ptr</code> reference counts.
+        The choice OPTION=mutex enables use of a mutex to synchronize updates
+        to <code class="classname">shared_ptr</code> reference counts.
+        If the compiler's thread model is "single" then this option has no
+        effect, as no synchronization is used for the reference counts.
+	The default is OPTION=auto, which checks for the availability of
+        compiler built-ins for 2-byte and 4-byte atomic compare-and-swap,
+        and uses OPTION=atomic if they're available, OPTION=mutex otherwise.
+        This option can change the library ABI.
+        If the library is configured to use atomics and user programs are
+        compiled using a target that doesn't natively support the atomic
+        operations (e.g. the library is configured for armv7 and then code
+        is compiled with <code class="option">-march=armv5t</code>) then the program
+        might rely on support in libgcc to provide the atomics.
+    </p></dd><dt><span class="term"><code class="code">--enable-vtable-verify</code>[default]</span></dt><dd><p>Use <code class="code">-fvtable-verify=std</code> to compile the C++
     runtime with instrumentation for vtable verification. All virtual
     functions in the standard library will be verified at runtime.
     Types impacted include <code class="classname">locale</code> and

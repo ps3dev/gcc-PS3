@@ -1,10 +1,105 @@
-2017-08-14  Release Manager
+2022-05-27  Release Manager
 
-	* GCC 7.2.0 released.
+	* GCC 9.5.0 released.
 
-2017-05-02  Release Manager
+2022-05-11  Jakub Jelinek  <jakub@redhat.com>
 
-	* GCC 7.1.0 released.
+	Backported from master:
+	2021-06-16  Jakub Jelinek  <jakub@redhat.com>
+
+	* src/x86/ffi64.c (classify_argument): For FFI_TYPE_STRUCT set words
+	to number of words needed for type->size + byte_offset bytes rather
+	than just type->size bytes.  Compute pos before the loop and check
+	total size of the structure.
+	* testsuite/libffi.call/nested_struct12.c: New test.
+
+2021-06-01  Release Manager
+
+	* GCC 9.4.0 released.
+
+2021-05-01  Iain Sandoe  <iain@sandoe.co.uk>
+	    Jakub Jelinek   <jakub@redhat.com>
+
+	PR target/97865
+	* configure: Regenerate.
+
+2020-03-12  Release Manager
+
+	* GCC 9.3.0 released.
+
+2019-08-12  Release Manager
+
+	* GCC 9.2.0 released.
+
+2019-05-03  Release Manager
+
+	* GCC 9.1.0 released.
+
+2018-10-31  Joseph Myers  <joseph@codesourcery.com>
+
+	PR bootstrap/82856
+	* Makefile.am: Include multilib.am.
+	(AUTOMAKE_OPTIONS): Add info-in-builddir.
+	(CLEANFILES): Remove doc/libffi.info.
+	* configure.ac: Remove AC_PREREQ.
+	* Makefile.in, aclocal.m4, configure, fficonfig.h.in,
+	include/Makefile.in, man/Makefile.in, testsuite/Makefile.in:
+	Regenerate.
+
+2018-08-15  Andreas Schwab  <schwab@suse.de>
+
+	Backport of RISC-V support for libffi go closures
+	* src/riscv/ffi.c (ffi_call_go, ffi_prep_go_closure): New
+	functions.
+	(ffi_call_int): Renamed from ffi_call.
+	(ffi_call_asm, ffi_closure_inner): Adjust interface.
+	* src/riscv/ffitarget.h (FFI_GO_CLOSURES): Define.
+	* src/riscv/sysv.S (ffi_go_closure_asm): New function.
+	(ffi_closure_asm, ffi_call_asm): Update for adjusted interfaces.
+
+2018-05-08  Andreas Schwab  <schwab@suse.de>
+
+	Backport of RISC-V support for libffi
+	* configure.host: Add RISC-V support.
+	* Makefile.am: Likewise.
+	* Makefile.in: Regenerate.
+	* src/riscv/ffi.c, src/riscv/ffitarget.h, src/riscv/sysv.S: New
+	files.
+
+2018-05-04  Alan Modra  <amodra@gmail.com>
+
+	Import from upstream
+	* src/powerpc/ffi_linux64.c (discover_homogeneous_aggregate):
+	Compile for ELFv1 too, handling single element aggregates.
+	(ffi_prep_cif_linux64_core): Call discover_homogeneous_aggregate
+	for ELFv1.  Set FLAG_RETURNS_64BITS for FFI_TYPE_POINTER return.
+	(ffi_prep_args64): Call discover_homogeneous_aggregate for ELFv1,
+	and handle single element structs containing float or double
+	as if the element wasn't wrapped in a struct.  Store floats in
+	second word of doubleword slot when big-endian.
+	(ffi_closure_helper_LINUX64): Similarly.
+
+2018-04-18  David Malcolm  <dmalcolm@redhat.com>
+
+	PR jit/85384
+	* configure: Regenerate.
+
+2017-08-31  Tony Reix  <tony.reix@atos.net>
+
+	* src/powerpc/aix.S (ffi_call_AIX): Add debugging pseudo-op and
+	labels for EH.
+	(ffi_call_go_AIX): New function.
+	(_GLOBAL__F_libffi_src_powerpc_aix): New EH frame.
+	* src/powerpc/aix_closure.S (ffi_closure_ASM): Add debugging
+	pseudo-op and labels for EH.
+	(ffi_go_closure_ASM): New function.
+	(_GLOBAL__F_libffi_src_powerpc_aix_closure): New EH frame.
+	* src/powrpc/ffi_darwin.c (ffi_call_go): New function.
+	(ffi_prep_go_closure): New function.
+	(ffi_closure_helper_common): Rename from ffi_closure_helper_DARWIN.
+	(ffi_closure_helper_DARWIN): Call ffi_closure_helper_common.
+	(ffi_go_closure_helper_DARWIN): Call ffi_closure_helper_common.
+	* src/powerpc/ffitarget.h (FFI_GO_CLOSURES): Define.
 
 2017-01-21  Jakub Jelinek  <jakub@redhat.com>
 
@@ -415,7 +510,7 @@
 	* configure: Rebuild.
 
 2012-10-30  James Greenhalgh  <james.greenhalgh at arm.com>
-            Marcus Shawcroft  <marcus.shawcroft at arm.com>
+	    Marcus Shawcroft  <marcus.shawcroft at arm.com>
 
 	* README: Add details of aarch64 port.
 	* src/aarch64/ffi.c: New.
@@ -426,7 +521,7 @@
 	* Makefile.in, configure: Rebuilt.
 
 2012-10-30  James Greenhalgh  <james.greenhalgh at arm.com>
-            Marcus Shawcroft  <marcus.shawcroft at arm.com>
+	    Marcus Shawcroft  <marcus.shawcroft at arm.com>
 
 	* testsuite/lib/libffi.exp: Add support for aarch64.
 	* testsuite/libffi.call/cls_struct_va1.c: New.

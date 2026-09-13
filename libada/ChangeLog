@@ -1,6 +1,56 @@
-2017-08-14  Release Manager
+2022-05-27  Release Manager
 
-	* GCC 7.2.0 released.
+	* GCC 9.5.0 released.
+
+2021-06-01  Release Manager
+
+	* GCC 9.4.0 released.
+
+2020-03-12  Release Manager
+
+	* GCC 9.3.0 released.
+
+2019-08-12  Release Manager
+
+	* GCC 9.2.0 released.
+
+2019-05-03  Release Manager
+
+	* GCC 9.1.0 released.
+
+2019-01-01  Jakub Jelinek  <jakub@redhat.com>
+
+	Update copyright years.
+
+2018-12-11  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/88429
+	* configure.ac (default_gnatlib_target): Set to gnatlib instead of
+	gnatlib-plain if --disable-shared.
+	* configure: Regenerate.
+	* Makefile.in (all): Replace gnatlib prerequisite with libada.
+	(ADA_RTS_SUBDIR): Delete.
+	(libada): New target, renamed from...
+	(gnatlib): ...this.  Merge with other library targets.
+	(gnatlib-plain): Delete.
+	(install-gnatlib): Rename to...
+	(install-libada): ...this.
+	(install): Replace install-gnatlib prerequisite with install-libada.
+
+2018-10-31  Joseph Myers  <joseph@codesourcery.com>
+
+	PR bootstrap/82856
+	* configure.ac: Remove AC_PREREQ.
+	* configure: Regenerate.
+
+2018-04-18  David Malcolm  <dmalcolm@redhat.com>
+
+	PR jit/85384
+	* configure: Regenerate.
+
+2018-01-03  Jakub Jelinek  <jakub@redhat.com>
+
+	Update copyright years.
 
 2017-06-01  Eric Botcazou  <ebotcazou@adacore.com>
 
@@ -9,9 +59,12 @@
 	(have_getipinfo): Tweak.
 	* configure: Regenerate.
 
-2017-05-02  Release Manager
+2017-05-22  Eric Botcazou  <ebotcazou@adacore.com>
 
-	* GCC 7.1.0 released.
+	* configure.ac: Add check for sys/capability.h header.
+	(have_capability): New substitution.
+	* configure: Regenerate.
+	* Makefile.in (GNATLIBCFLAGS_FOR_C): Add @have_capability@.
 
 2017-01-17  Jakub Jelinek  <jakub@redhat.com>
 
@@ -179,11 +232,11 @@
 
 2009-04-06  Laurent GUERBY  <laurent@guerby.net>
 
-        * Makefile.in (ADA_RTS_DIR): Define.
-        * Makefile.in (gnatlib-*): Link adainclude and adalib to it.
+	* Makefile.in (ADA_RTS_DIR): Define.
+	* Makefile.in (gnatlib-*): Link adainclude and adalib to it.
 
 2008-09-21  Laurent Guerby  <laurent@guerby.net>
-            Paolo Bonzini  <bonzini@gnu.org>
+	    Paolo Bonzini  <bonzini@gnu.org>
 
 	PR ada/5911
 	* Makefile.in (all, install, mostlyclean, clean, distclean): Add
@@ -397,7 +450,7 @@
 
 	* New directory, new ChangeLog.
 
-Copyright (C) 2003-2017 Free Software Foundation, Inc.
+Copyright (C) 2003-2019 Free Software Foundation, Inc.
 
 This ChangeLog is free software; the Free Software Foundation gives
 unlimited permission to copy, distribute, and modify it.

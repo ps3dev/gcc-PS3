@@ -36,4 +36,3 @@ bool my_neg_overflow (int a, int *res)
 /* { dg-final { scan-assembler-times "add.l" 2 } } */
 /* { dg-final { scan-assembler-times "sub.l" 4 } } */
 /* { dg-final { scan-assembler-not "cmp.l" } } */
-/* { dg-final { scan-assembler-not "mov.l" } } */

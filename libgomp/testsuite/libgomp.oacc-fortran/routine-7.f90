@@ -22,7 +22,7 @@ program main
   !$acc end parallel
 
   do i = 1, N
-    if (a(i) .ne.N) call abort
+    if (a(i) .ne.N) STOP 1
   end do
 
   !$acc parallel copy (a)
@@ -33,7 +33,7 @@ program main
   !$acc end parallel
 
   do i = 1, N
-    if (a(i) .ne. (N + (N * (-1 * i)))) call abort
+    if (a(i) .ne. (N + (N * (-1 * i)))) STOP 2
   end do
 
   do i = 1, N
@@ -48,7 +48,7 @@ program main
   !$acc end parallel
 
   do i = 1, N
-    if (b(i) .ne. N + i) call abort
+    if (b(i) .ne. N + i) STOP 3
   end do
 
   do i = 1, N
@@ -63,7 +63,7 @@ program main
   !$acc end parallel
 
   do i = 1, N
-    if (a(i) .ne. 0) call abort
+    if (a(i) .ne. 0) STOP 4
   end do
 
 contains
@@ -109,7 +109,7 @@ end subroutine gang
 
 subroutine seq (a)
   !$acc routine seq
-  integer, intent (inout) :: a(M)
+  integer, intent (inout) :: a(N)
   integer :: i
 
   do i = 1, N

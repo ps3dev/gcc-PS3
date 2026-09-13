@@ -1,5 +1,5 @@
 /* UndefinedBehaviorSanitizer, undefined behavior detector.
-   Copyright (C) 2013-2017 Free Software Foundation, Inc.
+   Copyright (C) 2013-2019 Free Software Foundation, Inc.
    Contributed by Marek Polacek <polacek@redhat.com>
 
 This file is part of GCC.
@@ -25,10 +25,13 @@ along with GCC; see the file COPYING3.  If not see
 #include "c-family/c-common.h"
 #include "ubsan.h"
 #include "c-family/c-ubsan.h"
-#include "asan.h"
 #include "stor-layout.h"
 #include "builtins.h"
 #include "gimplify.h"
+#include "stringpool.h"
+#include "attribs.h"
+#include "asan.h"
+#include "langhooks.h"
 
 /* Instrument division by zero and INT_MIN / -1.  If not instrumenting,
    return NULL_TREE.  */
@@ -38,30 +41,35 @@ ubsan_instrument_division (location_t loc, tree op0, tree op1)
 {
   tree t, tt;
   tree type = TREE_TYPE (op0);
+  enum sanitize_code flag = SANITIZE_DIVIDE;
 
   /* At this point both operands should have the same type,
      because they are already converted to RESULT_TYPE.
      Use TYPE_MAIN_VARIANT since typedefs can confuse us.  */
-  gcc_assert (TYPE_MAIN_VARIANT (TREE_TYPE (op0))
-	      == TYPE_MAIN_VARIANT (TREE_TYPE (op1)));
+  tree top0 = TYPE_MAIN_VARIANT (type);
+  tree top1 = TYPE_MAIN_VARIANT (TREE_TYPE (op1));
+  gcc_checking_assert (lang_hooks.types_compatible_p (top0, top1));
 
   op0 = unshare_expr (op0);
   op1 = unshare_expr (op1);
 
   if (TREE_CODE (type) == INTEGER_TYPE
-      && (flag_sanitize & SANITIZE_DIVIDE))
+      && sanitize_flags_p (SANITIZE_DIVIDE))
     t = fold_build2 (EQ_EXPR, boolean_type_node,
 		     op1, build_int_cst (type, 0));
   else if (TREE_CODE (type) == REAL_TYPE
-	   && (flag_sanitize & SANITIZE_FLOAT_DIVIDE))
-    t = fold_build2 (EQ_EXPR, boolean_type_node,
-		     op1, build_real (type, dconst0));
+	   && sanitize_flags_p (SANITIZE_FLOAT_DIVIDE))
+    {
+      t = fold_build2 (EQ_EXPR, boolean_type_node,
+		       op1, build_real (type, dconst0));
+      flag = SANITIZE_FLOAT_DIVIDE;
+    }
   else
     return NULL_TREE;
 
   /* We check INT_MIN / -1 only for signed types.  */
   if (TREE_CODE (type) == INTEGER_TYPE
-      && (flag_sanitize & SANITIZE_DIVIDE)
+      && sanitize_flags_p (SANITIZE_DIVIDE)
       && !TYPE_UNSIGNED (type))
     {
       tree x;
@@ -91,7 +99,7 @@ ubsan_instrument_division (location_t loc, tree op0, tree op1)
 				     NULL_TREE);
       data = build_fold_addr_expr_loc (loc, data);
       enum built_in_function bcode
-	= (flag_sanitize_recover & SANITIZE_DIVIDE)
+	= (flag_sanitize_recover & flag)
 	  ? BUILT_IN_UBSAN_HANDLE_DIVREM_OVERFLOW
 	  : BUILT_IN_UBSAN_HANDLE_DIVREM_OVERFLOW_ABORT;
       tt = builtin_decl_explicit (bcode);
@@ -130,11 +138,15 @@ ubsan_instrument_shift (location_t loc, enum tree_code code,
   /* If this is not a signed operation, don't perform overflow checks.
      Also punt on bit-fields.  */
   if (TYPE_OVERFLOW_WRAPS (type0)
-      || GET_MODE_BITSIZE (TYPE_MODE (type0)) != TYPE_PRECISION (type0)
-      || (flag_sanitize & SANITIZE_SHIFT_BASE) == 0)
+      || maybe_ne (GET_MODE_BITSIZE (TYPE_MODE (type0)),
+		   TYPE_PRECISION (type0))
+      || !sanitize_flags_p (SANITIZE_SHIFT_BASE)
+      /* In C++2a and later, shifts are well defined except when
+	 the second operand is not within bounds.  */
+      || cxx_dialect >= cxx2a)
     ;
 
-  /* For signed x << y, in C99/C11, the following:
+  /* For signed x << y, in C99 and later, the following:
      (unsigned) x >> (uprecm1 - y)
      if non-zero, is undefined.  */
   else if (code == LSHIFT_EXPR && flag_isoc99 && cxx_dialect < cxx11)
@@ -147,7 +159,7 @@ ubsan_instrument_shift (location_t loc, enum tree_code code,
 			build_int_cst (TREE_TYPE (tt), 0));
     }
 
-  /* For signed x << y, in C++11 and later, the following:
+  /* For signed x << y, in C++11 to C++17, the following:
      x < 0 || ((unsigned) x >> (uprecm1 - y))
      if > 1, is undefined.  */
   else if (code == LSHIFT_EXPR && cxx_dialect >= cxx11)
@@ -178,7 +190,7 @@ ubsan_instrument_shift (location_t loc, enum tree_code code,
   tree else_t = void_node;
   if (tt)
     {
-      if ((flag_sanitize & SANITIZE_SHIFT_EXPONENT) == 0)
+      if (!sanitize_flags_p (SANITIZE_SHIFT_EXPONENT))
 	{
 	  t = fold_build1 (TRUTH_NOT_EXPR, boolean_type_node, t);
 	  t = fold_build2 (TRUTH_AND_EXPR, boolean_type_node, t, tt);
@@ -301,7 +313,7 @@ ubsan_instrument_bounds (location_t loc, tree array, tree *index,
   /* Detect flexible array members and suchlike, unless
      -fsanitize=bounds-strict.  */
   tree base = get_base_address (array);
-  if ((flag_sanitize & SANITIZE_BOUNDS_STRICT) == 0
+  if (!sanitize_flags_p (SANITIZE_BOUNDS_STRICT)
       && TREE_CODE (array) == COMPONENT_REF
       && base && (INDIRECT_REF_P (base) || TREE_CODE (base) == MEM_REF))
     {
@@ -373,7 +385,8 @@ void
 ubsan_maybe_instrument_array_ref (tree *expr_p, bool ignore_off_by_one)
 {
   if (!ubsan_array_ref_instrumented_p (*expr_p)
-      && do_ubsan_in_current_function ())
+      && sanitize_flags_p (SANITIZE_BOUNDS | SANITIZE_BOUNDS_STRICT)
+      && current_function_decl != NULL_TREE)
     {
       tree op0 = TREE_OPERAND (*expr_p, 0);
       tree op1 = TREE_OPERAND (*expr_p, 1);
@@ -393,7 +406,8 @@ static tree
 ubsan_maybe_instrument_reference_or_call (location_t loc, tree op, tree ptype,
 					  enum ubsan_null_ckind ckind)
 {
-  if (!do_ubsan_in_current_function ())
+  if (!sanitize_flags_p (SANITIZE_ALIGNMENT | SANITIZE_NULL)
+      || current_function_decl == NULL_TREE)
     return NULL_TREE;
 
   tree type = TREE_TYPE (ptype);
@@ -401,7 +415,7 @@ ubsan_maybe_instrument_reference_or_call (location_t loc, tree op, tree ptype,
   bool instrument = false;
   unsigned int mina = 0;
 
-  if (flag_sanitize & SANITIZE_ALIGNMENT)
+  if (sanitize_flags_p (SANITIZE_ALIGNMENT))
     {
       mina = min_align_of_type (type);
       if (mina <= 1)
@@ -419,7 +433,7 @@ ubsan_maybe_instrument_reference_or_call (location_t loc, tree op, tree ptype,
     }
   else
     {
-      if ((flag_sanitize & SANITIZE_NULL) && TREE_CODE (op) == ADDR_EXPR)
+      if (sanitize_flags_p (SANITIZE_NULL) && TREE_CODE (op) == ADDR_EXPR)
 	{
 	  bool strict_overflow_p = false;
 	  /* tree_single_nonzero_warnv_p will not return true for non-weak
@@ -435,7 +449,7 @@ ubsan_maybe_instrument_reference_or_call (location_t loc, tree op, tree ptype,
 	  flag_delete_null_pointer_checks
 	    = save_flag_delete_null_pointer_checks;
 	}
-      else if (flag_sanitize & SANITIZE_NULL)
+      else if (sanitize_flags_p (SANITIZE_NULL))
 	instrument = true;
       if (mina && mina > 1)
 	{

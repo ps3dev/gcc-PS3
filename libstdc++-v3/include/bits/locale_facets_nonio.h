@@ -1,6 +1,6 @@
 // Locale support -*- C++ -*-
 
-// Copyright (C) 2007-2017 Free Software Foundation, Inc.
+// Copyright (C) 2007-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -236,9 +236,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	__dt[1] = _M_data->_M_date_time_era_format;
       }
 
+#if !_GLIBCXX_INLINE_VERSION
       void
-      _M_am_pm_format(const _CharT* __ampm) const
-      { __ampm = _M_data->_M_am_pm_format; }
+      _M_am_pm_format(const _CharT*) const
+      { /* Kept for ABI compatibility, see PR65927 */ }
+#endif
 
       void
       _M_am_pm(const _CharT** __ampm) const
@@ -367,11 +369,11 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
     {
     public:
       // Types:
-      //@{
+      ///@{
       /// Public typedefs
       typedef _CharT			char_type;
       typedef _InIter			iter_type;
-      //@}
+      ///@}
 
       /// Numpunct facet id.
       static locale::id			id;
@@ -796,11 +798,11 @@ _GLIBCXX_END_NAMESPACE_CXX11
     {
     public:
       // Types:
-      //@{
+      ///@{
       /// Public typedefs
       typedef _CharT			char_type;
       typedef _OutIter			iter_type;
-      //@}
+      ///@}
 
       /// Numpunct facet id.
       static locale::id			id;
@@ -898,7 +900,7 @@ _GLIBCXX_END_NAMESPACE_CXX11
       explicit
       time_put_byname(const char*, size_t __refs = 0)
       : time_put<_CharT, _OutIter>(__refs)
-      { };
+      { }
 
 #if __cplusplus >= 201103L
       explicit
@@ -1023,11 +1025,11 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
     {
     public:
       // Types:
-      //@{
+      ///@{
       /// Public typedefs
       typedef _CharT			char_type;
       typedef basic_string<_CharT>	string_type;
-      //@}
+      ///@}
       typedef __moneypunct_cache<_CharT, _Intl>     __cache_type;
 
     private:
@@ -1199,7 +1201,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
       frac_digits() const
       { return this->do_frac_digits(); }
 
-      //@{
+      ///@{
       /**
        *  @brief  Return pattern for money values.
        *
@@ -1238,7 +1240,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
       pattern
       neg_format() const
       { return this->do_neg_format(); }
-      //@}
+      ///@}
 
     protected:
       /// Destructor.
@@ -1467,12 +1469,12 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL_OR_CXX11
     {
     public:
       // Types:
-      //@{
+      ///@{
       /// Public typedefs
       typedef _CharT			char_type;
       typedef _InIter			iter_type;
       typedef basic_string<_CharT>	string_type;
-      //@}
+      ///@}
 
       /// Numpunct facet id.
       static locale::id			id;
@@ -1619,12 +1621,12 @@ _GLIBCXX_BEGIN_NAMESPACE_LDBL_OR_CXX11
     class money_put : public locale::facet
     {
     public:
-      //@{
+      ///@{
       /// Public typedefs
       typedef _CharT			char_type;
       typedef _OutIter			iter_type;
       typedef basic_string<_CharT>	string_type;
-      //@}
+      ///@}
 
       /// Numpunct facet id.
       static locale::id			id;
@@ -1798,11 +1800,11 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
     {
     public:
       // Types:
-      //@{
+      ///@{
       /// Public typedefs
       typedef _CharT			char_type;
       typedef basic_string<_CharT>	string_type;
-      //@}
+      ///@}
 
     protected:
       // Underlying "C" library locale information saved from

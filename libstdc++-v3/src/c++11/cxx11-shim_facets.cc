@@ -1,6 +1,6 @@
 // Locale support -*- C++ -*-
 
-// Copyright (C) 2014-2017 Free Software Foundation, Inc.
+// Copyright (C) 2014-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -45,6 +45,8 @@
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
+_GLIBCXX_BEGIN_NAMESPACE_VERSION
+
   // Base class of facet shims, holds a reference to the underlying facet
   // that the shim forwards to.
   class locale::facet::__shim
@@ -67,8 +69,6 @@ namespace std _GLIBCXX_VISIBILITY(default)
 
 namespace __facet_shims
 {
-_GLIBCXX_BEGIN_NAMESPACE_VERSION
-
   namespace // unnamed
   {
     template<typename C>
@@ -223,6 +223,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   template<typename C>
     void
     __messages_close(other_abi, const facet*, messages_base::catalog);
+
+#pragma GCC diagnostic push
+// Suppress -Wabi=2 warnings due to empty struct argument passing changes.
+// TODO This should use -Wabi=12 but that currently fails (PR c++/87611).
+#pragma GCC diagnostic ignored "-Wabi"
 
   namespace // unnamed
   {
@@ -767,6 +772,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	return m->put(s, intl, io, fill, units);
     }
 
+#pragma GCC diagnostic pop
+
   template ostreambuf_iterator<char>
   __money_put(current_abi, const facet*, ostreambuf_iterator<char>,
 		bool, ios_base&, char, long double, const __any_string*);
@@ -777,10 +784,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 		bool, ios_base&, wchar_t, long double, const __any_string*);
 #endif
 
-_GLIBCXX_END_NAMESPACE_VERSION
 } // namespace __facet_shims
 
-_GLIBCXX_BEGIN_NAMESPACE_VERSION
   // Create a new shim facet of type WHICH that forwards calls to F.
   // F is the replacement facet provided by the user, WHICH is the ID of
   // F's "other ABI twin" which we are replacing with a shim.

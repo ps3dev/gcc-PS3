@@ -74,13 +74,13 @@ merge() {
       if ! cmp -s ${old} ${new}; then
         echo "merge.sh: $name: skipping: exists in old and new git, but not in libgo"
       fi
-      continue
+      return
     fi
     if cmp -s ${old} ${libgo}; then
       # The libgo file is unchanged from the old version.
       if cmp -s ${new} ${libgo}; then
         # File is unchanged from old to new version.
-        continue
+	return
       fi
       # Update file in libgo.
       echo "merge.sh: $name: updating"
@@ -128,7 +128,7 @@ echo ${rev} > VERSION
 (cd ${NEWDIR}/src && find . -name '*.go' -print) | while read f; do
   skip=false
   case "$f" in
-  ./cmd/cgo/* | ./cmd/go/* | ./cmd/gofmt/* | ./cmd/internal/browser/*)
+  ./cmd/buildid/* | ./cmd/cgo/* | ./cmd/go/* | ./cmd/gofmt/* | ./cmd/testjson/* | ./cmd/vet/* | ./cmd/internal/browser/* | ./cmd/internal/buildid/* | ./cmd/internal/edit/* | ./cmd/internal/objabi/* | ./cmd/internal/testj2on/* | ./cmd/internal/sys/* | ./cmd/vendor/golang.org/x/tools/* )
     ;;
   ./cmd/*)
     skip=true
@@ -143,19 +143,19 @@ echo ${rev} > VERSION
 
   oldfile=${OLDDIR}/src/$f
   newfile=${NEWDIR}/src/$f
-  libgofile=go/`echo $f | sed -e 's|/vendor/|/|'`
+  libgofile=go/`echo $f | sed -e 's|cmd/vendor/|/|' | sed -e 's|/vendor/|/|'`
   merge $f ${oldfile} ${newfile} ${libgofile}
 done
 
 (cd ${NEWDIR}/src && find . -name testdata -print) | while read d; do
   skip=false
   case "$d" in
-  ./cmd/cgo/* | ./cmd/go/* | ./cmd/gofmt/* | ./cmd/internal/browser/*)
+  ./cmd/buildid/* | ./cmd/cgo/* | ./cmd/go/* | ./cmd/gofmt/* | ./cmd/testjson/* | ./cmd/vet/* | ./cmd/internal/browser/* | ./cmd/internal/buildid/* | ./cmd/internal/edit/* | ./cmd/internal/objabi/* | ./cmd/internal/testj2on/* | ./cmd/internal/sys/* | ./cmd/vendor/golang.org/x/tools/* )
     ;;
   ./cmd/*)
     skip=true
     ;;
-  ./runtime/race/*)
+  ./runtime/race/* | ./runtime/cgo/*)
     skip=true
     ;;
   esac
@@ -165,7 +165,7 @@ done
 
   oldtd=${OLDDIR}/src/$d
   newtd=${NEWDIR}/src/$d
-  libgotd=go/$d
+  libgofile=go/`echo $d | sed -e 's|cmd/vendor/|/|' | sed -e 's|/vendor/|/|'`
   if ! test -d ${oldtd}; then
     echo "merge.sh: $d: NEWDIR"
     continue
@@ -182,10 +182,32 @@ done
   done
 done
 
+(cd ${NEWDIR}/misc/cgo && find . -type f -print) | while read f; do
+  oldfile=${OLDDIR}/misc/cgo/$f
+  newfile=${NEWDIR}/misc/cgo/$f
+  libgofile=misc/cgo/$f
+  merge $f ${oldfile} ${newfile} ${libgofile}
+done
+
 (cd ${OLDDIR}/src && find . -name '*.go' -print) | while read f; do
   oldfile=${OLDDIR}/src/$f
   newfile=${NEWDIR}/src/$f
   libgofile=go/$f
+  if test -f ${newfile}; then
+    continue
+  fi
+  if ! test -f ${libgofile}; then
+    continue
+  fi
+  echo "merge.sh: ${libgofile}: REMOVED"
+  rm -f ${libgofile}
+  git rm ${libgofile}
+done
+
+(cd ${OLDDIR}/misc/cgo && find . -type f -print) | while read f; do
+  oldfile=${OLDDIR}/misc/cgo/$f
+  newfile=${NEWDIR}/misc/cgo/$f
+  libgofile=misc/cgo/$f
   if test -f ${newfile}; then
     continue
   fi

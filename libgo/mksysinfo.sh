@@ -29,11 +29,13 @@ echo 'type _ unsafe.Pointer' >> ${OUT}
 # will all have a leading underscore.
 grep -v '^// ' gen-sysinfo.go | \
   grep -v '^func' | \
+  grep -v '^var' | \
   grep -v '^type _timeval ' | \
   grep -v '^type _timespec_t ' | \
   grep -v '^type _timespec ' | \
   grep -v '^type _timestruc_t ' | \
   grep -v '^type _epoll_' | \
+  grep -v '^type _*locale[_ ]' | \
   grep -v 'in6_addr' | \
   grep -v 'sockaddr_in6' | \
   sed -e 's/\([^a-zA-Z0-9_]\)_timeval\([^a-zA-Z0-9_]\)/\1Timeval\2/g' \
@@ -42,9 +44,23 @@ grep -v '^// ' gen-sysinfo.go | \
       -e 's/\([^a-zA-Z0-9_]\)_timestruc_t\([^a-zA-Z0-9_]\)/\1Timestruc\2/g' \
     >> ${OUT}
 
+# On AIX, the _arpcom struct, is filtered by the above grep sequence, as it as
+# a field of type _in6_addr, but other types depend on _arpcom, so we need to
+# put it back.
+grep '^type _arpcom ' gen-sysinfo.go | \
+  sed -e 's/_in6_addr/[16]byte/' >> ${OUT}
+
+# Same on Solaris for _mld_hdr_t.
+grep '^type _mld_hdr_t ' gen-sysinfo.go | \
+  sed -e 's/_in6_addr/[16]byte/' >> ${OUT}
+
 # The errno constants.  These get type Errno.
-  egrep '#define E[A-Z0-9_]+ ' errno.i | \
+egrep '#define E[A-Z0-9_]+ [0-9E]' errno.i | \
   sed -e 's/^#define \(E[A-Z0-9_]*\) .*$/const \1 = Errno(_\1)/' >> ${OUT}
+
+# Workaround for GNU/Hurd _EMIG_* errors having negative values
+egrep '#define E[A-Z0-9_]+ -[0-9]' errno.i | \
+  sed -e 's/^#define \(E[A-Z0-9_]*\) .*$/const \1 = Errno(-_\1)/' >> ${OUT}
 
 # The O_xxx flags.
 egrep '^const _(O|F|FD)_' gen-sysinfo.go | \
@@ -59,6 +75,20 @@ fi
 # The os package requires F_DUPFD_CLOEXEC to be defined.
 if ! grep '^const F_DUPFD_CLOEXEC' ${OUT} >/dev/null 2>&1; then
   echo "const F_DUPFD_CLOEXEC = 0" >> ${OUT}
+fi
+
+# The internal/poll package requires F_GETPIPE_SZ to be defined.
+if ! grep '^const F_GETPIPE_SZ' ${OUT} >/dev/null 2>&1; then
+  echo "const F_GETPIPE_SZ = 0" >> ${OUT}
+fi
+
+# AIX 7.1 is a 64 bits value for _FCLOEXEC (referenced by O_CLOEXEC)
+# which leads to a constant overflow when using O_CLOEXEC in some
+# go code. Issue wan not present in 6.1 (no O_CLOEXEC) and is no
+# more present in 7.2 (_FCLOEXEC is a 32 bit value).
+if test "${GOOS}" = "aix" && `oslevel | grep -q "^7.1"`; then
+    sed -e 's/const __FCLOEXEC = .*/const __FCLOEXEC = 0/' ${OUT} > ${OUT}-2
+    mv ${OUT}-2 ${OUT}
 fi
 
 # These flags can be lost on i386 GNU/Linux when using
@@ -104,12 +134,23 @@ grep '^const _SYS_' gen-sysinfo.go | \
     echo "const $sup = _$sys" >> ${OUT}
   done
 
+# Special treatment of SYS_IOCTL for GNU/Hurd.
+if ! grep '^const SYS_IOCTL' ${OUT} > /dev/null 2>&1; then
+  echo "const SYS_IOCTL = 0" >> ${OUT}
+fi
+
 # The GNU/Linux support wants to use SYS_GETDENTS64 if available.
 if ! grep '^const SYS_GETDENTS ' ${OUT} >/dev/null 2>&1; then
   echo "const SYS_GETDENTS = 0" >> ${OUT}
 fi
 if ! grep '^const SYS_GETDENTS64 ' ${OUT} >/dev/null 2>&1; then
   echo "const SYS_GETDENTS64 = 0" >> ${OUT}
+fi
+
+# The syscall package wants the geteuid system call number.  It isn't
+# defined on Alpha, which only provides the getresuid system call.
+if ! grep '^const SYS_GETEUID ' ${OUT} >/dev/null 2>&1; then
+  echo "const SYS_GETEUID = 0" >> ${OUT}
 fi
 
 # Stat constants.
@@ -141,6 +182,15 @@ if grep '^const ___WALL = ' gen-sysinfo.go >/dev/null 2>&1 \
    && ! grep '^const _WALL = ' gen-sysinfo.go >/dev/null 2>&1; then
   echo 'const WALL = ___WALL' >> ${OUT}
 fi
+# On GNU/Linux the os package requires WEXITED and WNOWAIT.
+if test "${GOOS}" = "linux"; then
+  if ! grep '^const WEXITED = ' ${OUT} >/dev/null 2>&1; then
+    echo 'const WEXITED = 4' >> ${OUT}
+  fi
+  if ! grep '^const WNOWAIT = ' ${OUT} >/dev/null 2>&1; then
+    echo 'const WNOWAIT = 0x01000000' >> ${OUT}
+  fi
+fi
 
 # Networking constants.
 egrep '^const _(AF|ARPHRD|ETH|IN|SOCK|SOL|SO|IPPROTO|TCP|IP|IPV6)_' gen-sysinfo.go |
@@ -168,6 +218,11 @@ if ! grep '^const AF_LOCAL ' ${OUT} >/dev/null 2>&1; then
   if grep '^const AF_UNIX ' ${OUT} >/dev/null 2>&1; then
     echo "const AF_LOCAL = AF_UNIX" >> ${OUT}
   fi
+fi
+
+# The syscall package requires _AT_FDCWD, but doesn't export it.
+if ! grep '^const _AT_FDCWD = ' ${OUT} >/dev/null 2>&1; then
+  echo "const _AT_FDCWD = -100" >> ${OUT}
 fi
 
 # sysconf constants.
@@ -295,16 +350,11 @@ upcase_fields () {
 # _user_regs_struct.
 regs=`grep '^type _user_regs_struct struct' gen-sysinfo.go || true`
 if test "$regs" = ""; then
-  # s390
-  regs=`grep '^type __user_regs_struct struct' gen-sysinfo.go || true`
-  if test "$regs" != ""; then
-    # Substructures of __user_regs_struct on s390
-    upcase_fields "__user_psw_struct" "PtracePsw" >> ${OUT} || true
-    upcase_fields "__user_fpregs_struct" "PtraceFpregs" >> ${OUT} || true
-    upcase_fields "__user_per_struct" "PtracePer" >> ${OUT} || true
-  fi
+  # mips*
+  regs=`grep '^type _pt_regs struct' gen-sysinfo.go || true`
 fi
 if test "$regs" != ""; then
+  regs=`echo $regs | sed -e 's/type _pt_regs struct//'`
   regs=`echo $regs |
     sed -e 's/type __*user_regs_struct struct //' -e 's/[{}]//g'`
   regs=`echo $regs | sed -e s'/^ *//'`
@@ -428,6 +478,19 @@ grep '^type _tms ' gen-sysinfo.go | \
       -e 's/tms_cstime/Cstime/' \
     >> ${OUT}
 
+# AIX uses st_timespec struct for stat.
+grep '^type _st_timespec ' gen-sysinfo.go | \
+    sed -e 's/type _st_timespec /type StTimespec /' \
+      -e 's/tv_sec/Sec/' \
+      -e 's/tv_nsec/Nsec/' >> ${OUT}
+
+# Special treatment of struct stat st_dev for GNU/Hurd
+# /usr/include/i386-gnu/bits/stat.h: #define st_dev st_fsid
+st_dev='-e s/st_dev/Dev/'
+if grep 'define st_dev st_fsid' gen-sysinfo.go > /dev/null 2>&1; then
+  st_dev='-e s/st_fsid/Dev/'
+fi
+
 # The stat type.
 # Prefer largefile variant if available.
 stat=`grep '^type _stat64 ' gen-sysinfo.go || true`
@@ -437,7 +500,7 @@ else
   grep '^type _stat ' gen-sysinfo.go
 fi | sed -e 's/type _stat64/type Stat_t/' \
          -e 's/type _stat/type Stat_t/' \
-         -e 's/st_dev/Dev/' \
+         ${st_dev} \
          -e 's/st_ino/Ino/g' \
          -e 's/st_nlink/Nlink/' \
          -e 's/st_mode/Mode/' \
@@ -452,6 +515,7 @@ fi | sed -e 's/type _stat64/type Stat_t/' \
          -e 's/st_ctim/Ctim/' \
          -e 's/\([^a-zA-Z0-9_]\)_timeval\([^a-zA-Z0-9_]\)/\1Timeval\2/g' \
          -e 's/\([^a-zA-Z0-9_]\)_timespec_t\([^a-zA-Z0-9_]\)/\1Timespec\2/g' \
+         -e 's/\([^a-zA-Z0-9_]\)_st_timespec_t\([^a-zA-Z0-9_]\)/\1StTimespec\2/g' \
          -e 's/\([^a-zA-Z0-9_]\)_timespec\([^a-zA-Z0-9_]\)/\1Timespec\2/g' \
          -e 's/\([^a-zA-Z0-9_]\)_timestruc_t\([^a-zA-Z0-9_]\)/\1Timestruc\2/g' \
          -e 's/Godump_[0-9] struct { \([^;]*;\) };/\1/g' \
@@ -470,6 +534,7 @@ fi | sed -e 's/type _dirent64/type Dirent/' \
          -e 's/d_name/Name/' \
          -e 's/]int8/]byte/' \
          -e 's/d_ino/Ino/' \
+         -e 's/d_namlen/Namlen/' \
          -e 's/d_off/Off/' \
          -e 's/d_reclen/Reclen/' \
          -e 's/d_type/Type/' \
@@ -634,6 +699,14 @@ grep '^type _ip6_mtuinfo ' gen-sysinfo.go | \
       -e 's/ip6m_mtu/Mtu/' \
     >> ${OUT}
 
+# We need IPv6MTUInfo to compile the syscall package.
+if ! grep 'type IPv6MTUInfo ' ${OUT} >/dev/null 2>&1; then
+  echo 'type IPv6MTUInfo struct { Addr RawSockaddrInet6; Mtu uint32; }' >> ${OUT}
+fi
+if ! grep 'const _sizeof_ip6_mtuinfo = ' ${OUT} >/dev/null 2>&1; then
+  echo 'const SizeofIPv6MTUInfo = 32' >> ${OUT}
+fi
+
 # Try to guess the type to use for fd_set.
 fd_set=`grep '^type _fd_set ' gen-sysinfo.go || true`
 fds_bits_type="_C_long"
@@ -656,10 +729,19 @@ grep '^const _EAI_' gen-sysinfo.go | \
 grep '^const _NI_' gen-sysinfo.go | \
   sed -e 's/^\(const \)_\(NI_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
 
+# If nothing else defined EAI_OVERFLOW, make sure it has a value.
+if ! grep "const EAI_OVERFLOW " ${OUT} >/dev/null 2>&1; then
+  echo "const EAI_OVERFLOW = 0" >> ${OUT}
+fi
+
 # The passwd struct.
+# Force uid and gid from int32 to uint32 for consistency; they are
+# int32 on Solaris 10 but uint32 everywhere else including Solaris 11.
 grep '^type _passwd ' gen-sysinfo.go | \
     sed -e 's/_passwd/Passwd/' \
       -e 's/ pw_/ Pw_/g' \
+      -e 's/ Pw_uid int32/ Pw_uid uint32/' \
+      -e 's/ Pw_gid int32/ Pw_gid uint32/' \
     >> ${OUT}
 
 # The group struct.
@@ -870,6 +952,11 @@ if ! grep '^const _TIOCSCTTY ' gen-sysinfo.go >/dev/null 2>&1; then
   fi
 fi
 
+# If nothing else defined TIOCSCTTY, make sure it has a value.
+if ! grep "const TIOCSCTTY " ${OUT} >/dev/null 2>&1; then
+  echo "const TIOCSCTTY = 0" >> ${OUT}
+fi
+
 # The nlmsghdr struct.
 grep '^type _nlmsghdr ' gen-sysinfo.go | \
     sed -e 's/_nlmsghdr/NlMsghdr/' \
@@ -936,6 +1023,18 @@ grep '^type _ifinfomsg ' gen-sysinfo.go | \
       -e 's/ifi_flags/Flags/' \
       -e 's/ifi_change/Change/' \
     >> ${OUT}
+
+# The if_msghdr struct.
+grep '^type _if_msghdr ' gen-sysinfo.go | \
+    sed -e 's/_if_msghdr/IfMsgHdr/' \
+		-e 's/ifm_msglen/Msglen/' \
+		-e 's/ifm_version/Version/' \
+		-e 's/ifm_type/Type/' \
+		-e 's/ifm_addrs/Addrs/' \
+		-e 's/ifm_flags/Flags/' \
+		-e 's/ifm_index/Index/' \
+		-e 's/ifm_addrlen/Addrlen/' \
+		>> ${OUT}
 
 # The interface information types and flags.
 grep '^const _IFA' gen-sysinfo.go | \
@@ -1026,12 +1125,15 @@ grep '^const _FALLOC_' gen-sysinfo.go |
 
 # The statfs struct.
 # Prefer largefile variant if available.
+# CentOS 5 does not have f_flags, so pull from f_spare.
 statfs=`grep '^type _statfs64 ' gen-sysinfo.go || true`
-if test "$statfs" != ""; then
-  grep '^type _statfs64 ' gen-sysinfo.go
-else
-  grep '^type _statfs ' gen-sysinfo.go
-fi | sed -e 's/type _statfs64/type Statfs_t/' \
+if test "$statfs" = ""; then
+  statfs=`grep '^type _statfs ' gen-sysinfo.go || true`
+fi
+if ! echo "$statfs" | grep f_flags; then
+  statfs=`echo "$statfs" | sed -e 's/f_spare \[4+1\]\([^ ;]*\)/f_flags \1; f_spare [3+1]\1/'`
+fi
+echo "$statfs" | sed -e 's/type _statfs64/type Statfs_t/' \
 	 -e 's/type _statfs/type Statfs_t/' \
 	 -e 's/f_type/Type/' \
 	 -e 's/f_bsize/Bsize/' \
@@ -1083,8 +1185,16 @@ if test "$timex" != ""; then
 fi
 
 # The rlimit struct.
-grep '^type _rlimit ' gen-sysinfo.go | \
-    sed -e 's/_rlimit/Rlimit/' \
+# On systems that use syscall/libcall_posix_largefile.go, use rlimit64
+# if it exists.
+rlimit="_rlimit"
+if test "${GOOS}" = "aix" || test "${GOOS}" = "linux" || (test "${GOOS}" = "solaris" && (test "${GOARCH}" = "386" || test "${GOARCH}" = "sparc")); then
+  if grep '^type _rlimit64 ' gen-sysinfo.go > /dev/null 2>&1; then
+    rlimit="_rlimit64"
+  fi
+fi
+grep "^type ${rlimit} " gen-sysinfo.go | \
+    sed -e "s/${rlimit}/Rlimit/" \
       -e 's/rlim_cur/Cur/' \
       -e 's/rlim_max/Max/' \
     >> ${OUT}
@@ -1093,7 +1203,20 @@ grep '^type _rlimit ' gen-sysinfo.go | \
 grep '^const _RLIMIT_' gen-sysinfo.go |
     sed -e 's/^\(const \)_\(RLIMIT_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
 grep '^const _RLIM_' gen-sysinfo.go |
+    grep -v '^const _RLIM_INFINITY ' |
     sed -e 's/^\(const \)_\(RLIM_[^= ]*\)\(.*\)$/\1\2 = _\2/' >> ${OUT}
+rliminf=""
+if test "${rlimit}" = "_rlimit64" && grep '^const _RLIM64_INFINITY ' gen-sysinfo.go > /dev/null 2>&1; then
+  rliminf=`grep '^const _RLIM64_INFINITY ' gen-sysinfo.go | sed -e 's/.* //'`
+else
+  rliminf=`grep '^const _RLIM_INFINITY ' gen-sysinfo.go | sed -e 's/.* //'`
+fi
+# For compatibility with the gc syscall package, treat 0xffffffffffffffff as -1.
+if test "$rliminf" = "0xffffffffffffffff"; then
+  echo "const RLIM_INFINITY = -1" >> ${OUT}
+elif test -n "$rliminf"; then
+  echo "const RLIM_INFINITY = $rliminf" >> ${OUT}
+fi
 
 # The sysinfo struct.
 grep '^type _sysinfo ' gen-sysinfo.go | \
@@ -1111,20 +1234,6 @@ grep '^type _sysinfo ' gen-sysinfo.go | \
       -e 's/freehigh/Freehigh/' \
       -e 's/mem_unit/Unit/' \
     >> ${OUT}
-
-# The ustat struct.
-grep '^type _ustat ' gen-sysinfo.go | \
-    sed -e 's/_ustat/Ustat_t/' \
-      -e 's/f_tfree/Tfree/' \
-      -e 's/f_tinode/Tinoe/' \
-      -e 's/f_fname/Fname/' \
-      -e 's/f_fpack/Fpack/' \
-    >> ${OUT}
-# Force it to be defined, as on some older GNU/Linux systems the
-# header file fails when using with <linux/filter.h>.
-if ! grep 'type _ustat ' gen-sysinfo.go >/dev/null 2>&1; then
-  echo 'type Ustat_t struct { Tfree int32; Tinoe uint64; Fname [5+1]int8; Fpack [5+1]int8; }' >> ${OUT}
-fi
 
 # The utimbuf struct.
 grep '^type _utimbuf ' gen-sysinfo.go | \
@@ -1268,22 +1377,22 @@ grep '^type _zone_net_addr_t ' gen-sysinfo.go | \
     sed -e 's/_in6_addr/[16]byte/' \
     >> ${OUT}
 
-# The Solaris 12 _flow_arp_desc_t struct.
+# The Solaris 11.4 _flow_arp_desc_t struct.
 grep '^type _flow_arp_desc_t ' gen-sysinfo.go | \
     sed -e 's/_in6_addr_t/[16]byte/g' \
     >> ${OUT}
 
-# The Solaris 12 _flow_l3_desc_t struct.
+# The Solaris 11.4 _flow_l3_desc_t struct.
 grep '^type _flow_l3_desc_t ' gen-sysinfo.go | \
     sed -e 's/_in6_addr_t/[16]byte/g' \
     >> ${OUT}
 
-# The Solaris 12 _mac_ipaddr_t struct.
+# The Solaris 11.3 _mac_ipaddr_t struct.
 grep '^type _mac_ipaddr_t ' gen-sysinfo.go | \
     sed -e 's/_in6_addr_t/[16]byte/g' \
     >> ${OUT}
 
-# The Solaris 12 _mactun_info_t struct.
+# The Solaris 11.3 _mactun_info_t struct.
 grep '^type _mactun_info_t ' gen-sysinfo.go | \
     sed -e 's/_in6_addr_t/[16]byte/g' \
     >> ${OUT}

@@ -1,6 +1,6 @@
 // class template regex -*- C++ -*-
 
-// Copyright (C) 2010-2017 Free Software Foundation, Inc.
+// Copyright (C) 2010-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -32,6 +32,8 @@
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
+_GLIBCXX_BEGIN_NAMESPACE_VERSION
+
 /**
  * @defgroup regex Regular Expressions
  *
@@ -45,12 +47,10 @@ namespace std _GLIBCXX_VISIBILITY(default)
  */
 namespace regex_constants
 {
-_GLIBCXX_BEGIN_NAMESPACE_VERSION
-
   /**
    * @name 5.1 Regular Expression Syntax Options
    */
-  //@{
+  ///@{
   enum __syntax_option
   {
     _S_icase,
@@ -216,7 +216,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   operator^=(syntax_option_type& __a, syntax_option_type __b)
   { return __a = __a ^ __b; }
 
-  //@}
+  ///@}
 
   /**
    * @name 5.2 Matching Rules
@@ -227,7 +227,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    * below for any bitmask elements set.
    *
    */
-  //@{
+  ///@{
 
   enum __match_flag
   {
@@ -407,11 +407,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   operator^=(match_flag_type& __a, match_flag_type __b)
   { return __a = __a ^ __b; }
 
-  //@}
+  ///@}
+} // namespace regex_constants
+/// @} group regex
 
 _GLIBCXX_END_NAMESPACE_VERSION
-} // namespace regex_constants
-
-/* @} */ // group regex
 } // namespace std
 
