@@ -1,5 +1,5 @@
 /* Encoding of types for Objective C.
-   Copyright (C) 1993-2017 Free Software Foundation, Inc.
+   Copyright (C) 1993-2019 Free Software Foundation, Inc.
    Contributed by Kresten Krab Thorup
    Bitfield support by Ovidiu Predescu
 
@@ -81,6 +81,7 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #define DECL_MODE(TYPE) *(TYPE)
 #define TYPE_MODE(TYPE) *(TYPE)
 
+#undef  DFmode
 #define DFmode          _C_DBL
 
 #define strip_array_types(TYPE)      ({const char *_field = (TYPE); \
@@ -145,7 +146,6 @@ static int __attribute__ ((__unused__)) not_target_flags = 0;
 #  undef TARGET_ALIGN_NATURAL
 #  define TARGET_ALIGN_NATURAL 1
 # endif
-
 /* On Darwin32, we need to recurse until we find the starting stuct type.  */
 static int 
 _darwin_rs6000_special_round_type_align (const char *struc, int comp, int spec)

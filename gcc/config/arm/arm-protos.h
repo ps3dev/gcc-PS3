@@ -1,5 +1,5 @@
 /* Prototypes for exported functions defined in arm.c and pe.c
-   Copyright (C) 1999-2017 Free Software Foundation, Inc.
+   Copyright (C) 1999-2019 Free Software Foundation, Inc.
    Contributed by Richard Earnshaw (rearnsha@arm.com)
    Minor hacks by Nick Clifton (nickc@cygnus.com)
 
@@ -28,7 +28,7 @@ extern enum unwind_info_type arm_except_unwind_info (struct gcc_options *);
 extern int use_return_insn (int, rtx);
 extern bool use_simple_return_p (void);
 extern enum reg_class arm_regno_class (int);
-extern void arm_load_pic_register (unsigned long);
+extern void arm_load_pic_register (unsigned long, rtx);
 extern int arm_volatile_func (void);
 extern void arm_expand_prologue (void);
 extern void arm_expand_epilogue (bool);
@@ -47,7 +47,7 @@ extern unsigned int arm_dbx_register_number (unsigned int);
 extern void arm_output_fn_unwind (FILE *, bool);
 
 extern rtx arm_expand_builtin (tree exp, rtx target, rtx subtarget
-			       ATTRIBUTE_UNUSED, enum machine_mode mode
+			       ATTRIBUTE_UNUSED, machine_mode mode
 			       ATTRIBUTE_UNUSED, int ignore ATTRIBUTE_UNUSED);
 extern tree arm_builtin_decl (unsigned code, bool initialize_p
 			      ATTRIBUTE_UNUSED);
@@ -56,20 +56,21 @@ extern void arm_atomic_assign_expand_fenv (tree *hold, tree *clear, tree *update
 extern rtx arm_simd_vect_par_cnst_half (machine_mode mode, bool high);
 extern bool arm_simd_check_vect_par_cnst_half_p (rtx op, machine_mode mode,
 						 bool high);
+extern void arm_emit_speculation_barrier_function (void);
+
 #ifdef RTX_CODE
 extern void arm_gen_unlikely_cbranch (enum rtx_code, machine_mode cc_mode,
 				      rtx label_ref);
 extern bool arm_vector_mode_supported_p (machine_mode);
 extern bool arm_small_register_classes_for_mode_p (machine_mode);
-extern int arm_hard_regno_mode_ok (unsigned int, machine_mode);
-extern bool arm_modes_tieable_p (machine_mode, machine_mode);
 extern int const_ok_for_arm (HOST_WIDE_INT);
 extern int const_ok_for_op (HOST_WIDE_INT, enum rtx_code);
 extern int const_ok_for_dimode_op (HOST_WIDE_INT, enum rtx_code);
+extern void thumb1_gen_const_int (rtx, HOST_WIDE_INT);
 extern int arm_split_constant (RTX_CODE, machine_mode, rtx,
 			       HOST_WIDE_INT, rtx, rtx, int);
 extern int legitimate_pic_operand_p (rtx);
-extern rtx legitimize_pic_address (rtx, machine_mode, rtx);
+extern rtx legitimize_pic_address (rtx, machine_mode, rtx, rtx, bool);
 extern rtx legitimize_tls_address (rtx, rtx);
 extern bool arm_legitimate_address_p (machine_mode, rtx, bool);
 extern int arm_legitimate_address_outer_p (machine_mode, rtx, RTX_CODE, int);
@@ -109,6 +110,8 @@ extern int arm_coproc_mem_operand (rtx, bool);
 extern int neon_vector_mem_operand (rtx, int, bool);
 extern int neon_struct_mem_operand (rtx);
 
+extern rtx *neon_vcmla_lane_prepare_operands (rtx *);
+
 extern int tls_mentioned_p (rtx);
 extern int symbol_mentioned_p (rtx);
 extern int label_mentioned_p (rtx);
@@ -123,6 +126,7 @@ extern rtx arm_gen_store_multiple (int *, int, rtx, int, rtx, HOST_WIDE_INT *);
 extern bool offset_ok_for_ldrd_strd (HOST_WIDE_INT);
 extern bool operands_ok_ldrd_strd (rtx, rtx, rtx, HOST_WIDE_INT, bool, bool);
 extern bool gen_operands_ldrd_strd (rtx *, bool, bool, bool);
+extern bool valid_operands_ldrd_strd (rtx *, bool);
 extern int arm_gen_movmemqi (rtx *);
 extern bool gen_movmem_ldrd_strd (rtx *);
 extern machine_mode arm_select_cc_mode (RTX_CODE, rtx, rtx);
@@ -144,6 +148,7 @@ extern const char *output_mov_long_double_arm_from_arm (rtx *);
 extern const char *output_move_double (rtx *, bool, int *count);
 extern const char *output_move_quad (rtx *);
 extern int arm_count_output_move_double_insns (rtx *);
+extern int arm_count_ldrdstrd_insns (rtx *, bool);
 extern const char *output_move_vfp (rtx *operands);
 extern const char *output_move_neon (rtx *operands);
 extern int arm_attr_length_move_neon (rtx_insn *);
@@ -179,7 +184,6 @@ extern bool arm_coproc_ldc_stc_legitimate_address (rtx);
 
 #if defined TREE_CODE
 extern void arm_init_cumulative_args (CUMULATIVE_ARGS *, tree, rtx, tree);
-extern bool arm_pad_arg_upward (machine_mode, const_tree);
 extern bool arm_pad_reg_upward (machine_mode, tree, int);
 #endif
 extern int arm_apply_result_size (void);
@@ -225,8 +229,9 @@ extern bool arm_change_mode_p (tree);
 extern tree arm_valid_target_attribute_tree (tree, struct gcc_options *,
 					     struct gcc_options *);
 extern void arm_configure_build_target (struct arm_build_target *,
-					struct cl_target_option *,
-					struct gcc_options *, bool);
+					struct cl_target_option *, bool);
+extern void arm_option_reconfigure_globals (void);
+extern void arm_options_perform_arch_sanity_checks (void);
 extern void arm_pr_long_calls (struct cpp_reader *);
 extern void arm_pr_no_long_calls (struct cpp_reader *);
 extern void arm_pr_long_calls_off (struct cpp_reader *);
@@ -264,12 +269,32 @@ struct cpu_vec_costs {
 
 struct cpu_cost_table;
 
+/* Addressing mode operations.  Used to index tables in struct
+   addr_mode_cost_table.  */
+enum arm_addr_mode_op
+{
+   AMO_DEFAULT,
+   AMO_NO_WB,	/* Offset with no writeback.  */
+   AMO_WB,	/* Offset with writeback.  */
+   AMO_MAX	/* For array size.  */
+};
+
+/* Table of additional costs in units of COSTS_N_INSNS() when using
+   addressing modes for each access type.  */
+struct addr_mode_cost_table
+{
+   const int integer[AMO_MAX];
+   const int fp[AMO_MAX];
+   const int vector[AMO_MAX];
+};
+
 /* Dump function ARM_PRINT_TUNE_INFO should be updated whenever this
    structure is modified.  */
 
 struct tune_params
 {
   const struct cpu_cost_table *insn_extra_cost;
+  const struct addr_mode_cost_table *addr_mode_costs;
   bool (*sched_adjust_cost) (rtx_insn *, int, rtx_insn *, int *);
   int (*branch_cost) (bool, bool);
   /* Vectorizer costs.  */
@@ -338,7 +363,6 @@ extern bool arm_validize_comparison (rtx *, rtx *, rtx *);
 
 extern bool arm_gen_setmem (rtx *);
 extern void arm_expand_vec_perm (rtx target, rtx op0, rtx op1, rtx sel);
-extern bool arm_expand_vec_perm_const (rtx target, rtx op0, rtx op1, rtx sel);
 
 extern bool arm_autoinc_modes_ok_p (machine_mode, enum arm_auto_incmodes);
 
@@ -355,14 +379,14 @@ extern void arm_lang_object_attributes_init (void);
 extern void arm_register_target_pragmas (void);
 extern void arm_cpu_cpp_builtins (struct cpp_reader *);
 
+/* Defined in arm-d.c  */
+extern void arm_d_target_versions (void);
+
 extern bool arm_is_constant_pool_ref (rtx);
 
 /* The bits in this mask specify which instruction scheduling options should
    be used.  */
 extern unsigned int tune_flags;
-
-/* Nonzero if this chip supports the ARM Architecture 3M extensions.  */
-extern int arm_arch3m;
 
 /* Nonzero if this chip supports the ARM Architecture 4 extensions.  */
 extern int arm_arch4;
@@ -370,11 +394,11 @@ extern int arm_arch4;
 /* Nonzero if this chip supports the ARM Architecture 4t extensions.  */
 extern int arm_arch4t;
 
-/* Nonzero if this chip supports the ARM Architecture 5 extensions.  */
-extern int arm_arch5;
+/* Nonzero if this chip supports the ARM Architecture 5t extensions.  */
+extern int arm_arch5t;
 
-/* Nonzero if this chip supports the ARM Architecture 5E extensions.  */
-extern int arm_arch5e;
+/* Nonzero if this chip supports the ARM Architecture 5te extensions.  */
+extern int arm_arch5te;
 
 /* Nonzero if this chip supports the ARM Architecture 6 extensions.  */
 extern int arm_arch6;
@@ -462,10 +486,10 @@ struct arm_build_target
   const char *arch_name;
   /* Preprocessor substring (never NULL).  */
   const char *arch_pp_name;
-  /* CPU identifier for the core we're compiling for (architecturally).  */
-  enum processor_type arch_core;
   /* The base architecture value.  */
   enum base_architecture base_arch;
+  /* The profile letter for the architecture, upper case by convention.  */
+  char profile;
   /* Bitmap encapsulating the isa_bits for the target environment.  */
   sbitmap isa;
   /* Flags used for tuning.  Long term, these move into tune_params.  */
@@ -478,5 +502,78 @@ struct arm_build_target
 
 extern struct arm_build_target arm_active_target;
 
+/* Table entry for a CPU alias.  */
+struct cpu_alias
+{
+  /* The alias name.  */
+  const char *const name;
+  /* True if the name should be displayed in help text listing cpu names.  */
+  bool visible;
+};
+
+/* Table entry for an architectural feature extension.  */
+struct cpu_arch_extension
+{
+  /* Feature name.  */
+  const char *const name;
+  /* True if the option is negative (removes extensions).  */
+  bool remove;
+  /* True if the option is an alias for another option with identical effect;
+     the option will be ignored for canonicalization.  */
+  bool alias;
+  /* The modifier bits.  */
+  const enum isa_feature isa_bits[isa_num_bits];
+};
+
+/* Common elements of both CPU and architectural options.  */
+struct cpu_arch_option
+{
+  /* Name for this option.  */
+  const char *name;
+  /* List of feature extensions permitted.  */
+  const struct cpu_arch_extension *extensions;
+  /* Standard feature bits.  */
+  enum isa_feature isa_bits[isa_num_bits];
+};
+
+/* Table entry for an architecture entry.  */
+struct arch_option
+{
+  /* Common option fields.  */
+  cpu_arch_option common;
+  /* Short string for this architecture.  */
+  const char *arch;
+  /* Base architecture, from which this specific architecture is derived.  */
+  enum base_architecture base_arch;
+  /* The profile letter for the architecture, upper case by convention.  */
+  const char profile;
+  /* Default tune target (in the absence of any more specific data).  */
+  enum processor_type tune_id;
+};
+
+/* Table entry for a CPU entry.  */
+struct cpu_option
+{
+  /* Common option fields.  */
+  cpu_arch_option common;
+  /* List of aliases for this CPU.  */
+  const struct cpu_alias *aliases;
+  /* Architecture upon which this CPU is based.  */
+  enum arch_type arch;
+};
+
+extern const arch_option all_architectures[];
+extern const cpu_option all_cores[];
+
+const cpu_option *arm_parse_cpu_option_name (const cpu_option *, const char *,
+					     const char *, bool = true);
+const arch_option *arm_parse_arch_option_name (const arch_option *,
+					       const char *, const char *, bool = true);
+void arm_parse_option_features (sbitmap, const cpu_arch_option *,
+				const char *);
+
+void arm_initialize_isa (sbitmap, const enum isa_feature *);
+
+const char * arm_gen_far_branch (rtx *, int, const char * , const char *);
 
 #endif /* ! GCC_ARM_PROTOS_H */

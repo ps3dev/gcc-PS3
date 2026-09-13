@@ -1,7 +1,7 @@
 /* { dg-do compile } */
-/* { dg-require-effective-target arm_arch_v8m_base_ok } */
-/* { dg-add-options arm_arch_v8m_base } */
-/* { dg-options "-mcmse -mfloat-abi=softfp" } */
+/* Force an FPU to test that it is ignored for Thumb-1 -like targets and that
+   no clearing of VFP register occurs.  */
+/* { dg-options "-mcmse -mfloat-abi=softfp -mfpu=fpv5-d16" } */
 
 double __attribute__ ((cmse_nonsecure_call)) (*bar) (float, double);
 

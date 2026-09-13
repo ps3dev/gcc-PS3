@@ -1,5 +1,5 @@
 // Testcase from P0170R1
-// { dg-options -std=c++1z }
+// { dg-do compile { target c++17 } }
 
 constexpr int AddEleven(int n){
   return[n]{return n+11;}();

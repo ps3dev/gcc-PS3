@@ -13,9 +13,16 @@ main (void)
 
   /* MEMCHR.  */
   if (__builtin_memchr ("", 'x', 1000)) /* Not folded away.  */
-    __builtin_abort ();
+    {
+      /* { dg-warning "reading 1000 bytes from a region of size 1" "" { target *-*-* } .-2 } */
+      __builtin_abort ();
+    }
+
   if (__builtin_memchr (foo1, 'x', 1000)) /* Not folded away.  */
-    __builtin_abort ();
+    {
+      /* { dg-warning "reading 1000 bytes from a region of size 1" "" { target *-*-* } .-2 } */
+      __builtin_abort ();
+    }
 
   /* STRNCMP.  */
   if (strncmp ("a", "b", -1)) /* { dg-warning "implicit declaration of function" } */
@@ -24,4 +31,5 @@ main (void)
   return 0;
 }
 
-/* { dg-final { scan-tree-dump-times "__builtin_memchr" 2 "optimized" } } */
+/* { dg-prune-output "-Wbuiltin-declaration-mismatch" }
+   { dg-final { scan-tree-dump-times "__builtin_memchr" 2 "optimized" } } */

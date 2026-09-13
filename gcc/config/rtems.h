@@ -1,5 +1,5 @@
 /* Configuration common to all targets running RTEMS. 
-   Copyright (C) 2000-2017 Free Software Foundation, Inc.
+   Copyright (C) 2000-2019 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -21,10 +21,6 @@
    a copy of the GCC Runtime Library Exception along with this program;
    see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
    <http://www.gnu.org/licenses/>.  */
-
-/* The system headers under RTEMS are C++-aware.  */
-#undef NO_IMPLICIT_EXTERN_C
-#define NO_IMPLICIT_EXTERN_C
 
 /*
  * Dummy start/end specification to let linker work as
@@ -48,3 +44,7 @@
  -latomic -lc -lgcc --end-group %{!qnolinkcmds: -T linkcmds%s}}}"
 
 #define TARGET_POSIX_IO
+
+/* Prefer int for int32_t (see stdint-newlib.h).  */
+#undef STDINT_LONG32
+#define STDINT_LONG32 (INT_TYPE_SIZE != 32 && LONG_TYPE_SIZE == 32)

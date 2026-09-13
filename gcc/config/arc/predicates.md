@@ -1,5 +1,5 @@
 ;; Predicate definitions for Synopsys DesignWare ARC.
-;; Copyright (C) 2007-2017 Free Software Foundation, Inc.
+;; Copyright (C) 2007-2019 Free Software Foundation, Inc.
 ;;
 ;; This file is part of GCC.
 ;;
@@ -20,33 +20,12 @@
 (define_predicate "dest_reg_operand"
   (match_code "reg,subreg")
 {
-  rtx op0 = op;
-
-  if (GET_CODE (op0) == SUBREG)
-    op0 = SUBREG_REG (op0);
-  if (REG_P (op0) && REGNO (op0) < FIRST_PSEUDO_REGISTER
-      && TEST_HARD_REG_BIT (reg_class_contents[ALL_CORE_REGS],
-			    REGNO (op0))
-      && !TEST_HARD_REG_BIT (reg_class_contents[WRITABLE_CORE_REGS],
-			    REGNO (op0)))
-    return 0;
   return register_operand (op, mode);
 })
 
 (define_predicate "mpy_dest_reg_operand"
   (match_code "reg,subreg")
 {
-  rtx op0 = op;
-
-  if (GET_CODE (op0) == SUBREG)
-    op0 = SUBREG_REG (op0);
-  if (REG_P (op0) && REGNO (op0) < FIRST_PSEUDO_REGISTER
-      && TEST_HARD_REG_BIT (reg_class_contents[ALL_CORE_REGS],
-			    REGNO (op0))
-      /* Make sure the destination register is not LP_COUNT.  */
-      && !TEST_HARD_REG_BIT (reg_class_contents[MPY_WRITABLE_CORE_REGS],
-			    REGNO (op0)))
-    return 0;
   return register_operand (op, mode);
 })
 
@@ -189,6 +168,19 @@
   }
 )
 
+(define_predicate "compact_hreg_operand"
+  (match_code "reg, subreg")
+  {
+     if ((GET_MODE (op) != mode) && (mode != VOIDmode))
+	 return 0;
+
+      return (GET_CODE (op) == REG)
+      && (REGNO (op) >= FIRST_PSEUDO_REGISTER
+		|| (TARGET_V2 && REGNO (op) <= 31 && REGNO (op) != 30)
+		|| !TARGET_V2);
+  }
+)
+
 ;; Return true if OP is an acceptable memory operand for ARCompact
 ;; 16-bit store instructions
 (define_predicate "compact_store_memory_operand"
@@ -202,6 +194,10 @@
 
   /* .di instructions have no 16-bit form.  */
   if (MEM_VOLATILE_P (op) && !TARGET_VOLATILE_CACHE_SET)
+     return 0;
+
+  /* likewise for uncached types.  */
+  if (arc_is_uncached_mem_p (op))
      return 0;
 
   size = GET_MODE_SIZE (mode);
@@ -341,14 +337,17 @@
     case REG :
      /* Program Counter register cannot be the target of a move.  It is
 	 a readonly register.  */
-      if (REGNO (op) == PROGRAM_COUNTER_REGNO)
+      if (REGNO (op) == PCL_REG)
 	return 0;
       else if (TARGET_MULMAC_32BY16_SET
-	       && (REGNO (op) == 56 || REGNO(op) == 57))
+	       && (REGNO (op) == MUL32x16_REG || REGNO (op) == R57_REG))
 	return 0;
       else if (TARGET_MUL64_SET
-	       && (REGNO (op) == 57 || REGNO(op) == 58 || REGNO(op) == 59 ))
+	       && (REGNO (op) == R57_REG || REGNO (op) == MUL64_OUT_REG
+		   || REGNO (op) == R59_REG))
 	return 0;
+      else if (REGNO (op) == LP_COUNT)
+        return 1;
       else
 	return dest_reg_operand (op, mode);
     case SUBREG :
@@ -397,7 +396,8 @@
 ;; and only the standard movXX patterns are set up to handle them.
 (define_predicate "nonvol_nonimm_operand"
   (and (match_code "subreg, reg, mem")
-       (match_test "(GET_CODE (op) != MEM || !MEM_VOLATILE_P (op)) && nonimmediate_operand (op, mode)"))
+       (match_test "(GET_CODE (op) != MEM || !MEM_VOLATILE_P (op)) && nonimmediate_operand (op, mode)")
+       (match_test "!arc_is_uncached_mem_p (op)"))
 )
 
 ;; Return 1 if OP is a comparison operator valid for the mode of CC.
@@ -417,37 +417,38 @@
      a peephole.  */
   switch (GET_MODE (XEXP (op, 0)))
     {
-    case CC_ZNmode:
+    case E_CC_ZNmode:
       return (code == EQ || code == NE || code == GE || code == LT
 	      || code == GT);
-    case CC_Zmode:
+    case E_CC_Zmode:
       return code == EQ || code == NE;
-    case CC_Cmode:
+    case E_CC_Cmode:
       return code == LTU || code == GEU;
-    case CC_FP_GTmode:
+    case E_CC_FP_GTmode:
       return code == GT || code == UNLE;
-    case CC_FP_GEmode:
+    case E_CC_FP_GEmode:
       return code == GE || code == UNLT;
-    case CC_FP_ORDmode:
+    case E_CC_FP_ORDmode:
       return code == ORDERED || code == UNORDERED;
-    case CC_FP_UNEQmode:
+    case E_CC_FP_UNEQmode:
       return code == UNEQ || code == LTGT;
-    case CC_FPXmode:
+    case E_CC_FPXmode:
       return (code == EQ || code == NE || code == UNEQ || code == LTGT
 	      || code == ORDERED || code == UNORDERED);
 
-    case CC_FPUmode:
+    case E_CC_FPUmode:
+    case E_CC_FPUEmode:
       return 1;
-    case CC_FPU_UNEQmode:
+    case E_CC_FPU_UNEQmode:
       return 1;
 
-    case CCmode:
-    case SImode: /* Used for BRcc.  */
+    case E_CCmode:
+    case E_SImode: /* Used for BRcc.  */
       return 1;
     /* From combiner.  */
-    case QImode: case HImode: case DImode: case SFmode: case DFmode:
+    case E_QImode: case E_HImode: case E_DImode: case E_SFmode: case E_DFmode:
       return 0;
-    case VOIDmode:
+    case E_VOIDmode:
       return 0;
     default:
       gcc_unreachable ();
@@ -502,7 +503,7 @@
 	return FALSE;
     }
 
-  if (REGNO (op) != 61)
+  if (REGNO (op) != CC_REG)
     return FALSE;
   if (mode == rmode
       || (mode == CC_ZNmode && rmode == CC_Zmode)
@@ -524,11 +525,11 @@
     return 1;
   switch (mode)
     {
-    case CC_Zmode:
+    case E_CC_Zmode:
       if (GET_MODE (op) == CC_ZNmode)
 	return 1;
       /* Fall through.  */
-    case CC_ZNmode: case CC_Cmode:
+    case E_CC_ZNmode: case E_CC_Cmode:
       return GET_MODE (op) == CCmode;
     default:
       gcc_unreachable ();
@@ -589,7 +590,9 @@
 )
 
 (define_predicate "noncommutative_operator"
-  (ior (match_code "minus,ashift,ashiftrt,lshiftrt,rotatert")
+  (ior (and (match_code "ashift,ashiftrt,lshiftrt,rotatert")
+	    (match_test "TARGET_BARREL_SHIFTER"))
+       (match_code "minus")
        (and (match_code "ss_minus")
 	    (match_test "TARGET_ARC700 || TARGET_EA_SET")))
 )
@@ -600,6 +603,11 @@
 		 (and (match_code "ss_truncate")
 		      (match_test "GET_MODE (XEXP (op, 0)) == HImode")))
 	    (match_test "TARGET_ARC700 || TARGET_EA_SET")))
+)
+
+(define_predicate "_1_2_3_operand"
+  (and (match_code "const_int")
+       (match_test "INTVAL (op) == 1 || INTVAL (op) == 2 || INTVAL (op) == 3"))
 )
 
 (define_predicate "_2_4_8_operand"
@@ -684,7 +692,12 @@
   (and (match_code "reg")
        (match_test "REGNO (op) == (TARGET_BIG_ENDIAN ? 58 : 59)")))
 
-; Unfortunately, we can not allow a const_int_operand before reload, because
+(define_predicate "accl_operand"
+  (and (match_code "reg")
+       (match_test "REGNO (op) == (TARGET_BIG_ENDIAN ? 59 : 58)")
+       (match_test "TARGET_V2")))
+
+; Unfortunately, we cannot allow a const_int_operand before reload, because
 ; reload needs a non-void mode to guide it how to reload the inside of a
 ; {sign_}extend.
 (define_predicate "extend_operand"
@@ -768,3 +781,15 @@
 (define_predicate "arc_short_operand"
   (ior (match_test "register_operand (op, mode)")
        (match_test "short_unsigned_const_operand (op, mode)")))
+
+(define_special_predicate "push_multi_operand"
+  (match_code "parallel")
+  {
+   return arc_check_multi (op, true);
+})
+
+(define_special_predicate "pop_multi_operand"
+  (match_code "parallel")
+  {
+   return arc_check_multi (op, false);
+})

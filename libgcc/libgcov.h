@@ -1,5 +1,5 @@
 /* Header file for libgcov-*.c.
-   Copyright (C) 1996-2017 Free Software Foundation, Inc.
+   Copyright (C) 1996-2019 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -149,7 +149,7 @@ extern struct gcov_info *gcov_list;
 
 /* Poison these, so they don't accidentally slip in.  */
 #pragma GCC poison gcov_write_string gcov_write_tag gcov_write_length
-#pragma GCC poison gcov_time gcov_magic
+#pragma GCC poison gcov_time
 
 #ifdef HAVE_GAS_HIDDEN
 #define ATTRIBUTE_HIDDEN  __attribute__ ((__visibility__ ("hidden")))
@@ -226,6 +226,15 @@ struct gcov_master
   gcov_unsigned_t version;
   struct gcov_root *root;
 };
+
+struct indirect_call_tuple
+{
+  /* Callee function.  */
+  void *callee;
+
+  /* Pointer to counters.  */
+  gcov_type *counters;
+};
   
 /* Exactly one of these will be active in the process.  */
 extern struct gcov_master __gcov_master;
@@ -269,7 +278,7 @@ extern void __gcov_pow2_profiler (gcov_type *, gcov_type);
 extern void __gcov_pow2_profiler_atomic (gcov_type *, gcov_type);
 extern void __gcov_one_value_profiler (gcov_type *, gcov_type);
 extern void __gcov_one_value_profiler_atomic (gcov_type *, gcov_type);
-extern void __gcov_indirect_call_profiler_v2 (gcov_type, void *);
+extern void __gcov_indirect_call_profiler_v3 (gcov_type, void *);
 extern void __gcov_time_profiler (gcov_type *);
 extern void __gcov_time_profiler_atomic (gcov_type *);
 extern void __gcov_average_profiler (gcov_type *, gcov_type);

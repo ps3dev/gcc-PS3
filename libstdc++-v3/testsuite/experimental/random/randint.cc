@@ -1,8 +1,10 @@
 // { dg-do run { target c++14 } }
+// { dg-require-cstdint "" }
+// { dg-require-effective-target random_device }
 // { dg-require-effective-target tls_runtime }
 // { dg-add-options tls }
 
-// Copyright (C) 2015-2017 Free Software Foundation, Inc.
+// Copyright (C) 2015-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -32,7 +34,7 @@ test01()
   }
 
   std::experimental::reseed(99u);
-  const long n1[] = {
+  const int n1[] = {
     std::experimental::randint(0, 100),
     std::experimental::randint(0, 100),
     std::experimental::randint(0, 100),
@@ -40,7 +42,7 @@ test01()
     std::experimental::randint(0, 100)
   };
   std::experimental::reseed(99u);
-  const long n2[] = {
+  const int n2[] = {
     std::experimental::randint(0, 100),
     std::experimental::randint(0, 100),
     std::experimental::randint(0, 100),
@@ -50,13 +52,13 @@ test01()
   for (int i = 0; i < 5; ++i)
     VERIFY( n1[i] == n2[i] );
 
-  std::experimental::reseed();
-  const long n3[] = {
-    std::experimental::randint(0, 100),
-    std::experimental::randint(0, 100),
-    std::experimental::randint(0, 100)
-  };
-  VERIFY( !(n3[0] == n1[0] && n3[1] == n1[1] && n3[2] == n1[2]) );
+  do
+  {
+    std::experimental::reseed();
+  }
+  while (std::experimental::randint(0, 100) == n1[0]
+      && std::experimental::randint(0, 100) == n1[1]
+      && std::experimental::randint(0, 100) == n1[2]);
 }
 
 void

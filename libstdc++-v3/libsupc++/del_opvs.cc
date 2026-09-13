@@ -1,6 +1,6 @@
 // Boilerplate support routines for -*- C++ -*- dynamic memory management.
 
-// Copyright (C) 1997-2017 Free Software Foundation, Inc.
+// Copyright (C) 1997-2019 Free Software Foundation, Inc.
 //
 // This file is part of GCC.
 //
@@ -23,11 +23,12 @@
 // see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 // <http://www.gnu.org/licenses/>.
 
+#pragma GCC diagnostic ignored "-Wsized-deallocation"
 #include <bits/c++config.h>
 #include "new"
 
 _GLIBCXX_WEAK_DEFINITION void
-operator delete[] (void *ptr, std::size_t) _GLIBCXX_USE_NOEXCEPT
+operator delete[] (void *ptr, std::size_t) noexcept
 {
   ::operator delete[] (ptr);
 }

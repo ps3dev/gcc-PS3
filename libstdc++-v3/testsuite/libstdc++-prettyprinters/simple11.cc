@@ -4,7 +4,7 @@
 // { dg-options "-g -O0" }
 // { dg-skip-if "" { *-*-* } { "-D_GLIBCXX_PROFILE" } }
 
-// Copyright (C) 2011-2017 Free Software Foundation, Inc.
+// Copyright (C) 2011-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -109,6 +109,17 @@ main()
 
   std::vector<int>::iterator viter0;
 // { dg-final { note-test viter0 {non-dereferenceable iterator for std::vector} } }
+
+  std::vector<bool> vb;
+  vb.reserve(100);
+  vb.push_back(true);
+  vb.push_back(true);
+  vb.push_back(true);
+  vb.push_back(false);
+  vb.push_back(false);
+  vb.push_back(true);
+  vb.erase(vb.begin());
+// { dg-final { regexp-test vb {std::(__debug::)?vector<bool> of length 5, capacity 128 = \\{true, true, false, false, true\\}} } }
 
   __gnu_cxx::slist<int> sll;
   sll.push_front(23);

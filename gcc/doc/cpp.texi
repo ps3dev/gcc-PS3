@@ -10,7 +10,7 @@
 
 @copying
 @c man begin COPYRIGHT
-Copyright @copyright{} 1987-2017 Free Software Foundation, Inc.
+Copyright @copyright{} 1987-2019 Free Software Foundation, Inc.
 
 Permission is granted to copy, distribute and/or modify this document
 under the terms of the GNU Free Documentation License, Version 1.3 or
@@ -194,7 +194,7 @@ will be removed, and the Makefile will not work.
 
 Having said that, you can often get away with using cpp on things which
 are not C@.  Other Algol-ish programming languages are often safe
-(Pascal, Ada, etc.) So is assembly, with caution.  @option{-traditional-cpp}
+(Ada, etc.) So is assembly, with caution.  @option{-traditional-cpp}
 mode preserves more white space, and is otherwise more permissive.  Many
 of the problems can be avoided by writing C or C++ style comments
 instead of native language comments, and keeping macros simple.
@@ -211,8 +211,8 @@ Standard C@.  In its default mode, the GNU C preprocessor does not do a
 few things required by the standard.  These are features which are
 rarely, if ever, used, and may cause surprising changes to the meaning
 of a program which does not expect them.  To get strict ISO Standard C,
-you should use the @option{-std=c90}, @option{-std=c99} or
-@option{-std=c11} options, depending
+you should use the @option{-std=c90}, @option{-std=c99},
+@option{-std=c11} or @option{-std=c17} options, depending
 on which version of the standard you want.  To get all the mandatory
 diagnostics, you must also use @option{-pedantic}.  @xref{Invocation}.
 
@@ -958,10 +958,7 @@ prevent the file from ever being read again, by either @samp{#import} or
 @samp{#import} and @samp{#include} to refer to the same header file.
 
 Another way to prevent a header file from being included more than once
-is with the @samp{#pragma once} directive.  If @samp{#pragma once} is
-seen when scanning a header file, that file will never be read again, no
-matter what.
-
+is with the @samp{#pragma once} directive (@pxref{Pragmas}).  
 @samp{#pragma once} does not have the problems that @samp{#import} does,
 but it is not recognized by all preprocessors, so you cannot rely on it
 in a portable program.
@@ -1133,6 +1130,9 @@ header, no matter where it was found.  Code that comes before the
 @samp{#pragma} in the file is not affected.  @code{@w{#pragma GCC
 system_header}} has no effect in the primary source file.
 @end itemize
+
+On some targets, such as RS/6000 AIX, GCC implicitly surrounds all
+system headers with an @samp{extern "C"} block when compiling as C++.
 
 @node Macros
 @chapter Macros
@@ -1632,7 +1632,7 @@ a function can.  The syntax for defining the macro is similar to that of
 a function.  Here is an example:
 
 @smallexample
-#define eprintf(@dots{}) fprintf (stderr, __VA_ARGS__)
+#define eprintf(...) fprintf (stderr, __VA_ARGS__)
 @end smallexample
 
 This kind of macro is called @dfn{variadic}.  When the macro is invoked,
@@ -1656,11 +1656,11 @@ below for an important special case for @samp{##}.)
 If your macro is complicated, you may want a more descriptive name for
 the variable argument than @code{@w{__VA_ARGS__}}.  CPP permits
 this, as an extension.  You may write an argument name immediately
-before the @samp{@dots{}}; that name is used for the variable argument.
+before the @samp{...}; that name is used for the variable argument.
 The @code{eprintf} macro above could be written
 
 @smallexample
-#define eprintf(args@dots{}) fprintf (stderr, args)
+#define eprintf(args...) fprintf (stderr, args)
 @end smallexample
 
 @noindent
@@ -1671,24 +1671,31 @@ You can have named arguments as well as variable arguments in a variadic
 macro.  We could define @code{eprintf} like this, instead:
 
 @smallexample
-#define eprintf(format, @dots{}) fprintf (stderr, format, __VA_ARGS__)
+#define eprintf(format, ...) fprintf (stderr, format, __VA_ARGS__)
 @end smallexample
 
 @noindent
-This formulation looks more descriptive, but unfortunately it is less
-flexible: you must now supply at least one argument after the format
-string.  In standard C, you cannot omit the comma separating the named
-argument from the variable arguments.  Furthermore, if you leave the
-variable argument empty, you will get a syntax error, because
-there will be an extra comma after the format string.
+This formulation looks more descriptive, but historically it was less
+flexible: you had to supply at least one argument after the format
+string.  In standard C, you could not omit the comma separating the
+named argument from the variable arguments.  (Note that this
+restriction has been lifted in C++2a, and never existed in GNU C; see
+below.)
+
+Furthermore, if you left the variable argument empty, you would have
+gotten a syntax error, because there would have been an extra comma
+after the format string.
 
 @smallexample
 eprintf("success!\n", );
      @expansion{} fprintf(stderr, "success!\n", );
 @end smallexample
 
-GNU CPP has a pair of extensions which deal with this problem.  First,
-you are allowed to leave the variable argument out entirely:
+This has been fixed in C++2a, and GNU CPP also has a pair of
+extensions which deal with this problem.
+
+First, in GNU CPP, and in C++ beginning in C++2a, you are allowed to
+leave the variable argument out entirely:
 
 @smallexample
 eprintf ("success!\n")
@@ -1696,11 +1703,27 @@ eprintf ("success!\n")
 @end smallexample
 
 @noindent
-Second, the @samp{##} token paste operator has a special meaning when
-placed between a comma and a variable argument.  If you write
+Second, C++2a introduces the @code{@w{__VA_OPT__}} function macro.
+This macro may only appear in the definition of a variadic macro.  If
+the variable argument has any tokens, then a @code{@w{__VA_OPT__}}
+invocation expands to its argument; but if the variable argument does
+not have any tokens, the @code{@w{__VA_OPT__}} expands to nothing:
 
 @smallexample
-#define eprintf(format, @dots{}) fprintf (stderr, format, ##__VA_ARGS__)
+#define eprintf(format, ...) \
+  fprintf (stderr, format __VA_OPT__(,) __VA_ARGS__)
+@end smallexample
+
+@code{@w{__VA_OPT__}} is also available in GNU C and GNU C++.
+
+Historically, GNU CPP has also had another extension to handle the
+trailing comma: the @samp{##} token paste operator has a special
+meaning when placed between a comma and a variable argument.  Despite
+the introduction of @code{@w{__VA_OPT__}}, this extension remains
+supported in GNU CPP, for backward compatibility.  If you write
+
+@smallexample
+#define eprintf(format, ...) fprintf (stderr, format, ##__VA_ARGS__)
 @end smallexample
 
 @noindent
@@ -1730,10 +1753,13 @@ of macro.  It may also be forbidden in open text; the standard is
 ambiguous.  We recommend you avoid using it except for its defined
 purpose.
 
+Likewise, C++ forbids @code{@w{__VA_OPT__}} anywhere outside the
+replacement list of a variadic macro.
+
 Variadic macros became a standard part of the C language with C99.  
 GNU CPP previously supported them
 with a named variable argument
-(@samp{args@dots{}}, not @samp{@dots{}} and @code{@w{__VA_ARGS__}}), which
+(@samp{args...}, not @samp{...} and @code{@w{__VA_ARGS__}}), which
 is still supported for backward compatibility.
 
 @node Predefined Macros
@@ -1857,8 +1883,12 @@ implementation, unless GNU CPP is being used with GCC@.
 
 The value @code{199409L} signifies the 1989 C standard as amended in
 1994, which is the current default; the value @code{199901L} signifies
-the 1999 revision of the C standard.  Support for the 1999 revision is
-not yet complete.
+the 1999 revision of the C standard; the value @code{201112L}
+signifies the 2011 revision of the C standard; the value
+@code{201710L} signifies the 2017 revision of the C standard (which is
+otherwise identical to the 2011 version apart from correction of
+defects).  An unspecified value larger than @code{201710L} is used for
+the experimental @option{-std=c2x} and @option{-std=gnu2x} modes.
 
 This macro is not defined if the @option{-traditional-cpp} option is
 used, nor when compiling C++ or Objective-C@.
@@ -1877,9 +1907,10 @@ selected, the value of the macro is
 @code{199711L} for the 1998 C++ standard,
 @code{201103L} for the 2011 C++ standard,
 @code{201402L} for the 2014 C++ standard,
-or an unspecified value strictly larger than @code{201402L} for the
-experimental languages enabled by @option{-std=c++1z} and
-@option{-std=gnu++1z}.
+@code{201703L} for the 2017 C++ standard,
+or an unspecified value strictly larger than @code{201703L} for the
+experimental languages enabled by @option{-std=c++2a} and
+@option{-std=gnu++2a}.
 
 @item __OBJC__
 This macro is defined, with value 1, when the Objective-C compiler is in
@@ -2351,6 +2382,10 @@ If GCC cannot determine the current date, it will emit a warning message
 These macros are defined when the target processor supports atomic compare
 and swap operations on operands 1, 2, 4, 8 or 16 bytes in length, respectively.
 
+@item __HAVE_SPECULATION_SAFE_VALUE
+This macro is defined with the value 1 to show that this version of GCC
+supports @code{__builtin_speculation_safe_value}.
+
 @item __GCC_HAVE_DWARF2_CFI_ASM
 This macro is defined when the compiler is emitting DWARF CFI directives
 to the assembler.  When this is defined, it is possible to emit those same
@@ -2364,6 +2399,21 @@ These macros are defined with value 1 if the backend supports the
 the include file @file{math.h} can define the macros
 @code{FP_FAST_FMA}, @code{FP_FAST_FMAF}, and @code{FP_FAST_FMAL}
 for compatibility with the 1999 C standard.
+
+@item __FP_FAST_FMAF16
+@itemx __FP_FAST_FMAF32
+@itemx __FP_FAST_FMAF64
+@itemx __FP_FAST_FMAF128
+@itemx __FP_FAST_FMAF32X
+@itemx __FP_FAST_FMAF64X
+@itemx __FP_FAST_FMAF128X
+These macros are defined with the value 1 if the backend supports the
+@code{fma} functions using the additional @code{_Float@var{n}} and
+@code{_Float@var{n}x} types that are defined in ISO/IEC TS
+18661-3:2015.  The include file @file{math.h} can define the
+@code{FP_FAST_FMAF@var{n}} and @code{FP_FAST_FMAF@var{n}x} macros if
+the user defined @code{__STDC_WANT_IEC_60559_TYPES_EXT__} before
+including @file{math.h}.
 
 @item __GCC_IEC_559
 This macro is defined to indicate the intended level of support for
@@ -3108,6 +3158,9 @@ directive}: @samp{#if}, @samp{#ifdef} or @samp{#ifndef}.
 * Defined::
 * Else::
 * Elif::
+* @code{__has_attribute}::
+* @code{__has_cpp_attribute}::
+* @code{__has_include}::
 @end menu
 
 @node Ifdef
@@ -3372,6 +3425,99 @@ condition succeeds after the original @samp{#if} and all previous
 @samp{#else} is allowed after any number of @samp{#elif} directives, but
 @samp{#elif} may not follow @samp{#else}.
 
+@node @code{__has_attribute}
+@subsection @code{__has_attribute}
+@cindex @code{__has_attribute}
+
+The special operator @code{__has_attribute (@var{operand})} may be used
+in @samp{#if} and @samp{#elif} expressions to test whether the attribute
+referenced by its @var{operand} is recognized by GCC.  Using the operator
+in other contexts is not valid.  In C code, @var{operand} must be
+a valid identifier.  In C++ code, @var{operand} may be optionally
+introduced by the @code{@var{attribute-scope}::} prefix.
+The @var{attribute-scope} prefix identifies the ``namespace'' within
+which the attribute is recognized.  The scope of GCC attributes is
+@samp{gnu} or @samp{__gnu__}.  The @code{__has_attribute} operator by
+itself, without any @var{operand} or parentheses, acts as a predefined
+macro so that support for it can be tested in portable code.  Thus,
+the recommended use of the operator is as follows:
+
+@smallexample
+#if defined __has_attribute
+#  if __has_attribute (nonnull)
+#    define ATTR_NONNULL __attribute__ ((nonnull))
+#  endif
+#endif
+@end smallexample
+
+The first @samp{#if} test succeeds only when the operator is supported
+by the version of GCC (or another compiler) being used.  Only when that
+test succeeds is it valid to use @code{__has_attribute} as a preprocessor
+operator.  As a result, combining the two tests into a single expression as
+shown below would only be valid with a compiler that supports the operator
+but not with others that don't.
+
+@smallexample
+#if defined __has_attribute && __has_attribute (nonnull)   /* not portable */
+@dots{}
+#endif
+@end smallexample
+
+@node @code{__has_cpp_attribute}
+@subsection @code{__has_cpp_attribute}
+@cindex @code{__has_cpp_attribute}
+
+The special operator @code{__has_cpp_attribute (@var{operand})} may be used
+in @samp{#if} and @samp{#elif} expressions in C++ code to test whether
+the attribute referenced by its @var{operand} is recognized by GCC.
+@code{__has_cpp_attribute (@var{operand})} is equivalent to
+@code{__has_attribute (@var{operand})} except that when @var{operand}
+designates a supported standard attribute it evaluates to an integer
+constant of the form @code{YYYYMM} indicating the year and month when
+the attribute was first introduced into the C++ standard.  For additional
+information including the dates of the introduction of current standard
+attributes, see @w{@uref{https://isocpp.org/std/standing-documents/sd-6-sg10-feature-test-recommendations/,
+SD-6: SG10 Feature Test Recommendations}}.
+
+@node @code{__has_include}
+@subsection @code{__has_include}
+@cindex @code{__has_include}
+
+The special operator @code{__has_include (@var{operand})} may be used in
+@samp{#if} and @samp{#elif} expressions to test whether the header referenced
+by its @var{operand} can be included using the @samp{#include} directive.  Using
+the operator in other contexts is not valid.  The @var{operand} takes
+the same form as the file in the @samp{#include} directive (@pxref{Include
+Syntax}) and evaluates to a nonzero value if the header can be included and
+to zero otherwise.  Note that that the ability to include a header doesn't
+imply that the header doesn't contain invalid constructs or @samp{#error}
+directives that would cause the preprocessor to fail.
+
+The @code{__has_include} operator by itself, without any @var{operand} or
+parentheses, acts as a predefined macro so that support for it can be tested
+in portable code.  Thus, the recommended use of the operator is as follows:
+
+@smallexample
+#if defined __has_include
+#  if __has_include (<stdatomic.h>)
+#    include <stdatomic.h>
+#  endif
+#endif
+@end smallexample
+
+The first @samp{#if} test succeeds only when the operator is supported
+by the version of GCC (or another compiler) being used.  Only when that
+test succeeds is it valid to use @code{__has_include} as a preprocessor
+operator.  As a result, combining the two tests into a single expression
+as shown below would only be valid with a compiler that supports the operator
+but not with others that don't.
+
+@smallexample
+#if defined __has_include && __has_include ("header.h")   /* not portable */
+@dots{}
+#endif
+@end smallexample
+
 @node Deleted Code
 @section Deleted Code
 @cindex commenting out code
@@ -3500,12 +3646,14 @@ idea of the directory containing the current file.
 @node Pragmas
 @chapter Pragmas
 
+@cindex pragma directive
+
 The @samp{#pragma} directive is the method specified by the C standard
 for providing additional information to the compiler, beyond what is
 conveyed in the language itself.  The forms of this directive
 (commonly known as @dfn{pragmas}) specified by C standard are prefixed with 
 @code{STDC}.  A C compiler is free to attach any meaning it likes to other 
-pragmas.  All GNU-defined, supported pragmas have been given a
+pragmas.  Most GNU-defined, supported pragmas have been given a
 @code{GCC} prefix.
 
 @cindex @code{_Pragma}
@@ -3608,6 +3756,12 @@ contained in the pragma must be a single string literal.  Similarly,
 the @samp{#warning} and @samp{#error} directives, these pragmas can be
 embedded in preprocessor macros using @samp{_Pragma}.
 
+@item #pragma once
+If @code{#pragma once} is seen when scanning a header file, that
+file will never be read again, no matter what.  It is a less-portable
+alternative to using @samp{#ifndef} to guard the contents of header files
+against multiple inclusions.
+
 @end ftable
 
 @node Other Directives
@@ -3690,7 +3844,7 @@ so certain warnings should be suppressed.
 @item 4
 This indicates that the following text should be treated as being
 wrapped in an implicit @code{extern "C"} block.
-@c maybe cross reference NO_IMPLICIT_EXTERN_C
+@c maybe cross reference SYSTEM_IMPLICIT_EXTERN_C
 @end table
 
 As an extension, the preprocessor accepts linemarkers in non-assembler

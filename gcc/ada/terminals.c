@@ -6,7 +6,7 @@
  *                                                                          *
  *                          C Implementation File                           *
  *                                                                          *
- *                     Copyright (C) 2008-2016, AdaCore                     *
+ *                     Copyright (C) 2008-2019, AdaCore                     *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -29,12 +29,12 @@
  *                                                                          *
  ****************************************************************************/
 
+#define ATTRIBUTE_UNUSED __attribute__((unused))
+
 /* First all usupported platforms. Add stubs for exported routines. */
 
 #if defined (VMS) || defined (__vxworks) || defined (__Lynx__) \
   || defined (__ANDROID__) || defined (__PikeOS__) || defined(__DJGPP__)
-
-#define ATTRIBUTE_UNUSED __attribute__((unused))
 
 void *
 __gnat_new_tty (void)
@@ -85,6 +85,12 @@ __gnat_setup_child_communication (void *d ATTRIBUTE_UNUSED,
 
 int
 __gnat_terminate_process (void *desc ATTRIBUTE_UNUSED)
+{
+  return -1;
+}
+
+int
+__gnat_terminate_pid (int pid ATTRIBUTE_UNUSED)
 {
   return -1;
 }
@@ -962,6 +968,47 @@ __gnat_terminate_process (struct TTY_Process* p)
     return 0;
 }
 
+typedef struct {
+  DWORD dwProcessId;
+  HANDLE hwnd;
+} pid_struct;
+
+static BOOL CALLBACK
+find_process_handle (HWND hwnd, pid_struct * ps)
+{
+  DWORD thread_id;
+  DWORD process_id;
+
+  thread_id = GetWindowThreadProcessId (hwnd, &process_id);
+  if (process_id == ps->dwProcessId)
+    {
+      ps->hwnd = hwnd;
+      return FALSE;
+    }
+  /* keep looking */
+  return TRUE;
+}
+
+int
+__gnat_terminate_pid (int pid)
+{
+  pid_struct ps;
+
+  ps.dwProcessId = pid;
+  ps.hwnd = 0;
+  EnumWindows ((WNDENUMPROC) find_process_handle, (LPARAM) &ps);
+
+  if (ps.hwnd)
+    {
+      if (!TerminateProcess (ps.hwnd, 1))
+	return -1;
+      else
+	return 0;
+    }
+
+  return -1;
+}
+
 /* wait for process pid to terminate and return the process status. This
    implementation is different from the adaint.c one for Windows as it uses
    the Win32 API instead of the C one. */
@@ -1060,14 +1107,6 @@ __gnat_setup_winsize (void *desc, int rows, int columns)
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
-
-/* On some system termio is either absent or including it will disable termios
-   (HP-UX) */
-#if !defined (__hpux__) && !defined (BSD) && !defined (__APPLE__) \
-  && !defined (__rtems__)
-#   include <termio.h>
-#endif
-
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <fcntl.h>
@@ -1083,7 +1122,6 @@ __gnat_setup_winsize (void *desc, int rows, int columns)
 #   include <sys/signal.h>
 #endif
 #if defined (__hpux__)
-#   include <sys/termio.h>
 #   include <sys/stropts.h>
 #endif
 
@@ -1374,7 +1412,7 @@ int
 __gnat_setup_child_communication
    (pty_desc *desc,
     char **new_argv,
-    int Use_Pipes)
+    int Use_Pipes ATTRIBUTE_UNUSED)
 {
   int status;
   int pid = getpid ();
@@ -1411,7 +1449,7 @@ __gnat_setup_child_communication
 #ifdef TIOCSCTTY
   /* make the tty the controlling terminal */
   if ((status = ioctl (desc->slave_fd, TIOCSCTTY, 0)) == -1)
-    return -1;
+    _exit (1);
 #endif
 
   /* adjust tty settings */
@@ -1433,8 +1471,7 @@ __gnat_setup_child_communication
   /* launch the program */
   execvp (new_argv[0], new_argv);
 
-  /* return the pid */
-  return pid;
+  _exit (1);
 }
 
 /* send_signal_via_characters - Send a characters that will trigger a signal
@@ -1500,6 +1537,17 @@ int __gnat_terminate_process (pty_desc *desc)
   return kill (desc->child_pid, SIGKILL);
 }
 
+/* __gnat_terminate_pid - kill a process
+ *
+ * PARAMETERS
+ *   pid unix process id
+ */
+int
+__gnat_terminate_pid (int pid)
+{
+  return kill (pid, SIGKILL);
+}
+
 /* __gnat_tty_waitpid - wait for the child process to die
  *
  * PARAMETERS
@@ -1540,7 +1588,10 @@ __gnat_free_process (pty_desc** desc)
 
 /* __gnat_send_header - dummy function. this interface is only used on Windows */
 void
-__gnat_send_header (pty_desc* desc, char header[5], int size, int *ret)
+__gnat_send_header (pty_desc* desc ATTRIBUTE_UNUSED,
+		    char header[5] ATTRIBUTE_UNUSED,
+		    int size ATTRIBUTE_UNUSED,
+		    int *ret ATTRIBUTE_UNUSED)
 {
   *ret = 0;
 }

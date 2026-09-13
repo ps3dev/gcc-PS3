@@ -1,5 +1,5 @@
 /* Standard problems for dataflow support routines.
-   Copyright (C) 1999-2017 Free Software Foundation, Inc.
+   Copyright (C) 1999-2019 Free Software Foundation, Inc.
    Originally contributed by Michael P. Hayes
              (m.hayes@elec.canterbury.ac.nz, mhayes@redhat.com)
    Major rewrite contributed by Danny Berlin (dberlin@dberlin.org)
@@ -419,8 +419,8 @@ df_rd_local_compute (bitmap all_blocks)
 	}
     }
 
-  bitmap_clear (&seen_in_block);
-  bitmap_clear (&seen_in_insn);
+  bitmap_release (&seen_in_block);
+  bitmap_release (&seen_in_insn);
 }
 
 
@@ -461,19 +461,17 @@ df_rd_confluence_n (edge e)
       bitmap dense_invalidated = &problem_data->dense_invalidated_by_call;
       bitmap_iterator bi;
       unsigned int regno;
-      bitmap_head tmp;
 
-      bitmap_initialize (&tmp, &df_bitmap_obstack);
-      bitmap_and_compl (&tmp, op2, dense_invalidated);
+      auto_bitmap tmp (&df_bitmap_obstack);
+      bitmap_and_compl (tmp, op2, dense_invalidated);
 
       EXECUTE_IF_SET_IN_BITMAP (sparse_invalidated, 0, regno, bi)
  	{
- 	  bitmap_clear_range (&tmp,
+	  bitmap_clear_range (tmp,
  			      DF_DEFS_BEGIN (regno),
  			      DF_DEFS_COUNT (regno));
 	}
-      changed |= bitmap_ior_into (op1, &tmp);
-      bitmap_clear (&tmp);
+      changed |= bitmap_ior_into (op1, tmp);
       return changed;
     }
   else
@@ -1587,7 +1585,7 @@ df_live_free (void)
       df_live->block_info_size = 0;
       free (df_live->block_info);
       df_live->block_info = NULL;
-      bitmap_clear (&df_live_scratch);
+      bitmap_release (&df_live_scratch);
       bitmap_obstack_release (&problem_data->live_bitmaps);
       free (problem_data);
       df_live->problem_data = NULL;
@@ -1911,8 +1909,7 @@ df_mir_alloc (bitmap all_blocks)
 	  bitmap_initialize (&bb_info->gen, &problem_data->mir_bitmaps);
 	  bitmap_initialize (&bb_info->in, &problem_data->mir_bitmaps);
 	  bitmap_initialize (&bb_info->out, &problem_data->mir_bitmaps);
-	  bitmap_set_range (&bb_info->in, 0, DF_REG_SIZE (df));
-	  bitmap_set_range (&bb_info->out, 0, DF_REG_SIZE (df));
+	  bb_info->con_visited = false;
 	}
     }
 
@@ -1935,9 +1932,8 @@ df_mir_reset (bitmap all_blocks)
       gcc_assert (bb_info);
 
       bitmap_clear (&bb_info->in);
-      bitmap_set_range (&bb_info->in, 0, DF_REG_SIZE (df));
       bitmap_clear (&bb_info->out);
-      bitmap_set_range (&bb_info->out, 0, DF_REG_SIZE (df));
+      bb_info->con_visited = false;
     }
 }
 
@@ -2015,6 +2011,7 @@ df_mir_confluence_0 (basic_block bb)
   struct df_mir_bb_info *bb_info = df_mir_get_bb_info (bb->index);
 
   bitmap_clear (&bb_info->in);
+  bb_info->con_visited = true;
 }
 
 
@@ -2023,11 +2020,26 @@ df_mir_confluence_0 (basic_block bb)
 static bool
 df_mir_confluence_n (edge e)
 {
-  bitmap op1 = &df_mir_get_bb_info (e->dest->index)->in;
-  bitmap op2 = &df_mir_get_bb_info (e->src->index)->out;
-
   if (e->flags & EDGE_FAKE)
     return false;
+
+  df_mir_bb_info *src_info = df_mir_get_bb_info (e->src->index);
+  /* If SRC was not visited yet then we'll and with all-ones which
+     means no changes.  Do not consider DST con_visited by this
+     operation alone either.  */
+  if (!src_info->con_visited)
+    return false;
+
+  df_mir_bb_info *dst_info = df_mir_get_bb_info (e->dest->index);
+  bitmap op1 = &dst_info->in;
+  bitmap op2 = &src_info->out;
+  /* If DEST was not visited yet just copy the SRC bitmap.  */
+  if (!dst_info->con_visited)
+    {
+      dst_info->con_visited = true;
+      bitmap_copy (op1, op2);
+      return true;
+    }
 
   /* A register is must-initialized at the entry of a basic block iff it is
      must-initialized at the exit of all the predecessors.  */
@@ -2817,11 +2829,11 @@ df_word_lr_mark_ref (df_ref ref, bool is_set, regset live)
   regno = REGNO (reg);
   reg_mode = GET_MODE (reg);
   if (regno < FIRST_PSEUDO_REGISTER
-      || GET_MODE_SIZE (reg_mode) != 2 * UNITS_PER_WORD)
+      || maybe_ne (GET_MODE_SIZE (reg_mode), 2 * UNITS_PER_WORD))
     return true;
 
   if (GET_CODE (orig_reg) == SUBREG
-      && df_read_modify_subreg_p (orig_reg))
+      && read_modify_subreg_p (orig_reg))
     {
       gcc_assert (DF_REF_FLAGS_IS_SET (ref, DF_REF_PARTIAL));
       if (subreg_lowpart_p (orig_reg))
@@ -3207,7 +3219,7 @@ df_remove_dead_eq_notes (rtx_insn *insn, bitmap live)
 	    bool deleted = false;
 
 	    FOR_EACH_INSN_EQ_USE (use, insn)
-	      if (DF_REF_REGNO (use) > FIRST_PSEUDO_REGISTER
+	      if (DF_REF_REGNO (use) >= FIRST_PSEUDO_REGISTER
 		  && DF_REF_LOC (use)
 		  && (DF_REF_FLAGS (use) & DF_REF_IN_NOTE)
 		  && !bitmap_bit_p (live, DF_REF_REGNO (use))
@@ -4535,7 +4547,7 @@ df_md_local_compute (bitmap all_blocks)
       df_md_bb_local_compute (bb_index);
     }
 
-  bitmap_clear (&seen_in_insn);
+  bitmap_release (&seen_in_insn);
 
   frontiers = XNEWVEC (bitmap_head, last_basic_block_for_fn (cfun));
   FOR_ALL_BB_FN (bb, cfun)
@@ -4651,6 +4663,7 @@ df_md_free (void)
   struct df_md_problem_data *problem_data
     = (struct df_md_problem_data *) df_md->problem_data;
 
+  bitmap_release (&df_md_scratch);
   bitmap_obstack_release (&problem_data->md_bitmaps);
   free (problem_data);
   df_md->problem_data = NULL;

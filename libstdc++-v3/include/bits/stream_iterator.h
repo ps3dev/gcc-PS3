@@ -1,6 +1,6 @@
 // Stream iterators
 
-// Copyright (C) 2001-2017 Free Software Foundation, Inc.
+// Copyright (C) 2001-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -73,6 +73,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       : _M_stream(__obj._M_stream), _M_value(__obj._M_value),
         _M_ok(__obj._M_ok)
       { }
+
+#if __cplusplus >= 201103L
+      istream_iterator& operator=(const istream_iterator&) = default;
+#endif
 
       const _Tp&
       operator*() const
@@ -155,12 +159,12 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     : public iterator<output_iterator_tag, void, void, void, void>
     {
     public:
-      //@{
+      ///@{
       /// Public typedef
       typedef _CharT                         char_type;
       typedef _Traits                        traits_type;
       typedef basic_ostream<_CharT, _Traits> ostream_type;
-      //@}
+      ///@}
 
     private:
       ostream_type*	_M_stream;
@@ -188,6 +192,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       ostream_iterator(const ostream_iterator& __obj)
       : _M_stream(__obj._M_stream), _M_string(__obj._M_string)  { }
 
+#if __cplusplus >= 201103L
+      ostream_iterator& operator=(const ostream_iterator&) = default;
+#endif
+
       /// Writes @a value to underlying ostream using operator<<.  If
       /// constructed with delimiter string, writes delimiter to ostream.
       ostream_iterator&
@@ -214,7 +222,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       { return *this; }
     };
 
-  // @} group iterators
+  /// @} group iterators
 
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace

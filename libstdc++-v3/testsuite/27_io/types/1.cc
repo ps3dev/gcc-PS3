@@ -1,4 +1,4 @@
-// Copyright (C) 2002-2017 Free Software Foundation, Inc.
+// Copyright (C) 2002-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -15,6 +15,9 @@
 // with this library; see the file COPYING3.  If not see
 // <http://www.gnu.org/licenses/>.
 
+// { dg-options "-Wdeprecated" }
+// { dg-do compile { target c++14_down } }
+
 // 27.4.2.1 - Types [lib.ios.types]
 
 #include <ios>
@@ -24,12 +27,14 @@
 // Annex D, deprecated.
 void test01()
 {
-  typedef std::ios_base::streampos streampos_type;
-  typedef std::ios_base::streamoff streamoff_type;
+  typedef std::ios_base::streampos streampos_type; // { dg-warning "is deprecated: use 'std::streampos' instead" "" { target c++11 } }
+  typedef std::ios_base::streamoff streamoff_type; // { dg-warning "is deprecated: use 'std::streamoff' instead" "" { target c++11 } }
 }
 
-int main(void)
+// Annex D, deprecated.
+void test02()
 {
-  test01();
-  return 0;
+  typedef std::ios_base::io_state iostate_type; // { dg-warning "is deprecated: use 'std::iostate' instead" "" { target c++11 } }
+  typedef std::ios_base::open_mode openmode_type; // { dg-warning "is deprecated: use 'std::openmode' instead" "" { target c++11 } }
+  typedef std::ios_base::seek_dir seekdir_type; // { dg-warning "is deprecated: use 'std::seekdir' instead" "" { target c++11 } }
 }

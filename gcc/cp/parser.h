@@ -1,5 +1,5 @@
 /* Data structures and function exported by the C++ Parser.
-   Copyright (C) 2010-2017 Free Software Foundation, Inc.
+   Copyright (C) 2010-2019 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -199,8 +199,7 @@ struct GTY (()) cp_parser_context {
 };
 
 
-/* Helper data structure for parsing #pragma omp declare simd, and Cilk Plus
-   SIMD-enabled functions' vector attribute.  */
+/* Helper data structure for parsing #pragma omp declare simd.  */
 struct cp_omp_declare_simd_data {
   bool error_seen; /* Set if error has been reported.  */
   bool fndecl_seen; /* Set if one fn decl/definition has been seen already.  */
@@ -283,9 +282,12 @@ struct GTY(()) cp_parser {
      been seen that makes the expression non-constant.  */
   bool non_integral_constant_expression_p;
 
-  /* TRUE if local variable names and `this' are forbidden in the
-     current context.  */
-  bool local_variables_forbidden_p;
+  /* Used to track if local variable names and/or `this' are forbidden
+     in the current context.  */
+#define LOCAL_VARS_FORBIDDEN (1 << 0)
+#define THIS_FORBIDDEN (1 << 1)
+#define LOCAL_VARS_AND_THIS_FORBIDDEN (LOCAL_VARS_FORBIDDEN | THIS_FORBIDDEN)
+  unsigned char local_variables_forbidden_p;
 
   /* TRUE if the declaration we are parsing is part of a
      linkage-specification of the form `extern string-literal
@@ -309,8 +311,6 @@ struct GTY(()) cp_parser {
 #define IN_OMP_BLOCK		4
 #define IN_OMP_FOR		8
 #define IN_IF_STMT             16
-#define IN_CILK_SIMD_FOR       32
-#define IN_CILK_SPAWN          64
   unsigned char in_statement;
 
   /* TRUE if we are presently parsing the body of a switch statement.
@@ -323,10 +323,6 @@ struct GTY(()) cp_parser {
      such a situation, both "type (expr)" and "type (type)" are valid
      alternatives.  */
   bool in_type_id_in_expr_p;
-
-  /* TRUE if we are currently in a header file where declarations are
-     implicitly extern "C".  */
-  bool implicit_extern_c;
 
   /* TRUE if strings in expressions should be translated to the execution
      character set.  */
@@ -354,6 +350,9 @@ struct GTY(()) cp_parser {
      issued as an error message if a type is defined.  */
   const char *type_definition_forbidden_message;
 
+  /* Argument for type_definition_forbidden_message if needed.  */
+  const char *type_definition_forbidden_message_arg;
+
   /* A stack used for member functions of local classes.  The lists
      contained in an individual entry can only be processed once the
      outermost class being defined is complete.  */
@@ -370,10 +369,6 @@ struct GTY(()) cp_parser {
   /* When parsing #pragma omp declare simd, this is a pointer to a
      helper data structure.  */
   cp_omp_declare_simd_data * GTY((skip)) omp_declare_simd;
-
-  /* When parsing Cilk Plus SIMD-enabled functions' vector attributes,
-     this is a pointer to a helper data structure.  */
-  cp_omp_declare_simd_data * GTY((skip)) cilk_simd_fn_info;
 
   /* When parsing #pragma acc routine, this is a pointer to a helper data
      structure.  */
@@ -411,6 +406,10 @@ struct GTY(()) cp_parser {
   /* True if a constrained-type-specifier is not allowed in this
      context e.g., because they could never be deduced.  */
   int prevent_constrained_type_specifiers;
+
+  /* Location of the string-literal token within the current linkage
+     specification, if any, or UNKNOWN_LOCATION otherwise.  */
+  location_t innermost_linkage_specification_location;
 
 };
 

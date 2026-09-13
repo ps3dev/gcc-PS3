@@ -1,5 +1,5 @@
 /* HSAIL and BRIG related macros and definitions.
-   Copyright (C) 2013-2017 Free Software Foundation, Inc.
+   Copyright (C) 2013-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -27,6 +27,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "vec.h"
 #include "hash-table.h"
 #include "basic-block.h"
+#include "bitmap.h"
 
 
 /* Return true if the compiler should produce HSAIL.  */
@@ -156,6 +157,9 @@ public:
   /* Convert an operand to a destination type DTYPE and attach insns
      to HBB if needed.  */
   hsa_op_with_type *get_in_type (BrigType16_t dtype, hsa_bb *hbb);
+  /* If this operand has integer type smaller than 32 bits, extend it to 32
+     bits, adding instructions to HBB if needed.  */
+  hsa_op_with_type *extend_int_to_32bit (hsa_bb *hbb);
 
 protected:
   hsa_op_with_type (BrigKind16_t k, BrigType16_t t);
@@ -1027,7 +1031,6 @@ class hsa_bb
 public:
   hsa_bb (basic_block cfg_bb);
   hsa_bb (basic_block cfg_bb, int idx);
-  ~hsa_bb ();
 
   /* Append an instruction INSN into the basic block.  */
   void append_insn (hsa_insn_basic *insn);
@@ -1049,7 +1052,7 @@ public:
   /* Just a number to construct names from.  */
   int m_index;
 
-  bitmap m_liveout, m_livein;
+  auto_bitmap m_liveout, m_livein;
 private:
   /* Make the default constructor inaccessible.  */
   hsa_bb ();
@@ -1205,7 +1208,7 @@ public:
 
 enum hsa_function_kind
 {
-  HSA_NONE,
+  HSA_INVALID,
   HSA_KERNEL,
   HSA_FUNCTION
 };
@@ -1231,7 +1234,7 @@ struct hsa_function_summary
 };
 
 inline
-hsa_function_summary::hsa_function_summary (): m_kind (HSA_NONE),
+hsa_function_summary::hsa_function_summary (): m_kind (HSA_INVALID),
   m_bound_function (NULL), m_gpu_implementation_p (false)
 {
 }
@@ -1241,7 +1244,10 @@ class hsa_summary_t: public function_summary <hsa_function_summary *>
 {
 public:
   hsa_summary_t (symbol_table *table):
-    function_summary<hsa_function_summary *> (table) { }
+    function_summary<hsa_function_summary *> (table)
+  {
+    disable_insertion_hook ();
+  }
 
   /* Couple GPU and HOST as gpu-specific and host-specific implementation of
      the same function.  KIND determines whether GPU is a host-invokable kernel
@@ -1405,8 +1411,7 @@ hsa_gpu_implementation_p (tree decl)
     return false;
 
   hsa_function_summary *s = hsa_summaries->get (cgraph_node::get_create (decl));
-
-  return s->m_gpu_implementation_p;
+  return s != NULL && s->m_gpu_implementation_p;
 }
 
 #endif /* HSA_H */

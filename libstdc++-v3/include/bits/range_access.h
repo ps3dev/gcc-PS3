@@ -1,6 +1,6 @@
 // <range_access.h> -*- C++ -*-
 
-// Copyright (C) 2010-2017 Free Software Foundation, Inc.
+// Copyright (C) 2010-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -84,7 +84,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    */
   template<typename _Tp, size_t _Nm>
     inline _GLIBCXX14_CONSTEXPR _Tp*
-    begin(_Tp (&__arr)[_Nm])
+    begin(_Tp (&__arr)[_Nm]) noexcept
     { return __arr; }
 
   /**
@@ -94,7 +94,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    */
   template<typename _Tp, size_t _Nm>
     inline _GLIBCXX14_CONSTEXPR _Tp*
-    end(_Tp (&__arr)[_Nm])
+    end(_Tp (&__arr)[_Nm]) noexcept
     { return __arr + _Nm; }
 
 #if __cplusplus >= 201402L
@@ -175,7 +175,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    */
   template<typename _Tp, size_t _Nm>
     inline _GLIBCXX17_CONSTEXPR reverse_iterator<_Tp*>
-    rbegin(_Tp (&__arr)[_Nm])
+    rbegin(_Tp (&__arr)[_Nm]) noexcept
     { return reverse_iterator<_Tp*>(__arr + _Nm); }
 
   /**
@@ -185,7 +185,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    */
   template<typename _Tp, size_t _Nm>
     inline _GLIBCXX17_CONSTEXPR reverse_iterator<_Tp*>
-    rend(_Tp (&__arr)[_Nm])
+    rend(_Tp (&__arr)[_Nm]) noexcept
     { return reverse_iterator<_Tp*>(__arr); }
 
   /**
@@ -195,7 +195,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    */
   template<typename _Tp>
     inline _GLIBCXX17_CONSTEXPR reverse_iterator<const _Tp*>
-    rbegin(initializer_list<_Tp> __il)
+    rbegin(initializer_list<_Tp> __il) noexcept
     { return reverse_iterator<const _Tp*>(__il.end()); }
 
   /**
@@ -205,7 +205,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    */
   template<typename _Tp>
     inline _GLIBCXX17_CONSTEXPR reverse_iterator<const _Tp*>
-    rend(initializer_list<_Tp> __il)
+    rend(initializer_list<_Tp> __il) noexcept
     { return reverse_iterator<const _Tp*>(__il.begin()); }
 
   /**
@@ -230,7 +230,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
 #endif // C++14
 
-#if __cplusplus > 201402L
+#if __cplusplus >= 201703L
 #define __cpp_lib_nonmember_container_access 201411
 
   /**
@@ -239,7 +239,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    */
   template <typename _Container>
     constexpr auto
-    size(const _Container& __cont) -> decltype(__cont.size())
+    size(const _Container& __cont) noexcept(noexcept(__cont.size()))
+    -> decltype(__cont.size())
     { return __cont.size(); }
 
   /**
@@ -256,8 +257,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @param  __cont  Container.
    */
   template <typename _Container>
-    constexpr auto
-    empty(const _Container& __cont) -> decltype(__cont.empty())
+    [[nodiscard]] constexpr auto
+    empty(const _Container& __cont) noexcept(noexcept(__cont.empty()))
+    -> decltype(__cont.empty())
     { return __cont.empty(); }
 
   /**
@@ -265,7 +267,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @param  __array  Container.
    */
   template <typename _Tp, size_t _Nm>
-    constexpr bool
+    [[nodiscard]] constexpr bool
     empty(const _Tp (&/*__array*/)[_Nm]) noexcept
     { return false; }
 
@@ -274,7 +276,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @param  __il  Initializer list.
    */
   template <typename _Tp>
-    constexpr bool
+    [[nodiscard]] constexpr bool
     empty(initializer_list<_Tp> __il) noexcept
     { return __il.size() == 0;}
 
@@ -284,7 +286,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    */
   template <typename _Container>
     constexpr auto
-    data(_Container& __cont) -> decltype(__cont.data())
+    data(_Container& __cont) noexcept(noexcept(__cont.data()))
+    -> decltype(__cont.data())
     { return __cont.data(); }
 
   /**
@@ -293,7 +296,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    */
   template <typename _Container>
     constexpr auto
-    data(const _Container& __cont) -> decltype(__cont.data())
+    data(const _Container& __cont) noexcept(noexcept(__cont.data()))
+    -> decltype(__cont.data())
     { return __cont.data(); }
 
   /**

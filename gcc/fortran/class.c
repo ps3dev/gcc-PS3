@@ -1,5 +1,5 @@
 /* Implementation of Fortran 2003 Polymorphism.
-   Copyright (C) 2009-2017 Free Software Foundation, Inc.
+   Copyright (C) 2009-2019 Free Software Foundation, Inc.
    Contributed by Paul Richard Thomas <pault@gcc.gnu.org>
    and Janus Weil <janus@gcc.gnu.org>
 
@@ -35,7 +35,7 @@ along with GCC; see the file COPYING3.  If not see
     * _vptr: A pointer to the vtable entry (see below) of the dynamic type.
 
     Only for unlimited polymorphic classes:
-    * _len:  An integer(4) to store the string length when the unlimited
+    * _len:  An integer(C_SIZE_T) to store the string length when the unlimited
              polymorphic pointer is used to point to a char array.  The '_len'
              component will be zero when no character array is stored in
              '_data'.
@@ -72,14 +72,18 @@ along with GCC; see the file COPYING3.  If not see
 static void
 insert_component_ref (gfc_typespec *ts, gfc_ref **ref, const char * const name)
 {
-  gfc_symbol *type_sym;
   gfc_ref *new_ref;
+  int wcnt, ecnt;
 
   gcc_assert (ts->type == BT_DERIVED || ts->type == BT_CLASS);
-  type_sym = ts->u.derived;
 
-  gfc_find_component (type_sym, name, true, true, &new_ref);
+  gfc_find_component (ts->u.derived, name, true, true, &new_ref);
+
+  gfc_get_errors (&wcnt, &ecnt);
+  if (ecnt > 0 && !new_ref)
+    return;
   gcc_assert (new_ref->u.c.component);
+
   while (new_ref->next)
     new_ref = new_ref->next;
   new_ref->next = *ref;
@@ -308,9 +312,7 @@ class_array_ref_detected (gfc_ref *ref, bool *full_array)
 	    *full_array = true;
 	}
       else if (ref->next && ref->next->type == REF_ARRAY
-	    && !ref->next->next
 	    && ref->type == REF_COMPONENT
-	    && ref->next->type == REF_ARRAY
 	    && ref->next->u.ar.type != AR_ELEMENT)
 	{
 	  with_data = true;
@@ -499,8 +501,11 @@ get_unique_type_string (char *string, gfc_symbol *derived)
 static void
 get_unique_hashed_string (char *string, gfc_symbol *derived)
 {
-  char tmp[2*GFC_MAX_SYMBOL_LEN+2];
+  /* Provide sufficient space to hold "symbol.symbol_symbol".  */
+  char tmp[3*GFC_MAX_SYMBOL_LEN+3];
   get_unique_type_string (&tmp[0], derived);
+  size_t len = strnlen (tmp, sizeof (tmp));
+  gcc_assert (len < sizeof (tmp));
   /* If string is too long, use hash value in hex representation (allow for
      extra decoration, cf. gfc_build_class_symbol & gfc_find_derived_vtab).
      We need space to for 15 characters "__class_" + symbol name + "_%d_%da",
@@ -521,11 +526,13 @@ unsigned int
 gfc_hash_value (gfc_symbol *sym)
 {
   unsigned int hash = 0;
-  char c[2*(GFC_MAX_SYMBOL_LEN+1)];
+  /* Provide sufficient space to hold "symbol.symbol_symbol".  */
+  char c[3*GFC_MAX_SYMBOL_LEN+3];
   int i, len;
 
   get_unique_type_string (&c[0], sym);
-  len = strlen (c);
+  len = strnlen (c, sizeof (c));
+  gcc_assert ((size_t) len < sizeof (c));
 
   for (i = 0; i < len; i++)
     hash = (hash << 6) + (hash << 16) - hash + c[i];
@@ -563,7 +570,7 @@ gfc_intrinsic_hash_value (gfc_typespec *ts)
    ref to the _len component.  */
 
 gfc_expr *
-gfc_get_len_component (gfc_expr *e)
+gfc_get_len_component (gfc_expr *e, int k)
 {
   gfc_expr *ptr;
   gfc_ref *ref, **last;
@@ -588,6 +595,14 @@ gfc_get_len_component (gfc_expr *e)
     }
   /* And replace if with a ref to the _len component.  */
   gfc_add_len_component (ptr);
+  if (k != ptr->ts.kind)
+    {
+      gfc_typespec ts;
+      gfc_clear_ts (&ts);
+      ts.type = BT_INTEGER;
+      ts.kind = k;
+      gfc_convert_type_warn (ptr, &ts, 2, 0);
+    }
   return ptr;
 }
 
@@ -598,12 +613,14 @@ gfc_get_len_component (gfc_expr *e)
    component '_vptr' which determines the dynamic type.  When this CLASS
    entity is unlimited polymorphic, then also add a component '_len' to
    store the length of string when that is stored in it.  */
+static int ctr = 0;
 
 bool
 gfc_build_class_symbol (gfc_typespec *ts, symbol_attribute *attr,
 			gfc_array_spec **as)
 {
-  char name[GFC_MAX_SYMBOL_LEN+1], tname[GFC_MAX_SYMBOL_LEN+1];
+  char tname[GFC_MAX_SYMBOL_LEN+1];
+  char *name;
   gfc_symbol *fclass;
   gfc_symbol *vtab;
   gfc_component *c;
@@ -611,13 +628,6 @@ gfc_build_class_symbol (gfc_typespec *ts, symbol_attribute *attr,
   int rank;
 
   gcc_assert (as);
-
-  if (*as && (*as)->type == AS_ASSUMED_SIZE)
-    {
-      gfc_error ("Assumed size polymorphic objects or components, such "
-		 "as that at %C, have not yet been implemented");
-      return false;
-    }
 
   if (attr->class_ok)
     /* Class container has already been built.  */
@@ -627,24 +637,24 @@ gfc_build_class_symbol (gfc_typespec *ts, symbol_attribute *attr,
 		   || attr->select_type_temporary || attr->associate_var;
 
   if (!attr->class_ok)
-    /* We can not build the class container yet.  */
+    /* We cannot build the class container yet.  */
     return true;
 
   /* Determine the name of the encapsulating type.  */
   rank = !(*as) || (*as)->rank == -1 ? GFC_MAX_DIMENSIONS : (*as)->rank;
   get_unique_hashed_string (tname, ts->u.derived);
   if ((*as) && attr->allocatable)
-    sprintf (name, "__class_%s_%d_%da", tname, rank, (*as)->corank);
+    name = xasprintf ("__class_%s_%d_%da", tname, rank, (*as)->corank);
   else if ((*as) && attr->pointer)
-    sprintf (name, "__class_%s_%d_%dp", tname, rank, (*as)->corank);
+    name = xasprintf ("__class_%s_%d_%dp", tname, rank, (*as)->corank);
   else if ((*as))
-    sprintf (name, "__class_%s_%d_%dt", tname, rank, (*as)->corank);
+    name = xasprintf ("__class_%s_%d_%dt", tname, rank, (*as)->corank);
   else if (attr->pointer)
-    sprintf (name, "__class_%s_p", tname);
+    name = xasprintf ("__class_%s_p", tname);
   else if (attr->allocatable)
-    sprintf (name, "__class_%s_a", tname);
+    name = xasprintf ("__class_%s_a", tname);
   else
-    sprintf (name, "__class_%s_t", tname);
+    name = xasprintf ("__class_%s_t", tname);
 
   if (ts->u.derived->attr.unlimited_polymorphic)
     {
@@ -656,7 +666,30 @@ gfc_build_class_symbol (gfc_typespec *ts, symbol_attribute *attr,
   else
     ns = ts->u.derived->ns;
 
-  gfc_find_symbol (name, ns, 0, &fclass);
+  /* Although this might seem to be counterintuitive, we can build separate
+     class types with different array specs because the TKR interface checks
+     work on the declared type. All array type other than deferred shape or
+     assumed rank are added to the function namespace to ensure that they
+     are properly distinguished.  */
+  if (attr->dummy && !attr->codimension && (*as)
+      && !((*as)->type == AS_DEFERRED || (*as)->type == AS_ASSUMED_RANK))
+    {
+      char *sname;
+      ns = gfc_current_ns;
+      gfc_find_symbol (name, ns, 0, &fclass);
+      /* If a local class type with this name already exists, update the
+	 name with an index.  */
+      if (fclass)
+	{
+	  fclass = NULL;
+	  sname = xasprintf ("%s_%d", name, ++ctr);
+	  free (name);
+	  name = sname;
+	}
+    }
+  else
+    gfc_find_symbol (name, ns, 0, &fclass);
+
   if (fclass == NULL)
     {
       gfc_symtree *st;
@@ -739,6 +772,7 @@ gfc_build_class_symbol (gfc_typespec *ts, symbol_attribute *attr,
   ts->u.derived = fclass;
   attr->allocatable = attr->pointer = attr->dimension = attr->codimension = 0;
   (*as) = NULL;
+  free (name);
   return true;
 }
 
@@ -895,9 +929,18 @@ finalize_component (gfc_expr *expr, gfc_symbol *derived, gfc_component *comp,
 {
   gfc_expr *e;
   gfc_ref *ref;
+  gfc_was_finalized *f;
 
   if (!comp_is_finalizable (comp))
     return;
+
+  /* If this expression with this component has been finalized
+     already in this namespace, there is nothing to do.  */
+  for (f = sub_ns->was_finalized; f; f = f->next)
+    {
+      if (f->e == expr && f->c == comp)
+	return;
+    }
 
   e = gfc_copy_expr (expr);
   if (!e->ref)
@@ -987,6 +1030,7 @@ finalize_component (gfc_expr *expr, gfc_symbol *derived, gfc_component *comp,
 	}
       else
 	(*code) = cond;
+
     }
   else if (comp->ts.type == BT_DERIVED
 	    && comp->ts.u.derived->f2k_derived
@@ -1026,6 +1070,13 @@ finalize_component (gfc_expr *expr, gfc_symbol *derived, gfc_component *comp,
 			    sub_ns);
       gfc_free_expr (e);
     }
+
+  /* Record that this was finalized already in this namespace.  */
+  f = sub_ns->was_finalized;
+  sub_ns->was_finalized = XCNEW (gfc_was_finalized);
+  sub_ns->was_finalized->e = expr;
+  sub_ns->was_finalized->c = comp;
+  sub_ns->was_finalized->next = f;
 }
 
 
@@ -1528,7 +1579,7 @@ generate_finalization_wrapper (gfc_symbol *derived, gfc_namespace *ns,
   gfc_component *comp;
   gfc_namespace *sub_ns;
   gfc_code *last_code, *block;
-  char name[GFC_MAX_SYMBOL_LEN+1];
+  char *name;
   bool finalizable_comp = false;
   bool expr_null_wrapper = false;
   gfc_expr *ancestor_wrapper = NULL, *rank;
@@ -1607,7 +1658,7 @@ generate_finalization_wrapper (gfc_symbol *derived, gfc_namespace *ns,
   sub_ns->resolved = 1;
 
   /* Set up the procedure symbol.  */
-  sprintf (name, "__final_%s", tname);
+  name = xasprintf ("__final_%s", tname);
   gfc_get_symbol (name, sub_ns, &final);
   sub_ns->proc_name = final;
   final->attr.flavor = FL_PROCEDURE;
@@ -2173,6 +2224,7 @@ generate_finalization_wrapper (gfc_symbol *derived, gfc_namespace *ns,
   gfc_free_expr (rank);
   vtab_final->initializer = gfc_lval_expr_from_sym (final);
   vtab_final->ts.interface = final;
+  free (name);
 }
 
 
@@ -2212,6 +2264,9 @@ gfc_find_derived_vtab (gfc_symbol *derived)
   gfc_gsymbol *gsym = NULL;
   gfc_symbol *dealloc = NULL, *arg = NULL;
 
+  if (derived->attr.pdt_template)
+    return NULL;
+
   /* Find the top-level namespace.  */
   for (ns = gfc_current_ns; ns; ns = ns->parent)
     if (!ns->parent)
@@ -2220,6 +2275,12 @@ gfc_find_derived_vtab (gfc_symbol *derived)
   /* If the type is a class container, use the underlying derived type.  */
   if (!derived->attr.unlimited_polymorphic && derived->attr.is_class)
     derived = gfc_get_derived_super_type (derived);
+
+  if (!derived)
+    return NULL;
+
+  if (!derived->name)
+    return NULL;
 
   /* Find the gsymbol for the module of use associated derived types.  */
   if ((derived->attr.use_assoc || derived->attr.used_in_submodule)
@@ -2237,10 +2298,11 @@ gfc_find_derived_vtab (gfc_symbol *derived)
 
   if (ns)
     {
-      char name[GFC_MAX_SYMBOL_LEN+1], tname[GFC_MAX_SYMBOL_LEN+1];
+      char tname[GFC_MAX_SYMBOL_LEN+1];
+      char *name;
 
       get_unique_hashed_string (tname, derived);
-      sprintf (name, "__vtab_%s", tname);
+      name = xasprintf ("__vtab_%s", tname);
 
       /* Look for the vtab symbol in various namespaces.  */
       if (gsym && gsym->ns)
@@ -2268,7 +2330,7 @@ gfc_find_derived_vtab (gfc_symbol *derived)
 	  vtab->attr.vtab = 1;
 	  vtab->attr.access = ACCESS_PUBLIC;
 	  gfc_set_sym_referenced (vtab);
-	  sprintf (name, "__vtype_%s", tname);
+	  name = xasprintf ("__vtype_%s", tname);
 
 	  gfc_find_symbol (name, ns, 0, &vtype);
 	  if (vtype == NULL)
@@ -2311,13 +2373,13 @@ gfc_find_derived_vtab (gfc_symbol *derived)
 	      if (!gfc_add_component (vtype, "_size", &c))
 		goto cleanup;
 	      c->ts.type = BT_INTEGER;
-	      c->ts.kind = 4;
+	      c->ts.kind = gfc_size_kind;
 	      c->attr.access = ACCESS_PRIVATE;
 	      /* Remember the derived type in ts.u.derived,
 		 so that the correct initializer can be set later on
 		 (in gfc_conv_structure).  */
 	      c->ts.u.derived = derived;
-	      c->initializer = gfc_get_int_expr (gfc_default_integer_kind,
+	      c->initializer = gfc_get_int_expr (gfc_size_kind,
 						 NULL, 0);
 
 	      /* Add component _extends.  */
@@ -2371,7 +2433,7 @@ gfc_find_derived_vtab (gfc_symbol *derived)
 	      else
 		{
 		  /* Construct default initialization variable.  */
-		  sprintf (name, "__def_init_%s", tname);
+		  name = xasprintf ("__def_init_%s", tname);
 		  gfc_get_symbol (name, ns, &def_init);
 		  def_init->attr.target = 1;
 		  def_init->attr.artificial = 1;
@@ -2404,7 +2466,7 @@ gfc_find_derived_vtab (gfc_symbol *derived)
 		  ns->contained = sub_ns;
 		  sub_ns->resolved = 1;
 		  /* Set up procedure symbol.  */
-		  sprintf (name, "__copy_%s", tname);
+		  name = xasprintf ("__copy_%s", tname);
 		  gfc_get_symbol (name, sub_ns, &copy);
 		  sub_ns->proc_name = copy;
 		  copy->attr.flavor = FL_PROCEDURE;
@@ -2457,6 +2519,7 @@ gfc_find_derived_vtab (gfc_symbol *derived)
 		goto cleanup;
 	      c->attr.proc_pointer = 1;
 	      c->attr.access = ACCESS_PRIVATE;
+	      c->attr.artificial = 1;
 	      c->tb = XCNEW (gfc_typebound_proc);
 	      c->tb->ppc = 1;
 	      generate_finalization_wrapper (derived, ns, tname, c);
@@ -2481,7 +2544,7 @@ gfc_find_derived_vtab (gfc_symbol *derived)
 		  ns->contained = sub_ns;
 		  sub_ns->resolved = 1;
 		  /* Set up procedure symbol.  */
-		  sprintf (name, "__deallocate_%s", tname);
+		  name = xasprintf ("__deallocate_%s", tname);
 		  gfc_get_symbol (name, sub_ns, &dealloc);
 		  sub_ns->proc_name = dealloc;
 		  dealloc->attr.flavor = FL_PROCEDURE;
@@ -2530,6 +2593,7 @@ have_vtype:
 	  vtab->ts.u.derived = vtype;
 	  vtab->value = gfc_default_initializer (&vtab->ts);
 	}
+      free (name);
     }
 
   found_sym = vtab;
@@ -2621,13 +2685,14 @@ find_intrinsic_vtab (gfc_typespec *ts)
 
   if (ns)
     {
-      char name[GFC_MAX_SYMBOL_LEN+1], tname[GFC_MAX_SYMBOL_LEN+1];
+      char tname[GFC_MAX_SYMBOL_LEN+1];
+      char *name;
 
       /* Encode all types as TYPENAME_KIND_ including especially character
 	 arrays, whose length is now consistently stored in the _len component
 	 of the class-variable.  */
       sprintf (tname, "%s_%d_", gfc_basic_typename (ts->type), ts->kind);
-      sprintf (name, "__vtab_%s", tname);
+      name = xasprintf ("__vtab_%s", tname);
 
       /* Look for the vtab symbol in the top-level namespace only.  */
       gfc_find_symbol (name, ns, 0, &vtab);
@@ -2644,7 +2709,7 @@ find_intrinsic_vtab (gfc_typespec *ts)
 	  vtab->attr.vtab = 1;
 	  vtab->attr.access = ACCESS_PUBLIC;
 	  gfc_set_sym_referenced (vtab);
-	  sprintf (name, "__vtype_%s", tname);
+	  name = xasprintf ("__vtype_%s", tname);
 
 	  gfc_find_symbol (name, ns, 0, &vtype);
 	  if (vtype == NULL)
@@ -2654,6 +2719,7 @@ find_intrinsic_vtab (gfc_typespec *ts)
 	      gfc_namespace *sub_ns;
 	      gfc_namespace *contained;
 	      gfc_expr *e;
+	      size_t e_size;
 
 	      gfc_get_symbol (name, ns, &vtype);
 	      if (!gfc_add_flavor (&vtype->attr, FL_DERIVED, NULL,
@@ -2677,7 +2743,7 @@ find_intrinsic_vtab (gfc_typespec *ts)
 	      if (!gfc_add_component (vtype, "_size", &c))
 		goto cleanup;
 	      c->ts.type = BT_INTEGER;
-	      c->ts.kind = 4;
+	      c->ts.kind = gfc_size_kind;
 	      c->attr.access = ACCESS_PRIVATE;
 
 	      /* Build a minimal expression to make use of
@@ -2688,11 +2754,13 @@ find_intrinsic_vtab (gfc_typespec *ts)
 	      e = gfc_get_expr ();
 	      e->ts = *ts;
 	      e->expr_type = EXPR_VARIABLE;
-	      c->initializer = gfc_get_int_expr (gfc_default_integer_kind,
+	      if (ts->type == BT_CHARACTER)
+		e_size = ts->kind;
+	      else
+		gfc_element_size (e, &e_size);
+	      c->initializer = gfc_get_int_expr (gfc_size_kind,
 						 NULL,
-						 ts->type == BT_CHARACTER
-						 ? ts->kind
-						 : (int)gfc_element_size (e));
+						 e_size);
 	      gfc_free_expr (e);
 
 	      /* Add component _extends.  */
@@ -2720,12 +2788,12 @@ find_intrinsic_vtab (gfc_typespec *ts)
 	      c->tb->ppc = 1;
 
 	      if (ts->type != BT_CHARACTER)
-		sprintf (name, "__copy_%s", tname);
+		name = xasprintf ("__copy_%s", tname);
 	      else
 		{
 		  /* __copy is always the same for characters.
 		     Check to see if copy function already exists.  */
-		  sprintf (name, "__copy_character_%d", ts->kind);
+		  name = xasprintf ("__copy_character_%d", ts->kind);
 		  contained = ns->contained;
 		  for (; contained; contained = contained->sibling)
 		    if (contained->proc_name
@@ -2751,9 +2819,9 @@ find_intrinsic_vtab (gfc_typespec *ts)
 	      /* This is elemental so that arrays are automatically
 		 treated correctly by the scalarizer.  */
 	      copy->attr.elemental = 1;
-	      if (ns->proc_name->attr.flavor == FL_MODULE)
+	      if (ns->proc_name && ns->proc_name->attr.flavor == FL_MODULE)
 		copy->module = ns->proc_name->name;
-		  gfc_set_sym_referenced (copy);
+	      gfc_set_sym_referenced (copy);
 	      /* Set up formal arguments.  */
 	      gfc_get_symbol ("src", sub_ns, &src);
 	      src->ts.type = ts->type;
@@ -2787,6 +2855,7 @@ find_intrinsic_vtab (gfc_typespec *ts)
 		goto cleanup;
 	      c->attr.proc_pointer = 1;
 	      c->attr.access = ACCESS_PRIVATE;
+	      c->attr.artificial = 1;
 	      c->tb = XCNEW (gfc_typebound_proc);
 	      c->tb->ppc = 1;
 	      c->initializer = gfc_get_null_expr (NULL);
@@ -2794,6 +2863,7 @@ find_intrinsic_vtab (gfc_typespec *ts)
 	  vtab->ts.u.derived = vtype;
 	  vtab->value = gfc_default_initializer (&vtab->ts);
 	}
+      free (name);
     }
 
   found_sym = vtab;
@@ -2832,7 +2902,12 @@ gfc_find_vtab (gfc_typespec *ts)
     case BT_DERIVED:
       return gfc_find_derived_vtab (ts->u.derived);
     case BT_CLASS:
-      return gfc_find_derived_vtab (ts->u.derived->components->ts.u.derived);
+      if (ts->u.derived->attr.is_class
+	  && ts->u.derived->components
+	  && ts->u.derived->components->ts.u.derived)
+	return gfc_find_derived_vtab (ts->u.derived->components->ts.u.derived);
+      else
+	return NULL;
     default:
       return find_intrinsic_vtab (ts);
     }

@@ -170,14 +170,12 @@
 
       <listitem>
 	<para>
-	  The patch itself. If you are accessing the SVN
-	  repository use <command>svn update; svn diff NEW</command>;
-	  else, use <command>diff -cp OLD NEW</command> ... If your
+	  The patch itself. If you are using the Git repository use
+	  <command>git diff</command> or <command>git format-patch</command>
+	  to produce a patch;
+	  otherwise, use <command>diff -cp OLD NEW</command>. If your
 	  version of diff does not support these options, then get the
-	  latest version of GNU
-	  diff. The <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://gcc.gnu.org/wiki/SvnTricks">SVN
-	  Tricks</link> wiki page has information on customising the
-	  output of <code>svn diff</code>.
+	  latest version of GNU diff.
 	</para>
       </listitem>
 
@@ -416,8 +414,9 @@ indicate a place that may require attention for multi-thread safety.
   
   <para>
   </para>
-  <section xml:id="coding_style.bad_identifiers"><info><title>Bad Identifiers</title></info>
-    
+
+  <section xml:id="coding_style.bad_identifiers"><info><title>Bad Identifiers</title></info> <!-- BADNAMES -->
+
     <para>
       Identifiers that conflict and should be avoided.
     </para>
@@ -449,6 +448,7 @@ indicate a place that may require attention for multi-thread safety.
 
       MS adds:
       _T
+			__deref
 
       BSD adds:
       __used

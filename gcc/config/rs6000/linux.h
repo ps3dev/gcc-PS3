@@ -1,6 +1,6 @@
 /* Definitions of target machine for GNU compiler,
    for PowerPC machines running Linux.
-   Copyright (C) 1996-2017 Free Software Foundation, Inc.
+   Copyright (C) 1996-2019 Free Software Foundation, Inc.
    Contributed by Michael Meissner (meissner@cygnus.com).
 
    This file is part of GCC.
@@ -46,22 +46,25 @@
 #define TARGET_LIBC_HAS_FUNCTION linux_libc_has_function
 
 #undef  TARGET_OS_CPP_BUILTINS
-#define TARGET_OS_CPP_BUILTINS()		\
-  do						\
-    {						\
-      builtin_define_std ("PPC");		\
-      builtin_define_std ("powerpc");		\
-      builtin_assert ("cpu=powerpc");		\
-      builtin_assert ("machine=powerpc");	\
-      TARGET_OS_SYSV_CPP_BUILTINS ();		\
-    }						\
+#define TARGET_OS_CPP_BUILTINS()			\
+  do							\
+    {							\
+      if (strcmp (rs6000_abi_name, "linux") == 0)	\
+	GNU_USER_TARGET_OS_CPP_BUILTINS();		\
+      builtin_define_std ("PPC");			\
+      builtin_define_std ("powerpc");			\
+      builtin_assert ("cpu=powerpc");			\
+      builtin_assert ("machine=powerpc");		\
+      TARGET_OS_SYSV_CPP_BUILTINS ();			\
+    }							\
   while (0)
 
 #undef	CPP_OS_DEFAULT_SPEC
 #define CPP_OS_DEFAULT_SPEC "%(cpp_os_linux)"
 
 #undef  LINK_SHLIB_SPEC
-#define LINK_SHLIB_SPEC "%{shared:-shared} %{!shared: %{static:-static}}"
+#define LINK_SHLIB_SPEC "%{shared:-shared} %{!shared: %{static:-static}} \
+  %{static-pie:-static -pie --no-dynamic-linker -z text}"
 
 #undef	LIB_DEFAULT_SPEC
 #define LIB_DEFAULT_SPEC "%(lib_linux)"
@@ -93,8 +96,9 @@
 
 #undef LINK_OS_LINUX_SPEC
 #define LINK_OS_LINUX_SPEC LINK_OS_LINUX_EMUL " %{!shared: %{!static: \
-  %{rdynamic:-export-dynamic} \
-  -dynamic-linker " GNU_USER_DYNAMIC_LINKER "}}"
+  %{!static-pie: \
+    %{rdynamic:-export-dynamic} \
+    -dynamic-linker " GNU_USER_DYNAMIC_LINKER "}}}"
 
 /* For backward compatibility, we must continue to use the AIX
    structure return convention.  */
@@ -110,6 +114,9 @@
 #undef RELOCATABLE_NEEDS_FIXUP
 #define RELOCATABLE_NEEDS_FIXUP \
   (rs6000_isa_flags & rs6000_isa_flags_explicit & OPTION_MASK_RELOCATABLE)
+
+#undef	RS6000_ABI_NAME
+#define	RS6000_ABI_NAME "linux"
 
 #ifdef TARGET_LIBC_PROVIDES_SSP
 /* ppc32 glibc provides __stack_chk_guard in -0x7008(2).  */

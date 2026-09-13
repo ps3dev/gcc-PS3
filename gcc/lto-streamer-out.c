@@ -1,6 +1,6 @@
 /* Write the GIMPLE representation to a file stream.
 
-   Copyright (C) 2009-2017 Free Software Foundation, Inc.
+   Copyright (C) 2009-2019 Free Software Foundation, Inc.
    Contributed by Kenneth Zadeck <zadeck@naturalbridge.com>
    Re-implemented by Diego Novillo <dnovillo@google.com>
 
@@ -40,6 +40,10 @@ along with GCC; see the file COPYING3.  If not see
 #include "cfgloop.h"
 #include "builtins.h"
 #include "gomp-constants.h"
+#include "debug.h"
+#include "omp-offload.h"
+#include "print-tree.h"
+#include "tree-dfa.h"
 
 
 static void lto_write_tree (struct output_block*, tree, bool);
@@ -63,6 +67,9 @@ struct output_block *
 create_output_block (enum lto_section_type section_type)
 {
   struct output_block *ob = XCNEW (struct output_block);
+  if (streamer_dump_file)
+    fprintf (streamer_dump_file, "Creating output block for %s\n",
+	     lto_section_name [section_type]);
 
   ob->section_type = section_type;
   ob->decl_state = lto_get_out_decl_state ();
@@ -128,9 +135,12 @@ tree_is_indexable (tree t)
   if ((TREE_CODE (t) == PARM_DECL || TREE_CODE (t) == RESULT_DECL)
       && DECL_CONTEXT (t))
     return variably_modified_type_p (TREE_TYPE (DECL_CONTEXT (t)), NULL_TREE);
-  /* IMPORTED_DECL is put into BLOCK and thus it never can be shared.  */
+  /* IMPORTED_DECL is put into BLOCK and thus it never can be shared.
+     We should no longer need to stream it.  */
   else if (TREE_CODE (t) == IMPORTED_DECL)
-    return false;
+    gcc_unreachable ();
+  else if (TREE_CODE (t) == LABEL_DECL)
+    return FORCED_LABEL (t) || DECL_NONLOCAL (t);
   else if (((VAR_P (t) && !TREE_STATIC (t))
 	    || TREE_CODE (t) == TYPE_DECL
 	    || TREE_CODE (t) == CONST_DECL
@@ -297,7 +307,6 @@ lto_is_streamable (tree expr)
      name version in lto_output_tree_ref (see output_ssa_names).  */
   return !is_lang_specific (expr)
 	 && code != SSA_NAME
-	 && code != CALL_EXPR
 	 && code != LANG_TYPE
 	 && code != MODIFY_EXPR
 	 && code != INIT_EXPR
@@ -405,6 +414,26 @@ lto_write_tree_1 (struct output_block *ob, tree expr, bool ref_p)
       tree initial = get_symbol_initial_value
 			 (ob->decl_state->symtab_node_encoder, expr);
       stream_write_tree (ob, initial, ref_p);
+    }
+
+  /* Stream references to early generated DIEs.  Keep in sync with the
+     trees handled in dwarf2out_die_ref_for_decl.  */
+  if ((DECL_P (expr)
+       && TREE_CODE (expr) != FIELD_DECL
+       && TREE_CODE (expr) != DEBUG_EXPR_DECL
+       && TREE_CODE (expr) != TYPE_DECL)
+      || TREE_CODE (expr) == BLOCK)
+    {
+      const char *sym;
+      unsigned HOST_WIDE_INT off;
+      if (debug_info_level > DINFO_LEVEL_NONE
+	  && debug_hooks->die_ref_for_decl (expr, &sym, &off))
+	{
+	  streamer_write_string (ob, ob->main_stream, sym, true);
+	  streamer_write_uhwi (ob, off);
+	}
+      else
+	streamer_write_string (ob, ob->main_stream, NULL, true);
     }
 }
 
@@ -716,6 +745,14 @@ DFS::DFS_write_tree_body (struct output_block *ob,
 
   enum tree_code code;
 
+  if (streamer_dump_file)
+    {
+      print_node_brief (streamer_dump_file, "    Streaming ",
+	 		expr, 4);
+      fprintf (streamer_dump_file, "  to %s\n",
+	       lto_section_name [ob->section_type]);
+    }
+
   code = TREE_CODE (expr);
 
   if (CODE_CONTAINS_STRUCT (code, TS_TYPED))
@@ -726,9 +763,14 @@ DFS::DFS_write_tree_body (struct output_block *ob,
 
   if (CODE_CONTAINS_STRUCT (code, TS_VECTOR))
     {
-      for (unsigned i = 0; i < VECTOR_CST_NELTS (expr); ++i)
-	DFS_follow_tree_edge (VECTOR_CST_ELT (expr, i));
+      unsigned int count = vector_cst_encoded_nelts (expr);
+      for (unsigned int i = 0; i < count; ++i)
+	DFS_follow_tree_edge (VECTOR_CST_ENCODED_ELT (expr, i));
     }
+
+  if (CODE_CONTAINS_STRUCT (code, TS_POLY_INT_CST))
+    for (unsigned int i = 0; i < NUM_POLY_INT_COEFFS; ++i)
+      DFS_follow_tree_edge (POLY_INT_CST_COEFF (expr, i));
 
   if (CODE_CONTAINS_STRUCT (code, TS_COMPLEX))
     {
@@ -745,7 +787,11 @@ DFS::DFS_write_tree_body (struct output_block *ob,
 	;
       else
 	DFS_follow_tree_edge (DECL_NAME (expr));
-      DFS_follow_tree_edge (DECL_CONTEXT (expr));
+      if (TREE_CODE (expr) != TRANSLATION_UNIT_DECL
+	  && ! DECL_CONTEXT (expr))
+	DFS_follow_tree_edge ((*all_translation_units)[0]);
+      else
+	DFS_follow_tree_edge (DECL_CONTEXT (expr));
     }
 
   if (CODE_CONTAINS_STRUCT (code, TS_DECL_COMMON))
@@ -758,26 +804,19 @@ DFS::DFS_write_tree_body (struct output_block *ob,
 
       DFS_follow_tree_edge (DECL_ATTRIBUTES (expr));
 
-      /* Do not follow DECL_ABSTRACT_ORIGIN.  We cannot handle debug information
-	 for early inlining so drop it on the floor instead of ICEing in
-	 dwarf2out.c.
-	 We however use DECL_ABSTRACT_ORIGIN == error_mark_node to mark
+      /* We use DECL_ABSTRACT_ORIGIN == error_mark_node to mark
 	 declarations which should be eliminated by decl merging. Be sure none
 	 leaks to this point.  */
       gcc_assert (DECL_ABSTRACT_ORIGIN (expr) != error_mark_node);
+      DFS_follow_tree_edge (DECL_ABSTRACT_ORIGIN (expr));
 
       if ((VAR_P (expr)
 	   || TREE_CODE (expr) == PARM_DECL)
 	  && DECL_HAS_VALUE_EXPR_P (expr))
 	DFS_follow_tree_edge (DECL_VALUE_EXPR (expr));
-      if (VAR_P (expr))
+      if (VAR_P (expr)
+	  && DECL_HAS_DEBUG_EXPR_P (expr))
 	DFS_follow_tree_edge (DECL_DEBUG_EXPR (expr));
-    }
-
-  if (CODE_CONTAINS_STRUCT (code, TS_DECL_NON_COMMON))
-    {
-      if (TREE_CODE (expr) == TYPE_DECL)
-	DFS_follow_tree_edge (DECL_ORIGINAL_TYPE (expr));
     }
 
   if (CODE_CONTAINS_STRUCT (code, TS_DECL_WITH_VIS))
@@ -793,12 +832,12 @@ DFS::DFS_write_tree_body (struct output_block *ob,
       DFS_follow_tree_edge (DECL_BIT_FIELD_TYPE (expr));
       DFS_follow_tree_edge (DECL_BIT_FIELD_REPRESENTATIVE (expr));
       DFS_follow_tree_edge (DECL_FIELD_BIT_OFFSET (expr));
-      DFS_follow_tree_edge (DECL_FCONTEXT (expr));
+      gcc_checking_assert (!DECL_FCONTEXT (expr));
     }
 
   if (CODE_CONTAINS_STRUCT (code, TS_FUNCTION_DECL))
     {
-      DFS_follow_tree_edge (DECL_VINDEX (expr));
+      gcc_checking_assert (DECL_VINDEX (expr) == NULL);
       DFS_follow_tree_edge (DECL_FUNCTION_PERSONALITY (expr));
       DFS_follow_tree_edge (DECL_FUNCTION_SPECIFIC_TARGET (expr));
       DFS_follow_tree_edge (DECL_FUNCTION_SPECIFIC_OPTIMIZATION (expr));
@@ -818,7 +857,9 @@ DFS::DFS_write_tree_body (struct output_block *ob,
       DFS_follow_tree_edge (TYPE_CONTEXT (expr));
       /* TYPE_CANONICAL is re-computed during type merging, so no need
 	 to follow it here.  */
-      DFS_follow_tree_edge (TYPE_STUB_DECL (expr));
+      /* Do not stream TYPE_STUB_DECL; it is not needed by LTO but currently
+	 it cannot be freed by free_lang_data without triggering ICEs in
+	 langhooks.  */
     }
 
   if (CODE_CONTAINS_STRUCT (code, TS_TYPE_NON_COMMON))
@@ -835,10 +876,8 @@ DFS::DFS_write_tree_body (struct output_block *ob,
 	DFS_follow_tree_edge (TYPE_ARG_TYPES (expr));
 
       if (!POINTER_TYPE_P (expr))
-	DFS_follow_tree_edge (TYPE_MINVAL (expr));
-      DFS_follow_tree_edge (TYPE_MAXVAL (expr));
-      if (RECORD_OR_UNION_TYPE_P (expr))
-	DFS_follow_tree_edge (TYPE_BINFO (expr));
+	DFS_follow_tree_edge (TYPE_MIN_VALUE_RAW (expr));
+      DFS_follow_tree_edge (TYPE_MAX_VALUE_RAW (expr));
     }
 
   if (CODE_CONTAINS_STRUCT (code, TS_LIST))
@@ -864,30 +903,17 @@ DFS::DFS_write_tree_body (struct output_block *ob,
   if (CODE_CONTAINS_STRUCT (code, TS_BLOCK))
     {
       for (tree t = BLOCK_VARS (expr); t; t = TREE_CHAIN (t))
-	if (VAR_OR_FUNCTION_DECL_P (t)
-	    && DECL_EXTERNAL (t))
-	  /* We have to stream externals in the block chain as
-	     non-references.  See also
-	     tree-streamer-out.c:streamer_write_chain.  */
-	  DFS_write_tree (ob, expr_state, t, ref_p, false);
-	else
+	{
+	  /* We would have to stream externals in the block chain as
+	     non-references but we should have dropped them in
+	     free-lang-data.  */
+	  gcc_assert (!VAR_OR_FUNCTION_DECL_P (t) || !DECL_EXTERNAL (t));
 	  DFS_follow_tree_edge (t);
+	}
 
       DFS_follow_tree_edge (BLOCK_SUPERCONTEXT (expr));
+      DFS_follow_tree_edge (BLOCK_ABSTRACT_ORIGIN (expr));
 
-      /* Follow BLOCK_ABSTRACT_ORIGIN for the limited cases we can
-	 handle - those that represent inlined function scopes.
-	 For the drop rest them on the floor instead of ICEing
-	 in dwarf2out.c, but keep the notion of whether the block
-	 is an inlined block by refering to itself for the sake of
-	 tree_nonartificial_location.  */
-      if (inlined_function_outer_scope_p (expr))
-	{
-	  tree ultimate_origin = block_ultimate_origin (expr);
-	  DFS_follow_tree_edge (ultimate_origin);
-	}
-      else if (BLOCK_ABSTRACT_ORIGIN (expr))
-	DFS_follow_tree_edge (expr);
       /* Do not follow BLOCK_NONLOCALIZED_VARS.  We cannot handle debug
 	 information for early inlined BLOCKs so drop it on the floor instead
 	 of ICEing in dwarf2out.c.  */
@@ -911,15 +937,10 @@ DFS::DFS_write_tree_body (struct output_block *ob,
 	DFS_follow_tree_edge (t);
       DFS_follow_tree_edge (BINFO_OFFSET (expr));
       DFS_follow_tree_edge (BINFO_VTABLE (expr));
-      DFS_follow_tree_edge (BINFO_VPTR_FIELD (expr));
 
-      /* The number of BINFO_BASE_ACCESSES has already been emitted in
-	 EXPR's bitfield section.  */
-      FOR_EACH_VEC_SAFE_ELT (BINFO_BASE_ACCESSES (expr), i, t)
-	DFS_follow_tree_edge (t);
-
-      /* Do not walk BINFO_INHERITANCE_CHAIN, BINFO_SUBVTT_INDEX
-	 and BINFO_VPTR_INDEX; these are used by C++ FE only.  */
+      /* Do not walk BINFO_INHERITANCE_CHAIN, BINFO_SUBVTT_INDEX,
+	 BINFO_BASE_ACCESSES and BINFO_VPTR_INDEX; these are used
+	 by C++ FE only.  */
     }
 
   if (CODE_CONTAINS_STRUCT (code, TS_CONSTRUCTOR))
@@ -1004,13 +1025,7 @@ hash_tree (struct streamer_tree_cache_d *cache, hash_map<tree, hashval_t> *map, 
   hstate.commit_flag ();
 
   if (CODE_CONTAINS_STRUCT (code, TS_INT_CST))
-    {
-      int i;
-      hstate.add_wide_int (TREE_INT_CST_NUNITS (t));
-      hstate.add_wide_int (TREE_INT_CST_EXT_NUNITS (t));
-      for (i = 0; i < TREE_INT_CST_NUNITS (t); i++)
-	hstate.add_wide_int (TREE_INT_CST_ELT (t, i));
-    }
+    hstate.add_wide_int (wi::to_widest (t));
 
   if (CODE_CONTAINS_STRUCT (code, TS_REAL_CST))
     {
@@ -1034,7 +1049,7 @@ hash_tree (struct streamer_tree_cache_d *cache, hash_map<tree, hashval_t> *map, 
 
   if (CODE_CONTAINS_STRUCT (code, TS_DECL_COMMON))
     {
-      hstate.add_wide_int (DECL_MODE (t));
+      hstate.add_hwi (DECL_MODE (t));
       hstate.add_flag (DECL_NONLOCAL (t));
       hstate.add_flag (DECL_VIRTUAL_P (t));
       hstate.add_flag (DECL_IGNORED_P (t));
@@ -1055,6 +1070,7 @@ hash_tree (struct streamer_tree_cache_d *cache, hash_map<tree, hashval_t> *map, 
 	{
 	  hstate.add_flag (DECL_PACKED (t));
 	  hstate.add_flag (DECL_NONADDRESSABLE_P (t));
+	  hstate.add_flag (DECL_PADDING_P (t));
 	  hstate.add_int (DECL_OFFSET_ALIGN (t));
 	}
       else if (code == VAR_DECL)
@@ -1127,11 +1143,10 @@ hash_tree (struct streamer_tree_cache_d *cache, hash_map<tree, hashval_t> *map, 
 
   if (CODE_CONTAINS_STRUCT (code, TS_TYPE_COMMON))
     {
-      hstate.add_wide_int (TYPE_MODE (t));
+      hstate.add_hwi (TYPE_MODE (t));
       hstate.add_flag (TYPE_STRING_FLAG (t));
       /* TYPE_NO_FORCE_BLK is private to stor-layout and need
  	 no streaming.  */
-      hstate.add_flag (TYPE_NEEDS_CONSTRUCTING (t));
       hstate.add_flag (TYPE_PACKED (t));
       hstate.add_flag (TYPE_RESTRICT (t));
       hstate.add_flag (TYPE_USER_ALIGN (t));
@@ -1148,6 +1163,7 @@ hash_tree (struct streamer_tree_cache_d *cache, hash_map<tree, hashval_t> *map, 
       hstate.commit_flag ();
       hstate.add_int (TYPE_PRECISION (t));
       hstate.add_int (TYPE_ALIGN (t));
+      hstate.add_int (TYPE_EMPTY_P (t));
     }
 
   if (CODE_CONTAINS_STRUCT (code, TS_TRANSLATION_UNIT_DECL))
@@ -1157,10 +1173,10 @@ hash_tree (struct streamer_tree_cache_d *cache, hash_map<tree, hashval_t> *map, 
   if (CODE_CONTAINS_STRUCT (code, TS_TARGET_OPTION)
       /* We don't stream these when passing things to a different target.  */
       && !lto_stream_offload_p)
-    hstate.add_wide_int (cl_target_option_hash (TREE_TARGET_OPTION (t)));
+    hstate.add_hwi (cl_target_option_hash (TREE_TARGET_OPTION (t)));
 
   if (CODE_CONTAINS_STRUCT (code, TS_OPTIMIZATION))
-    hstate.add_wide_int (cl_optimization_hash (TREE_OPTIMIZATION (t)));
+    hstate.add_hwi (cl_optimization_hash (TREE_OPTIMIZATION (t)));
 
   if (CODE_CONTAINS_STRUCT (code, TS_IDENTIFIER))
     hstate.merge_hash (IDENTIFIER_HASH_VALUE (t));
@@ -1175,8 +1191,15 @@ hash_tree (struct streamer_tree_cache_d *cache, hash_map<tree, hashval_t> *map, 
     }
 
   if (CODE_CONTAINS_STRUCT (code, TS_VECTOR))
-    for (unsigned i = 0; i < VECTOR_CST_NELTS (t); ++i)
-      visit (VECTOR_CST_ELT (t, i));
+    {
+      unsigned int count = vector_cst_encoded_nelts (t);
+      for (unsigned int i = 0; i < count; ++i)
+	visit (VECTOR_CST_ENCODED_ELT (t, i));
+    }
+
+  if (CODE_CONTAINS_STRUCT (code, TS_POLY_INT_CST))
+    for (unsigned int i = 0; i < NUM_POLY_INT_COEFFS; ++i)
+      visit (POLY_INT_CST_COEFF (t, i));
 
   if (CODE_CONTAINS_STRUCT (code, TS_COMPLEX))
     {
@@ -1215,12 +1238,6 @@ hash_tree (struct streamer_tree_cache_d *cache, hash_map<tree, hashval_t> *map, 
          be able to call get_symbol_initial_value.  */
     }
 
-  if (CODE_CONTAINS_STRUCT (code, TS_DECL_NON_COMMON))
-    {
-      if (code == TYPE_DECL)
-	visit (DECL_ORIGINAL_TYPE (t));
-    }
-
   if (CODE_CONTAINS_STRUCT (code, TS_DECL_WITH_VIS))
     {
       if (DECL_ASSEMBLER_NAME_SET_P (t))
@@ -1233,12 +1250,10 @@ hash_tree (struct streamer_tree_cache_d *cache, hash_map<tree, hashval_t> *map, 
       visit (DECL_BIT_FIELD_TYPE (t));
       visit (DECL_BIT_FIELD_REPRESENTATIVE (t));
       visit (DECL_FIELD_BIT_OFFSET (t));
-      visit (DECL_FCONTEXT (t));
     }
 
   if (CODE_CONTAINS_STRUCT (code, TS_FUNCTION_DECL))
     {
-      visit (DECL_VINDEX (t));
       visit (DECL_FUNCTION_PERSONALITY (t));
       visit (DECL_FUNCTION_SPECIFIC_TARGET (t));
       visit (DECL_FUNCTION_SPECIFIC_OPTIMIZATION (t));
@@ -1255,7 +1270,6 @@ hash_tree (struct streamer_tree_cache_d *cache, hash_map<tree, hashval_t> *map, 
 	;
       else
 	visit (TYPE_CONTEXT (t));
-      visit (TYPE_STUB_DECL (t));
     }
 
   if (CODE_CONTAINS_STRUCT (code, TS_TYPE_NON_COMMON))
@@ -1271,10 +1285,8 @@ hash_tree (struct streamer_tree_cache_d *cache, hash_map<tree, hashval_t> *map, 
 	       || code == METHOD_TYPE)
 	visit (TYPE_ARG_TYPES (t));
       if (!POINTER_TYPE_P (t))
-	visit (TYPE_MINVAL (t));
-      visit (TYPE_MAXVAL (t));
-      if (RECORD_OR_UNION_TYPE_P (t))
-	visit (TYPE_BINFO (t));
+	visit (TYPE_MIN_VALUE_RAW (t));
+      visit (TYPE_MAX_VALUE_RAW (t));
     }
 
   if (CODE_CONTAINS_STRUCT (code, TS_LIST))
@@ -1290,7 +1302,7 @@ hash_tree (struct streamer_tree_cache_d *cache, hash_map<tree, hashval_t> *map, 
 
   if (CODE_CONTAINS_STRUCT (code, TS_EXP))
     {
-      hstate.add_wide_int (TREE_OPERAND_LENGTH (t));
+      hstate.add_hwi (TREE_OPERAND_LENGTH (t));
       for (int i = 0; i < TREE_OPERAND_LENGTH (t); ++i)
 	visit (TREE_OPERAND (t, i));
     }
@@ -1303,18 +1315,16 @@ hash_tree (struct streamer_tree_cache_d *cache, hash_map<tree, hashval_t> *map, 
 	visit (b);
       visit (BINFO_OFFSET (t));
       visit (BINFO_VTABLE (t));
-      visit (BINFO_VPTR_FIELD (t));
-      FOR_EACH_VEC_SAFE_ELT (BINFO_BASE_ACCESSES (t), i, b)
-	visit (b);
       /* Do not walk BINFO_INHERITANCE_CHAIN, BINFO_SUBVTT_INDEX
-	 and BINFO_VPTR_INDEX; these are used by C++ FE only.  */
+	 BINFO_BASE_ACCESSES and BINFO_VPTR_INDEX; these are used
+	 by C++ FE only.  */
     }
 
   if (CODE_CONTAINS_STRUCT (code, TS_CONSTRUCTOR))
     {
       unsigned i;
       tree index, value;
-      hstate.add_wide_int (CONSTRUCTOR_NELTS (t));
+      hstate.add_hwi (CONSTRUCTOR_NELTS (t));
       FOR_EACH_CONSTRUCTOR_ELT (CONSTRUCTOR_ELTS (t), i, index, value)
 	{
 	  visit (index);
@@ -1327,7 +1337,7 @@ hash_tree (struct streamer_tree_cache_d *cache, hash_map<tree, hashval_t> *map, 
       int i;
       HOST_WIDE_INT val;
 
-      hstate.add_wide_int (OMP_CLAUSE_CODE (t));
+      hstate.add_hwi (OMP_CLAUSE_CODE (t));
       switch (OMP_CLAUSE_CODE (t))
 	{
 	case OMP_CLAUSE_DEFAULT:
@@ -1346,13 +1356,15 @@ hash_tree (struct streamer_tree_cache_d *cache, hash_map<tree, hashval_t> *map, 
 	  val = OMP_CLAUSE_PROC_BIND_KIND (t);
 	  break;
 	case OMP_CLAUSE_REDUCTION:
+	case OMP_CLAUSE_TASK_REDUCTION:
+	case OMP_CLAUSE_IN_REDUCTION:
 	  val = OMP_CLAUSE_REDUCTION_CODE (t);
 	  break;
 	default:
 	  val = 0;
 	  break;
 	}
-      hstate.add_wide_int (val);
+      hstate.add_hwi (val);
       for (i = 0; i < omp_clause_num_ops[OMP_CLAUSE_CODE (t)]; i++)
 	visit (OMP_CLAUSE_OPERAND (t, i));
       visit (OMP_CLAUSE_CHAIN (t));
@@ -1603,6 +1615,13 @@ lto_output_tree (struct output_block *ob, tree expr,
 	 we stream out.  */
       gcc_assert (!in_dfs_walk);
 
+      if (streamer_dump_file)
+	{
+	  print_node_brief (streamer_dump_file, "   Streaming SCC of ",
+			    expr, 4);
+          fprintf (streamer_dump_file, "\n");
+	}
+
       /* Start the DFS walk.  */
       /* Save ob state ... */
       /* let's see ... */
@@ -1619,6 +1638,12 @@ lto_output_tree (struct output_block *ob, tree expr,
       streamer_write_uhwi (ob, ix);
       streamer_write_enum (ob->main_stream, LTO_tags, LTO_NUM_TAGS,
 			   lto_tree_code_to_tag (TREE_CODE (expr)));
+      if (streamer_dump_file)
+	{
+	  print_node_brief (streamer_dump_file, "   Finished SCC of ",
+			    expr, 4);
+          fprintf (streamer_dump_file, "\n\n");
+	}
       lto_stats.num_pickle_refs_output++;
     }
 }
@@ -1860,15 +1885,14 @@ output_cfg (struct output_block *ob, struct function *fn)
       FOR_EACH_EDGE (e, ei, bb->succs)
 	{
 	  streamer_write_uhwi (ob, e->dest->index);
-	  streamer_write_hwi (ob, e->probability);
-	  streamer_write_gcov_count (ob, e->count);
+	  e->probability.stream_out (ob);
 	  streamer_write_uhwi (ob, e->flags);
 	}
     }
 
   streamer_write_hwi (ob, -1);
 
-  bb = ENTRY_BLOCK_PTR_FOR_FN (cfun);
+  bb = ENTRY_BLOCK_PTR_FOR_FN (fn);
   while (bb->next_bb)
     {
       streamer_write_hwi (ob, bb->next_bb->index);
@@ -1876,9 +1900,6 @@ output_cfg (struct output_block *ob, struct function *fn)
     }
 
   streamer_write_hwi (ob, -1);
-
-  /* ???  The cfgloop interface is tied to cfun.  */
-  gcc_assert (cfun == fn);
 
   /* Output the number of loops.  */
   streamer_write_uhwi (ob, number_of_loops (fn));
@@ -1914,6 +1935,8 @@ output_cfg (struct output_block *ob, struct function *fn)
 
       /* Write OMP SIMD related info.  */
       streamer_write_hwi (ob, loop->safelen);
+      streamer_write_hwi (ob, loop->unroll);
+      streamer_write_hwi (ob, loop->owned_clique);
       streamer_write_hwi (ob, loop->dont_vectorize);
       streamer_write_hwi (ob, loop->force_vectorize);
       stream_write_tree (ob, loop->simduid, true);
@@ -2014,6 +2037,14 @@ output_struct_function_base (struct output_block *ob, struct function *fn)
   stream_output_location (ob, &bp, fn->function_start_locus);
   stream_output_location (ob, &bp, fn->function_end_locus);
 
+  /* Save the instance discriminator if present.  */
+  int *instance_number_p = NULL;
+  if (decl_to_instance_map)
+    instance_number_p = decl_to_instance_map->get (fn->decl);
+  bp_pack_value (&bp, !!instance_number_p, 1);
+  if (instance_number_p)
+    bp_pack_value (&bp, *instance_number_p, sizeof (int) * CHAR_BIT);
+
   streamer_write_bitpack (&bp);
 }
 
@@ -2030,6 +2061,62 @@ collect_block_tree_leafs (tree root, vec<tree> &leafs)
       collect_block_tree_leafs (BLOCK_SUBBLOCKS (root), leafs);
 }
 
+/* This performs function body modifications that are needed for streaming
+   to work.  */
+
+void
+lto_prepare_function_for_streaming (struct cgraph_node *node)
+{
+  struct function *fn = DECL_STRUCT_FUNCTION (node->decl);
+  basic_block bb;
+
+  if (number_of_loops (fn))
+    {
+      push_cfun (fn);
+      loop_optimizer_init (AVOID_CFG_MODIFICATIONS);
+      loop_optimizer_finalize ();
+      pop_cfun ();
+    }
+  /* We will renumber the statements.  The code that does this uses
+     the same ordering that we use for serializing them so we can use
+     the same code on the other end and not have to write out the
+     statement numbers.  We do not assign UIDs to PHIs here because
+     virtual PHIs get re-computed on-the-fly which would make numbers
+     inconsistent.  */
+  set_gimple_stmt_max_uid (fn, 0);
+  FOR_ALL_BB_FN (bb, fn)
+    {
+      for (gphi_iterator gsi = gsi_start_phis (bb); !gsi_end_p (gsi);
+	   gsi_next (&gsi))
+	{
+	  gphi *stmt = gsi.phi ();
+
+	  /* Virtual PHIs are not going to be streamed.  */
+	  if (!virtual_operand_p (gimple_phi_result (stmt)))
+	    gimple_set_uid (stmt, inc_gimple_stmt_max_uid (fn));
+	}
+      for (gimple_stmt_iterator gsi = gsi_start_bb (bb); !gsi_end_p (gsi);
+	   gsi_next (&gsi))
+	{
+	  gimple *stmt = gsi_stmt (gsi);
+	  gimple_set_uid (stmt, inc_gimple_stmt_max_uid (fn));
+	}
+    }
+  /* To avoid keeping duplicate gimple IDs in the statements, renumber
+     virtual phis now.  */
+  FOR_ALL_BB_FN (bb, fn)
+    {
+      for (gphi_iterator gsi = gsi_start_phis (bb); !gsi_end_p (gsi);
+	   gsi_next (&gsi))
+	{
+	  gphi *stmt = gsi.phi ();
+	  if (virtual_operand_p (gimple_phi_result (stmt)))
+	    gimple_set_uid (stmt, inc_gimple_stmt_max_uid (fn));
+	}
+    }
+
+}
+
 /* Output the body of function NODE->DECL.  */
 
 static void
@@ -2040,6 +2127,10 @@ output_function (struct cgraph_node *node)
   basic_block bb;
   struct output_block *ob;
 
+  if (streamer_dump_file)
+    fprintf (streamer_dump_file, "\nStreaming body of %s\n",
+	     node->name ());
+
   function = node->decl;
   fn = DECL_STRUCT_FUNCTION (function);
   ob = create_output_block (LTO_section_function_body);
@@ -2049,9 +2140,6 @@ output_function (struct cgraph_node *node)
 
   gcc_assert (current_function_decl == NULL_TREE && cfun == NULL);
 
-  /* Set current_function_decl and cfun.  */
-  push_cfun (fn);
-
   /* Make string 0 be a NULL string.  */
   streamer_write_char_stream (ob->string_stream, 0);
 
@@ -2060,6 +2148,17 @@ output_function (struct cgraph_node *node)
   /* Output decls for parameters and args.  */
   stream_write_tree (ob, DECL_RESULT (function), true);
   streamer_write_chain (ob, DECL_ARGUMENTS (function), true);
+
+  /* Output debug args if available. */
+  vec<tree, va_gc> **debugargs = decl_debug_args_lookup (function);
+  if (! debugargs)
+    streamer_write_uhwi (ob, 0);
+  else
+    {
+      streamer_write_uhwi (ob, (*debugargs)->length ());
+      for (unsigned i = 0; i < (*debugargs)->length (); ++i)
+	stream_write_tree (ob, (**debugargs)[i], true);
+    }
 
   /* Output DECL_INITIAL for the function, which contains the tree of
      lexical scopes.  */
@@ -2086,45 +2185,6 @@ output_function (struct cgraph_node *node)
       /* Output any exception handling regions.  */
       output_eh_regions (ob, fn);
 
-
-      /* We will renumber the statements.  The code that does this uses
-	 the same ordering that we use for serializing them so we can use
-	 the same code on the other end and not have to write out the
-	 statement numbers.  We do not assign UIDs to PHIs here because
-	 virtual PHIs get re-computed on-the-fly which would make numbers
-	 inconsistent.  */
-      set_gimple_stmt_max_uid (cfun, 0);
-      FOR_ALL_BB_FN (bb, cfun)
-	{
-	  for (gphi_iterator gsi = gsi_start_phis (bb); !gsi_end_p (gsi);
-	       gsi_next (&gsi))
-	    {
-	      gphi *stmt = gsi.phi ();
-
-	      /* Virtual PHIs are not going to be streamed.  */
-	      if (!virtual_operand_p (gimple_phi_result (stmt)))
-	        gimple_set_uid (stmt, inc_gimple_stmt_max_uid (cfun));
-	    }
-	  for (gimple_stmt_iterator gsi = gsi_start_bb (bb); !gsi_end_p (gsi);
-	       gsi_next (&gsi))
-	    {
-	      gimple *stmt = gsi_stmt (gsi);
-	      gimple_set_uid (stmt, inc_gimple_stmt_max_uid (cfun));
-	    }
-	}
-      /* To avoid keeping duplicate gimple IDs in the statements, renumber
-	 virtual phis now.  */
-      FOR_ALL_BB_FN (bb, cfun)
-	{
-	  for (gphi_iterator gsi = gsi_start_phis (bb); !gsi_end_p (gsi);
-	       gsi_next (&gsi))
-	    {
-	      gphi *stmt = gsi.phi ();
-	      if (virtual_operand_p (gimple_phi_result (stmt)))
-	        gimple_set_uid (stmt, inc_gimple_stmt_max_uid (cfun));
-	    }
-	}
-
       /* Output the code for the function.  */
       FOR_ALL_BB_FN (bb, fn)
 	output_bb (ob, bb, fn);
@@ -2133,8 +2193,6 @@ output_function (struct cgraph_node *node)
       streamer_write_record_start (ob, LTO_null);
 
       output_cfg (ob, fn);
-
-      pop_cfun ();
    }
   else
     streamer_write_uhwi (ob, 0);
@@ -2143,6 +2201,9 @@ output_function (struct cgraph_node *node)
   produce_asm (ob, function);
 
   destroy_output_block (ob);
+  if (streamer_dump_file)
+    fprintf (streamer_dump_file, "Finished streaming %s\n",
+	     node->name ());
 }
 
 /* Output the body of function NODE->DECL.  */
@@ -2152,6 +2213,10 @@ output_constructor (struct varpool_node *node)
 {
   tree var = node->decl;
   struct output_block *ob;
+
+  if (streamer_dump_file)
+    fprintf (streamer_dump_file, "\nStreaming constructor of %s\n",
+	     node->name ());
 
   ob = create_output_block (LTO_section_function_body);
 
@@ -2169,6 +2234,9 @@ output_constructor (struct varpool_node *node)
   produce_asm (ob, var);
 
   destroy_output_block (ob);
+  if (streamer_dump_file)
+    fprintf (streamer_dump_file, "Finished streaming %s\n",
+	     node->name ());
 }
 
 
@@ -2240,6 +2308,8 @@ copy_function_or_variable (struct symtab_node *node)
   struct lto_in_decl_state *in_state;
   struct lto_out_decl_state *out_state = lto_get_out_decl_state ();
 
+  if (streamer_dump_file)
+    fprintf (streamer_dump_file, "Copying section for %s\n", name);
   lto_begin_section (section_name, false);
   free (section_name);
 
@@ -2304,6 +2374,25 @@ wrap_refs (tree *tp, int *ws, void *)
   return NULL_TREE;
 }
 
+/* Remove functions that are no longer used from offload_funcs, and mark the
+   remaining ones with DECL_PRESERVE_P.  */
+
+static void
+prune_offload_funcs (void)
+{
+  if (!offload_funcs)
+    return;
+
+  unsigned ix, ix2;
+  tree *elem_ptr;
+  VEC_ORDERED_REMOVE_IF (*offload_funcs, ix, ix2, elem_ptr,
+			 cgraph_node::get (*elem_ptr) == NULL);
+
+  tree fn_decl;
+  FOR_EACH_VEC_ELT (*offload_funcs, ix, fn_decl)
+    DECL_PRESERVE_P (fn_decl) = 1;
+}
+
 /* Main entry point from the pass manager.  */
 
 void
@@ -2313,6 +2402,8 @@ lto_output (void)
   bitmap output = NULL;
   int i, n_nodes;
   lto_symtab_encoder_t encoder = lto_get_out_decl_state ()->symtab_node_encoder;
+
+  prune_offload_funcs ();
 
   if (flag_checking)
     output = lto_bitmap_alloc ();
@@ -2328,8 +2419,7 @@ lto_output (void)
       if (cgraph_node *node = dyn_cast <cgraph_node *> (snode))
 	{
 	  if (lto_symtab_encoder_encode_body_p (encoder, node)
-	      && !node->alias
-	      && (!node->thunk.thunk_p || !node->thunk.add_pointer_bounds_args))
+	      && !node->alias)
 	    {
 	      if (flag_checking)
 		{
@@ -2338,7 +2428,9 @@ lto_output (void)
 		}
 	      decl_state = lto_new_out_decl_state ();
 	      lto_push_out_decl_state (decl_state);
-	      if (gimple_has_body_p (node->decl) || !flag_wpa
+	      if (gimple_has_body_p (node->decl)
+		  || (!flag_wpa
+		      && flag_incremental_link != INCREMENTAL_LINK_LTO)
 		  /* Thunks have no body but they may be synthetized
 		     at WPA time.  */
 		  || DECL_ARGUMENTS (node->decl))
@@ -2370,7 +2462,8 @@ lto_output (void)
 	      decl_state = lto_new_out_decl_state ();
 	      lto_push_out_decl_state (decl_state);
 	      if (DECL_INITIAL (node->decl) != error_mark_node
-		  || !flag_wpa)
+		  || (!flag_wpa
+		      && flag_incremental_link != INCREMENTAL_LINK_LTO))
 		output_constructor (node);
 	      else
 		copy_function_or_variable (node);
@@ -2414,6 +2507,12 @@ write_global_stream (struct output_block *ob,
   for (index = 0; index < size; index++)
     {
       t = lto_tree_ref_encoder_get_tree (encoder, index);
+      if (streamer_dump_file)
+	{
+          fprintf (streamer_dump_file, " %i:", (int)index);
+	  print_node_brief (streamer_dump_file, "", t, 4);
+          fprintf (streamer_dump_file, "\n");
+	}
       if (!streamer_tree_cache_lookup (ob->writer_cache, t, NULL))
 	stream_write_tree (ob, t, false);
     }
@@ -2524,14 +2623,6 @@ write_symbol (struct streamer_tree_cache_d *cache,
   const char *comdat;
   unsigned char c;
 
-  /* None of the following kinds of symbols are needed in the
-     symbol table.  */
-  if (!TREE_PUBLIC (t)
-      || is_builtin_fn (t)
-      || DECL_ABSTRACT_P (t)
-      || (VAR_P (t) && DECL_HARD_REGISTER (t)))
-    return;
-
   gcc_assert (VAR_OR_FUNCTION_DECL_P (t));
 
   name = IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (t));
@@ -2618,45 +2709,6 @@ write_symbol (struct streamer_tree_cache_d *cache,
   lto_write_data (&slot_num, 4);
 }
 
-/* Return true if NODE should appear in the plugin symbol table.  */
-
-bool
-output_symbol_p (symtab_node *node)
-{
-  struct cgraph_node *cnode;
-  if (!node->real_symbol_p ())
-    return false;
-  /* We keep external functions in symtab for sake of inlining
-     and devirtualization.  We do not want to see them in symbol table as
-     references unless they are really used.  */
-  cnode = dyn_cast <cgraph_node *> (node);
-  if (cnode && (!node->definition || DECL_EXTERNAL (cnode->decl))
-      && cnode->callers)
-    return true;
-
- /* Ignore all references from external vars initializers - they are not really
-    part of the compilation unit until they are used by folding.  Some symbols,
-    like references to external construction vtables can not be referred to at all.
-    We decide this at can_refer_decl_in_current_unit_p.  */
- if (!node->definition || DECL_EXTERNAL (node->decl))
-    {
-      int i;
-      struct ipa_ref *ref;
-      for (i = 0; node->iterate_referring (i, ref); i++)
-	{
-	  if (ref->use == IPA_REF_ALIAS)
-	    continue;
-          if (is_a <cgraph_node *> (ref->referring))
-	    return true;
-	  if (!DECL_EXTERNAL (ref->referring->decl))
-	    return true;
-	}
-      return false;
-    }
-  return true;
-}
-
-
 /* Write an IL symbol table to OB.
    SET and VSET are cgraph/varpool node sets we are outputting.  */
 
@@ -2681,7 +2733,7 @@ produce_symtab (struct output_block *ob)
     {
       symtab_node *node = lsei_node (lsei);
 
-      if (!output_symbol_p (node) || DECL_EXTERNAL (node->decl))
+      if (DECL_EXTERNAL (node->decl) || !node->output_to_lto_symbol_table_p ())
 	continue;
       write_symbol (cache, node->decl, &seen, false);
     }
@@ -2690,7 +2742,7 @@ produce_symtab (struct output_block *ob)
     {
       symtab_node *node = lsei_node (lsei);
 
-      if (!output_symbol_p (node) || !DECL_EXTERNAL (node->decl))
+      if (!DECL_EXTERNAL (node->decl) || !node->output_to_lto_symbol_table_p ())
 	continue;
       write_symbol (cache, node->decl, &seen, false);
     }
@@ -2737,10 +2789,10 @@ lto_write_mode_table (void)
 	    continue;
 	  bp_pack_value (&bp, m, 8);
 	  bp_pack_enum (&bp, mode_class, MAX_MODE_CLASS, GET_MODE_CLASS (m));
-	  bp_pack_value (&bp, GET_MODE_SIZE (m), 8);
-	  bp_pack_value (&bp, GET_MODE_PRECISION (m), 16);
+	  bp_pack_poly_value (&bp, GET_MODE_SIZE (m), 16);
+	  bp_pack_poly_value (&bp, GET_MODE_PRECISION (m), 16);
 	  bp_pack_value (&bp, GET_MODE_INNER (m), 8);
-	  bp_pack_value (&bp, GET_MODE_NUNITS (m), 8);
+	  bp_pack_poly_value (&bp, GET_MODE_NUNITS (m), 16);
 	  switch (GET_MODE_CLASS (m))
 	    {
 	    case MODE_FRACT:
@@ -2831,12 +2883,18 @@ produce_asm_for_decls (void)
       }
 
   /* Write the global symbols.  */
+  if (streamer_dump_file)
+    fprintf (streamer_dump_file, "Outputting global stream\n");
   lto_output_decl_state_streams (ob, out_state);
   num_fns = lto_function_decl_states.length ();
   for (idx = 0; idx < num_fns; idx++)
     {
       fn_out_state =
 	lto_function_decl_states[idx];
+      if (streamer_dump_file)
+        fprintf (streamer_dump_file, "Outputting stream for %s\n",
+		 IDENTIFIER_POINTER
+		    (DECL_ASSEMBLER_NAME (fn_out_state->fn_decl)));
       lto_output_decl_state_streams (ob, fn_out_state);
     }
 

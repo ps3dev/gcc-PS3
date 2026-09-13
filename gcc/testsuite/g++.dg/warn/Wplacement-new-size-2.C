@@ -33,13 +33,13 @@ void fAx (Ax *px, Ax &rx)
 void fAx2 ()
 {
   // Initialization of non-static objects with flexible array members
-  // isn't allowed in C and should perhaps be disallowed in C++ as
+  // isn't allowed in C and had to be be disallowed in C++ as
   // well to avoid c++/69696 - incorrect initialization of block-scope
   // flexible array members.
-  Ax ax2 = { 1, { 2, 3 } };
+  Ax ax2 = { 1, { 2, 3 } };   // { dg-error "non-static initialization of a flexible array member" }
 
-  new (ax2.a) Int16;
-  new (ax2.a) Int16[1];
+  new (ax2.a) Int16;          // { dg-warning "placement" }
+  new (ax2.a) Int16[1];       // { dg-warning "placement" }
   new (ax2.a) Int16[2];       // { dg-warning "placement" }
   new (ax2.a) Int32;          // { dg-warning "placement" }
   new (ax2.a) Int32[2];       // { dg-warning "placement" }
@@ -140,36 +140,12 @@ void fBx (BAx *pbx, BAx &rbx)
 
 void fBx1 ()
 {
-  BAx bax1 = { 1, /* Ax = */ { 2, /* a[] = */ { 3 } } };
+  static BAx bax1 = { 1, /* Ax = */ { 2, /* a[] = */ {} } };
 
-  new (bax1.ax.a) char;
+  new (bax1.ax.a) char;	      // { dg-warning "placement" }
   new (bax1.ax.a) char[2];    // { dg-warning "placement" }
   new (bax1.ax.a) Int16;      // { dg-warning "placement" }
   new (bax1.ax.a) Int32;      // { dg-warning "placement" }
-}
-
-void fBx2 ()
-{
-  BAx bax2 = { 1, /* Ax = */ { 2, /* a[] = */ { 3, 4 } } };
-
-  new (bax2.ax.a) char;
-  new (bax2.ax.a) char[2];
-  new (bax2.ax.a) char[3];    // { dg-warning "placement" }
-  new (bax2.ax.a) Int16;
-  new (bax2.ax.a) char[4];    // { dg-warning "placement" }
-  new (bax2.ax.a) Int32;      // { dg-warning "placement" }
-}
-
-void fBx3 ()
-{
-  BAx bax2 = { 1, /* Ax = */ { 3, /* a[] = */ { 4, 5, 6 } } };
-
-  new (bax2.ax.a) char;
-  new (bax2.ax.a) char[2];
-  new (bax2.ax.a) Int16;
-  new (bax2.ax.a) char[3];
-  new (bax2.ax.a) char[4];    // { dg-warning "placement" }
-  new (bax2.ax.a) Int32;      // { dg-warning "placement" }
 }
 
 void fB0 (BA0 *pb0, BA0 &rb0)

@@ -1,5 +1,5 @@
 /* Next Runtime (ABI-2) private.
-   Copyright (C) 2011-2017 Free Software Foundation, Inc.
+   Copyright (C) 2011-2019 Free Software Foundation, Inc.
 
    Contributed by Iain Sandoe and based, in part, on an implementation in
    'branches/apple/trunk' contributed by Apple Computer Inc.
@@ -28,7 +28,9 @@ along with GCC; see the file COPYING3.  If not see
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
+#include "tree.h"
 #include "stringpool.h"
+#include "attribs.h"
 
 #ifdef OBJCPLUS
 #include "cp/cp-tree.h"
@@ -341,6 +343,8 @@ next_runtime_abi_02_init_metadata_attributes (void)
   meta_ehtype = get_identifier ("V2_EHTY");
 
   meta_const_str = get_identifier ("V2_CSTR");
+
+  meta_ivar_ref = get_identifier ("V2_IVRF");
 }
 
 static void next_runtime_02_initialize (void)
@@ -1645,8 +1649,8 @@ build_v2_build_objc_method_call (int super_flag, tree method_prototype,
      /* ??? CHECKME.   */
       ret_val = build_conditional_expr (input_location,
 					ifexp, 1,
-					ret_val, NULL_TREE,
-					ftree, NULL_TREE);
+					ret_val, NULL_TREE, input_location,
+					ftree, NULL_TREE, input_location);
 #endif
     }
   return ret_val;
@@ -2791,8 +2795,8 @@ ivar_offset_ref (tree class_name, tree field_decl)
   else
     decl = create_hidden_decl (TREE_TYPE (size_zero_node), buf);
 
-  /* Make sure it ends up in an ObjC section.  */
-  OBJCMETA (decl, objc_meta, meta_base);
+  /* Identify so that we can indirect these where the ABI requires.  */
+  OBJCMETA (decl, objc_meta, meta_ivar_ref);
 
   e.decl = decl;
   e.offset = byte_position (field_decl);
@@ -3584,7 +3588,7 @@ next_runtime_02_eh_type (tree type)
 	 case, we use c++'s typeinfo decl.  */
       return build_eh_type_type (type);
 #else
-      error ("non-objective-c type '%T' cannot be caught", type);
+      error ("non-objective-c type %qT cannot be caught", type);
       goto err_mark_in;
 #endif
     }

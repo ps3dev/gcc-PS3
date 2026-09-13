@@ -1,10 +1,58 @@
-2017-08-14  Release Manager
+2022-05-27  Release Manager
 
-	* GCC 7.2.0 released.
+	* GCC 9.5.0 released.
 
-2017-05-02  Release Manager
+2021-06-01  Release Manager
 
-	* GCC 7.1.0 released.
+	* GCC 9.4.0 released.
+
+2021-04-20  Jakub Jelinek  <jakub@redhat.com>
+
+	Backported from master:
+	2021-04-20  Jakub Jelinek  <jakub@redhat.com>
+
+	PR jit/100096
+	* configure.ac: Add --enable-host-shared support.
+	* Makefile.in: Update copyright.  Add @PICFLAG@ to CFLAGS.
+	* configure: Regenerated.
+
+2020-03-12  Release Manager
+
+	* GCC 9.3.0 released.
+
+2019-08-12  Release Manager
+
+	* GCC 9.2.0 released.
+
+2019-05-03  Release Manager
+
+	* GCC 9.1.0 released.
+
+2018-11-07  Hafiz Abid Qadeer  <abidh@codesourcery.com>
+
+        * configure: Regenerated.
+
+2018-10-31  Joseph Myers  <joseph@codesourcery.com>
+
+	PR bootstrap/82856
+	Merge from binutils-gdb:
+	2018-06-19  Simon Marchi  <simon.marchi@ericsson.com>
+
+	* configure.ac: Add AC_USE_SYSTEM_EXTENSIONS, remove AC_PREREQ.
+	* configure: Re-generate.
+	* config.h.in: Re-generate.
+	* aclocal.m4: Re-generate.
+
+2018-09-18  Simon Marchi  <simon.marchi@ericsson.com>
+
+	* libgnuintl.h (_INTL_MAY_RETURN_STRING_ARG, gettext, dgettext,
+	dcgettext, ngettext, dngettext, dcngettext): Backport changes
+	from upstream gettext.
+
+2017-11-07  Alan Modra  <amodra@gmail.com>
+
+	* configure.ac: Invoke AM_GNU_GETTEXT with need_ngettext.
+	* configure: Regenerate.
 
 2016-11-15  Matthias Klose  <doko@ubuntu.com>
 
@@ -135,8 +183,8 @@
 
 2004-04-25  Paolo Bonzini  <bonzini@gnu.org>
 
-        * configure.ac: Point config.intl to the parent directory of
-        ${top_builddir}.
+	* configure.ac: Point config.intl to the parent directory of
+	${top_builddir}.
 	* configure: Regenerate.
 
 2004-03-10  Kelley Cook  <kcook@gcc.gnu.org>

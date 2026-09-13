@@ -1,6 +1,6 @@
-// Class filesystem::path -*- C++ -*-
+// Class experimental::filesystem::path -*- C++ -*-
 
-// Copyright (C) 2014-2017 Free Software Foundation, Inc.
+// Copyright (C) 2014-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -28,11 +28,12 @@
 
 #include <experimental/filesystem>
 
-using std::experimental::filesystem::path;
+namespace fs = std::experimental::filesystem;
+using fs::path;
 
-std::experimental::filesystem::filesystem_error::~filesystem_error() = default;
+fs::filesystem_error::~filesystem_error() = default;
 
-constexpr path::value_type path::preferred_separator;
+constexpr path::value_type path::preferred_separator [[gnu::used]];
 
 path&
 path::remove_filename()
@@ -60,6 +61,12 @@ path::replace_filename(const path& replacement)
   return *this;
 }
 
+#ifdef _GLIBCXX_FILESYSTEM_IS_WINDOWS
+const fs::path::value_type dot = L'.';
+#else
+const fs::path::value_type dot = '.';
+#endif
+
 path&
 path::replace_extension(const path& replacement)
 {
@@ -77,8 +84,8 @@ path::replace_extension(const path& replacement)
 	  _M_pathname.erase(back._M_pos + ext.second);
 	}
     }
-  if (!replacement.empty() && replacement.native()[0] != '.')
-    _M_pathname += '.';
+  if (!replacement.empty() && replacement.native()[0] != dot)
+    _M_pathname += dot;
   _M_pathname += replacement.native();
   _M_split_cmpts();
   return *this;
@@ -296,7 +303,7 @@ path::has_filename() const
 std::pair<const path::string_type*, std::size_t>
 path::_M_find_extension() const
 {
-  const std::string* s = nullptr;
+  const string_type* s = nullptr;
 
   if (_M_type != _Type::_Multi)
     s = &_M_pathname;
@@ -311,14 +318,14 @@ path::_M_find_extension() const
     {
       if (auto sz = s->size())
 	{
-	  if (sz <= 2 && (*s)[0] == '.')
+	  if (sz <= 2 && (*s)[0] == dot)
 	    {
-	      if (sz == 1 || (*s)[1] == '.')  // filename is "." or ".."
+	      if (sz == 1 || (*s)[1] == dot)  // filename is "." or ".."
 		return { s, string_type::npos };
 	      else
 		return { s, 0 };  // filename is like ".?"
 	    }
-	  return { s, s->rfind('.') };
+	  return { s, s->rfind(dot) };
 	}
     }
   return {};
@@ -332,6 +339,28 @@ path::_M_split_cmpts()
 
   if (_M_pathname.empty())
     return;
+
+  {
+    // Approximate count of components, to reserve space in _M_cmpts vector:
+    int count = 1;
+    bool saw_sep_last = _S_is_dir_sep(_M_pathname[0]);
+    bool saw_non_sep = !saw_sep_last;
+    for (value_type c : _M_pathname)
+      {
+       if (_S_is_dir_sep(c))
+         saw_sep_last = true;
+       else if (saw_sep_last)
+         {
+           ++count;
+           saw_sep_last = false;
+           saw_non_sep = true;
+         }
+      }
+    if (saw_non_sep && saw_sep_last)
+      ++count; // empty filename after trailing slash
+    if (count > 1)
+      _M_cmpts.reserve(count);
+  }
 
   size_t pos = 0;
   const size_t len = _M_pathname.size();
@@ -355,9 +384,13 @@ path::_M_split_cmpts()
 	      pos = 3;
 	      while (pos < len && !_S_is_dir_sep(_M_pathname[pos]))
 		++pos;
+	      if (pos == len)
+		{
+		  _M_type = _Type::_Root_name;
+		  return;
+		}
 	      _M_add_root_name(pos);
-	      if (pos < len) // also got root directory
-		_M_add_root_dir(pos);
+	      _M_add_root_dir(pos);
 	    }
 	  else
 	    {
@@ -365,6 +398,11 @@ path::_M_split_cmpts()
 	      // composed of multiple redundant directory separators
 	      _M_add_root_dir(0);
 	    }
+	}
+      else if (len == 1) // got root directory only
+	{
+	  _M_type = _Type::_Root_dir;
+	  return;
 	}
       else // got root directory
 	_M_add_root_dir(0);
@@ -374,12 +412,28 @@ path::_M_split_cmpts()
   else if (len > 1 && _M_pathname[1] == L':')
     {
       // got disk designator
+      if (len == 2)
+	{
+	  _M_type = _Type::_Root_name;
+	  return;
+	}
       _M_add_root_name(2);
       if (len > 2 && _S_is_dir_sep(_M_pathname[2]))
 	_M_add_root_dir(2);
       pos = 2;
     }
 #endif
+  else
+    {
+      size_t n = 1;
+      for (; n < _M_pathname.size() && !_S_is_dir_sep(_M_pathname[n]); ++n)
+	{ }
+      if (n == _M_pathname.size())
+	{
+	  _M_type = _Type::_Filename;
+	  return;
+	}
+    }
 
   size_t back = pos;
   while (pos < len)
@@ -404,7 +458,7 @@ path::_M_split_cmpts()
 	{
 	  const auto& last = _M_cmpts.back();
 	  pos = last._M_pos + last._M_pathname.size();
-	  _M_cmpts.emplace_back(string_type(1, '.'), _Type::_Filename, pos);
+	  _M_cmpts.emplace_back(string_type(1, dot), _Type::_Filename, pos);
 	}
     }
 
@@ -446,7 +500,7 @@ path::_S_convert_loc(const char* __first, const char* __last,
 #if _GLIBCXX_USE_WCHAR_T
   auto& __cvt = std::use_facet<codecvt<wchar_t, char, mbstate_t>>(__loc);
   basic_string<wchar_t> __ws;
-  if (!__str_codecvt_in(__first, __last, __ws, __cvt))
+  if (!__str_codecvt_in_all(__first, __last, __ws, __cvt))
     _GLIBCXX_THROW_OR_ABORT(filesystem_error(
 	  "Cannot convert character sequence",
 	  std::make_error_code(errc::illegal_byte_sequence)));
@@ -461,7 +515,7 @@ path::_S_convert_loc(const char* __first, const char* __last,
 }
 
 std::size_t
-std::experimental::filesystem::hash_value(const path& p) noexcept
+fs::hash_value(const path& p) noexcept
 {
   // [path.non-member]
   // "If for two paths, p1 == p2 then hash_value(p1) == hash_value(p2)."
@@ -476,4 +530,36 @@ std::experimental::filesystem::hash_value(const path& p) noexcept
 	+ (seed<<6) + (seed>>2);
     }
   return seed;
+}
+
+#include <experimental/string_view>
+
+std::string
+fs::filesystem_error::_M_gen_what()
+{
+  const std::string pstr1 = _M_path1.u8string();
+  const std::string pstr2 = _M_path2.u8string();
+  experimental::string_view s = this->system_error::what();
+  const size_t len = 18 + s.length()
+    + (pstr1.length() || pstr2.length() ? pstr1.length() + 3 : 0)
+    + (pstr2.length() ? pstr2.length() + 3 : 0);
+  std::string w;
+  w.reserve(len);
+  w = "filesystem error: ";
+  w.append(s.data(), s.length());
+  if (!pstr1.empty())
+    {
+      w += " [";
+      w += pstr1;
+      w += ']';
+    }
+  if (!pstr2.empty())
+    {
+      if (pstr1.empty())
+	w += " []";
+      w += " [";
+      w += pstr2;
+      w += ']';
+    }
+  return w;
 }

@@ -1,6 +1,6 @@
 /* Subroutines for insn-output.c for Windows NT.
    Contributed by Douglas Rupp (drupp@cs.washington.edu)
-   Copyright (C) 1995-2017 Free Software Foundation, Inc.
+   Copyright (C) 1995-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -18,6 +18,8 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
+#define IN_TARGET_CODE 1
+
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
@@ -30,9 +32,11 @@ along with GCC; see the file COPYING3.  If not see
 #include "memmodel.h"
 #include "tm_p.h"
 #include "stringpool.h"
+#include "attribs.h"
 #include "emit-rtl.h"
 #include "cgraph.h"
 #include "lto-streamer.h"
+#include "except.h"
 #include "output.h"
 #include "varasm.h"
 #include "lto-section-names.h"
@@ -804,19 +808,56 @@ i386_pe_file_end (void)
     }
 }
 
+/* Kludge because of missing PE-COFF support for early LTO debug.  */
+
+static enum debug_info_levels saved_debug_info_level;
+
+void
+i386_pe_asm_lto_start (void)
+{
+  saved_debug_info_level = debug_info_level;
+  debug_info_level = DINFO_LEVEL_NONE;
+}
+
+void
+i386_pe_asm_lto_end (void)
+{
+  debug_info_level = saved_debug_info_level;
+}
+
 
 /* x64 Structured Exception Handling unwind info.  */
 
 struct seh_frame_state
 {
-  /* SEH records saves relative to the "current" stack pointer, whether
-     or not there's a frame pointer in place.  This tracks the current
-     stack pointer offset from the CFA.  */
+  /* SEH records offsets relative to the lowest address of the fixed stack
+     allocation.  If there is no frame pointer, these offsets are from the
+     stack pointer; if there is a frame pointer, these offsets are from the
+     value of the stack pointer when the frame pointer was established, i.e.
+     the frame pointer minus the offset in the .seh_setframe directive.
+
+     We do not distinguish these two cases, i.e. we consider that the offsets
+     are always relative to the "current" stack pointer.  This means that we
+     need to perform the fixed stack allocation before establishing the frame
+     pointer whenever there are registers to be saved, and this is guaranteed
+     by the prologue provided that we force the frame pointer to point at or
+     below the lowest used register save area, see ix86_compute_frame_layout.
+
+     This tracks the current stack pointer offset from the CFA.  */
   HOST_WIDE_INT sp_offset;
 
   /* The CFA is located at CFA_REG + CFA_OFFSET.  */
   HOST_WIDE_INT cfa_offset;
   rtx cfa_reg;
+
+  /* The offset wrt the CFA where register N has been saved.  */
+  HOST_WIDE_INT reg_offset[FIRST_PSEUDO_REGISTER];
+
+  /* True if we are past the end of the epilogue.  */
+  bool after_prologue;
+
+  /* True if we are in the cold section.  */
+  bool in_cold_section;
 };
 
 /* Set up data structures beginning output for SEH.  */
@@ -847,8 +888,106 @@ i386_pe_seh_init (FILE *f)
   fputc ('\n', f);
 }
 
+/* Emit an assembler directive for the end of the prologue.  */
+
 void
 i386_pe_seh_end_prologue (FILE *f)
+{
+  if (!TARGET_SEH)
+    return;
+  if (cfun->is_thunk)
+    return;
+  cfun->machine->seh->after_prologue = true;
+  fputs ("\t.seh_endprologue\n", f);
+}
+
+/* Emit assembler directives to reconstruct the SEH state.  */
+
+void
+i386_pe_seh_cold_init (FILE *f, const char *name)
+{
+  struct seh_frame_state *seh;
+  HOST_WIDE_INT alloc_offset, offset;
+
+  if (!TARGET_SEH)
+    return;
+  if (cfun->is_thunk)
+    return;
+  seh = cfun->machine->seh;
+
+  fputs ("\t.seh_proc\t", f);
+  assemble_name (f, name);
+  fputc ('\n', f);
+
+  /* In the normal case, the frame pointer is near the bottom of the frame
+     so we can do the full stack allocation and set it afterwards.  There
+     is an exception if the function overflows the SEH maximum frame size
+     or accesses prior frames so, in this case, we need to pre-allocate a
+     small chunk of stack before setting it.  */
+  offset = seh->sp_offset - INCOMING_FRAME_SP_OFFSET;
+  if (offset < SEH_MAX_FRAME_SIZE && !crtl->accesses_prior_frames)
+    alloc_offset = seh->sp_offset;
+  else
+    alloc_offset = MIN (seh->cfa_offset + 240, seh->sp_offset);
+
+  offset = alloc_offset - INCOMING_FRAME_SP_OFFSET;
+  if (offset > 0)
+    fprintf (f, "\t.seh_stackalloc\t" HOST_WIDE_INT_PRINT_DEC "\n", offset);
+
+  for (int regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
+    if (seh->reg_offset[regno] > 0 && seh->reg_offset[regno] <= alloc_offset)
+      {
+	if (SSE_REGNO_P (regno))
+	  fputs ("\t.seh_savexmm\t", f);
+	else if (GENERAL_REGNO_P (regno))
+	  fputs ("\t.seh_savereg\t", f);
+	else
+	  gcc_unreachable ();
+	print_reg (gen_rtx_REG (DImode, regno), 0, f);
+	fprintf (f, ", " HOST_WIDE_INT_PRINT_DEC "\n",
+		 alloc_offset - seh->reg_offset[regno]);
+      }
+
+  if (seh->cfa_reg != stack_pointer_rtx)
+    {
+      offset = alloc_offset - seh->cfa_offset;
+
+      gcc_assert ((offset & 15) == 0);
+      gcc_assert (IN_RANGE (offset, 0, 240));
+
+      fputs ("\t.seh_setframe\t", f);
+      print_reg (seh->cfa_reg, 0, f);
+      fprintf (f, ", " HOST_WIDE_INT_PRINT_DEC "\n", offset);
+    }
+
+  if (alloc_offset != seh->sp_offset)
+    {
+      offset = seh->sp_offset - alloc_offset;
+      if (offset > 0 && offset < SEH_MAX_FRAME_SIZE)
+	fprintf (f, "\t.seh_stackalloc\t" HOST_WIDE_INT_PRINT_DEC "\n", offset);
+
+      for (int regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
+	if (seh->reg_offset[regno] > alloc_offset)
+	  {
+	    if (SSE_REGNO_P (regno))
+	      fputs ("\t.seh_savexmm\t", f);
+	    else if (GENERAL_REGNO_P (regno))
+	      fputs ("\t.seh_savereg\t", f);
+	    else
+	      gcc_unreachable ();
+	    print_reg (gen_rtx_REG (DImode, regno), 0, f);
+	    fprintf (f, ", " HOST_WIDE_INT_PRINT_DEC "\n",
+		     seh->sp_offset - seh->reg_offset[regno]);
+	  }
+    }
+
+  fputs ("\t.seh_endprologue\n", f);
+}
+
+/* Emit an assembler directive for the end of the function.  */
+
+static void
+i386_pe_seh_fini (FILE *f, bool cold)
 {
   struct seh_frame_state *seh;
 
@@ -857,20 +996,10 @@ i386_pe_seh_end_prologue (FILE *f)
   if (cfun->is_thunk)
     return;
   seh = cfun->machine->seh;
-
+  if (cold != seh->in_cold_section)
+    return;
   XDELETE (seh);
   cfun->machine->seh = NULL;
-
-  fputs ("\t.seh_endprologue\n", f);
-}
-
-static void
-i386_pe_seh_fini (FILE *f)
-{
-  if (!TARGET_SEH)
-    return;
-  if (cfun->is_thunk)
-    return;
   fputs ("\t.seh_endproc\n", f);
 }
 
@@ -879,11 +1008,12 @@ i386_pe_seh_fini (FILE *f)
 static void
 seh_emit_push (FILE *f, struct seh_frame_state *seh, rtx reg)
 {
-  unsigned int regno = REGNO (reg);
+  const unsigned int regno = REGNO (reg);
 
   gcc_checking_assert (GENERAL_REGNO_P (regno));
 
   seh->sp_offset += UNITS_PER_WORD;
+  seh->reg_offset[regno] = seh->sp_offset;
   if (seh->cfa_reg == stack_pointer_rtx)
     seh->cfa_offset += UNITS_PER_WORD;
 
@@ -898,8 +1028,10 @@ static void
 seh_emit_save (FILE *f, struct seh_frame_state *seh,
 	       rtx reg, HOST_WIDE_INT cfa_offset)
 {
-  unsigned int regno = REGNO (reg);
+  const unsigned int regno = REGNO (reg);
   HOST_WIDE_INT offset;
+
+  seh->reg_offset[regno] = cfa_offset;
 
   /* Negative save offsets are of course not supported, since that
      would be a store below the stack pointer and thus clobberable.  */
@@ -1109,13 +1241,23 @@ i386_pe_seh_unwind_emit (FILE *asm_out_file, rtx_insn *insn)
   if (!TARGET_SEH)
     return;
 
-  /* We free the SEH data once done with the prologue.  Ignore those
-     RTX_FRAME_RELATED_P insns that are associated with the epilogue.  */
   seh = cfun->machine->seh;
-  if (seh == NULL)
-    return;
+  if (NOTE_P (insn) && NOTE_KIND (insn) == NOTE_INSN_SWITCH_TEXT_SECTIONS)
+    {
+      /* See ix86_seh_fixup_eh_fallthru for the rationale.  */
+      rtx_insn *prev = prev_active_insn (insn);
+      if (prev && !insn_nothrow_p (prev))
+	fputs ("\tnop\n", asm_out_file);
+      fputs ("\t.seh_endproc\n", asm_out_file);
+      seh->in_cold_section = true;
+      return;
+    }
 
   if (NOTE_P (insn) || !RTX_FRAME_RELATED_P (insn))
+    return;
+
+  /* Skip RTX_FRAME_RELATED_P insns that are associated with the epilogue.  */
+  if (seh->after_prologue)
     return;
 
   for (note = REG_NOTES (insn); note ; note = XEXP (note, 1))
@@ -1128,7 +1270,8 @@ i386_pe_seh_unwind_emit (FILE *asm_out_file, rtx_insn *insn)
 
 	case REG_CFA_DEF_CFA:
 	case REG_CFA_EXPRESSION:
-	  /* Only emitted with DRAP, which we disable.  */
+	  /* Only emitted with DRAP and aligned memory access using a
+	     realigned SP, both of which we disable.  */
 	  gcc_unreachable ();
 	  break;
 
@@ -1213,8 +1356,7 @@ void
 i386_pe_start_function (FILE *f, const char *name, tree decl)
 {
   i386_pe_maybe_record_exported_symbol (decl, name, 0);
-  if (write_symbols != SDB_DEBUG)
-    i386_pe_declare_function_type (f, name, TREE_PUBLIC (decl));
+  i386_pe_declare_function_type (f, name, TREE_PUBLIC (decl));
   /* In case section was altered by debugging output.  */
   if (decl != NULL_TREE)
     switch_to_section (function_section (decl));
@@ -1224,8 +1366,13 @@ i386_pe_start_function (FILE *f, const char *name, tree decl)
 void
 i386_pe_end_function (FILE *f, const char *, tree)
 {
-  i386_pe_seh_fini (f);
+  i386_pe_seh_fini (f, false);
 }
 
+void
+i386_pe_end_cold_function (FILE *f, const char *, tree)
+{
+  i386_pe_seh_fini (f, true);
+}
 
 #include "gt-winnt.h"

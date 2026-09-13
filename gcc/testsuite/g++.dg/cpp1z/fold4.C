@@ -1,4 +1,4 @@
-// { dg-options -std=c++1z }
+// { dg-do compile { target c++17 } }
 
 template <class...T>
 constexpr auto f(T... t)

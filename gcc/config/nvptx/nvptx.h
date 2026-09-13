@@ -1,5 +1,5 @@
 /* Target Definitions for NVPTX.
-   Copyright (C) 2014-2017 Free Software Foundation, Inc.
+   Copyright (C) 2014-2019 Free Software Foundation, Inc.
    Contributed by Bernd Schmidt <bernds@codesourcery.com>
 
    This file is part of GCC.
@@ -21,9 +21,15 @@
 #ifndef GCC_NVPTX_H
 #define GCC_NVPTX_H
 
+#ifndef NVPTX_OPTS_H
+#include "config/nvptx/nvptx-opts.h"
+#endif
+
 /* Run-time Target.  */
 
 #define STARTFILE_SPEC "%{mmainkernel:crt0.o}"
+
+#define ASM_SPEC "%{misa=*:-m %*}"
 
 #define TARGET_CPU_CPP_BUILTINS()		\
   do						\
@@ -52,12 +58,14 @@
 
 /* Alignments in bits.  */
 #define PARM_BOUNDARY 32
-#define STACK_BOUNDARY 64
+#define STACK_BOUNDARY 128
 #define FUNCTION_BOUNDARY 32
-#define BIGGEST_ALIGNMENT 64
+#define BIGGEST_ALIGNMENT 128
 #define STRICT_ALIGNMENT 1
 
 #define MAX_STACK_ALIGNMENT (1024 * 8)
+
+#define DATA_ALIGNMENT nvptx_data_alignment
 
 /* Copied from elf.h and other places.  We'd otherwise use
    BIGGEST_ALIGNMENT and fail a number of testcases.  */
@@ -85,6 +93,8 @@
 #define Pmode (TARGET_ABI64 ? DImode : SImode)
 #define STACK_SIZE_MODE Pmode
 
+#define TARGET_SM35 (ptx_isa_option >= PTX_ISA_SM35)
+
 /* Registers.  Since ptx is a virtual target, we just define a few
    hard registers for special purposes and leave pseudos unallocated.
    We have to have some available hard registers, to keep gcc setup
@@ -92,13 +102,6 @@
 #define FIRST_PSEUDO_REGISTER 16
 #define FIXED_REGISTERS	    { 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
 #define CALL_USED_REGISTERS { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 }
-
-#define HARD_REGNO_NREGS(REG, MODE)		\
-  ((void)(REG), (void)(MODE), 1)
-#define CANNOT_CHANGE_MODE_CLASS(M1, M2, CLS)	\
-  ((void)(M1), (void)(M2), (void)(CLS), true)
-#define HARD_REGNO_MODE_OK(REG, MODE)		\
-     ((void)(REG), (void)(MODE), true)
 
 /* Register Classes.  */
 enum reg_class             {  NO_REGS,    ALL_REGS,	LIM_REG_CLASSES };
@@ -117,8 +120,6 @@ enum reg_class             {  NO_REGS,    ALL_REGS,	LIM_REG_CLASSES };
 #define CLASS_MAX_NREGS(class, mode) \
   ((GET_MODE_SIZE (mode) + UNITS_PER_WORD - 1) / UNITS_PER_WORD)
 
-#define MODES_TIEABLE_P(M1, M2) false
-
 #define PROMOTE_MODE(MODE, UNSIGNEDP, TYPE)		\
   if ((MODE) == QImode || (MODE) == HImode)		\
     {							\
@@ -129,7 +130,6 @@ enum reg_class             {  NO_REGS,    ALL_REGS,	LIM_REG_CLASSES };
 
 /* Stack and Calling.  */
 
-#define STARTING_FRAME_OFFSET 0
 #define FRAME_GROWS_DOWNWARD 0
 #define STACK_GROWS_DOWNWARD 1
 
@@ -218,6 +218,15 @@ struct GTY(()) machine_function
   int return_mode; /* Return mode of current fn.
 		      (machine_mode not defined yet.) */
   rtx axis_predicate[2]; /* Neutering predicates.  */
+  int axis_dim[2]; /* Maximum number of threads on each axis, dim[0] is
+		      vector_length, dim[1] is num_workers.  */
+  bool axis_dim_init_p;
+  rtx bcast_partition; /* Register containing the size of each
+			  vector's partition of share-memory used to
+			  broadcast state.  */
+  rtx red_partition; /* Similar to bcast_partition, except for vector
+			reductions.  */
+  rtx sync_bar; /* Synchronization barrier ID for vectors.  */
   rtx unisimt_master; /* 'Master lane index' for -muniform-simt.  */
   rtx unisimt_predicate; /* Predicate for -muniform-simt.  */
   rtx unisimt_location; /* Mask location for -muniform-simt.  */
@@ -317,7 +326,6 @@ struct GTY(()) machine_function
 #define CASE_VECTOR_MODE SImode
 #define MOVE_MAX 8
 #define MOVE_RATIO(SPEED) 4
-#define TRULY_NOOP_TRUNCATION(outprec, inprec) 1
 #define FUNCTION_MODE QImode
 #define HAS_INIT_SECTION 1
 

@@ -1,5 +1,5 @@
 /* Interprocedural analyses.
-   Copyright (C) 2005-2017 Free Software Foundation, Inc.
+   Copyright (C) 2005-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -160,7 +160,7 @@ struct GTY(()) ipa_vr
 {
   /* The data fields below are valid only if known is true.  */
   bool known;
-  enum value_range_type type;
+  enum value_range_kind type;
   wide_int min;
   wide_int max;
 };
@@ -182,7 +182,7 @@ struct GTY (()) ipa_jump_func
   /* Information about value range, containing valid data only when vr_known is
      true.  The pointed to structure is shared betweed different jump
      functions.  Use ipa_set_jfunc_vr to set this field.  */
-  struct value_range *m_vr;
+  struct value_range_base *m_vr;
 
   enum jump_func_type type;
   /* Represents a value of a jump function.  pass_through is used only in jump
@@ -428,8 +428,9 @@ struct ipa_func_body_info
   /* Number of parameters.  */
   int param_count;
 
-  /* Number of statements already walked by when analyzing this function.  */
-  unsigned int aa_walked;
+  /* Number of statements we are still allowed to walked by when analyzing this
+     function.  */
+  unsigned int aa_walk_budget;
 };
 
 /* ipa_node_params access functions.  Please use these to access fields that
@@ -464,7 +465,8 @@ ipa_get_param (struct ipa_node_params *info, int i)
 static inline tree
 ipa_get_type (struct ipa_node_params *info, int i)
 {
-  gcc_checking_assert (info->descriptors);
+  if (vec_safe_length (info->descriptors) <= (unsigned) i)
+    return NULL;
   tree t = (*info->descriptors)[i].decl_or_type;
   if (!t)
     return NULL;
@@ -543,7 +545,7 @@ struct GTY(()) ipa_agg_replacement_value
 
 /* Structure holding information for the transformation phase of IPA-CP.  */
 
-struct GTY(()) ipcp_transformation_summary
+struct GTY(()) ipcp_transformation
 {
   /* Linked list of known aggregate values.  */
   ipa_agg_replacement_value *agg_values;
@@ -555,13 +557,29 @@ struct GTY(()) ipcp_transformation_summary
 
 void ipa_set_node_agg_value_chain (struct cgraph_node *node,
 				   struct ipa_agg_replacement_value *aggvals);
-void ipcp_grow_transformations_if_necessary (void);
+void ipcp_transformation_initialize (void);
+void ipcp_free_transformation_sum (void);
 
 /* ipa_edge_args stores information related to a callsite and particularly its
    arguments.  It can be accessed by the IPA_EDGE_REF macro.  */
-struct GTY(()) ipa_edge_args
+
+class GTY((for_user)) ipa_edge_args
 {
-  /* Vector of the callsite's jump function of each parameter.  */
+ public:
+
+  /* Default constructor.  */
+  ipa_edge_args () : jump_functions (NULL), polymorphic_call_contexts (NULL)
+    {}
+
+  /* Destructor.  */
+  ~ipa_edge_args ()
+    {
+      vec_free (jump_functions);
+      vec_free (polymorphic_call_contexts);
+    }
+
+  /* Vectors of the callsite's jump function and polymorphic context
+     information of each parameter.  */
   vec<ipa_jump_func, va_gc> *jump_functions;
   vec<ipa_polymorphic_call_context, va_gc> *polymorphic_call_contexts;
 };
@@ -611,19 +629,54 @@ public:
 			  ipa_node_params *data2);
 };
 
+/* Summary to manange ipa_edge_args structures.  */
+
+class GTY((user)) ipa_edge_args_sum_t : public call_summary <ipa_edge_args *>
+{
+ public:
+  ipa_edge_args_sum_t (symbol_table *table, bool ggc)
+    : call_summary<ipa_edge_args *> (table, ggc) { }
+
+  /* Hook that is called by summary when an edge is duplicated.  */
+  virtual void remove (cgraph_edge *cs, ipa_edge_args *args);
+  /* Hook that is called by summary when an edge is duplicated.  */
+  virtual void duplicate (cgraph_edge *src,
+			  cgraph_edge *dst,
+			  ipa_edge_args *old_args,
+			  ipa_edge_args *new_args);
+};
+
 /* Function summary where the parameter infos are actually stored. */
 extern GTY(()) ipa_node_params_t * ipa_node_params_sum;
+/* Call summary to store information about edges such as jump functions.  */
+extern GTY(()) ipa_edge_args_sum_t *ipa_edge_args_sum;
 
-/* Vector of IPA-CP transformation data for each clone.  */
-extern GTY(()) vec<ipcp_transformation_summary, va_gc> *ipcp_transformations;
-/* Vector where the parameter infos are actually stored. */
-extern GTY(()) vec<ipa_edge_args, va_gc> *ipa_edge_args_vector;
+/* Function summary for IPA-CP transformation.  */
+class ipcp_transformation_t
+: public function_summary<ipcp_transformation *>
+{
+public:
+  ipcp_transformation_t (symbol_table *table, bool ggc):
+    function_summary<ipcp_transformation *> (table, ggc) {}
 
+  ~ipcp_transformation_t () {}
+
+  static ipcp_transformation_t *create_ggc (symbol_table *symtab)
+  {
+    ipcp_transformation_t *summary
+      = new (ggc_cleared_alloc <ipcp_transformation_t> ())
+      ipcp_transformation_t (symtab, true);
+    return summary;
+  }
+};
+
+/* Function summary where the IPA CP transformations are actually stored.  */
+extern GTY(()) function_summary <ipcp_transformation *> *ipcp_transformation_sum;
 
 /* Return the associated parameter/argument info corresponding to the given
    node/edge.  */
-#define IPA_NODE_REF(NODE) (ipa_node_params_sum->get (NODE))
-#define IPA_EDGE_REF(EDGE) (&(*ipa_edge_args_vector)[(EDGE)->uid])
+#define IPA_NODE_REF(NODE) (ipa_node_params_sum->get_create (NODE))
+#define IPA_EDGE_REF(EDGE) (ipa_edge_args_sum->get_create (EDGE))
 /* This macro checks validity of index returned by
    ipa_get_param_decl_index function.  */
 #define IS_VALID_JUMP_FUNC_INDEX(I) ((I) != -1)
@@ -632,7 +685,6 @@ extern GTY(()) vec<ipa_edge_args, va_gc> *ipa_edge_args_vector;
 void ipa_create_all_node_params (void);
 void ipa_create_all_edge_args (void);
 void ipa_check_create_edge_args (void);
-void ipa_free_edge_args_substructures (struct ipa_edge_args *);
 void ipa_free_all_node_params (void);
 void ipa_free_all_edge_args (void);
 void ipa_free_all_structures_after_ipa_cp (void);
@@ -653,22 +705,23 @@ ipa_check_create_node_params (void)
 	 ipa_node_params_t (symtab, true));
 }
 
-/* Returns true if the array of edge infos is large enough to accommodate an
-   info for EDGE.  The main purpose of this function is that debug dumping
-   function can check info availability without causing reallocations.  */
+/* Returns true if edge summary contains a record for EDGE.  The main purpose
+   of this function is that debug dumping function can check info availability
+   without causing allocations.  */
 
 static inline bool
 ipa_edge_args_info_available_for_edge_p (struct cgraph_edge *edge)
 {
-  return ((unsigned) edge->uid < vec_safe_length (ipa_edge_args_vector));
+  return ipa_edge_args_sum->exists (edge);
 }
 
-static inline ipcp_transformation_summary *
+static inline ipcp_transformation *
 ipcp_get_transformation_summary (cgraph_node *node)
 {
-  if ((unsigned) node->uid >= vec_safe_length (ipcp_transformations))
+  if (ipcp_transformation_sum == NULL)
     return NULL;
-  return &(*ipcp_transformations)[node->uid];
+
+  return ipcp_transformation_sum->get (node);
 }
 
 /* Return the aggregate replacements for NODE, if there are any.  */
@@ -676,7 +729,7 @@ ipcp_get_transformation_summary (cgraph_node *node)
 static inline struct ipa_agg_replacement_value *
 ipa_get_agg_replacements_for_node (cgraph_node *node)
 {
-  ipcp_transformation_summary *ts = ipcp_get_transformation_summary (node);
+  ipcp_transformation *ts = ipcp_get_transformation_summary (node);
   return ts ? ts->agg_values : NULL;
 }
 
@@ -734,121 +787,26 @@ class ipcp_agg_lattice;
 
 extern object_allocator<ipcp_agg_lattice> ipcp_agg_lattice_pool;
 
-/* Operation to be performed for the parameter in ipa_parm_adjustment
-   below.  */
-enum ipa_parm_op {
-  IPA_PARM_OP_NONE,
-
-  /* This describes a brand new parameter.
-
-     The field `type' should be set to the new type, `arg_prefix'
-     should be set to the string prefix for the new DECL_NAME, and
-     `new_decl' will ultimately hold the newly created argument.  */
-  IPA_PARM_OP_NEW,
-
-  /* This new parameter is an unmodified parameter at index base_index. */
-  IPA_PARM_OP_COPY,
-
-  /* This adjustment describes a parameter that is about to be removed
-     completely.  Most users will probably need to book keep those so that they
-     don't leave behinfd any non default def ssa names belonging to them.  */
-  IPA_PARM_OP_REMOVE
-};
-
-/* Structure to describe transformations of formal parameters and actual
-   arguments.  Each instance describes one new parameter and they are meant to
-   be stored in a vector.  Additionally, most users will probably want to store
-   adjustments about parameters that are being removed altogether so that SSA
-   names belonging to them can be replaced by SSA names of an artificial
-   variable.  */
-struct ipa_parm_adjustment
-{
-  /* The original PARM_DECL itself, helpful for processing of the body of the
-     function itself.  Intended for traversing function bodies.
-     ipa_modify_formal_parameters, ipa_modify_call_arguments and
-     ipa_combine_adjustments ignore this and use base_index.
-     ipa_modify_formal_parameters actually sets this.  */
-  tree base;
-
-  /* Type of the new parameter.  However, if by_ref is true, the real type will
-     be a pointer to this type.  */
-  tree type;
-
-  /* Alias refrerence type to be used in MEM_REFs when adjusting caller
-     arguments.  */
-  tree alias_ptr_type;
-
-  /* The new declaration when creating/replacing a parameter.  Created
-     by ipa_modify_formal_parameters, useful for functions modifying
-     the body accordingly.  For brand new arguments, this is the newly
-     created argument.  */
-  tree new_decl;
-
-  /* New declaration of a substitute variable that we may use to replace all
-     non-default-def ssa names when a parm decl is going away.  */
-  tree new_ssa_base;
-
-  /* If non-NULL and the original parameter is to be removed (copy_param below
-     is NULL), this is going to be its nonlocalized vars value.  */
-  tree nonlocal_value;
-
-  /* This holds the prefix to be used for the new DECL_NAME.  */
-  const char *arg_prefix;
-
-  /* Offset into the original parameter (for the cases when the new parameter
-     is a component of an original one).  */
-  HOST_WIDE_INT offset;
-
-  /* Zero based index of the original parameter this one is based on.  */
-  int base_index;
-
-  /* Whether this parameter is a new parameter, a copy of an old one,
-     or one about to be removed.  */
-  enum ipa_parm_op op;
-
-  /* Storage order of the original parameter (for the cases when the new
-     parameter is a component of an original one).  */
-  unsigned reverse : 1;
-
-  /* The parameter is to be passed by reference.  */
-  unsigned by_ref : 1;
-};
-
-typedef vec<ipa_parm_adjustment> ipa_parm_adjustment_vec;
-
-vec<tree> ipa_get_vector_of_formal_parms (tree fndecl);
-vec<tree> ipa_get_vector_of_formal_parm_types (tree fntype);
-void ipa_modify_formal_parameters (tree fndecl, ipa_parm_adjustment_vec);
-void ipa_modify_call_arguments (struct cgraph_edge *, gcall *,
-				ipa_parm_adjustment_vec);
-ipa_parm_adjustment_vec ipa_combine_adjustments (ipa_parm_adjustment_vec,
-						 ipa_parm_adjustment_vec);
-void ipa_dump_param_adjustments (FILE *, ipa_parm_adjustment_vec, tree);
 void ipa_dump_agg_replacement_values (FILE *f,
 				      struct ipa_agg_replacement_value *av);
 void ipa_prop_write_jump_functions (void);
 void ipa_prop_read_jump_functions (void);
 void ipcp_write_transformation_summaries (void);
 void ipcp_read_transformation_summaries (void);
-void ipa_update_after_lto_read (void);
 int ipa_get_param_decl_index (struct ipa_node_params *, tree);
 tree ipa_value_from_jfunc (struct ipa_node_params *info,
-			   struct ipa_jump_func *jfunc);
+			   struct ipa_jump_func *jfunc, tree type);
 unsigned int ipcp_transform_function (struct cgraph_node *node);
 ipa_polymorphic_call_context ipa_context_from_jfunc (ipa_node_params *,
 						     cgraph_edge *,
 						     int,
 						     ipa_jump_func *);
 void ipa_dump_param (FILE *, struct ipa_node_params *info, int i);
-bool ipa_modify_expr (tree *, bool, ipa_parm_adjustment_vec);
-ipa_parm_adjustment *ipa_get_adjustment_candidate (tree **, bool *,
-						   ipa_parm_adjustment_vec,
-						   bool);
 void ipa_release_body_info (struct ipa_func_body_info *);
 tree ipa_get_callee_param_type (struct cgraph_edge *e, int i);
 
 /* From tree-sra.c:  */
-tree build_ref_for_offset (location_t, tree, HOST_WIDE_INT, bool, tree,
+tree build_ref_for_offset (location_t, tree, poly_int64, bool, tree,
 			   gimple_stmt_iterator *, bool);
 
 /* In ipa-cp.c  */

@@ -1,5 +1,5 @@
 // Test for reference address comparison in constant expression.
-// { dg-options -std=c++1z }
+// { dg-do compile { target c++17 } }
 
 int i[2];
 struct A { int i, j; } a;

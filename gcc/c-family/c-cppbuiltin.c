@@ -1,5 +1,5 @@
 /* Define builtin-in macros for the C family front ends.
-   Copyright (C) 2002-2017 Free Software Foundation, Inc.
+   Copyright (C) 2002-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -31,7 +31,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "output.h"		/* For user_label_prefix.  */
 #include "debug.h"		/* For dwarf2out_do_cfi_asm.  */
 #include "common/common-target.h"
-#include "cpp-id-data.h"
 #include "cppbuiltin.h"
 
 #ifndef TARGET_OS_CPP_BUILTINS
@@ -73,22 +72,27 @@ mode_has_fma (machine_mode mode)
   switch (mode)
     {
 #ifdef HAVE_fmasf4
-    case SFmode:
+    case E_SFmode:
       return !!HAVE_fmasf4;
 #endif
 
 #ifdef HAVE_fmadf4
-    case DFmode:
+    case E_DFmode:
       return !!HAVE_fmadf4;
 #endif
 
+#ifdef HAVE_fmakf4	/* PowerPC if long double != __float128.  */
+    case E_KFmode:
+      return !!HAVE_fmakf4;
+#endif
+
 #ifdef HAVE_fmaxf4
-    case XFmode:
+    case E_XFmode:
       return !!HAVE_fmaxf4;
 #endif
 
 #ifdef HAVE_fmatf4
-    case TFmode:
+    case E_TFmode:
       return !!HAVE_fmatf4;
 #endif
 
@@ -698,6 +702,9 @@ cpp_atomic_builtins (cpp_reader *pfile)
 			(have_swap[SWAP_INDEX (boolean_type_node)]? 2 : 1));
   builtin_define_with_int_value ("__GCC_ATOMIC_CHAR_LOCK_FREE", 
 			(have_swap[SWAP_INDEX (signed_char_type_node)]? 2 : 1));
+  if (flag_char8_t)
+    builtin_define_with_int_value ("__GCC_ATOMIC_CHAR8_T_LOCK_FREE",
+			(have_swap[SWAP_INDEX (char8_type_node)]? 2 : 1));
   builtin_define_with_int_value ("__GCC_ATOMIC_CHAR16_T_LOCK_FREE", 
 			(have_swap[SWAP_INDEX (char16_type_node)]? 2 : 1));
   builtin_define_with_int_value ("__GCC_ATOMIC_CHAR32_T_LOCK_FREE", 
@@ -951,7 +958,7 @@ c_cpp_builtins (cpp_reader *pfile)
 	}
       if (cxx_dialect > cxx14)
 	{
-	  /* Set feature test macros for C++1z.  */
+	  /* Set feature test macros for C++17.  */
 	  cpp_define (pfile, "__cpp_unicode_characters=201411");
 	  cpp_define (pfile, "__cpp_static_assert=201411");
 	  cpp_define (pfile, "__cpp_namespace_attributes=201411");
@@ -965,18 +972,29 @@ c_cpp_builtins (cpp_reader *pfile)
 	  cpp_define (pfile, "__cpp_capture_star_this=201603");
 	  cpp_define (pfile, "__cpp_inline_variables=201606");
 	  cpp_define (pfile, "__cpp_aggregate_bases=201603");
-	  cpp_define (pfile, "__cpp_deduction_guides=201606");
+	  cpp_define (pfile, "__cpp_deduction_guides=201703");
 	  cpp_define (pfile, "__cpp_noexcept_function_type=201510");
+	  /* Old macro, superseded by
+	     __cpp_nontype_template_parameter_auto.  */
 	  cpp_define (pfile, "__cpp_template_auto=201606");
 	  cpp_define (pfile, "__cpp_structured_bindings=201606");
 	  cpp_define (pfile, "__cpp_variadic_using=201611");
+	  cpp_define (pfile, "__cpp_guaranteed_copy_elision=201606");
+	  cpp_define (pfile, "__cpp_nontype_template_parameter_auto=201606");
+	}
+      if (cxx_dialect > cxx17)
+	{
+	  /* Set feature test macros for C++2a.  */
+	  cpp_define (pfile, "__cpp_conditional_explicit=201806");
+	  cpp_define (pfile, "__cpp_nontype_template_parameter_class=201806");
+	  cpp_define (pfile, "__cpp_impl_destroying_delete=201806");
 	}
       if (flag_concepts)
 	cpp_define (pfile, "__cpp_concepts=201507");
       if (flag_tm)
 	/* Use a value smaller than the 201505 specified in
 	   the TS, since we don't yet support atomic_cancel.  */
-	cpp_define (pfile, "__cpp_transactional_memory=210500");
+	cpp_define (pfile, "__cpp_transactional_memory=201500");
       if (flag_sized_deallocation)
 	cpp_define (pfile, "__cpp_sized_deallocation=201309");
       if (aligned_new_threshold)
@@ -987,6 +1005,10 @@ c_cpp_builtins (cpp_reader *pfile)
 	}
       if (flag_new_ttp)
 	cpp_define (pfile, "__cpp_template_template_args=201611");
+      if (flag_threadsafe_statics)
+	cpp_define (pfile, "__cpp_threadsafe_static_init=200806");
+      if (flag_char8_t)
+        cpp_define (pfile, "__cpp_char8_t=201811");
     }
   /* Note that we define this for C as well, so that we know if
      __attribute__((cleanup)) will interface with EH.  */
@@ -1117,8 +1139,8 @@ c_cpp_builtins (cpp_reader *pfile)
 	       floatn_nx_types[i].extended ? "X" : "");
       sprintf (csuffix, "F%d%s", floatn_nx_types[i].n,
 	       floatn_nx_types[i].extended ? "x" : "");
-      builtin_define_float_constants (prefix, csuffix, "%s", NULL,
-				      FLOATN_NX_TYPE_NODE (i));
+      builtin_define_float_constants (prefix, ggc_strdup (csuffix), "%s",
+				      csuffix, FLOATN_NX_TYPE_NODE (i));
     }
 
   /* For decfloat.h.  */
@@ -1186,10 +1208,10 @@ c_cpp_builtins (cpp_reader *pfile)
   if (flag_building_libgcc)
     {
       /* Properties of floating-point modes for libgcc2.c.  */
-      for (machine_mode mode = GET_CLASS_NARROWEST_MODE (MODE_FLOAT);
-	   mode != VOIDmode;
-	   mode = GET_MODE_WIDER_MODE (mode))
+      opt_scalar_float_mode mode_iter;
+      FOR_EACH_MODE_IN_CLASS (mode_iter, MODE_FLOAT)
 	{
+	  scalar_float_mode mode = mode_iter.require ();
 	  const char *name = GET_MODE_NAME (mode);
 	  char *macro_name
 	    = (char *) alloca (strlen (name)
@@ -1354,7 +1376,12 @@ c_cpp_builtins (cpp_reader *pfile)
     cpp_define (pfile, "__WCHAR_UNSIGNED__");
 
   cpp_atomic_builtins (pfile);
-    
+
+  /* Show support for __builtin_speculation_safe_value () if the target
+     has been updated to fully support it.  */
+  if (targetm.have_speculation_safe_value (false))
+    cpp_define (pfile, "__HAVE_SPECULATION_SAFE_VALUE");
+
 #ifdef DWARF2_UNWIND_INFO
   if (dwarf2out_do_cfi_asm ())
     cpp_define (pfile, "__GCC_HAVE_DWARF2_CFI_ASM");
@@ -1559,42 +1586,47 @@ builtin_define_with_int_value (const char *macro, HOST_WIDE_INT value)
 struct GTY(()) lazy_hex_fp_value_struct
 {
   const char *hex_str;
-  cpp_macro *macro;
   machine_mode mode;
   int digits;
   const char *fp_suffix;
 };
-static GTY(()) struct lazy_hex_fp_value_struct lazy_hex_fp_values[12];
-static GTY(()) int lazy_hex_fp_value_count;
+/* Number of the expensive to compute macros we should evaluate lazily.
+   Each builtin_define_float_constants invocation calls
+   builtin_define_with_hex_fp_value 4 times and builtin_define_float_constants
+   is called for FLT, DBL, LDBL and up to NUM_FLOATN_NX_TYPES times for
+   FLTNN*.  */ 
+#define LAZY_HEX_FP_VALUES_CNT (4 * (3 + NUM_FLOATN_NX_TYPES))
+static GTY(()) struct lazy_hex_fp_value_struct
+  lazy_hex_fp_values[LAZY_HEX_FP_VALUES_CNT];
+static GTY(()) unsigned lazy_hex_fp_value_count;
 
-static bool
-lazy_hex_fp_value (cpp_reader *pfile ATTRIBUTE_UNUSED,
-		   cpp_hashnode *node)
+static void
+lazy_hex_fp_value (cpp_reader *, cpp_macro *macro, unsigned num)
 {
   REAL_VALUE_TYPE real;
   char dec_str[64], buf1[256];
-  unsigned int idx;
-  if (node->value.builtin < BT_FIRST_USER
-      || (int) node->value.builtin >= BT_FIRST_USER + lazy_hex_fp_value_count)
-    return false;
 
-  idx = node->value.builtin - BT_FIRST_USER;
-  real_from_string (&real, lazy_hex_fp_values[idx].hex_str);
+  gcc_checking_assert (num < lazy_hex_fp_value_count);
+
+  real_from_string (&real, lazy_hex_fp_values[num].hex_str);
   real_to_decimal_for_mode (dec_str, &real, sizeof (dec_str),
-			    lazy_hex_fp_values[idx].digits, 0,
-			    lazy_hex_fp_values[idx].mode);
+			    lazy_hex_fp_values[num].digits, 0,
+			    lazy_hex_fp_values[num].mode);
 
-  sprintf (buf1, "%s%s", dec_str, lazy_hex_fp_values[idx].fp_suffix);
-  node->flags &= ~(NODE_BUILTIN | NODE_USED);
-  node->value.macro = lazy_hex_fp_values[idx].macro;
-  for (idx = 0; idx < node->value.macro->count; idx++)
-    if (node->value.macro->exp.tokens[idx].type == CPP_NUMBER)
-      break;
-  gcc_assert (idx < node->value.macro->count);
-  node->value.macro->exp.tokens[idx].val.str.len = strlen (buf1);
-  node->value.macro->exp.tokens[idx].val.str.text
-    = (const unsigned char *) ggc_strdup (buf1);
-  return true;
+  size_t len
+    = sprintf (buf1, "%s%s", dec_str, lazy_hex_fp_values[num].fp_suffix);
+  gcc_assert (len < sizeof (buf1));
+  for (unsigned idx = 0; idx < macro->count; idx++)
+    if (macro->exp.tokens[idx].type == CPP_NUMBER)
+      {
+	macro->exp.tokens[idx].val.str.len = len;
+	macro->exp.tokens[idx].val.str.text
+	  = (const unsigned char *) ggc_strdup (buf1);
+	return;
+      }
+
+  /* We must have replaced a token.  */
+  gcc_unreachable ();
 }
 
 /* Pass an object-like macro a hexadecimal floating-point value.  */
@@ -1606,30 +1638,25 @@ builtin_define_with_hex_fp_value (const char *macro,
 				  const char *fp_cast)
 {
   REAL_VALUE_TYPE real;
-  char dec_str[64], buf1[256], buf2[256];
+  char dec_str[64], buf[256], buf1[128], buf2[64];
 
   /* This is very expensive, so if possible expand them lazily.  */
-  if (lazy_hex_fp_value_count < 12
+  if (lazy_hex_fp_value_count < LAZY_HEX_FP_VALUES_CNT
       && flag_dump_macros == 0
       && !cpp_get_options (parse_in)->traditional)
     {
-      struct cpp_hashnode *node;
       if (lazy_hex_fp_value_count == 0)
-	cpp_get_callbacks (parse_in)->user_builtin_macro = lazy_hex_fp_value;
+	cpp_get_callbacks (parse_in)->user_lazy_macro = lazy_hex_fp_value;
       sprintf (buf2, fp_cast, "1.1");
       sprintf (buf1, "%s=%s", macro, buf2);
       cpp_define (parse_in, buf1);
-      node = C_CPP_HASHNODE (get_identifier (macro));
+      struct cpp_hashnode *node = C_CPP_HASHNODE (get_identifier (macro));
       lazy_hex_fp_values[lazy_hex_fp_value_count].hex_str
 	= ggc_strdup (hex_str);
       lazy_hex_fp_values[lazy_hex_fp_value_count].mode = TYPE_MODE (type);
       lazy_hex_fp_values[lazy_hex_fp_value_count].digits = digits;
       lazy_hex_fp_values[lazy_hex_fp_value_count].fp_suffix = fp_suffix;
-      lazy_hex_fp_values[lazy_hex_fp_value_count].macro = node->value.macro;
-      node->flags |= NODE_BUILTIN;
-      node->value.builtin
-	= (enum cpp_builtin_type) (BT_FIRST_USER + lazy_hex_fp_value_count);
-      lazy_hex_fp_value_count++;
+      cpp_define_lazily (parse_in, node, lazy_hex_fp_value_count++);
       return;
     }
 
@@ -1649,11 +1676,11 @@ builtin_define_with_hex_fp_value (const char *macro,
 
   /* Assemble the macro in the following fashion
      macro = fp_cast [dec_str fp_suffix] */
-  sprintf (buf1, "%s%s", dec_str, fp_suffix);
-  sprintf (buf2, fp_cast, buf1);
-  sprintf (buf1, "%s=%s", macro, buf2);
+  sprintf (buf2, "%s%s", dec_str, fp_suffix);
+  sprintf (buf1, fp_cast, buf2);
+  sprintf (buf, "%s=%s", macro, buf1);
 
-  cpp_define (parse_in, buf1);
+  cpp_define (parse_in, buf);
 }
 
 /* Return a string constant for the suffix for a value of type TYPE

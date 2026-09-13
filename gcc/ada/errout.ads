@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2019, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -67,6 +67,10 @@ package Errout is
    --  (Off,..) and Warning_As_Pragma(...) but do not result in adding the
    --  error message tag. The -gnatw.d switch sets this flag True, -gnatw.D
    --  sets this flag False.
+
+   Current_Node : Node_Id := Empty;
+   --  Used by Error_Msg as a default Node_Id.
+   --  Relevant only when Opt.Include_Subprogram_In_Messages is set.
 
    -----------------------------------
    -- Suppression of Error Messages --
@@ -214,7 +218,7 @@ package Errout is
    --    Insertion character } (Right brace: insert type reference)
    --      The character } is replaced by a string describing the type
    --      referenced by the entity whose Id is stored in Error_Msg_Node_1.
-   --      the string gives the name or description of the type, and also
+   --      The string gives the name or description of the type, and also
    --      where appropriate the location of its declaration. Special cases
    --      like "some integer type" are handled appropriately. Only one } is
    --      allowed in a message, since there is not enough room for two (the
@@ -301,7 +305,9 @@ package Errout is
    --      Note: this usage is obsolete, use ?? ?*? ?$? ?x? ?X? to specify
    --      the string to be added when Warn_Doc_Switch is set to True. If this
    --      switch is True, then for simple ? messages it has no effect. This
-   --      simple form is to ease transition and will be removed later.
+   --      simple form is to ease transition and may be removed later except
+   --      for GNATprove-specific messages (info and warnings) which are not
+   --      subject to the same GNAT warning switches.
 
    --    Insertion character ?? (Two question marks: default warning)
    --      Like ?, but if the flag Warn_Doc_Switch is True, adds the string
@@ -686,9 +692,13 @@ package Errout is
    --  Output list of messages, including messages giving number of detected
    --  errors and warnings.
 
-   procedure Error_Msg (Msg : String; Flag_Location : Source_Ptr);
+   procedure Error_Msg
+     (Msg : String; Flag_Location : Source_Ptr);
+   procedure Error_Msg
+     (Msg : String; Flag_Location : Source_Ptr; N : Node_Id);
    --  Output a message at specified location. Can be called from the parser
-   --  or the semantic analyzer.
+   --  or the semantic analyzer. If N is set, points to the relevant node for
+   --  this message.
 
    procedure Error_Msg_S (Msg : String);
    --  Output a message at current scan pointer location. This routine can be

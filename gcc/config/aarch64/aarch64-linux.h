@@ -1,5 +1,5 @@
 /* Machine description for AArch64 architecture.
-   Copyright (C) 2009-2017 Free Software Foundation, Inc.
+   Copyright (C) 2009-2019 Free Software Foundation, Inc.
    Contributed by ARM Ltd.
 
    This file is part of GCC.
@@ -38,9 +38,10 @@
    %{static:-Bstatic}				\
    %{shared:-shared}				\
    %{symbolic:-Bsymbolic}			\
-   %{!static:					\
+   %{!static:%{!static-pie:			\
      %{rdynamic:-export-dynamic}		\
-     %{!shared:-dynamic-linker " GNU_USER_DYNAMIC_LINKER "}} \
+     %{!shared:-dynamic-linker " GNU_USER_DYNAMIC_LINKER "}}} \
+   %{static-pie:-Bstatic -pie --no-dynamic-linker -z text} \
    -X						\
    %{mbig-endian:-EB} %{mlittle-endian:-EL}     \
    -maarch64linux%{mabi=ilp32:32}%{mbig-endian:b}"
@@ -80,7 +81,9 @@
     }						\
   while (0)
 
-#define TARGET_ASM_FILE_END file_end_indicate_exec_stack
+#define GNU_USER_TARGET_D_CRITSEC_SIZE 48
+
+#define TARGET_ASM_FILE_END aarch64_file_end_indicate_exec_stack
 
 /* Uninitialized common symbols in non-PIE executables, even with
    strong definitions in dependent shared libraries, will resolve

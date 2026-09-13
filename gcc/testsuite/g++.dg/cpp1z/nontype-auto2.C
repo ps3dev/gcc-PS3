@@ -1,5 +1,5 @@
 // Testcase from P0127R2
-// { dg-options -std=c++1z }
+// { dg-do compile { target c++17 } }
 
 template <typename T> struct S;
 template <typename T, T n> struct S<int[n]> {

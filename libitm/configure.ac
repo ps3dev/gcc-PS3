@@ -1,5 +1,5 @@
 # Process this file with autoreconf to produce a configure script.
-#   Copyright (C) 2011-2017 Free Software Foundation, Inc.
+#   Copyright (C) 2011-2019 Free Software Foundation, Inc.
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -15,7 +15,6 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.  
 
-AC_PREREQ(2.59)
 AC_INIT([GNU TM Runtime Library], 1.0,,[libitm])
 AC_CONFIG_HEADER(config.h)
 
@@ -259,6 +258,10 @@ if test "x$GCC" = "xyes"; then
 fi
 
 XCFLAGS="$XCFLAGS $XPCFLAGS"
+
+# Add CET specific flags if CET is enabled
+GCC_CET_FLAGS(CET_FLAGS)
+XCFLAGS="$XCFLAGS $CET_FLAGS"
 
 AC_SUBST(config_path)
 AC_SUBST(XCFLAGS)

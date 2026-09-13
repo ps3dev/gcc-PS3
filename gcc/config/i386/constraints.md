@@ -1,5 +1,5 @@
 ;; Constraint definitions for IA-32 and x86-64.
-;; Copyright (C) 2006-2017 Free Software Foundation, Inc.
+;; Copyright (C) 2006-2019 Free Software Foundation, Inc.
 ;;
 ;; This file is part of GCC.
 ;;
@@ -78,10 +78,10 @@
  "TARGET_80387 || TARGET_FLOAT_RETURNS_IN_80387 ? FP_SECOND_REG : NO_REGS"
  "Second from top of 80387 floating-point stack (@code{%st(1)}).")
 
-(define_register_constraint "Yk" "TARGET_AVX512F ? MASK_EVEX_REGS : NO_REGS"
+(define_register_constraint "Yk" "TARGET_AVX512F ? MASK_REGS : NO_REGS"
 "@internal Any mask register that can be used as predicate, i.e. k1-k7.")
 
-(define_register_constraint "k" "TARGET_AVX512F ? MASK_REGS : NO_REGS"
+(define_register_constraint "k" "TARGET_AVX512F ? ALL_MASK_REGS : NO_REGS"
 "@internal Any mask register.")
 
 ;; Vector registers (also used for plain floating point nowadays).
@@ -94,44 +94,29 @@
 (define_register_constraint "v" "TARGET_SSE ? ALL_SSE_REGS : NO_REGS"
  "Any EVEX encodable SSE register (@code{%xmm0-%xmm31}).")
 
-(define_register_constraint "w" "TARGET_MPX ? BND_REGS : NO_REGS"
- "@internal Any bound register.")
-
 ;; We use the Y prefix to denote any number of conditional register sets:
 ;;  z	First SSE register.
-;;  i	SSE2 inter-unit moves to SSE register enabled
-;;  j	SSE2 inter-unit moves from SSE register enabled
-;;  m	MMX inter-unit moves to MMX register enabled
-;;  n	MMX inter-unit moves from MMX register enabled
+;;  d	any EVEX encodable SSE register for AVX512DQ target or
+;;	any SSE register for SSE4_1 target.
+;;  p	Integer register when TARGET_PARTIAL_REG_STALL is disabled
 ;;  a	Integer register when zero extensions with AND are disabled
 ;;  b	Any register that can be used as the GOT base when calling
 ;;	___tls_get_addr: that is, any general register except EAX
 ;;	and ESP, for -fno-plt if linker supports it.  Otherwise,
 ;;	EBX.
-;;  p	Integer register when TARGET_PARTIAL_REG_STALL is disabled
 ;;  f	x87 register when 80387 floating point arithmetic is enabled
 ;;  r	SSE regs not requiring REX prefix when prefixes avoidance is enabled
 ;;	and all SSE regs otherwise
-;;  h   EVEX encodable SSE register with number factor of four
+;;  v	any EVEX encodable SSE register for AVX512VL target,
+;;	otherwise any SSE register
+;;  h	EVEX encodable SSE register with number factor of four
 
 (define_register_constraint "Yz" "TARGET_SSE ? SSE_FIRST_REG : NO_REGS"
  "First SSE register (@code{%xmm0}).")
 
-(define_register_constraint "Yi"
- "TARGET_SSE2 && TARGET_INTER_UNIT_MOVES_TO_VEC ? ALL_SSE_REGS : NO_REGS"
- "@internal Any SSE register, when SSE2 and inter-unit moves to vector registers are enabled.")
-
-(define_register_constraint "Yj"
- "TARGET_SSE2 && TARGET_INTER_UNIT_MOVES_FROM_VEC ? ALL_SSE_REGS : NO_REGS"
- "@internal Any SSE register, when SSE2 and inter-unit moves from vector registers are enabled.")
-
-(define_register_constraint "Ym"
- "TARGET_MMX && TARGET_INTER_UNIT_MOVES_TO_VEC ? MMX_REGS : NO_REGS"
- "@internal Any MMX register, when inter-unit moves to vector registers are enabled.")
-
-(define_register_constraint "Yn"
- "TARGET_MMX && TARGET_INTER_UNIT_MOVES_FROM_VEC ? MMX_REGS : NO_REGS"
- "@internal Any MMX register, when inter-unit moves from vector registers are enabled.")
+(define_register_constraint "Yd"
+ "TARGET_AVX512DQ ? ALL_SSE_REGS : TARGET_SSE4_1 ? SSE_REGS : NO_REGS"
+ "@internal Any EVEX encodable SSE register (@code{%xmm0-%xmm31}) for AVX512DQ target or any SSE register for SSE4_1 target.")
 
 (define_register_constraint "Yp"
  "TARGET_PARTIAL_REG_STALL ? NO_REGS : GENERAL_REGS"
@@ -160,9 +145,6 @@
 (define_register_constraint "Yv"
  "TARGET_AVX512VL ? ALL_SSE_REGS : TARGET_SSE ? SSE_REGS : NO_REGS"
  "@internal For AVX512VL, any EVEX encodable SSE register (@code{%xmm0-%xmm31}), otherwise any SSE register.")
-
-(define_register_constraint "Yh" "TARGET_AVX512F ? MOD4_SSE_REGS : NO_REGS"
- "@internal Any EVEX encodable SSE register, which has number factor of four.")
 
 ;; We use the B prefix to denote any number of internal operands:
 ;;  f  FLAGS_REG
@@ -198,14 +180,16 @@
 
 (define_constraint "Bs"
   "@internal Sibcall memory operand."
-  (ior (and (not (match_test "TARGET_X32"))
+  (ior (and (not (match_test "TARGET_INDIRECT_BRANCH_REGISTER"))
+	    (not (match_test "TARGET_X32"))
 	    (match_operand 0 "sibcall_memory_operand"))
        (and (match_test "TARGET_X32 && Pmode == DImode")
 	    (match_operand 0 "GOT_memory_operand"))))
 
 (define_constraint "Bw"
   "@internal Call memory operand."
-  (ior (and (not (match_test "TARGET_X32"))
+  (ior (and (not (match_test "TARGET_INDIRECT_BRANCH_REGISTER"))
+	    (not (match_test "TARGET_X32"))
 	    (match_operand 0 "memory_operand"))
        (and (match_test "TARGET_X32 && Pmode == DImode")
 	    (match_operand 0 "GOT_memory_operand"))))
@@ -270,10 +254,9 @@
 
 ;; This can theoretically be any mode's CONST0_RTX.
 (define_constraint "C"
-  "SSE constant zero operand."
-  (and (match_test "TARGET_SSE")
-       (ior (match_test "op == const0_rtx")
-	    (match_operand 0 "const0_operand"))))
+  "Constant zero operand."
+  (ior (match_test "op == const0_rtx")
+       (match_operand 0 "const0_operand")))
 
 ;; Constant-or-symbol-reference constraints.
 
@@ -305,6 +288,11 @@
    of it satisfies the e constraint."
   (match_operand 0 "x86_64_hilo_int_operand"))
 
+(define_constraint "Wf"
+  "32-bit signed integer constant zero extended from word size
+   to double word size."
+  (match_operand 0 "x86_64_dwzext_immediate_operand"))
+
 (define_constraint "Z"
   "32-bit unsigned integer constant, or a symbolic reference known
    to fit that range (for immediate operands in zero-extending x86-64
@@ -324,11 +312,3 @@
 (define_address_constraint "Ts"
   "Address operand without segment register"
   (match_operand 0 "address_no_seg_operand"))
-
-(define_address_constraint "Ti"
-  "MPX address operand without index"
-  (match_operand 0 "address_mpx_no_index_operand"))
-
-(define_address_constraint "Tb"
-  "MPX address operand without base"
-  (match_operand 0 "address_mpx_no_base_operand"))

@@ -1,5 +1,5 @@
-// { dg-do run }
-// { dg-options "-std=c++1z -fconcepts" }
+// { dg-do run { target c++17 } }
+// { dg-options "-fconcepts" }
 
 template<typename T>
   concept bool Class () { return __is_class(T); }

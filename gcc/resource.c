@@ -1,5 +1,5 @@
 /* Definitions for computing resource usage of specific insns.
-   Copyright (C) 1999-2017 Free Software Foundation, Inc.
+   Copyright (C) 1999-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -108,6 +108,11 @@ update_live_status (rtx dest, const_rtx x, void *data ATTRIBUTE_UNUSED)
   if (GET_CODE (x) == CLOBBER)
     for (i = first_regno; i < last_regno; i++)
       CLEAR_HARD_REG_BIT (current_live_regs, i);
+  else if (GET_CODE (x) == CLOBBER_HIGH)
+    /* No current target supports both branch delay slots and CLOBBER_HIGH.
+       We'd need more elaborate liveness tracking to handle that
+       combination.  */
+    gcc_unreachable ();
   else
     for (i = first_regno; i < last_regno; i++)
       {
@@ -212,6 +217,7 @@ mark_referenced_resources (rtx x, struct resources *res,
     case PC:
     case SYMBOL_REF:
     case LABEL_REF:
+    case DEBUG_INSN:
       return;
 
     case SUBREG:
@@ -259,7 +265,7 @@ mark_referenced_resources (rtx x, struct resources *res,
       res->volatil |= MEM_VOLATILE_P (x);
 
       /* For all ASM_OPERANDS, we must traverse the vector of input operands.
-	 We can not just fall through here since then we would be confused
+	 We cannot just fall through here since then we would be confused
 	 by the ASM_INPUT rtx inside ASM_OPERANDS, which do not indicate
 	 traditional asms unlike their normal usage.  */
 
@@ -292,6 +298,7 @@ mark_referenced_resources (rtx x, struct resources *res,
       return;
 
     case CLOBBER:
+    case CLOBBER_HIGH:
       return;
 
     case CALL_INSN:
@@ -451,6 +458,7 @@ find_dead_or_set_registers (rtx_insn *target, struct resources *res,
 
 	case BARRIER:
 	case NOTE:
+	case DEBUG_INSN:
 	  continue;
 
 	case INSN:
@@ -639,6 +647,7 @@ mark_set_resources (rtx x, struct resources *res, int in_dest,
     case SYMBOL_REF:
     case CONST:
     case PC:
+    case DEBUG_INSN:
       /* These don't set any resources.  */
       return;
 
@@ -665,9 +674,15 @@ mark_set_resources (rtx x, struct resources *res, int in_dest,
 
 	  for (link = CALL_INSN_FUNCTION_USAGE (call_insn);
 	       link; link = XEXP (link, 1))
-	    if (GET_CODE (XEXP (link, 0)) == CLOBBER)
-	      mark_set_resources (SET_DEST (XEXP (link, 0)), res, 1,
-				  MARK_SRC_DEST);
+	    {
+	      /* We could support CLOBBER_HIGH and treat it in the same way as
+		 HARD_REGNO_CALL_PART_CLOBBERED, but no port needs that
+		 yet.  */
+	      gcc_assert (GET_CODE (XEXP (link, 0)) != CLOBBER_HIGH);
+	      if (GET_CODE (XEXP (link, 0)) == CLOBBER)
+		mark_set_resources (SET_DEST (XEXP (link, 0)), res, 1,
+				    MARK_SRC_DEST);
+	    }
 
 	  /* Check for a REG_SETJMP.  If it exists, then we must
 	     assume that this call can clobber any register.  */
@@ -709,6 +724,12 @@ mark_set_resources (rtx x, struct resources *res, int in_dest,
     case CLOBBER:
       mark_set_resources (XEXP (x, 0), res, 1, MARK_SRC_DEST);
       return;
+
+    case CLOBBER_HIGH:
+      /* No current target supports both branch delay slots and CLOBBER_HIGH.
+	 We'd need more elaborate liveness tracking to handle that
+	 combination.  */
+      gcc_unreachable ();
 
     case SEQUENCE:
       {
@@ -796,7 +817,7 @@ mark_set_resources (rtx x, struct resources *res, int in_dest,
       res->volatil |= MEM_VOLATILE_P (x);
 
       /* For all ASM_OPERANDS, we must traverse the vector of input operands.
-	 We can not just fall through here since then we would be confused
+	 We cannot just fall through here since then we would be confused
 	 by the ASM_INPUT rtx inside ASM_OPERANDS, which do not indicate
 	 traditional asms unlike their normal usage.  */
 
@@ -966,9 +987,13 @@ mark_target_live_regs (rtx_insn *insns, rtx target_maybe_return, struct resource
     {
       regset regs_live = DF_LR_IN (BASIC_BLOCK_FOR_FN (cfun, b));
       rtx_insn *start_insn, *stop_insn;
+      df_ref def;
 
       /* Compute hard regs live at start of block.  */
       REG_SET_TO_HARD_REG_SET (current_live_regs, regs_live);
+      FOR_EACH_ARTIFICIAL_DEF (def, b)
+	if (DF_REF_FLAGS (def) & DF_REF_AT_TOP)
+	  SET_HARD_REG_BIT (current_live_regs, DF_REF_REGNO (def));
 
       /* Get starting and ending insn, handling the case where each might
 	 be a SEQUENCE.  */
@@ -1286,7 +1311,26 @@ clear_hashed_info_for_insn (rtx_insn *insn)
 	tinfo->block = -1;
     }
 }
-
+
+/* Clear any hashed information that we have stored for instructions
+   between INSN and the next BARRIER that follow a JUMP or a LABEL.  */
+
+void
+clear_hashed_info_until_next_barrier (rtx_insn *insn)
+{
+  while (insn && !BARRIER_P (insn))
+    {
+      if (JUMP_P (insn) || LABEL_P (insn))
+	{
+	  rtx_insn *next = next_active_insn (insn);
+	  if (next)
+	    clear_hashed_info_for_insn (next);
+	}
+
+      insn = next_nonnote_insn (insn);
+    }
+}
+
 /* Increment the tick count for the basic block that contains INSN.  */
 
 void

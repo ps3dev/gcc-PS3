@@ -1,10 +1,72 @@
-2017-08-14  Release Manager
+2022-05-27  Release Manager
 
-	* GCC 7.2.0 released.
+	* GCC 9.5.0 released.
 
-2017-05-02  Release Manager
+2021-06-01  Release Manager
 
-	* GCC 7.1.0 released.
+	* GCC 9.4.0 released.
+
+2021-05-01  Iain Sandoe  <iain@sandoe.co.uk>
+	    Jakub Jelinek   <jakub@redhat.com>
+
+	PR target/97865
+	* configure: Regenerate.
+
+2020-03-12  Release Manager
+
+	* GCC 9.3.0 released.
+
+2019-08-12  Release Manager
+
+	* GCC 9.2.0 released.
+
+2019-05-03  Release Manager
+
+	* GCC 9.1.0 released.
+
+2019-01-01  Jakub Jelinek  <jakub@redhat.com>
+
+	Update copyright years.
+
+2018-10-31  Joseph Myers  <joseph@codesourcery.com>
+
+	PR bootstrap/82856
+	* Makefile.am: Include multilib.am.
+	(AUTOMAKE_OPTIONS): Remove 1.9.5.
+	* configure.ac: Remove AC_PREREQ.  Quote argument to
+	AC_RUN_IFELSE.
+	* Makefile.in, aclocal.m4, configure: Regenerate.
+
+2018-04-24  H.J. Lu  <hongjiu.lu@intel.com>
+
+	* configure: Regenerated.
+
+2018-04-19  Jakub Jelinek  <jakub@redhat.com>
+
+	* configure: Regenerated.
+
+2018-04-18  David Malcolm  <dmalcolm@redhat.com>
+
+	PR jit/85384
+	* configure: Regenerate.
+
+2018-02-14  Igor Tsimbalist  <igor.v.tsimbalist@intel.com>
+
+	PR target/84148
+	* configure: Regenerate.
+
+2018-01-03  Jakub Jelinek  <jakub@redhat.com>
+
+	Update copyright years.
+
+2017-11-17  Igor Tsimbalist  <igor.v.tsimbalist@intel.com>
+
+	* Makefile.am: Update AM_CFLAGS, update
+	libssp_nonshared_la_CFLAGS.
+	* Makefile.in: Regenerate.
+	* configure: Likewise.
+	* aclocal.m4: Likewise.
+	* configure.ac: Set CET_FLAGS. Update XCFLAGS.
 
 2017-04-01  Jonathan Yong  <10walls@gmail.com>
 
@@ -228,7 +290,7 @@
 	* configure: Regenerate.
 
 2008-09-26  Peter O'Gorman  <pogma@thewrittenword.com>
-            Steve Ellcey  <sje@cup.hp.com>
+	    Steve Ellcey  <sje@cup.hp.com>
 
 	* configure: Regenerate for new libtool.
 	* Makefile.in: Ditto.

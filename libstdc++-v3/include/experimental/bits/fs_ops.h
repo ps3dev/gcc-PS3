@@ -1,6 +1,6 @@
 // Filesystem operational functions -*- C++ -*-
 
-// Copyright (C) 2014-2017 Free Software Foundation, Inc.
+// Copyright (C) 2014-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -38,16 +38,16 @@
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
+_GLIBCXX_BEGIN_NAMESPACE_VERSION
+
 namespace experimental
 {
 namespace filesystem
 {
 inline namespace v1
 {
-_GLIBCXX_BEGIN_NAMESPACE_VERSION
-
   /**
-   * @ingroup filesystem
+   * @ingroup filesystem-ts
    * @{
    */
 
@@ -74,19 +74,19 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   { return copy_file(__from, __to, copy_options::none); }
 
   inline bool
-  copy_file(const path& __from, const path& __to, error_code& __ec) noexcept
+  copy_file(const path& __from, const path& __to, error_code& __ec)
   { return copy_file(__from, __to, copy_options::none, __ec); }
 
   bool copy_file(const path& __from, const path& __to, copy_options __option);
   bool copy_file(const path& __from, const path& __to, copy_options __option,
-		 error_code& __ec) noexcept;
+		 error_code& __ec);
 
   void copy_symlink(const path& __existing_symlink, const path& __new_symlink);
   void copy_symlink(const path& __existing_symlink, const path& __new_symlink,
 		    error_code& __ec) noexcept;
 
   bool create_directories(const path& __p);
-  bool create_directories(const path& __p, error_code& __ec) noexcept;
+  bool create_directories(const path& __p, error_code& __ec);
 
   bool create_directory(const path& __p);
   bool create_directory(const path& __p, error_code& __ec) noexcept;
@@ -131,8 +131,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   {
     auto __s = status(__p, __ec);
     if (status_known(__s))
-      __ec.clear();
-    return exists(__s);
+      {
+	__ec.clear();
+	return __s.type() != file_type::not_found;
+      }
+    return false;
   }
 
   uintmax_t file_size(const path& __p);
@@ -259,7 +262,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   bool remove(const path& __p, error_code& __ec) noexcept;
 
   uintmax_t remove_all(const path& __p);
-  uintmax_t remove_all(const path& __p, error_code& __ec) noexcept;
+  uintmax_t remove_all(const path& __p, error_code& __ec);
 
   void rename(const path& __from, const path& __to);
   void rename(const path& __from, const path& __to, error_code& __ec) noexcept;
@@ -285,11 +288,12 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   path temp_directory_path();
   path temp_directory_path(error_code& __ec);
 
-  // @} group filesystem
-_GLIBCXX_END_NAMESPACE_VERSION
+  /// @} group filesystem-ts
 } // namespace v1
 } // namespace filesystem
 } // namespace experimental
+
+_GLIBCXX_END_NAMESPACE_VERSION
 } // namespace std
 
 #endif // C++11

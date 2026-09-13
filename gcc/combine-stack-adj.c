@@ -1,5 +1,5 @@
 /* Combine stack adjustments.
-   Copyright (C) 1987-2017 Free Software Foundation, Inc.
+   Copyright (C) 1987-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -133,6 +133,7 @@ single_set_for_csa (rtx_insn *insn)
 	  && SET_SRC (this_rtx) == SET_DEST (this_rtx))
 	;
       else if (GET_CODE (this_rtx) != CLOBBER
+	       && GET_CODE (this_rtx) != CLOBBER_HIGH
 	       && GET_CODE (this_rtx) != USE)
 	return NULL_RTX;
     }
@@ -508,6 +509,8 @@ combine_stack_adjustments_for_block (basic_block bb)
 	continue;
 
       set = single_set_for_csa (insn);
+      if (set && find_reg_note (insn, REG_STACK_CHECK, NULL_RTX))
+	set = NULL_RTX;
       if (set)
 	{
 	  rtx dest = SET_DEST (set);
@@ -537,7 +540,7 @@ combine_stack_adjustments_for_block (basic_block bb)
 		 Also we need to be careful to not move stack pointer
 		 such that we create stack accesses outside the allocated
 		 area.  We can combine an allocation into the first insn,
-		 or a deallocation into the second insn.  We can not
+		 or a deallocation into the second insn.  We cannot
 		 combine an allocation followed by a deallocation.
 
 		 The only somewhat frequent occurrence of the later is when
@@ -620,11 +623,11 @@ combine_stack_adjustments_for_block (basic_block bb)
 	  if (MEM_P (dest)
 	      && ((STACK_GROWS_DOWNWARD
 		   ? (GET_CODE (XEXP (dest, 0)) == PRE_DEC
-		      && last_sp_adjust
-			 == (HOST_WIDE_INT) GET_MODE_SIZE (GET_MODE (dest)))
+		      && known_eq (last_sp_adjust,
+				   GET_MODE_SIZE (GET_MODE (dest))))
 		   : (GET_CODE (XEXP (dest, 0)) == PRE_INC
-		      && last_sp_adjust
-		         == -(HOST_WIDE_INT) GET_MODE_SIZE (GET_MODE (dest))))
+		      && known_eq (-last_sp_adjust,
+				   GET_MODE_SIZE (GET_MODE (dest)))))
 		  || ((STACK_GROWS_DOWNWARD
 		       ? last_sp_adjust >= 0 : last_sp_adjust <= 0)
 		      && GET_CODE (XEXP (dest, 0)) == PRE_MODIFY

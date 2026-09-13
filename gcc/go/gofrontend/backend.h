@@ -254,7 +254,7 @@ class Backend
 
   // Create a reference to a variable.
   virtual Bexpression*
-  var_expression(Bvariable* var, Varexpr_context in_lvalue_pos, Location) = 0;
+  var_expression(Bvariable* var, Location) = 0;
 
   // Create an expression that indirects through the pointer expression EXPR
   // (i.e., return the expression for *EXPR). KNOWN_VALID is true if the pointer
@@ -372,14 +372,12 @@ class Backend
   virtual Bexpression*
   array_index_expression(Bexpression* array, Bexpression* index, Location) = 0;
 
-  // Create an expression for a call to FN with ARGS.
+  // Create an expression for a call to FN with ARGS, taking place within
+  // caller CALLER.
   virtual Bexpression*
-  call_expression(Bexpression* fn, const std::vector<Bexpression*>& args,
+  call_expression(Bfunction *caller, Bexpression* fn,
+                  const std::vector<Bexpression*>& args,
 		  Bexpression* static_chain, Location) = 0;
-
-  // Return an expression that allocates SIZE bytes on the stack.
-  virtual Bexpression*
-  stack_allocation_expression(int64_t size, Location) = 0;
 
   // Statements.
 
@@ -514,15 +512,18 @@ class Backend
   // Create a local variable.  The frontend will create the local
   // variables first, and then create the block which contains them.
   // FUNCTION is the function in which the variable is defined.  NAME
-  // is the name of the variable.  TYPE is the type.  IS_ADDRESS_TAKEN
-  // is true if the address of this variable is taken (this implies
-  // that the address does not escape the function, as otherwise the
-  // variable would be on the heap).  LOCATION is where the variable
-  // is defined.  For each local variable the frontend will call
-  // init_statement to set the initial value.
+  // is the name of the variable.  TYPE is the type.  DECL_VAR, if not
+  // null, gives the location at which the value of this variable may
+  // be found, typically used to create an inner-scope reference to an
+  // outer-scope variable, to extend the lifetime of the variable beyond
+  // the inner scope.  IS_ADDRESS_TAKEN is true if the address of this
+  // variable is taken (this implies that the address does not escape
+  // the function, as otherwise the variable would be on the heap).
+  // LOCATION is where the variable is defined.  For each local variable
+  // the frontend will call init_statement to set the initial value.
   virtual Bvariable*
   local_variable(Bfunction* function, const std::string& name, Btype* type,
-		 bool is_address_taken, Location location) = 0;
+		 Bvariable* decl_var, bool is_address_taken, Location location) = 0;
 
   // Create a function parameter.  This is an incoming parameter, not
   // a result parameter (result parameters are treated as local
@@ -698,23 +699,48 @@ class Backend
   virtual Bfunction*
   error_function() = 0;
 
+  // Bit flags to pass to the function method.
+
+  // Set if the function should be visible outside of the current
+  // compilation unit.
+  static const unsigned int function_is_visible = 1 << 0;
+
+  // Set if this is a function declaration rather than a definition;
+  // the definition will be in another compilation unit.
+  static const unsigned int function_is_declaration = 1 << 1;
+
+  // Set if the function can be inlined.  This is normally set, but is
+  // false for functions that may not be inlined because they call
+  // recover and must be visible for correct panic recovery.
+  static const unsigned int function_is_inlinable = 1 << 2;
+
+  // Set if the function may not split the stack.  This is set for the
+  // implementation of recover itself, among other things.
+  static const unsigned int function_no_split_stack = 1 << 3;
+
+  // Set if the function does not return.  This is set for the
+  // implementation of panic.
+  static const unsigned int function_does_not_return = 1 << 4;
+
+  // Set if the function should be put in a unique section if
+  // possible.  This is used for field tracking.
+  static const unsigned int function_in_unique_section = 1 << 5;
+
+  // Set if the function should be available for inlining in the
+  // backend, but should not be emitted as a standalone function.  Any
+  // call to the function that is not inlined should be treated as a
+  // call to a function defined in a different compilation unit.  This
+  // is like a C99 function marked inline but not extern.
+  static const unsigned int function_only_inline = 1 << 6;
+
   // Declare or define a function of FNTYPE.
-  // NAME is the Go name of the function. ASM_NAME, if not the empty string, is
-  // the name that should be used in the symbol table; this will be non-empty if
-  // a magic extern comment is used.
-  // IS_VISIBLE is true if this function should be visible outside of the
-  // current compilation unit. IS_DECLARATION is true if this is a function
-  // declaration rather than a definition; the function definition will be in
-  // another compilation unit.
-  // IS_INLINABLE is true if the function can be inlined.
-  // DISABLE_SPLIT_STACK is true if this function may not split the stack; this
-  // is used for the implementation of recover.
-  // IN_UNIQUE_SECTION is true if this function should be put into a unique
-  // location if possible; this is used for field tracking.
+  // NAME is the Go name of the function.  ASM_NAME, if not the empty
+  // string, is the name that should be used in the symbol table; this
+  // will be non-empty if a magic extern comment is used.  FLAGS is
+  // bit flags described above.
   virtual Bfunction*
   function(Btype* fntype, const std::string& name, const std::string& asm_name,
-           bool is_visible, bool is_declaration, bool is_inlinable,
-           bool disable_split_stack, bool in_unique_section, Location) = 0;
+	   unsigned int flags, Location) = 0;
 
   // Create a statement that runs all deferred calls for FUNCTION.  This should
   // be a statement that looks like this in C++:
@@ -750,6 +776,11 @@ class Backend
                            const std::vector<Bexpression*>& constant_decls,
                            const std::vector<Bfunction*>& function_decls,
                            const std::vector<Bvariable*>& variable_decls) = 0;
+
+  // Write SIZE bytes of export data from BYTES to the proper
+  // section in the output object file.
+  virtual void
+  write_export_data(const char* bytes, unsigned int size) = 0;
 };
 
 #endif // !defined(GO_BACKEND_H)

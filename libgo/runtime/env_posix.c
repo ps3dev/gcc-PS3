@@ -2,12 +2,11 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build darwin dragonfly freebsd linux nacl netbsd openbsd solaris windows
+// +build darwin dragonfly freebsd hurd linux nacl netbsd openbsd solaris windows
 
 #include "runtime.h"
 #include "array.h"
 #include "arch.h"
-#include "malloc.h"
 
 extern Slice runtime_get_envs(void);
 

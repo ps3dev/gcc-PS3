@@ -1,5 +1,5 @@
 // PR c++/78771
-// { dg-options -std=c++1z }
+// { dg-do compile { target c++17 } }
 
 // ICE instantiating a deleted inherited ctor
 

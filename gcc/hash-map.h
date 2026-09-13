@@ -1,5 +1,5 @@
 /* A type-safe hash map.
-   Copyright (C) 2014-2017 Free Software Foundation, Inc.
+   Copyright (C) 2014-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -62,6 +62,12 @@ class GTY((user)) hash_map
 	gt_ggc_mx (e.m_value);
       }
 
+    static void ggc_maybe_mx (hash_entry &e)
+      {
+	if (Traits::maybe_mx)
+	  ggc_mx (e);
+      }
+
     static void pch_nx (hash_entry &e)
       {
 	gt_pch_nx (e.m_key);
@@ -72,6 +78,11 @@ class GTY((user)) hash_map
       {
 	pch_nx_helper (e.m_key, op, c);
 	pch_nx_helper (e.m_value, op, c);
+      }
+
+    static int keep_cache_entry (hash_entry &e)
+      {
+	return ggc_marked_p (e.m_key);
       }
 
   private:
@@ -212,10 +223,23 @@ public:
       return *this;
     }
 
-    std::pair<Key, Value> operator* ()
+    /* Can't use std::pair here, because GCC before 4.3 don't handle
+       std::pair where template parameters are references well.
+       See PR86739.  */
+    struct reference_pair {
+      const Key &first;
+      Value &second;
+
+      reference_pair (const Key &key, Value &value) : first (key), second (value) {}
+
+      template <typename K, typename V>
+      operator std::pair<K, V> () const { return std::pair<K, V> (first, second); }
+    };
+
+    reference_pair operator* ()
     {
       hash_entry &e = *m_iter;
-      return std::pair<Key, Value> (e.m_key, e.m_value);
+      return reference_pair (e.m_key, e.m_value);
     }
 
     bool
@@ -237,7 +261,8 @@ private:
 
   template<typename T, typename U, typename V> friend void gt_ggc_mx (hash_map<T, U, V> *);
   template<typename T, typename U, typename V> friend void gt_pch_nx (hash_map<T, U, V> *);
-      template<typename T, typename U, typename V> friend void gt_pch_nx (hash_map<T, U, V> *, gt_pointer_operator, void *);
+  template<typename T, typename U, typename V> friend void gt_pch_nx (hash_map<T, U, V> *, gt_pointer_operator, void *);
+  template<typename T, typename U, typename V> friend void gt_cleare_cache (hash_map<T, U, V> *);
 
   hash_table<hash_entry> m_table;
 };
@@ -256,6 +281,14 @@ static inline void
 gt_pch_nx (hash_map<K, V, H> *h)
 {
   gt_pch_nx (&h->m_table);
+}
+
+template<typename K, typename V, typename H>
+static inline void
+gt_cleare_cache (hash_map<K, V, H> *h)
+{
+  if (h)
+    gt_cleare_cache (&h->m_table);
 }
 
 template<typename K, typename V, typename H>

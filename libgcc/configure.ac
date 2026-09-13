@@ -11,8 +11,8 @@ sinclude(../config/dfp.m4)
 sinclude(../config/unwind_ipinfo.m4)
 sinclude(../config/gthr.m4)
 sinclude(../config/sjlj.m4)
+sinclude(../config/cet.m4)
 
-AC_PREREQ(2.64)
 AC_INIT([GNU C Runtime Library], 1.0,,[libgcc])
 AC_CONFIG_SRCDIR([static-object.mk])
 
@@ -66,6 +66,11 @@ AC_ARG_ENABLE(shared,
   esac
 ], [enable_shared=yes])
 AC_SUBST(enable_shared)
+
+AC_ARG_ENABLE(gcov,
+[  --disable-gcov          don't provide libgcov and related host tools],
+[], [enable_gcov=yes])
+AC_SUBST(enable_gcov)
 
 AC_ARG_ENABLE(vtable-verify,
 [  --enable-vtable-verify    Enable vtable verification feature ],
@@ -202,7 +207,7 @@ AC_SUBST(long_double_type_size)
 
 AC_CHECK_HEADERS(inttypes.h stdint.h stdlib.h ftw.h \
 	unistd.h sys/stat.h sys/types.h \
-	string.h strings.h memory.h)
+	string.h strings.h memory.h sys/auxv.h)
 AC_HEADER_STDC
 
 # Check for decimal float support.
@@ -223,7 +228,8 @@ GCC_AC_ENABLE_DECIMAL_FLOAT([$host])
 
 # Check for fixed-point support.
 AC_CACHE_CHECK([whether fixed-point is supported], [libgcc_cv_fixed_point],
-	       [AC_COMPILE_IFELSE([_Sat _Fract x;], [libgcc_cv_fixed_point=yes],
+	       [AC_COMPILE_IFELSE([AC_LANG_SOURCE([_Sat _Fract x;])],
+	       			  [libgcc_cv_fixed_point=yes],
 				  [libgcc_cv_fixed_point=no])])
 fixed_point=$libgcc_cv_fixed_point
 AC_SUBST(fixed_point)
@@ -235,6 +241,9 @@ GCC_CHECK_UNWIND_GETIPINFO
 
 # Check if the compiler is configured for setjmp/longjmp exceptions.
 GCC_CHECK_SJLJ_EXCEPTIONS
+
+GCC_CET_FLAGS(CET_FLAGS)
+AC_SUBST(CET_FLAGS)
 
 AC_ARG_ENABLE([explicit-exception-frame-registration],
   [AC_HELP_STRING([--enable-explicit-exception-frame-registration],
@@ -261,11 +270,11 @@ AC_MSG_RESULT([$target_thread_file])
 # Check for assembler CFI support.
 AC_CACHE_CHECK([whether assembler supports CFI directives], [libgcc_cv_cfi],
 	       [AC_COMPILE_IFELSE(
-[asm("\n\
+[AC_LANG_SOURCE([asm("\n\
 	.text\n\
 	.cfi_startproc\n\
 	.cfi_personality 0, symbol\n\
-	.cfi_endproc");],
+	.cfi_endproc");])],
   [libgcc_cv_cfi=yes],
   [libgcc_cv_cfi=no])])
 
@@ -287,16 +296,17 @@ mips*-*-*)
   AC_CACHE_CHECK([whether the target is hard-float],
 		 [libgcc_cv_mips_hard_float],
 		 [AC_COMPILE_IFELSE(
-    [#ifndef __mips_hard_float
+    [AC_LANG_SOURCE([#ifndef __mips_hard_float
      #error FOO
-     #endif],
+     #endif
+    ])],
     [libgcc_cv_mips_hard_float=yes],
     [libgcc_cv_mips_hard_float=no])])
 esac
 
 case ${host} in
 *-*-solaris2*)
-  # Check for system-provided CRTs on Solaris 11.x and Solaris 12.
+  # Check for system-provided CRTs on Solaris 11.4.
   AC_CACHE_CHECK([system-provided CRTs on Solaris],
     		 [libgcc_cv_solaris_crts],
     [libgcc_cv_solaris_crts=no
@@ -376,17 +386,17 @@ esac
 esac
 
 case ${host} in
-# At present, we cannot turn -mfloat128 on via #pragma GCC target,
-# so just check if we have VSX (ISA 2.06) support to build the
-# software libraries, and whether the assembler can handle xsaddqp
-# for hardware support.
+# At present, we cannot turn -mfloat128 on via #pragma GCC target, so just
+# check if we have VSX (ISA 2.06) support to build the software libraries, and
+# whether the assembler can handle xsaddqp for hardware support.  Also check if
+# a new glibc is being used so that __builtin_cpu_supports can be used.
 powerpc*-*-linux*)
   saved_CFLAGS="$CFLAGS"
   CFLAGS="$CFLAGS -mabi=altivec -mvsx -mfloat128"
   AC_CACHE_CHECK([for PowerPC ISA 2.06 to build __float128 libraries],
 		 [libgcc_cv_powerpc_float128],
 		 [AC_COMPILE_IFELSE(
-    [vector double dadd (vector double a, vector double b) { return a + b; }],
+    [AC_LANG_SOURCE([vector double dadd (vector double a, vector double b) { return a + b; }])],
     [libgcc_cv_powerpc_float128=yes],
     [libgcc_cv_powerpc_float128=no])])
 
@@ -394,9 +404,12 @@ powerpc*-*-linux*)
   AC_CACHE_CHECK([for PowerPC ISA 3.0 to build hardware __float128 libraries],
 		 [libgcc_cv_powerpc_float128_hw],
 		 [AC_COMPILE_IFELSE(
-    [#include <sys/auxv.h>
+    [AC_LANG_SOURCE([#include <sys/auxv.h>
      #ifndef AT_PLATFORM
      #error "AT_PLATFORM is not defined"
+     #endif
+     #ifndef __BUILTIN_CPU_SUPPORTS__
+     #error "__builtin_cpu_supports is not available"
      #endif
      vector unsigned char add (vector unsigned char a, vector unsigned char b)
      {
@@ -406,7 +419,7 @@ powerpc*-*-linux*)
      }
      void *add_resolver (void) { return (void *) add; }
      __float128 add_ifunc (__float128, __float128)
-	__attribute__ ((__ifunc__ ("add_resolver")));],
+	__attribute__ ((__ifunc__ ("add_resolver")));])],
     [libgcc_cv_powerpc_float128_hw=yes],
     [libgcc_cv_powerpc_float128_hw=no])])
   CFLAGS="$saved_CFLAGS"
@@ -447,6 +460,21 @@ EOF
   ;;
 esac
 
+# Check if Solaris linker support v2 linker mapfile syntax.
+# Link with -nostartfiles -nodefaultlibs since neither are present while
+# building libgcc.
+case ${host} in
+*-*-solaris2*)
+  solaris_ld_v2_maps=no
+  echo 'int main(void) {return 0;}' > conftest.c
+  echo '$mapfile_version 2' > conftest.map
+  if AC_TRY_COMMAND([${CC-cc} -nostartfiles -nodefaultlibs -Wl,-M,conftest.map -o conftest conftest.c 1>&AS_MESSAGE_LOG_FD]); then
+      solaris_ld_v2_maps=yes
+  fi
+  ;;
+esac
+AC_SUBST(solaris_ld_v2_maps)
+
 # Check if xtensa target is configured for windowed ABI and thus needs to use
 # custom unwind code.
 # This is after config.host so we can augment tmake_file.
@@ -479,10 +507,28 @@ AC_CACHE_CHECK([for __attribute__((visibility("hidden")))],
 
 if test $libgcc_cv_hidden_visibility_attribute = yes; then
     vis_hide='-fvisibility=hidden -DHIDE_EXPORTS'
+    AC_DEFINE_UNQUOTED(AS_HIDDEN_DIRECTIVE, $asm_hidden_op, [Define to the .hidden-like directive if it exists.])
 else
     vis_hide=
 fi
 AC_SUBST(vis_hide)
+
+# Check for .cfi_sections .debug_frame support.
+AC_CACHE_CHECK([for .cfi_sections .debug_frame],
+    libgcc_cv_cfi_sections_directive, [
+	echo 'int foo (int, char *);' > conftest.c
+	echo 'int bar (int x) { char *y = __builtin_alloca (x); return foo (x + 1, y) + 1; }' >> conftest.c
+	libgcc_cv_cfi_sections_directive=no
+	if AC_TRY_COMMAND(${CC-cc} -Werror -g -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-exceptions -S conftest.c -o conftest.s 1>&AS_MESSAGE_LOG_FD); then
+	    if grep "\\.cfi_sections.*\\.debug_frame" conftest.s >/dev/null; then
+		libgcc_cv_cfi_sections_directive=yes
+	    fi
+	fi
+	rm -f conftest.*
+    ])
+if test $libgcc_cv_cfi_sections_directive = yes; then
+    AC_DEFINE(HAVE_AS_CFI_SECTIONS, 1, [Define to 1 if the assembler supports .cfi_sections .debug_frame directive.])
+fi
 
 # See if we have thread-local storage.  We can only test assembler
 # since link-time and run-time tests require the newly built
@@ -503,6 +549,41 @@ if test "$enable_tls $gcc_cv_use_emutls" = "yes yes"; then
 fi
 AC_SUBST(set_use_emutls)
 
+dnl Check if as supports AVX instructions.
+AC_DEFUN([LIBGCC_CHECK_AS_AVX], [
+case "${target}" in
+i[[34567]]86-*-* | x86_64-*-*)
+  AC_CACHE_CHECK([if the assembler supports AVX], libgcc_cv_as_avx, [
+    AC_TRY_COMPILE([], [asm("vzeroupper");],
+		   [libgcc_cv_as_avx=yes], [libgcc_cv_as_avx=no])
+  ])
+  if test x$libgcc_cv_as_avx = xyes; then
+    AC_DEFINE(HAVE_AS_AVX, 1, [Define to 1 if the assembler supports AVX.])
+  fi
+  ;;
+esac])
+LIBGCC_CHECK_AS_AVX
+
+dnl Check if as supports LSE instructions.
+AC_DEFUN([LIBGCC_CHECK_AS_LSE], [
+case "${target}" in
+aarch64*-*-*)
+  AC_CACHE_CHECK([if the assembler supports LSE], libgcc_cv_as_lse, [
+    AC_TRY_COMPILE([],
+changequote(,)dnl
+			asm(".arch armv8-a+lse\n\tcas w0, w1, [x2]");
+changequote([,])dnl
+		       ,
+		   [libgcc_cv_as_lse=yes], [libgcc_cv_as_lse=no])
+  ])
+  if test x$libgcc_cv_as_lse = xyes; then
+    AC_DEFINE(HAVE_AS_LSE, 1, [Define to 1 if the assembler supports LSE.])
+  fi
+  ;;
+esac])
+LIBGCC_CHECK_AS_LSE
+
+dnl Check if as supports RTM instructions.
 AC_CACHE_CHECK(for init priority support, libgcc_cv_init_priority, [
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM(,
   [[void ip (void) __attribute__ ((constructor (1)));]])],

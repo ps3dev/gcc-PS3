@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2019, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -27,7 +27,6 @@ with Atree;    use Atree;
 with Einfo;    use Einfo;
 with Elists;   use Elists;
 with Exp_Atag; use Exp_Atag;
-with Exp_Disp; use Exp_Disp;
 with Exp_Strm; use Exp_Strm;
 with Exp_Tss;  use Exp_Tss;
 with Exp_Util; use Exp_Util;
@@ -933,9 +932,9 @@ package body Exp_Dist is
       procedure Visit_Nested_Pkg (Nested_Pkg_Decl : Node_Id);
       --  Recurse for the given nested package declaration
 
-      -----------------------
-      -- Visit_Nested_Spec --
-      -----------------------
+      ----------------------
+      -- Visit_Nested_Pkg --
+      ----------------------
 
       procedure Visit_Nested_Pkg (Nested_Pkg_Decl : Node_Id) is
          Nested_Pkg_Spec : constant Node_Id := Specification (Nested_Pkg_Decl);
@@ -977,7 +976,7 @@ package body Exp_Dist is
                     or else
                       (Is_Generic_Instance (Pkg_Ent)
                          and then Comes_From_Source
-                                    (Get_Package_Instantiation_Node (Pkg_Ent)))
+                                    (Get_Unit_Instantiation_Node (Pkg_Ent)))
                   then
                      Visit_Nested_Pkg (Decl);
                   end if;
@@ -1364,10 +1363,10 @@ package body Exp_Dist is
       RPC_Receiver                   : Entity_Id;
       RPC_Receiver_Statements        : List_Id;
       RPC_Receiver_Case_Alternatives : constant List_Id := New_List;
-      RPC_Receiver_Elsif_Parts       : List_Id;
-      RPC_Receiver_Request           : Entity_Id;
-      RPC_Receiver_Subp_Id           : Entity_Id;
-      RPC_Receiver_Subp_Index        : Entity_Id;
+      RPC_Receiver_Elsif_Parts       : List_Id          := No_List;
+      RPC_Receiver_Request           : Entity_Id        := Empty;
+      RPC_Receiver_Subp_Id           : Entity_Id        := Empty;
+      RPC_Receiver_Subp_Index        : Entity_Id        := Empty;
 
       Subp_Str : String_Id;
 
@@ -9219,9 +9218,9 @@ package body Exp_Dist is
                 Idx));
          end Build_Get_Aggregate_Element;
 
-         -------------------------
-         -- Build_Reposiroty_Id --
-         -------------------------
+         ----------------------------------
+         -- Build_Name_And_Repository_Id --
+         ----------------------------------
 
          procedure Build_Name_And_Repository_Id
            (E           : Entity_Id;
@@ -9434,7 +9433,7 @@ package body Exp_Dist is
             Stms   : List_Id;
 
             Expr_Formal : Entity_Id;
-            Cstr_Formal : Entity_Id;
+            Cstr_Formal : Entity_Id := Empty;  -- initialize to prevent warning
             Any         : Entity_Id;
             Result_TC   : Node_Id;
 

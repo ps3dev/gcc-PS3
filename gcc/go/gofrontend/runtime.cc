@@ -60,8 +60,6 @@ enum Runtime_function_type
   RFT_IFACE,
   // Go type interface{}, C type struct __go_empty_interface.
   RFT_EFACE,
-  // Go type func(unsafe.Pointer), C type void (*) (void *).
-  RFT_FUNC_PTR,
   // Pointer to Go type descriptor.
   RFT_TYPE,
   // [2]string.
@@ -176,15 +174,6 @@ runtime_function_type(Runtime_function_type bft)
 	  t = Type::make_empty_interface_type(bloc);
 	  break;
 
-	case RFT_FUNC_PTR:
-	  {
-	    Typed_identifier_list* param_types = new Typed_identifier_list();
-	    Type* ptrtype = runtime_function_type(RFT_POINTER);
-	    param_types->push_back(Typed_identifier("", ptrtype, bloc));
-	    t = Type::make_function_type(NULL, param_types, NULL, bloc);
-	  }
-	  break;
-
 	case RFT_TYPE:
 	  t = Type::make_type_descriptor_ptr_type();
 	  break;
@@ -265,7 +254,6 @@ convert_to_runtime_function_type(Runtime_function_type bft, Expression* e,
     case RFT_COMPLEX128:
     case RFT_STRING:
     case RFT_POINTER:
-    case RFT_FUNC_PTR:
       {
 	Type* t = runtime_function_type(bft);
 	if (!Type::are_identical(t, e->type(), true, NULL))
@@ -438,26 +426,18 @@ Runtime::name_to_code(const std::string& name)
 {
   Function code = Runtime::NUMBER_OF_FUNCTIONS;
 
-  // Aliases seen in function declaration code.
-  // TODO(cmang): Add other aliases.
-  if (name == "new")
-    code = Runtime::NEW;
-  else if (name == "close")
-    code = Runtime::CLOSE;
-  else if (name == "copy")
-    code = Runtime::SLICECOPY;
-  else if (name == "append")
-    code = Runtime::GROWSLICE;
-  else if (name == "delete")
-    code = Runtime::MAPDELETE;
-  else
+  // Look through the known names for a match.
+  for (size_t i = 0; i < Runtime::NUMBER_OF_FUNCTIONS; i++)
     {
-      // Look through the known names for a match.
-      for (size_t i = 0; i < Runtime::NUMBER_OF_FUNCTIONS; i++)
-	{
-	  if (strcmp(runtime_functions[i].name, name.c_str()) == 0)
-	    code = static_cast<Runtime::Function>(i);
-	}
+      const char* runtime_function_name = runtime_functions[i].name;
+      if (strcmp(runtime_function_name, name.c_str()) == 0)
+        code = static_cast<Runtime::Function>(i);
+      // The names in the table have "runtime." prefix. We may be
+      // called with a name without the prefix. Try matching
+      // without the prefix as well.
+      if (strncmp(runtime_function_name, "runtime.", 8) == 0
+          && strcmp(runtime_function_name + 8, name.c_str()) == 0)
+        code = static_cast<Runtime::Function>(i);
     }
   return code;
 }

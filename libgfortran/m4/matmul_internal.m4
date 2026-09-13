@@ -59,8 +59,8 @@
 	  arg_extent = GFC_DESCRIPTOR_EXTENT(b,1);
 	  ret_extent = GFC_DESCRIPTOR_EXTENT(retarray,0);
 	  if (arg_extent != ret_extent)
-	    runtime_error ("Incorrect extent in return array in"
-			   " MATMUL intrinsic: is %ld, should be %ld",
+	    runtime_error ("Array bound mismatch for dimension 1 of "
+	    		   "array (%ld/%ld) ",
 			   (long int) ret_extent, (long int) arg_extent);
 	}
       else if (GFC_DESCRIPTOR_RANK (b) == 1)
@@ -68,8 +68,8 @@
 	  arg_extent = GFC_DESCRIPTOR_EXTENT(a,0);
 	  ret_extent = GFC_DESCRIPTOR_EXTENT(retarray,0);
 	  if (arg_extent != ret_extent)
-	    runtime_error ("Incorrect extent in return array in"
-			   " MATMUL intrinsic: is %ld, should be %ld",
+	    runtime_error ("Array bound mismatch for dimension 1 of "
+	    		   "array (%ld/%ld) ",
 			   (long int) ret_extent, (long int) arg_extent);
 	}
       else
@@ -77,17 +77,15 @@
 	  arg_extent = GFC_DESCRIPTOR_EXTENT(a,0);
 	  ret_extent = GFC_DESCRIPTOR_EXTENT(retarray,0);
 	  if (arg_extent != ret_extent)
-	    runtime_error ("Incorrect extent in return array in"
-			   " MATMUL intrinsic for dimension 1:"
-			   " is %ld, should be %ld",
+	    runtime_error ("Array bound mismatch for dimension 1 of "
+	    		   "array (%ld/%ld) ",
 			   (long int) ret_extent, (long int) arg_extent);
 
 	  arg_extent = GFC_DESCRIPTOR_EXTENT(b,1);
 	  ret_extent = GFC_DESCRIPTOR_EXTENT(retarray,1);
 	  if (arg_extent != ret_extent)
-	    runtime_error ("Incorrect extent in return array in"
-			   " MATMUL intrinsic for dimension 2:"
-			   " is %ld, should be %ld",
+	    runtime_error ("Array bound mismatch for dimension 2 of "
+	    		   "array (%ld/%ld) ",
 			   (long int) ret_extent, (long int) arg_extent);
 	}
     }
@@ -129,7 +127,9 @@ sinclude(`matmul_asm_'rtype_code`.m4')dnl
   if (count != GFC_DESCRIPTOR_EXTENT(b,0))
     {
       if (count > 0 || GFC_DESCRIPTOR_EXTENT(b,0) > 0)
-	runtime_error ("dimension of array B incorrect in MATMUL intrinsic");
+	runtime_error ("Incorrect extent in argument B in MATMUL intrinsic "
+		       "in dimension 1: is %ld, should be %ld",
+		       (long int) GFC_DESCRIPTOR_EXTENT(b,0), (long int) count);
     }
 
   if (GFC_DESCRIPTOR_RANK (b) == 1)
@@ -138,9 +138,9 @@ sinclude(`matmul_asm_'rtype_code`.m4')dnl
       bxstride = GFC_DESCRIPTOR_STRIDE(b,0);
 
       /* bystride should never be used for 1-dimensional b.
-	 in case it is we want it to cause a segfault, rather than
-	 an incorrect result. */
-      bystride = 0xDEADBEEF;
+         The value is only used for calculation of the
+         memory by the buffer.  */
+      bystride = 256;
       ycount = 1;
     }
   else
@@ -174,14 +174,26 @@ sinclude(`matmul_asm_'rtype_code`.m4')dnl
       if (lda > 0 && ldb > 0 && ldc > 0 && m > 1 && n > 1 && k > 1)
 	{
 	  assert (gemm != NULL);
-	  gemm (axstride == 1 ? "N" : "T", bxstride == 1 ? "N" : "T", &m,
+	  const char *transa, *transb;
+	  if (try_blas & 2)
+	    transa = "C";
+	  else
+	    transa = axstride == 1 ? "N" : "T";
+
+	  if (try_blas & 4)
+	    transb = "C";
+	  else
+	    transb = bxstride == 1 ? "N" : "T";
+
+	  gemm (transa, transb , &m,
 		&n, &k,	&one, abase, &lda, bbase, &ldb, &zero, dest,
 		&ldc, 1, 1);
 	  return;
 	}
     }
 
-  if (rxstride == 1 && axstride == 1 && bxstride == 1)
+  if (rxstride == 1 && axstride == 1 && bxstride == 1
+      && GFC_DESCRIPTOR_RANK (b) != 1)
     {
       /* This block of code implements a tuned matmul, derived from
          Superscalar GEMM-based level 3 BLAS,  Beta version 0.1
@@ -202,11 +214,11 @@ sinclude(`matmul_asm_'rtype_code`.m4')dnl
 		 i1, i2, i3, i4, i5, i6;
 
       /* Local variables */
-      'rtype_name` t1[65536], /* was [256][256] */
-		 f11, f12, f21, f22, f31, f32, f41, f42,
+      'rtype_name` f11, f12, f21, f22, f31, f32, f41, f42,
 		 f13, f14, f23, f24, f33, f34, f43, f44;
       index_type i, j, l, ii, jj, ll;
       index_type isec, jsec, lsec, uisec, ujsec, ulsec;
+      'rtype_name` *t1;
 
       a = abase;
       b = bbase;
@@ -231,6 +243,19 @@ sinclude(`matmul_asm_'rtype_code`.m4')dnl
       /* Early exit if possible */
       if (m == 0 || n == 0 || k == 0)
 	return;
+
+      /* Adjust size of t1 to what is needed.  */
+      index_type t1_dim, a_sz;
+      if (aystride == 1)
+        a_sz = rystride;
+      else
+        a_sz = a_dim1;
+
+      t1_dim = a_sz * 256 + b_dim1;
+      if (t1_dim > 65536)
+	t1_dim = 65536;
+
+      t1 = malloc (t1_dim * sizeof('rtype_name`));
 
       /* Start turning the crank. */
       i1 = n;
@@ -441,6 +466,7 @@ sinclude(`matmul_asm_'rtype_code`.m4')dnl
 		}
 	    }
 	}
+      free(t1);
       return;
     }
   else if (rxstride == 1 && aystride == 1 && bxstride == 1)
@@ -481,20 +507,6 @@ sinclude(`matmul_asm_'rtype_code`.m4')dnl
 	    }
 	}
     }
-  else if (axstride < aystride)
-    {
-      for (y = 0; y < ycount; y++)
-	for (x = 0; x < xcount; x++)
-	  dest[x*rxstride + y*rystride] = ('rtype_name`)0;
-
-      for (y = 0; y < ycount; y++)
-	for (n = 0; n < count; n++)
-	  for (x = 0; x < xcount; x++)
-	    /* dest[x,y] += a[x,n] * b[n,y] */
-	    dest[x*rxstride + y*rystride] +=
-					abase[x*axstride + n*aystride] *
-					bbase[n*bxstride + y*bystride];
-    }
   else if (GFC_DESCRIPTOR_RANK (a) == 1)
     {
       const 'rtype_name` *restrict bbase_y;
@@ -508,6 +520,20 @@ sinclude(`matmul_asm_'rtype_code`.m4')dnl
 	    s += abase[n*axstride] * bbase_y[n*bxstride];
 	  dest[y*rxstride] = s;
 	}
+    }
+  else if (axstride < aystride)
+    {
+      for (y = 0; y < ycount; y++)
+	for (x = 0; x < xcount; x++)
+	  dest[x*rxstride + y*rystride] = ('rtype_name`)0;
+
+      for (y = 0; y < ycount; y++)
+	for (n = 0; n < count; n++)
+	  for (x = 0; x < xcount; x++)
+	    /* dest[x,y] += a[x,n] * b[n,y] */
+	    dest[x*rxstride + y*rystride] +=
+					abase[x*axstride + n*aystride] *
+					bbase[n*bxstride + y*bystride];
     }
   else
     {

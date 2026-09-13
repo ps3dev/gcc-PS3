@@ -1,5 +1,4 @@
-// { dg-do compile }
-// { dg-options "-std=c++1z" }
+// { dg-do compile { target c++17 } }
 
 struct A { bool a, b; };
 struct B { int a, b; };

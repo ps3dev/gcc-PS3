@@ -1,4 +1,4 @@
-// { dg-options "-std=c++1z" }
+// { dg-do compile { target c++17 } }
 
 #ifndef __cpp_unicode_characters
 #error __cpp_unicode_characters not defined

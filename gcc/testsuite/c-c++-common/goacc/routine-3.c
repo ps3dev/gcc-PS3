@@ -1,8 +1,9 @@
 /* Test invalid calls to routines.  */
+/* See also variant 'routine-3-extern.c', moving the callees 'extern'.  */
 
 #pragma acc routine gang
 int
-gang () /* { dg-message "declared here" 3 } */
+gang () /* { dg-message "declared here" "3" } */
 {
   #pragma acc loop gang worker vector
   for (int i = 0; i < 10; i++)
@@ -14,7 +15,7 @@ gang () /* { dg-message "declared here" 3 } */
 
 #pragma acc routine worker
 int
-worker () /* { dg-message "declared here" 2 } */
+worker () /* { dg-message "declared here" "2" } */
 {
   #pragma acc loop worker vector
   for (int i = 0; i < 10; i++)

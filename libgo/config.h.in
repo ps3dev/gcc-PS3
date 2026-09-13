@@ -114,6 +114,9 @@
 /* Define to 1 if you have the <linux/netlink.h> header file. */
 #undef HAVE_LINUX_NETLINK_H
 
+/* Define to 1 if you have the <linux/ptrace.h> header file. */
+#undef HAVE_LINUX_PTRACE_H
+
 /* Define to 1 if you have the <linux/reboot.h> header file. */
 #undef HAVE_LINUX_REBOOT_H
 
@@ -137,6 +140,9 @@
 
 /* Define to 1 if you have the `matherr' function. */
 #undef HAVE_MATHERR
+
+/* Define to 1 if you have the `memmem' function. */
+#undef HAVE_MEMMEM
 
 /* Define to 1 if you have the <memory.h> header file. */
 #undef HAVE_MEMORY_H
@@ -240,24 +246,11 @@
 /* Define to 1 if <math.h> defines struct exception */
 #undef HAVE_STRUCT_EXCEPTION
 
-/* Define to 1 if the compiler provides the __sync_add_and_fetch function for
-   uint64 */
-#undef HAVE_SYNC_ADD_AND_FETCH_8
-
-/* Define to 1 if the compiler provides the __sync_bool_compare_and_swap
-   function for uint32 */
-#undef HAVE_SYNC_BOOL_COMPARE_AND_SWAP_4
-
-/* Define to 1 if the compiler provides the __sync_bool_compare_and_swap
-   function for uint64 */
-#undef HAVE_SYNC_BOOL_COMPARE_AND_SWAP_8
-
-/* Define to 1 if the compiler provides the __sync_fetch_and_add function for
-   uint32 */
-#undef HAVE_SYNC_FETCH_AND_ADD_4
-
 /* Define to 1 if you have the `sync_file_range' function. */
 #undef HAVE_SYNC_FILE_RANGE
+
+/* Define to 1 if you have the `syscall' function. */
+#undef HAVE_SYSCALL
 
 /* Define to 1 if you have the <syscall.h> header file. */
 #undef HAVE_SYSCALL_H
@@ -336,9 +329,6 @@
 
 /* Define to 1 if you have the `unshare' function. */
 #undef HAVE_UNSHARE
-
-/* Define to 1 if you have the <ustat.h> header file and it works. */
-#undef HAVE_USTAT_H
 
 /* Define to 1 if you have the `utimensat' function. */
 #undef HAVE_UTIMENSAT

@@ -1,5 +1,5 @@
 /* Common block and equivalence list handling
-   Copyright (C) 2000-2017 Free Software Foundation, Inc.
+   Copyright (C) 2000-2019 Free Software Foundation, Inc.
    Contributed by Canqun Yang <canqun@nudt.edu.cn>
 
 This file is part of GCC.
@@ -242,8 +242,9 @@ static tree
 gfc_sym_mangled_common_id (gfc_common_head *com)
 {
   int has_underscore;
-  char mangled_name[GFC_MAX_MANGLED_SYMBOL_LEN + 1];
-  char name[GFC_MAX_SYMBOL_LEN + 1];
+  /* Provide sufficient space to hold "symbol.eq.1234567890__".  */
+  char mangled_name[GFC_MAX_MANGLED_SYMBOL_LEN + 1 + 16];
+  char name[GFC_MAX_SYMBOL_LEN + 1 + 16];
 
   /* Get the name out of the common block pointer.  */
   strcpy (name, com->name);
@@ -1156,13 +1157,13 @@ translate_common (gfc_common_head *common, gfc_symbol *var_list)
 		    gfc_warning (OPT_Walign_commons,
 				 "Padding of %d bytes required before %qs in "
 				 "COMMON %qs at %L; reorder elements or use "
-				 "-fno-align-commons", (int)offset,
+				 "%<-fno-align-commons%>", (int)offset,
 				 s->sym->name, common->name, &common->where);
 		  else
 		    gfc_warning (OPT_Walign_commons,
 				 "Padding of %d bytes required before %qs in "
 				 "COMMON at %L; reorder elements or use "
-				 "-fno-align-commons", (int)offset,
+				 "%<-fno-align-commons%>", (int)offset,
 				 s->sym->name, &common->where);
 		}
 	    }
@@ -1252,7 +1253,11 @@ finish_equivalences (gfc_namespace *ns)
 	      c->where = ns->proc_name->declared_at;
 	    else if (ns->is_block_data)
 	      c->where = ns->sym_root->n.sym->declared_at;
-	    strcpy (c->name, z->module);
+
+	    size_t len = strlen (z->module);
+	    gcc_assert (len < sizeof (c->name));
+	    memcpy (c->name, z->module, len);
+	    c->name[len] = '\0';
 	  }
 	else
 	  c = NULL;

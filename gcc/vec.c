@@ -1,5 +1,5 @@
 /* Vector API for GNU compiler.
-   Copyright (C) 2004-2017 Free Software Foundation, Inc.
+   Copyright (C) 2004-2019 Free Software Foundation, Inc.
    Contributed by Nathan Sidwell <nathan@codesourcery.com>
    Re-implemented in C++ by Diego Novillo <dnovillo@google.com>
 
@@ -31,6 +31,12 @@ along with GCC; see the file COPYING3.  If not see
 #include "coretypes.h"
 #include "hash-table.h"
 #include "selftest.h"
+#ifdef GENERATOR_FILE
+#include "errors.h"
+#else
+#include "input.h"
+#include "diagnostic-core.h"
+#endif
 
 /* vNULL is an empty type with a template cast operation that returns
    a zero-initialized vec<T, A, L> instance.  Use this when you want
@@ -46,22 +52,14 @@ vnull vNULL;
 struct vec_usage: public mem_usage
 {
   /* Default constructor.  */
-  vec_usage (): m_items (0), m_items_peak (0) {}
+  vec_usage (): m_items (0), m_items_peak (0), m_element_size (0) {}
 
   /* Constructor.  */
   vec_usage (size_t allocated, size_t times, size_t peak,
-	     size_t items, size_t items_peak)
+	     size_t items, size_t items_peak, size_t element_size)
     : mem_usage (allocated, times, peak),
-    m_items (items), m_items_peak (items_peak) {}
-
-  /* Comparison operator.  */
-  inline bool
-  operator< (const vec_usage &second) const
-  {
-    return (m_allocated == second.m_allocated ?
-	    (m_peak == second.m_peak ? m_times < second.m_times
-	     : m_peak < second.m_peak) : m_allocated < second.m_allocated);
-  }
+    m_items (items), m_items_peak (items_peak),
+    m_element_size (element_size) {}
 
   /* Sum the usage with SECOND usage.  */
   vec_usage
@@ -71,7 +69,7 @@ struct vec_usage: public mem_usage
 		      m_times + second.m_times,
 		      m_peak + second.m_peak,
 		      m_items + second.m_items,
-		      m_items_peak + second.m_items_peak);
+		      m_items_peak + second.m_items_peak, 0);
   }
 
   /* Dump usage coupled to LOC location, where TOTAL is sum of all rows.  */
@@ -84,47 +82,41 @@ struct vec_usage: public mem_usage
 
     s[48] = '\0';
 
-    fprintf (stderr, "%-48s %10li:%4.1f%%%10li%10li:%4.1f%%%11li%11li\n", s,
-	     (long)m_allocated, m_allocated * 100.0 / total.m_allocated,
-	     (long)m_peak, (long)m_times, m_times * 100.0 / total.m_times,
-	     (long)m_items, (long)m_items_peak);
+    fprintf (stderr,
+	     "%-48s %10" PRIu64 PRsa (10) ":%4.1f%%" PRsa (9) "%10" PRIu64
+	     ":%4.1f%%" PRsa (10) PRsa (10) "\n",
+	     s,
+	     (uint64_t)m_element_size,
+	     SIZE_AMOUNT (m_allocated),
+	     m_allocated * 100.0 / total.m_allocated,
+	     SIZE_AMOUNT (m_peak), (uint64_t)m_times,
+	     m_times * 100.0 / total.m_times,
+	     SIZE_AMOUNT (m_items), SIZE_AMOUNT (m_items_peak));
   }
 
   /* Dump footer.  */
   inline void
   dump_footer ()
   {
-    print_dash_line ();
-    fprintf (stderr, "%s%55li%25li%17li\n", "Total", (long)m_allocated,
-	     (long)m_times, (long)m_items);
-    print_dash_line ();
+    fprintf (stderr, "%s" PRsa (64) PRsa (25) PRsa (16) "\n",
+	     "Total", SIZE_AMOUNT (m_allocated),
+	     SIZE_AMOUNT (m_times), SIZE_AMOUNT (m_items));
   }
 
   /* Dump header with NAME.  */
   static inline void
   dump_header (const char *name)
   {
-    fprintf (stderr, "%-48s %11s%15s%10s%17s%11s\n", name, "Leak", "Peak",
-	     "Times", "Leak items", "Peak items");
-    print_dash_line ();
-  }
-
-  /* Compare wrapper used by qsort method.  */
-  static int
-  compare (const void *first, const void *second)
-  {
-    typedef std::pair<mem_location *, vec_usage *> mem_pair_t;
-
-    const mem_pair_t f = *(const mem_pair_t *)first;
-    const mem_pair_t s = *(const mem_pair_t *)second;
-
-    return (*f.second) < (*s.second);
+    fprintf (stderr, "%-48s %10s%11s%16s%10s%17s%11s\n", name, "sizeof(T)",
+	     "Leak", "Peak", "Times", "Leak items", "Peak items");
   }
 
   /* Current number of items allocated.  */
   size_t m_items;
   /* Peak value of number of allocated items.  */
   size_t m_items_peak;
+  /* Size of element of the vector.  */
+  size_t m_element_size;
 };
 
 /* Vector memory description.  */
@@ -133,12 +125,14 @@ static mem_alloc_description <vec_usage> vec_mem_desc;
 /* Account the overhead.  */
 
 void
-vec_prefix::register_overhead (void *ptr, size_t size, size_t elements
-			       MEM_STAT_DECL)
+vec_prefix::register_overhead (void *ptr, size_t elements,
+			       size_t element_size MEM_STAT_DECL)
 {
   vec_mem_desc.register_descriptor (ptr, VEC_ORIGIN, false
 				    FINAL_PASS_MEM_STAT);
-  vec_usage *usage = vec_mem_desc.register_instance_overhead (size, ptr);
+  vec_usage *usage
+    = vec_mem_desc.register_instance_overhead (elements * element_size, ptr);
+  usage->m_element_size = element_size;
   usage->m_items += elements;
   if (usage->m_items_peak < usage->m_items)
     usage->m_items_peak = usage->m_items;
@@ -147,15 +141,16 @@ vec_prefix::register_overhead (void *ptr, size_t size, size_t elements
 /* Notice that the memory allocated for the vector has been freed.  */
 
 void
-vec_prefix::release_overhead (void *ptr, size_t size, bool in_dtor
-			      MEM_STAT_DECL)
+vec_prefix::release_overhead (void *ptr, size_t size, size_t elements,
+			      bool in_dtor MEM_STAT_DECL)
 {
   if (!vec_mem_desc.contains_descriptor_for_instance (ptr))
     vec_mem_desc.register_descriptor (ptr, VEC_ORIGIN,
 				      false FINAL_PASS_MEM_STAT);
-  vec_mem_desc.release_instance_overhead (ptr, size, in_dtor);
+  vec_usage *usage = vec_mem_desc.release_instance_overhead (ptr, size,
+							     in_dtor);
+  usage->m_items -= elements;
 }
-
 
 /* Calculate the number of slots to reserve a vector, making sure that
    it is of at least DESIRED size by growing ALLOC exponentially.  */
@@ -189,6 +184,84 @@ dump_vec_loc_statistics (void)
 {
   vec_mem_desc.dump (VEC_ORIGIN);
 }
+
+#if CHECKING_P
+/* Report qsort comparator CMP consistency check failure with P1, P2, P3 as
+   witness elements.  */
+ATTRIBUTE_NORETURN ATTRIBUTE_COLD
+static void
+qsort_chk_error (const void *p1, const void *p2, const void *p3,
+		 int (*cmp) (const void *, const void *))
+{
+  if (!p3)
+    {
+      int r1 = cmp (p1, p2), r2 = cmp (p2, p1);
+      error ("qsort comparator not anti-commutative: %d, %d", r1, r2);
+    }
+  else if (p1 == p2)
+    {
+      int r = cmp (p1, p3);
+      error ("qsort comparator non-negative on sorted output: %d", r);
+    }
+  else
+    {
+      int r1 = cmp (p1, p2), r2 = cmp (p2, p3), r3 = cmp (p1, p3);
+      error ("qsort comparator not transitive: %d, %d, %d", r1, r2, r3);
+    }
+  internal_error ("qsort checking failed");
+}
+
+/* Verify anti-symmetry and transitivity for comparator CMP on sorted array
+   of N SIZE-sized elements pointed to by BASE.  */
+void
+qsort_chk (void *base, size_t n, size_t size,
+	   int (*cmp)(const void *, const void *))
+{
+#if 0
+#define LIM(n) (n)
+#else
+  /* Limit overall time complexity to O(n log n).  */
+#define LIM(n) ((n) <= 16 ? (n) : 12 + floor_log2 (n))
+#endif
+#define ELT(i) ((const char *) base + (i) * size)
+#define CMP(i, j) cmp (ELT (i), ELT (j))
+#define ERR2(i, j) qsort_chk_error (ELT (i), ELT (j), NULL, cmp)
+#define ERR3(i, j, k) qsort_chk_error (ELT (i), ELT (j), ELT (k), cmp)
+  size_t i1, i2, i, j;
+  /* This outer loop iterates over maximum spans [i1, i2) such that
+     elements within each span compare equal to each other.  */
+  for (i1 = 0; i1 < n; i1 = i2)
+    {
+      /* Position i2 one past last element that compares equal to i1'th.  */
+      for (i2 = i1 + 1; i2 < n; i2++)
+	if (CMP (i1, i2))
+	  break;
+	else if (CMP (i2, i1))
+	  return ERR2 (i1, i2);
+      size_t lim1 = LIM (i2 - i1), lim2 = LIM (n - i2);
+      /* Verify that other pairs within current span compare equal.  */
+      for (i = i1 + 1; i + 1 < i2; i++)
+	for (j = i + 1; j < i1 + lim1; j++)
+	  if (CMP (i, j))
+	    return ERR3 (i, i1, j);
+	  else if (CMP (j, i))
+	    return ERR2 (i, j);
+      /* Verify that elements within this span compare less than
+         elements beyond the span.  */
+      for (i = i1; i < i2; i++)
+	for (j = i2; j < i2 + lim2; j++)
+	  if (CMP (i, j) >= 0)
+	    return ERR3 (i, i1, j);
+	  else if (CMP (j, i) <= 0)
+	    return ERR2 (i, j);
+    }
+#undef ERR3
+#undef ERR2
+#undef CMP
+#undef ELT
+#undef LIM
+}
+#endif /* #if CHECKING_P */
 
 #ifndef GENERATOR_FILE
 #if CHECKING_P
@@ -310,6 +383,51 @@ test_ordered_remove ()
   ASSERT_EQ (9, v.length ());
 }
 
+/* Verify that vec::ordered_remove_if works correctly.  */
+
+static void
+test_ordered_remove_if (void)
+{
+  auto_vec <int> v;
+  safe_push_range (v, 0, 10);
+  unsigned ix, ix2;
+  int *elem_ptr;
+  VEC_ORDERED_REMOVE_IF (v, ix, ix2, elem_ptr,
+			 *elem_ptr == 5 || *elem_ptr == 7);
+  ASSERT_EQ (4, v[4]);
+  ASSERT_EQ (6, v[5]);
+  ASSERT_EQ (8, v[6]);
+  ASSERT_EQ (8, v.length ());
+
+  v.truncate (0);
+  safe_push_range (v, 0, 10);
+  VEC_ORDERED_REMOVE_IF_FROM_TO (v, ix, ix2, elem_ptr, 0, 6,
+				 *elem_ptr == 5 || *elem_ptr == 7);
+  ASSERT_EQ (4, v[4]);
+  ASSERT_EQ (6, v[5]);
+  ASSERT_EQ (7, v[6]);
+  ASSERT_EQ (9, v.length ());
+
+  v.truncate (0);
+  safe_push_range (v, 0, 10);
+  VEC_ORDERED_REMOVE_IF_FROM_TO (v, ix, ix2, elem_ptr, 0, 5,
+				 *elem_ptr == 5 || *elem_ptr == 7);
+  VEC_ORDERED_REMOVE_IF_FROM_TO (v, ix, ix2, elem_ptr, 8, 10,
+				 *elem_ptr == 5 || *elem_ptr == 7);
+  ASSERT_EQ (4, v[4]);
+  ASSERT_EQ (5, v[5]);
+  ASSERT_EQ (6, v[6]);
+  ASSERT_EQ (10, v.length ());
+
+  v.truncate (0);
+  safe_push_range (v, 0, 10);
+  VEC_ORDERED_REMOVE_IF (v, ix, ix2, elem_ptr, *elem_ptr == 5);
+  ASSERT_EQ (4, v[4]);
+  ASSERT_EQ (6, v[5]);
+  ASSERT_EQ (7, v[6]);
+  ASSERT_EQ (9, v.length ());
+}
+
 /* Verify that vec::unordered_remove works correctly.  */
 
 static void
@@ -359,6 +477,43 @@ test_qsort ()
   ASSERT_EQ (10, v.length ());
 }
 
+/* Verify that vec::reverse works correctly.  */
+
+static void
+test_reverse ()
+{
+  /* Reversing an empty vec ought to be a no-op.  */
+  {
+    auto_vec <int> v;
+    ASSERT_EQ (0, v.length ());
+    v.reverse ();
+    ASSERT_EQ (0, v.length ());
+  }
+
+  /* Verify reversing a vec with even length.  */
+  {
+    auto_vec <int> v;
+    safe_push_range (v, 0, 4);
+    v.reverse ();
+    ASSERT_EQ (3, v[0]);
+    ASSERT_EQ (2, v[1]);
+    ASSERT_EQ (1, v[2]);
+    ASSERT_EQ (0, v[3]);
+    ASSERT_EQ (4, v.length ());
+  }
+
+  /* Verify reversing a vec with odd length.  */
+  {
+    auto_vec <int> v;
+    safe_push_range (v, 0, 3);
+    v.reverse ();
+    ASSERT_EQ (2, v[0]);
+    ASSERT_EQ (1, v[1]);
+    ASSERT_EQ (0, v[2]);
+    ASSERT_EQ (3, v.length ());
+  }
+}
+
 /* Run all of the selftests within this file.  */
 
 void
@@ -371,9 +526,11 @@ vec_c_tests ()
   test_pop ();
   test_safe_insert ();
   test_ordered_remove ();
+  test_ordered_remove_if ();
   test_unordered_remove ();
   test_block_remove ();
   test_qsort ();
+  test_reverse ();
 }
 
 } // namespace selftest

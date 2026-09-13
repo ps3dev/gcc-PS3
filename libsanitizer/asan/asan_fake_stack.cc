@@ -26,9 +26,9 @@ static const u64 kAllocaRedzoneMask = 31UL;
 
 // For small size classes inline PoisonShadow for better performance.
 ALWAYS_INLINE void SetShadow(uptr ptr, uptr size, uptr class_id, u64 magic) {
-  CHECK_EQ(SHADOW_SCALE, 3);  // This code expects SHADOW_SCALE=3.
   u64 *shadow = reinterpret_cast<u64*>(MemToShadow(ptr));
-  if (class_id <= 6) {
+  if (SHADOW_SCALE == 3 && class_id <= 6) {
+    // This code expects SHADOW_SCALE=3.
     for (uptr i = 0; i < (((uptr)1) << class_id); i++) {
       shadow[i] = magic;
       // Make sure this does not become memset.
@@ -169,7 +169,7 @@ void FakeStack::ForEachFakeFrame(RangeIteratorCallback callback, void *arg) {
   }
 }
 
-#if SANITIZER_LINUX && !SANITIZER_ANDROID
+#if (SANITIZER_LINUX && !SANITIZER_ANDROID) || SANITIZER_FUCHSIA
 static THREADLOCAL FakeStack *fake_stack_tls;
 
 FakeStack *GetTLSFakeStack() {
@@ -181,7 +181,7 @@ void SetTLSFakeStack(FakeStack *fs) {
 #else
 FakeStack *GetTLSFakeStack() { return 0; }
 void SetTLSFakeStack(FakeStack *fs) { }
-#endif  // SANITIZER_LINUX && !SANITIZER_ANDROID
+#endif  // (SANITIZER_LINUX && !SANITIZER_ANDROID) || SANITIZER_FUCHSIA
 
 static FakeStack *GetFakeStack() {
   AsanThread *t = GetCurrentThread();

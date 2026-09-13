@@ -117,6 +117,7 @@ static bool isDerivedFromAtOffset(const abi::__class_type_info *Derived,
                                   sptr Offset) {
   if (Derived->__type_name == Base->__type_name ||
       (SANITIZER_NON_UNIQUE_TYPEINFO &&
+       Derived->__type_name[0] != '*' &&
        !internal_strcmp(Derived->__type_name, Base->__type_name)))
     return Offset == 0;
 
@@ -195,9 +196,9 @@ struct VtablePrefix {
 };
 VtablePrefix *getVtablePrefix(void *Vtable) {
   VtablePrefix *Vptr = reinterpret_cast<VtablePrefix*>(Vtable);
-  if (!Vptr)
-    return nullptr;
   VtablePrefix *Prefix = Vptr - 1;
+  if (!IsAccessibleMemoryRange((uptr)Prefix, sizeof(VtablePrefix)))
+    return nullptr;
   if (!Prefix->TypeInfo)
     // This can't possibly be a valid vtable.
     return nullptr;

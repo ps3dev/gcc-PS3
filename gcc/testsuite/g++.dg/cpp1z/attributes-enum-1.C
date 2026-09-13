@@ -1,4 +1,4 @@
-// { dg-options "-std=c++1z" }
+// { dg-do compile { target c++17 } }
 
 #ifndef __cpp_enumerator_attributes
 #error __cpp_enumerator_attributes not defined

@@ -1,5 +1,5 @@
 /* Chains of recurrences.
-   Copyright (C) 2003-2017 Free Software Foundation, Inc.
+   Copyright (C) 2003-2019 Free Software Foundation, Inc.
    Contributed by Sebastian Pop <pop@cri.ensmp.fr>
 
 This file is part of GCC.
@@ -80,12 +80,12 @@ extern bool convert_affine_scev (struct loop *, tree, tree *, tree *, gimple *,
 /* Observers.  */
 extern bool eq_evolutions_p (const_tree, const_tree);
 extern bool is_multivariate_chrec (const_tree);
-extern bool chrec_contains_symbols (const_tree);
+extern bool chrec_contains_symbols (const_tree, struct loop * = NULL);
 extern bool chrec_contains_symbols_defined_in_loop (const_tree, unsigned);
 extern bool chrec_contains_undetermined (const_tree);
 extern bool tree_contains_chrecs (const_tree, int *);
 extern bool evolution_function_is_affine_multivariate_p (const_tree, int);
-extern bool evolution_function_is_univariate_p (const_tree);
+extern bool evolution_function_is_univariate_p (const_tree, int = 0);
 extern unsigned nb_vars_in_chrec (tree);
 extern bool evolution_function_is_invariant_p (tree, int);
 extern bool scev_is_linear_expression (tree);
@@ -157,8 +157,9 @@ build_polynomial_chrec (unsigned loop_num,
   if (chrec_zerop (right))
     return left;
 
-  return build3 (POLYNOMIAL_CHREC, TREE_TYPE (left),
-		 build_int_cst (NULL_TREE, loop_num), left, right);
+  tree chrec = build2 (POLYNOMIAL_CHREC, TREE_TYPE (left), left, right);
+  CHREC_VARIABLE (chrec) = loop_num;
+  return chrec;
 }
 
 /* Determines whether the expression CHREC is a constant.  */
@@ -169,15 +170,7 @@ evolution_function_is_constant_p (const_tree chrec)
   if (chrec == NULL_TREE)
     return false;
 
-  switch (TREE_CODE (chrec))
-    {
-    case INTEGER_CST:
-    case REAL_CST:
-      return true;
-
-    default:
-      return false;
-    }
+  return is_gimple_min_invariant (chrec);
 }
 
 /* Determine whether CHREC is an affine evolution function in LOOPNUM.  */

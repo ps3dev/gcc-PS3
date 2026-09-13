@@ -1,5 +1,6 @@
 // { dg-lto-do link }
-// { dg-lto-options { { -flto -O2 } } }
+// { dg-require-effective-target lto_incremental }
+// { dg-lto-options { { -flto -O2 -Wno-return-type } } }
 // { dg-extra-ld-options "-r -nostdlib -O0" }
 
 class CstringStorageReference {

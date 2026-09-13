@@ -1,5 +1,5 @@
 /* Mapping from optabs to underlying library functions
-   Copyright (C) 1987-2017 Free Software Foundation, Inc.
+   Copyright (C) 1987-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -189,8 +189,9 @@ gen_int_libfunc (optab optable, const char *opname, char suffix,
 {
   int maxsize = 2 * BITS_PER_WORD;
   int minsize = BITS_PER_WORD;
+  scalar_int_mode int_mode;
 
-  if (GET_MODE_CLASS (mode) != MODE_INT)
+  if (!is_int_mode (mode, &int_mode))
     return;
   if (maxsize < LONG_LONG_TYPE_SIZE)
     maxsize = LONG_LONG_TYPE_SIZE;
@@ -198,10 +199,10 @@ gen_int_libfunc (optab optable, const char *opname, char suffix,
       && (trapv_binoptab_p (optable)
 	  || trapv_unoptab_p (optable)))
     minsize = INT_TYPE_SIZE;
-  if (GET_MODE_BITSIZE (mode) < minsize
-      || GET_MODE_BITSIZE (mode) > maxsize)
+  if (GET_MODE_BITSIZE (int_mode) < minsize
+      || GET_MODE_BITSIZE (int_mode) > maxsize)
     return;
-  gen_libfunc (optable, opname, suffix, mode);
+  gen_libfunc (optable, opname, suffix, int_mode);
 }
 
 /* Like gen_libfunc, but verify that FP and set decimal prefix if needed.  */
@@ -579,24 +580,20 @@ gen_trunc_conv_libfunc (convert_optab tab,
 			machine_mode tmode,
 			machine_mode fmode)
 {
-  if (GET_MODE_CLASS (tmode) != MODE_FLOAT && !DECIMAL_FLOAT_MODE_P (tmode))
-    return;
-  if (GET_MODE_CLASS (fmode) != MODE_FLOAT && !DECIMAL_FLOAT_MODE_P (fmode))
-    return;
-  if (tmode == fmode)
-    return;
-
-  if ((GET_MODE_CLASS (tmode) == MODE_FLOAT && DECIMAL_FLOAT_MODE_P (fmode))
-      || (GET_MODE_CLASS (fmode) == MODE_FLOAT && DECIMAL_FLOAT_MODE_P (tmode)))
-     gen_interclass_conv_libfunc (tab, opname, tmode, fmode);
-
-  if (GET_MODE_PRECISION (fmode) <= GET_MODE_PRECISION (tmode))
+  scalar_float_mode float_tmode, float_fmode;
+  if (!is_a <scalar_float_mode> (fmode, &float_fmode)
+      || !is_a <scalar_float_mode> (tmode, &float_tmode)
+      || float_tmode == float_fmode)
     return;
 
-  if ((GET_MODE_CLASS (tmode) == MODE_FLOAT
-       && GET_MODE_CLASS (fmode) == MODE_FLOAT)
-      || (DECIMAL_FLOAT_MODE_P (fmode) && DECIMAL_FLOAT_MODE_P (tmode)))
-    gen_intraclass_conv_libfunc (tab, opname, tmode, fmode);
+  if (GET_MODE_CLASS (float_tmode) != GET_MODE_CLASS (float_fmode))
+    gen_interclass_conv_libfunc (tab, opname, float_tmode, float_fmode);
+
+  if (GET_MODE_PRECISION (float_fmode) <= GET_MODE_PRECISION (float_tmode))
+    return;
+
+  if (GET_MODE_CLASS (float_tmode) == GET_MODE_CLASS (float_fmode))
+    gen_intraclass_conv_libfunc (tab, opname, float_tmode, float_fmode);
 }
 
 /* Pick proper libcall for extend_optab.  We need to chose if we do
@@ -608,23 +605,19 @@ gen_extend_conv_libfunc (convert_optab tab,
 			 machine_mode tmode,
 			 machine_mode fmode)
 {
-  if (GET_MODE_CLASS (tmode) != MODE_FLOAT && !DECIMAL_FLOAT_MODE_P (tmode))
-    return;
-  if (GET_MODE_CLASS (fmode) != MODE_FLOAT && !DECIMAL_FLOAT_MODE_P (fmode))
-    return;
-  if (tmode == fmode)
-    return;
-
-  if ((GET_MODE_CLASS (tmode) == MODE_FLOAT && DECIMAL_FLOAT_MODE_P (fmode))
-      || (GET_MODE_CLASS (fmode) == MODE_FLOAT && DECIMAL_FLOAT_MODE_P (tmode)))
-     gen_interclass_conv_libfunc (tab, opname, tmode, fmode);
-
-  if (GET_MODE_PRECISION (fmode) > GET_MODE_PRECISION (tmode))
+  scalar_float_mode float_tmode, float_fmode;
+  if (!is_a <scalar_float_mode> (fmode, &float_fmode)
+      || !is_a <scalar_float_mode> (tmode, &float_tmode)
+      || float_tmode == float_fmode)
     return;
 
-  if ((GET_MODE_CLASS (tmode) == MODE_FLOAT
-       && GET_MODE_CLASS (fmode) == MODE_FLOAT)
-      || (DECIMAL_FLOAT_MODE_P (fmode) && DECIMAL_FLOAT_MODE_P (tmode)))
+  if (GET_MODE_CLASS (float_tmode) != GET_MODE_CLASS (float_fmode))
+    gen_interclass_conv_libfunc (tab, opname, float_tmode, float_fmode);
+
+  if (GET_MODE_PRECISION (float_fmode) > GET_MODE_PRECISION (float_tmode))
+    return;
+
+  if (GET_MODE_CLASS (float_tmode) == GET_MODE_CLASS (float_fmode))
     gen_intraclass_conv_libfunc (tab, opname, tmode, fmode);
 }
 
@@ -726,10 +719,10 @@ struct libfunc_decl_hasher : ggc_ptr_hash<tree_node>
 /* A table of previously-created libfuncs, hashed by name.  */
 static GTY (()) hash_table<libfunc_decl_hasher> *libfunc_decls;
 
-/* Build a decl for a libfunc named NAME.  */
+/* Build a decl for a libfunc named NAME with visibility VIS.  */
 
 tree
-build_libfunc_function (const char *name)
+build_libfunc_function_visibility (const char *name, symbol_visibility vis)
 {
   /* ??? We don't have any type information; pretend this is "int foo ()".  */
   tree decl = build_decl (UNKNOWN_LOCATION, FUNCTION_DECL,
@@ -738,7 +731,7 @@ build_libfunc_function (const char *name)
   DECL_EXTERNAL (decl) = 1;
   TREE_PUBLIC (decl) = 1;
   DECL_ARTIFICIAL (decl) = 1;
-  DECL_VISIBILITY (decl) = VISIBILITY_DEFAULT;
+  DECL_VISIBILITY (decl) = vis;
   DECL_VISIBILITY_SPECIFIED (decl) = 1;
   gcc_assert (DECL_ASSEMBLER_NAME (decl));
 
@@ -749,11 +742,19 @@ build_libfunc_function (const char *name)
   return decl;
 }
 
+/* Build a decl for a libfunc named NAME.  */
+
+tree
+build_libfunc_function (const char *name)
+{
+  return build_libfunc_function_visibility (name, VISIBILITY_DEFAULT);
+}
+
 /* Return a libfunc for NAME, creating one if we don't already have one.
-   The returned rtx is a SYMBOL_REF.  */
+   The decl is given visibility VIS.  The returned rtx is a SYMBOL_REF.  */
 
 rtx
-init_one_libfunc (const char *name)
+init_one_libfunc_visibility (const char *name, symbol_visibility vis)
 {
   tree id, decl;
   hashval_t hash;
@@ -770,10 +771,16 @@ init_one_libfunc (const char *name)
     {
       /* Create a new decl, so that it can be passed to
 	 targetm.encode_section_info.  */
-      decl = build_libfunc_function (name);
+      decl = build_libfunc_function_visibility (name, vis);
       *slot = decl;
     }
   return XEXP (DECL_RTL (decl), 0);
+}
+
+rtx
+init_one_libfunc (const char *name)
+{
+  return init_one_libfunc_visibility (name, VISIBILITY_DEFAULT);
 }
 
 /* Adjust the assembler name of libfunc NAME to ASMSPEC.  */
@@ -866,8 +873,10 @@ init_optabs (void)
   /* The ffs function operates on `int'.  Fall back on it if we do not
      have a libgcc2 function for that width.  */
   if (INT_TYPE_SIZE < BITS_PER_WORD)
-    set_optab_libfunc (ffs_optab, mode_for_size (INT_TYPE_SIZE, MODE_INT, 0),
-		       "ffs");
+    {
+      scalar_int_mode mode = int_mode_for_size (INT_TYPE_SIZE, 0).require ();
+      set_optab_libfunc (ffs_optab, mode, "ffs");
+    }
 
   /* Explicitly initialize the bswap libfuncs since we need them to be
      valid for things other than word_mode.  */
@@ -918,9 +927,10 @@ init_sync_libfuncs_1 (optab tab, const char *base, int max)
   mode = QImode;
   for (i = 1; i <= max; i *= 2)
     {
+      if (i > 1)
+	mode = GET_MODE_2XWIDER_MODE (mode).require ();
       buf[len + 1] = '0' + i;
       set_optab_libfunc (tab, mode, buf);
-      mode = GET_MODE_2XWIDER_MODE (mode);
     }
 }
 

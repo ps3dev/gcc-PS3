@@ -15,6 +15,7 @@ class Statement_inserter;
 class Block;
 class Function;
 class Unnamed_label;
+class Export_function_body;
 class Assignment_statement;
 class Temporary_statement;
 class Variable_declaration_statement;
@@ -148,7 +149,7 @@ class Statement
   make_temporary(Type*, Expression*, Location);
 
   // Make an assignment statement.
-  static Statement*
+  static Assignment_statement*
   make_assignment(Expression*, Expression*, Location);
 
   // Make an assignment operation (+=, etc.).
@@ -326,6 +327,23 @@ class Statement
   check_types(Gogo* gogo)
   { this->do_check_types(gogo); }
 
+  // Return the cost of this statement for inlining purposes.
+  int
+  inlining_cost()
+  { return this->do_inlining_cost(); }
+
+  // Export data for this statement to BODY.  INDENT is an indentation
+  // level used if the export data requires multiple lines.
+  void
+  export_statement(Export_function_body* efb)
+  { this->do_export_statement(efb); }
+
+  // Read a statement from export data.  The location should be used
+  // for the returned statement.  Errors should be reported using the
+  // Import_function_body's location method.
+  static Statement*
+  import_statement(Import_function_body*, Location);
+
   // Return whether this is a block statement.
   bool
   is_block_statement() const
@@ -488,6 +506,22 @@ class Statement
   do_check_types(Gogo*)
   { }
 
+  // Implemented by child class: return the cost of this statement for
+  // inlining.  The default cost is high, so we only need to define
+  // this method for statements that can be inlined.
+  virtual int
+  do_inlining_cost()
+  { return 0x100000; }
+
+  // Implemented by child class: write export data for this statement
+  // to the string.  The integer is an indentation level used if the
+  // export data requires multiple lines.  This need only be
+  // implemented by classes that implement do_inlining_cost with a
+  // reasonable value.
+  virtual void
+  do_export_statement(Export_function_body*)
+  { go_unreachable(); }
+
   // Implemented by child class: return true if this statement may
   // fall through.
   virtual bool
@@ -562,7 +596,7 @@ class Assignment_statement : public Statement
   Assignment_statement(Expression* lhs, Expression* rhs,
 		       Location location)
     : Statement(STATEMENT_ASSIGNMENT, location),
-      lhs_(lhs), rhs_(rhs)
+      lhs_(lhs), rhs_(rhs), omit_write_barrier_(false)
   { }
 
   Expression*
@@ -572,6 +606,14 @@ class Assignment_statement : public Statement
   Expression*
   rhs() const
   { return this->rhs_; }
+
+  bool
+  omit_write_barrier() const
+  { return this->omit_write_barrier_; }
+
+  void
+  set_omit_write_barrier()
+  { this->omit_write_barrier_ = true; }
 
  protected:
   int
@@ -589,6 +631,13 @@ class Assignment_statement : public Statement
   void
   do_check_types(Gogo*);
 
+  int
+  do_inlining_cost()
+  { return 1; }
+
+  void
+  do_export_statement(Export_function_body*);
+
   Statement*
   do_flatten(Gogo*, Named_object*, Block*, Statement_inserter*);
 
@@ -603,6 +652,8 @@ class Assignment_statement : public Statement
   Expression* lhs_;
   // Right hand side--the rvalue.
   Expression* rhs_;
+  // True if we can omit a write barrier from this assignment.
+  bool omit_write_barrier_;
 };
 
 // A statement which creates and initializes a temporary variable.
@@ -612,7 +663,8 @@ class Temporary_statement : public Statement
  public:
   Temporary_statement(Type* type, Expression* init, Location location)
     : Statement(STATEMENT_TEMPORARY, location),
-      type_(type), init_(init), bvariable_(NULL), is_address_taken_(false)
+      type_(type), init_(init), bvariable_(NULL), is_address_taken_(false),
+      value_escapes_(false)
   { }
 
   // Return the type of the temporary variable.
@@ -629,6 +681,16 @@ class Temporary_statement : public Statement
   void
   set_is_address_taken()
   { this->is_address_taken_ = true; }
+
+  // Whether the value escapes.
+  bool
+  value_escapes() const
+  { return this->value_escapes_; }
+
+  // Record that the value escapes.
+  void
+  set_value_escapes()
+  { this->value_escapes_ = true; }
 
   // Return the temporary variable.  This should not be called until
   // after the statement itself has been converted.
@@ -666,6 +728,9 @@ class Temporary_statement : public Statement
   Bvariable* bvariable_;
   // True if something takes the address of this temporary variable.
   bool is_address_taken_;
+  // True if the value assigned to this temporary variable escapes.
+  // This is used for select statements.
+  bool value_escapes_;
 };
 
 // A variable declaration.  This marks the point in the code where a
@@ -734,6 +799,13 @@ class Return_statement : public Statement
   do_may_fall_through() const
   { return false; }
 
+  int
+  do_inlining_cost()
+  { return 1; }
+
+  void
+  do_export_statement(Export_function_body*);
+
   Bstatement*
   do_get_backend(Translate_context*);
 
@@ -795,6 +867,11 @@ class Block_statement : public Statement
       block_(block), is_lowered_for_statement_(false)
   { }
 
+  // Return the actual block.
+  Block*
+  block() const
+  { return this->block_; }
+
   void
   set_is_lowered_for_statement()
   { this->is_lowered_for_statement_ = true; }
@@ -811,6 +888,13 @@ class Block_statement : public Statement
   void
   do_determine_types()
   { this->block_->determine_types(); }
+
+  int
+  do_inlining_cost()
+  { return 0; }
+
+  void
+  do_export_statement(Export_function_body*);
 
   bool
   do_may_fall_through() const
@@ -841,7 +925,7 @@ class Send_statement : public Statement
 
   Expression*
   channel()
-  { return this->channel_; }  
+  { return this->channel_; }
 
   Expression*
   val()
@@ -899,10 +983,9 @@ class Select_clauses
       Named_object* var, Named_object* closedvar, bool is_default,
       Block* statements, Location location)
   {
-    int index = static_cast<int>(this->clauses_.size());
-    this->clauses_.push_back(Select_clause(index, is_send, channel, val,
-					   closed, var, closedvar, is_default,
-					   statements, location));
+    this->clauses_.push_back(Select_clause(is_send, channel, val, closed, var,
+					   closedvar, is_default, statements,
+					   location));
   }
 
   size_t
@@ -915,7 +998,8 @@ class Select_clauses
 
   // Lower statements.
   void
-  lower(Gogo*, Named_object*, Block*, Temporary_statement*);
+  lower(Gogo*, Named_object*, Block*, Temporary_statement*,
+	Temporary_statement*);
 
   // Determine types.
   void
@@ -932,7 +1016,7 @@ class Select_clauses
 
   // Convert to the backend representation.
   Bstatement*
-  get_backend(Translate_context*, Temporary_statement* sel,
+  get_backend(Translate_context*, Temporary_statement* index,
 	      Unnamed_label* break_label, Location);
 
   // Dump AST representation.
@@ -950,20 +1034,14 @@ class Select_clauses
 	is_default_(false)
     { }
 
-    Select_clause(int index, bool is_send, Expression* channel,
-		  Expression* val, Expression* closed, Named_object* var,
+    Select_clause(bool is_send, Expression* channel, Expression* val,
+		  Expression* closed, Named_object* var,
 		  Named_object* closedvar, bool is_default, Block* statements,
 		  Location location)
-      : index_(index), channel_(channel), val_(val), closed_(closed),
-	var_(var), closedvar_(closedvar), statements_(statements),
-	location_(location), is_send_(is_send), is_default_(is_default),
-	is_lowered_(false)
+      : channel_(channel), val_(val), closed_(closed), var_(var),
+	closedvar_(closedvar), statements_(statements), location_(location),
+	is_send_(is_send), is_default_(is_default), is_lowered_(false)
     { go_assert(is_default ? channel == NULL : channel != NULL); }
-
-    // Return the index of this clause.
-    int
-    index() const
-    { return this->index_; }
 
     // Traverse the select clause.
     int
@@ -971,7 +1049,8 @@ class Select_clauses
 
     // Lower statements.
     void
-    lower(Gogo*, Named_object*, Block*, Temporary_statement*);
+    lower(Gogo*, Named_object*, Block*, Temporary_statement*, size_t,
+	  Temporary_statement*);
 
     // Determine types.
     void
@@ -1024,18 +1103,27 @@ class Select_clauses
     dump_clause(Ast_dump_context*) const;
 
    private:
-    void
-    lower_default(Block*, Expression*, Expression*);
+    // These values must match the values in libgo/go/runtime/select.go.
+    enum
+    {
+      caseRecv = 1,
+      caseSend = 2,
+      caseDefault = 3,
+    };
 
     void
-    lower_send(Block*, Expression*, Expression*, Expression*);
+    lower_default(Block*, Expression*);
+
+    void
+    lower_send(Block*, Expression*, Expression*);
 
     void
     lower_recv(Gogo*, Named_object*, Block*, Expression*, Expression*,
-	       Expression*);
+	       Temporary_statement*);
 
-    // The index of this case in the generated switch statement.
-    int index_;
+    void
+    set_case(Block*, Expression*, Expression*, Expression*, int);
+
     // The channel.
     Expression* channel_;
     // The value to send or the lvalue to receive into.
@@ -1072,7 +1160,7 @@ class Select_statement : public Statement
  public:
   Select_statement(Location location)
     : Statement(STATEMENT_SELECT, location),
-      clauses_(NULL), sel_(NULL), break_label_(NULL), is_lowered_(false)
+      clauses_(NULL), index_(NULL), break_label_(NULL), is_lowered_(false)
   { }
 
   // Add the clauses.
@@ -1115,8 +1203,8 @@ class Select_statement : public Statement
  private:
   // The select clauses.
   Select_clauses* clauses_;
-  // A temporary which holds the select structure we build up at runtime.
-  Temporary_statement* sel_;
+  // A temporary that holds the index value returned by selectgo.
+  Temporary_statement* index_;
   // The break label.
   Unnamed_label* break_label_;
   // Whether this statement has been lowered.
@@ -1609,7 +1697,7 @@ class Case_clauses
   // Dump the AST representation to a dump context.
   void
   dump_clauses(Ast_dump_context*) const;
-  
+
  private:
   // For a constant switch we need to keep a record of constants we
   // have already seen.
@@ -1683,7 +1771,7 @@ class Case_clauses
     // Dump the AST representation to a dump context.
     void
     dump_clause(Ast_dump_context*) const;
-  
+
    private:
     // The list of case expressions.
     Expression_list* cases_;

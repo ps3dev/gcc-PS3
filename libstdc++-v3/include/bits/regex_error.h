@@ -1,6 +1,6 @@
 // class template regex -*- C++ -*-
 
-// Copyright (C) 2010-2017 Free Software Foundation, Inc.
+// Copyright (C) 2010-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -32,6 +32,8 @@
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
+_GLIBCXX_BEGIN_NAMESPACE_VERSION
+
 /**
  * @addtogroup regex
  * @{
@@ -39,12 +41,10 @@ namespace std _GLIBCXX_VISIBILITY(default)
 
 namespace regex_constants
 {
-_GLIBCXX_BEGIN_NAMESPACE_VERSION
-
   /**
    * @name 5.3 Error Types
    */
-  //@{
+  ///@{
 
   enum error_type
     {
@@ -119,11 +119,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    */
   constexpr error_type error_stack(_S_error_stack);
 
-  //@}
-_GLIBCXX_END_NAMESPACE_VERSION
+  ///@}
 } // namespace regex_constants
-
-_GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   // [7.8] Class regex_error
   /**
@@ -164,7 +161,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     friend void __throw_regex_error(regex_constants::error_type, const char*);
   };
 
-  //@} // group regex
+  ///@} // group regex
 
   void
   __throw_regex_error(regex_constants::error_type __ecode);

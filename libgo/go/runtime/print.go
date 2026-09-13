@@ -78,7 +78,7 @@ var debuglock mutex
 
 // The compiler emits calls to printlock and printunlock around
 // the multiple calls that implement a single Go print or println
-// statement. Some of the print helpers (printsp, for example)
+// statement. Some of the print helpers (printslice, for example)
 // call print recursively. There is also the problem of a crash
 // happening during the print routines and needing to acquire
 // the print lock to print information about the crash.
@@ -110,7 +110,12 @@ func gwrite(b []byte) {
 	}
 	recordForPanic(b)
 	gp := getg()
-	if gp == nil || gp.writebuf == nil {
+	// Don't use the writebuf if gp.m is dying. We want anything
+	// written through gwrite to appear in the terminal rather
+	// than be written to in some buffer, if we're in a panicking state.
+	// Note that we can't just clear writebuf in the gp.m.dying case
+	// because a panic isn't allowed to have any write barriers.
+	if gp == nil || gp.writebuf == nil || gp.m.dying > 0 {
 		writeErr(b)
 		return
 	}
@@ -120,31 +125,31 @@ func gwrite(b []byte) {
 }
 
 func printsp() {
-	print(" ")
+	printstring(" ")
 }
 
 func printnl() {
-	print("\n")
+	printstring("\n")
 }
 
 func printbool(v bool) {
 	if v {
-		print("true")
+		printstring("true")
 	} else {
-		print("false")
+		printstring("false")
 	}
 }
 
 func printfloat(v float64) {
 	switch {
 	case v != v:
-		print("NaN")
+		printstring("NaN")
 		return
 	case v+v == v && v > 0:
-		print("+Inf")
+		printstring("+Inf")
 		return
 	case v+v == v && v < 0:
-		print("-Inf")
+		printstring("-Inf")
 		return
 	}
 
@@ -226,7 +231,7 @@ func printuint(v uint64) {
 
 func printint(v int64) {
 	if v < 0 {
-		print("-")
+		printstring("-")
 		v = -v
 	}
 	printuint(uint64(v))

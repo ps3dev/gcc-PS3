@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2016, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2019, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -27,7 +27,7 @@ with Atree;    use Atree;
 with Checks;   use Checks;
 with Einfo;    use Einfo;
 with Exp_Ch3;  use Exp_Ch3;
-with Exp_Ch6;  use Exp_Ch6;
+with Exp_Ch6;
 with Exp_Imgv; use Exp_Imgv;
 with Exp_Tss;  use Exp_Tss;
 with Exp_Util; use Exp_Util;
@@ -470,6 +470,11 @@ package body Exp_Ch13 is
         and then Ekind (E_Scope) not in Concurrent_Kind
       then
          E_Scope := Scope (E_Scope);
+
+      --  The entity may be a subtype declared for an iterator
+
+      elsif Ekind (E_Scope) = E_Loop then
+         E_Scope := Scope (E_Scope);
       end if;
 
       --  Remember that we are processing a freezing entity and its freezing
@@ -535,6 +540,8 @@ package body Exp_Ch13 is
          --      moved to the non-protected version of the subprogram.
          --    * Task bodies - The declarations and statements are moved to the
          --      task body procedure.
+         --    * Blocks that will be rewritten as subprograms when unnesting
+         --      is in effect.
 
          --  Visible declarations do not need to be installed in these three
          --  cases since it does not make semantic sense to do so. All entities
@@ -547,7 +554,8 @@ package body Exp_Ch13 is
              (Is_Entry (E_Scope)
                 or else (Is_Subprogram (E_Scope)
                           and then Is_Protected_Type (Scope (E_Scope)))
-                or else Is_Task_Type (E_Scope))
+                or else Is_Task_Type (E_Scope)
+                or else Ekind (E_Scope) = E_Block)
          then
             null;
          else

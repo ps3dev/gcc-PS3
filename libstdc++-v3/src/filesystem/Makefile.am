@@ -1,6 +1,6 @@
 ## Makefile for the GNU C++ Filesystem library.
 ##
-## Copyright (C) 2014-2017 Free Software Foundation, Inc.
+## Copyright (C) 2014-2019 Free Software Foundation, Inc.
 ##
 ## Process this file with automake to produce Makefile.in.
 ##
@@ -52,7 +52,7 @@ libstdc__fs_la_SOURCES = $(sources)
 # as the occasion call for it.
 AM_CXXFLAGS = \
 	$(glibcxx_lt_pic_flag) $(glibcxx_compiler_shared_flag) \
-	-std=gnu++14 \
+	-std=gnu++17 \
 	$(WARN_CXXFLAGS) $(OPTIMIZE_CXXFLAGS)  $(CONFIG_CXXFLAGS)
 
 AM_MAKEFLAGS = \

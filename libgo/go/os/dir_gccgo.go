@@ -6,16 +6,11 @@ package os
 
 import (
 	"io"
+	"runtime"
 	"sync/atomic"
 	"syscall"
 	"unsafe"
 )
-
-//extern opendir
-func libc_opendir(*byte) *syscall.DIR
-
-//extern closedir
-func libc_closedir(*syscall.DIR) int
 
 // FIXME: pathconf returns long, not int.
 //extern pathconf
@@ -53,11 +48,11 @@ func (file *File) readdirnames(n int) (names []string, err error) {
 		}
 
 		syscall.Entersyscall()
-		r := libc_opendir(p)
+		r := libc_fdopendir(int32(file.pfd.Sysfd))
 		errno := syscall.GetErrno()
 		syscall.Exitsyscall()
 		if r == nil {
-			return nil, &PathError{"opendir", file.name, errno}
+			return nil, &PathError{"fdopendir", file.name, errno}
 		}
 
 		file.dirinfo = new(dirInfo)
@@ -81,6 +76,11 @@ func (file *File) readdirnames(n int) (names []string, err error) {
 		syscall.Entersyscall()
 		i := libc_readdir_r(file.dirinfo.dir, entryDirent, pr)
 		syscall.Exitsyscall()
+		// On AIX when readdir_r hits EOF it sets dirent to nil and returns 9.
+		//  https://www.ibm.com/support/knowledgecenter/ssw_aix_71/com.ibm.aix.basetrf2/readdir_r.htm
+		if runtime.GOOS == "aix" && i == 9 && dirent == nil {
+			break
+		}
 		if i != 0 {
 			return names, NewSyscallError("readdir_r", i)
 		}

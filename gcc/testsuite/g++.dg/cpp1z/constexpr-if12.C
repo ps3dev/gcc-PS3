@@ -1,7 +1,8 @@
 // PR c++/80562
-// { dg-options -std=c++1z }
+// { dg-do compile { target c++17 } }
 
 struct T {
+  int i;
   constexpr auto foo() { return false; }
 };
 

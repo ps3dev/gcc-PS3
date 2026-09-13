@@ -1,6 +1,5 @@
 // P0145R2: Refining Expression Order for C++
-// { dg-do run }
-// { dg-options "-std=c++1z" }
+// { dg-do run { target c++17 } }
 
 #include <string>
 #define assert(X) if (!(X)) __builtin_abort();

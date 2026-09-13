@@ -1,5 +1,5 @@
 /* Rewrite a program in Normal form into SSA.
-   Copyright (C) 2001-2017 Free Software Foundation, Inc.
+   Copyright (C) 2001-2019 Free Software Foundation, Inc.
    Contributed by Diego Novillo <dnovillo@redhat.com>
 
 This file is part of GCC.
@@ -38,6 +38,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-ssa.h"
 #include "domwalk.h"
 #include "statistics.h"
+#include "stringpool.h"
+#include "attribs.h"
 #include "asan.h"
 
 #define PERCENT(x,y) ((float)(x) * 100.0 / (float)(y))
@@ -1224,6 +1226,8 @@ get_reaching_def (tree var)
   if (currdef == NULL_TREE)
     {
       tree sym = DECL_P (var) ? var : SSA_NAME_VAR (var);
+      if (! sym)
+	sym = create_tmp_reg (TREE_TYPE (var));
       currdef = get_or_create_ssa_default_def (cfun, sym);
     }
 
@@ -1432,20 +1436,12 @@ rewrite_add_phi_arguments (basic_block bb)
       for (gsi = gsi_start_phis (e->dest); !gsi_end_p (gsi);
 	   gsi_next (&gsi))
 	{
-	  tree currdef, res, argvar;
+	  tree currdef, res;
 	  location_t loc;
 
 	  phi = gsi.phi ();
 	  res = gimple_phi_result (phi);
-	  /* If we have pre-existing PHI (via the GIMPLE FE) its args may
-	     be different vars than existing vars and they may be constants
-	     as well.  Note the following supports partial SSA for PHI args.  */
-	  argvar = gimple_phi_arg_def (phi, e->dest_idx);
-	  if (argvar && ! DECL_P (argvar))
-	    continue;
-	  if (!argvar)
-	    argvar = SSA_NAME_VAR (res);
-	  currdef = get_reaching_def (argvar);
+	  currdef = get_reaching_def (SSA_NAME_VAR (res));
 	  /* Virtual operand PHI args do not need a location.  */
 	  if (virtual_operand_p (res))
 	    loc = UNKNOWN_LOCATION;
@@ -1459,7 +1455,8 @@ rewrite_add_phi_arguments (basic_block bb)
 class rewrite_dom_walker : public dom_walker
 {
 public:
-  rewrite_dom_walker (cdi_direction direction) : dom_walker (direction) {}
+  rewrite_dom_walker (cdi_direction direction)
+    : dom_walker (direction, ALL_BLOCKS, NULL) {}
 
   virtual edge before_dom_children (basic_block);
   virtual void after_dom_children (basic_block);
@@ -1608,10 +1605,10 @@ dump_defs_stack (FILE *file, int n)
 	}
 
       fprintf (file, "    Previous CURRDEF (");
-      print_generic_expr (file, var, 0);
+      print_generic_expr (file, var);
       fprintf (file, ") = ");
       if (name)
-	print_generic_expr (file, name, 0);
+	print_generic_expr (file, name);
       else
 	fprintf (file, "<NIL>");
       fprintf (file, "\n");
@@ -1647,10 +1644,10 @@ dump_currdefs (FILE *file)
     {
       common_info *info = get_common_info (var);
       fprintf (file, "CURRDEF (");
-      print_generic_expr (file, var, 0);
+      print_generic_expr (file, var);
       fprintf (file, ") = ");
       if (info->current_def)
-	print_generic_expr (file, info->current_def, 0);
+	print_generic_expr (file, info->current_def);
       else
 	fprintf (file, "<NIL>");
       fprintf (file, "\n");
@@ -2114,7 +2111,7 @@ rewrite_update_phi_arguments (basic_block bb)
           /* Update the argument if there is a reaching def.  */
 	  if (reaching_def)
 	    {
-	      source_location locus;
+	      location_t locus;
 	      int arg_i = PHI_ARG_INDEX_FROM_USE (arg_p);
 
 	      SET_USE (arg_p, reaching_def);
@@ -2149,7 +2146,8 @@ rewrite_update_phi_arguments (basic_block bb)
 class rewrite_update_dom_walker : public dom_walker
 {
 public:
-  rewrite_update_dom_walker (cdi_direction direction) : dom_walker (direction) {}
+  rewrite_update_dom_walker (cdi_direction direction)
+    : dom_walker (direction, ALL_BLOCKS, NULL) {}
 
   virtual edge before_dom_children (basic_block);
   virtual void after_dom_children (basic_block);
@@ -2318,7 +2316,7 @@ private:
 };
 
 mark_def_dom_walker::mark_def_dom_walker (cdi_direction direction)
-  : dom_walker (direction), m_kills (BITMAP_ALLOC (NULL))
+  : dom_walker (direction, ALL_BLOCKS, NULL), m_kills (BITMAP_ALLOC (NULL))
 {
 }
 
@@ -2482,6 +2480,28 @@ pass_build_ssa::execute (function *fun)
 	  && !VAR_DECL_IS_VIRTUAL_OPERAND (decl)
 	  && DECL_IGNORED_P (decl))
 	SET_SSA_NAME_VAR_OR_IDENTIFIER (name, DECL_NAME (decl));
+    }
+
+  /* Initialize SSA_NAME_POINTS_TO_READONLY_MEMORY.  */
+  tree fnspec = lookup_attribute ("fn spec",
+				  TYPE_ATTRIBUTES (TREE_TYPE (fun->decl)));
+  if (fnspec)
+    {
+      fnspec = TREE_VALUE (TREE_VALUE (fnspec));
+      unsigned i = 1;
+      for (tree arg = DECL_ARGUMENTS (cfun->decl);
+	   arg; arg = DECL_CHAIN (arg), ++i)
+	{
+	  if (i >= (unsigned) TREE_STRING_LENGTH (fnspec))
+	    break;
+	  if (TREE_STRING_POINTER (fnspec)[i]  == 'R'
+	      || TREE_STRING_POINTER (fnspec)[i] == 'r')
+	    {
+	      tree name = ssa_default_def (fun, arg);
+	      if (name)
+		SSA_NAME_POINTS_TO_READONLY_MEMORY (name) = 1;
+	    }
+	}
     }
 
   return 0;
@@ -2784,13 +2804,13 @@ dump_names_replaced_by (FILE *file, tree name)
   bitmap old_set;
   bitmap_iterator bi;
 
-  print_generic_expr (file, name, 0);
+  print_generic_expr (file, name);
   fprintf (file, " -> { ");
 
   old_set = names_replaced_by (name);
   EXECUTE_IF_SET_IN_BITMAP (old_set, 0, i, bi)
     {
-      print_generic_expr (file, ssa_name (i), 0);
+      print_generic_expr (file, ssa_name (i));
       fprintf (file, " ");
     }
 
@@ -2842,7 +2862,7 @@ dump_update_ssa (FILE *file)
       fprintf (file, "\nSSA names to release after updating the SSA web\n\n");
       EXECUTE_IF_SET_IN_BITMAP (names_to_release, 0, i, bi)
 	{
-	  print_generic_expr (file, ssa_name (i), 0);
+	  print_generic_expr (file, ssa_name (i));
 	  fprintf (file, " ");
 	}
       fprintf (file, "\n");
@@ -3287,7 +3307,7 @@ update_ssa (unsigned update_flags)
 		      error ("statement uses released SSA name:");
 		      debug_gimple_stmt (stmt);
 		      fprintf (stderr, "The use of ");
-		      print_generic_expr (stderr, use, 0);
+		      print_generic_expr (stderr, use);
 		      fprintf (stderr," should have been replaced\n");
 		      err = true;
 		    }

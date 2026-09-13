@@ -1,6 +1,6 @@
 /* Target macros for arc*-*-linux targets.
 
-   Copyright (C) 2017 Free Software Foundation, Inc.
+   Copyright (C) 2017-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -29,7 +29,8 @@ along with GCC; see the file COPYING3.  If not see
     }						\
   while (0)
 
-#define GLIBC_DYNAMIC_LINKER   "/lib/ld-linux.so.2"
+#define GLIBC_DYNAMIC_LINKER					\
+  "/lib/ld-linux-arc%{mbig-endian:eb}%{mcpu=arc700:700}.so.2"
 #define UCLIBC_DYNAMIC_LINKER  "/lib/ld-uClibc.so.0"
 
 /* Note that the default is to link against dynamic libraries, if they are
@@ -61,6 +62,7 @@ along with GCC; see the file COPYING3.  If not see
    %{shared:-lc} \
    %{!shared:%{profile:-lc_p}%{!profile:-lc}}"
 
+#undef TARGET_ASM_FILE_END
 #define TARGET_ASM_FILE_END file_end_indicate_exec_stack
 
 /* No SDATA default for linux.  */
@@ -83,3 +85,56 @@ along with GCC; see the file COPYING3.  If not see
 #define SUBTARGET_CPP_SPEC "\
    %{pthread:-D_REENTRANT} \
 "
+
+/* Indexed loads are default off.  */
+#undef TARGET_INDEXED_LOADS_DEFAULT
+#define TARGET_INDEXED_LOADS_DEFAULT 0
+
+/* Pre/post modify with register displacement are default off.  */
+#undef TARGET_AUTO_MODIFY_REG_DEFAULT
+#define TARGET_AUTO_MODIFY_REG_DEFAULT 0
+
+#if DEFAULT_LIBC == LIBC_GLIBC
+/* Override linux.h LINK_EH_SPEC definition.
+   Signalize that because we have fde-glibc, we don't need all C shared libs
+   linked against -lgcc_s.  */
+#undef LINK_EH_SPEC
+#define LINK_EH_SPEC "--eh-frame-hdr "
+#endif
+
+#undef SUBTARGET_CPP_SPEC
+#define SUBTARGET_CPP_SPEC "\
+   %{pthread:-D_REENTRANT} \
+"
+
+/* Build attribute: procedure call standard.  */
+#undef ATTRIBUTE_PCS
+#define ATTRIBUTE_PCS 3
+
+/* Clear the instruction cache from `beg' to `end'.  This makes an
+   inline system call to SYS_cacheflush.  */
+#undef CLEAR_INSN_CACHE
+#define CLEAR_INSN_CACHE(beg, end)					\
+{									\
+  register unsigned long _beg __asm ("r0") = (unsigned long) (beg);	\
+  register unsigned long _end __asm ("r1") = (unsigned long) (end);	\
+  register unsigned long _xtr __asm ("r2") = 0;				\
+  register unsigned long _scno __asm ("r8") = 244;			\
+  __asm __volatile ("trap_s 0		; sys_cache_sync"		\
+		    : "=r" (_beg)					\
+		    : "0" (_beg), "r" (_end), "r" (_xtr), "r" (_scno));	\
+}
+
+/* Emit rtl for profiling.  Output assembler code to FILE
+   to call "_mcount" for profiling a function entry.  */
+#define PROFILE_HOOK(LABEL)					\
+  {								\
+   rtx fun, rt;							\
+   rt = get_hard_reg_initial_val (Pmode, RETURN_ADDR_REGNUM);	\
+   fun = gen_rtx_SYMBOL_REF (Pmode, "_mcount");			\
+   emit_library_call (fun, LCT_NORMAL, VOIDmode, rt, Pmode);	\
+  }
+
+/* Enter/Leave ops are default off for linux targets.  */
+#undef TARGET_CODE_DENSITY_FRAME_DEFAULT
+#define TARGET_CODE_DENSITY_FRAME_DEFAULT 0

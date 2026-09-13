@@ -1,4 +1,4 @@
-// { dg-options "-std=c++1z" }
+// { dg-do compile { target c++17 } }
 
 #ifndef __cpp_fold_expressions
 #error __cpp_fold_expressions not defined

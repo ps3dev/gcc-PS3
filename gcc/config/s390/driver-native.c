@@ -1,5 +1,5 @@
 /* Subroutines for the gcc driver.
-   Copyright (C) 2015-2017 Free Software Foundation, Inc.
+   Copyright (C) 2015-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -16,6 +16,8 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
+
+#define IN_TARGET_CODE 1
 
 #include "config.h"
 #include "system.h"
@@ -84,8 +86,6 @@ s390_host_detect_local_cpu (int argc, const char **argv)
 	  machine_id = strtol (p, NULL, 16);
 	  switch (machine_id)
 	    {
-	      /* g5 and g6 default to z900 */
-	    case 0x9672:
 	    case 0x2064:
 	    case 0x2066:
 	      cpu = "z900";
@@ -116,10 +116,15 @@ s390_host_detect_local_cpu (int argc, const char **argv)
 	      cpu = "z13";
 	      break;
 	    case 0x3906:
+	    case 0x3907:
 	      cpu = "z14";
 	      break;
+	    case 0x8561:
+	    case 0x8562:
+	      cpu = "z15";
+	      break;
 	    default:
-	      cpu = "z14";
+	      cpu = "z15";
 	      break;
 	    }
 	}

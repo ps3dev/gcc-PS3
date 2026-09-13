@@ -1,5 +1,5 @@
 /* Store register values as _Unwind_Word type in DWARF2 EH unwind context.
-   Copyright (C) 2017 Free Software Foundation, Inc.
+   Copyright (C) 2017-2019 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -13,6 +13,10 @@
    or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
    License for more details.
 
+   Under Section 7 of GPL version 3, you are granted additional
+   permissions described in the GCC Runtime Library Exception, version
+   3.1, as published by the Free Software Foundation.
+
    You should have received a copy of the GNU General Public License and
    a copy of the GCC Runtime Library Exception along with this program;
    see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
@@ -23,3 +27,19 @@
 #if defined __aarch64__ && !defined __LP64__
 # define REG_VALUE_IN_UNWIND_CONTEXT
 #endif
+
+/* Return the value of the pseudo VG register.  This should only be
+   called if we know this is an SVE host.  */
+static inline int
+aarch64_vg (void)
+{
+  register int vg asm ("x0");
+  /* CNTD X0.  */
+  asm (".inst 0x04e0e3e0" : "=r" (vg));
+  return vg;
+}
+
+/* Lazily provide a value for VG, so that we don't try to execute SVE
+   instructions unless we know they're needed.  */
+#define DWARF_LAZY_REGISTER_VALUE(REGNO, VALUE) \
+  ((REGNO) == AARCH64_DWARF_VG && ((*VALUE) = aarch64_vg (), 1))

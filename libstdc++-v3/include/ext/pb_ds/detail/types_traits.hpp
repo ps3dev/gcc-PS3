@@ -1,6 +1,6 @@
 // -*- C++ -*-
 
-// Copyright (C) 2005-2017 Free Software Foundation, Inc.
+// Copyright (C) 2005-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the terms
@@ -281,7 +281,7 @@ namespace __gnu_pbds
 	store_extra			       	m_store_extra_indicator;
 	no_throw_indicator 		 	m_no_throw_copies_indicator;
     };
-    //@}
+    ///@}
   } // namespace detail
 } // namespace __gnu_pbds
 

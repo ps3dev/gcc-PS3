@@ -1,5 +1,5 @@
 /* AddressSanitizer, a fast memory error detector.
-   Copyright (C) 2011-2017 Free Software Foundation, Inc.
+   Copyright (C) 2011-2019 Free Software Foundation, Inc.
    Contributed by Kostya Serebryany <kcc@google.com>
 
 This file is part of GCC.
@@ -25,7 +25,8 @@ extern void asan_function_start (void);
 extern void asan_finish_file (void);
 extern rtx_insn *asan_emit_stack_protection (rtx, rtx, unsigned int,
 					     HOST_WIDE_INT *, tree *, int);
-extern bool asan_protect_global (tree);
+extern rtx_insn *asan_emit_allocas_unpoison (rtx, rtx, rtx_insn *);
+extern bool asan_protect_global (tree, bool ignore_decl_rtl_set_p = false);
 extern void initialize_sanitizer_builtins (void);
 extern tree asan_dynamic_init_call (bool);
 extern bool asan_expand_check_ifn (gimple_stmt_iterator *, bool);
@@ -51,6 +52,11 @@ extern hash_set <tree> *asan_used_labels;
 /* Red zone size, stack and global variables are padded by ASAN_RED_ZONE_SIZE
    up to 2 * ASAN_RED_ZONE_SIZE - 1 bytes.  */
 #define ASAN_RED_ZONE_SIZE	32
+
+/* Stack variable use more compact red zones.  The size includes also
+   size of variable itself.  */
+
+#define ASAN_MIN_RED_ZONE_SIZE	16
 
 /* Shadow memory values for stack protection.  Left is below protected vars,
    the first pointer in stack corresponding to that offset contains
@@ -101,11 +107,35 @@ asan_red_zone_size (unsigned int size)
   return c ? 2 * ASAN_RED_ZONE_SIZE - c : ASAN_RED_ZONE_SIZE;
 }
 
+/* Return how much a stack variable occupis on a stack
+   including a space for red zone.  */
+
+static inline unsigned HOST_WIDE_INT
+asan_var_and_redzone_size (unsigned HOST_WIDE_INT size)
+{
+  if (size <= 4)
+    return 16;
+  else if (size <= 16)
+    return 32;
+  else if (size <= 128)
+    return size + 32;
+  else if (size <= 512)
+    return size + 64;
+  else if (size <= 4096)
+    return size + 128;
+  else
+    return size + 256;
+}
+
 extern bool set_asan_shadow_offset (const char *);
 
 extern void set_sanitized_sections (const char *);
 
 extern bool asan_sanitize_stack_p (void);
+
+extern bool asan_sanitize_allocas_p (void);
+
+extern hash_set<tree> *asan_handled_variables;
 
 /* Return TRUE if builtin with given FCODE will be intercepted by
    libasan.  */
@@ -144,13 +174,6 @@ asan_sanitize_use_after_scope (void)
   return (flag_sanitize_address_use_after_scope && asan_sanitize_stack_p ());
 }
 
-static inline bool
-asan_no_sanitize_address_p (void)
-{
-  return lookup_attribute ("no_sanitize_address",
-			   DECL_ATTRIBUTES (current_function_decl));
-}
-
 /* Return true if DECL should be guarded on the stack.  */
 
 static inline bool
@@ -159,6 +182,26 @@ asan_protect_stack_decl (tree decl)
   return DECL_P (decl)
     && (!DECL_ARTIFICIAL (decl)
 	|| (asan_sanitize_use_after_scope () && TREE_ADDRESSABLE (decl)));
+}
+
+/* Return true when flag_sanitize & FLAG is non-zero.  If FN is non-null,
+   remove all flags mentioned in "no_sanitize" of DECL_ATTRIBUTES.  */
+
+static inline bool
+sanitize_flags_p (unsigned int flag, const_tree fn = current_function_decl)
+{
+  unsigned int result_flags = flag_sanitize & flag;
+  if (result_flags == 0)
+    return false;
+
+  if (fn != NULL_TREE)
+    {
+      tree value = lookup_attribute ("no_sanitize", DECL_ATTRIBUTES (fn));
+      if (value)
+	result_flags &= ~tree_to_uhwi (TREE_VALUE (value));
+    }
+
+  return result_flags;
 }
 
 #endif /* TREE_ASAN */

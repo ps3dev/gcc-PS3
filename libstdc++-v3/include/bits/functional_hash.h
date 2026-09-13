@@ -1,6 +1,6 @@
 // functional_hash.h header -*- C++ -*-
 
-// Copyright (C) 2007-2017 Free Software Foundation, Inc.
+// Copyright (C) 2007-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -49,8 +49,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   template<typename _Result, typename _Arg>
     struct __hash_base
     {
-      typedef _Result     result_type;
-      typedef _Arg      argument_type;
+      typedef _Result     result_type _GLIBCXX17_DEPRECATED;
+      typedef _Arg      argument_type _GLIBCXX17_DEPRECATED;
     };
 
   /// Primary class template hash.
@@ -134,6 +134,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
   /// Explicit specialization for wchar_t.
   _Cxx_hashtable_define_trivial_hash(wchar_t)
+
+#ifdef _GLIBCXX_USE_CHAR8_T
+  /// Explicit specialization for char8_t.
+  _Cxx_hashtable_define_trivial_hash(char8_t)
+#endif
 
   /// Explicit specialization for char16_t.
   _Cxx_hashtable_define_trivial_hash(char16_t)
@@ -254,7 +259,17 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       operator()(long double __val) const noexcept;
     };
 
-  // @} group hashes
+#if __cplusplus >= 201703L
+  template<>
+    struct hash<nullptr_t> : public __hash_base<size_t, nullptr_t>
+    {
+      size_t
+      operator()(nullptr_t) const noexcept
+      { return 0; }
+    };
+#endif
+
+  /// @} group hashes
 
   // Hint about performance of hash functor. If not fast the hash-based
   // containers will cache the hash code.

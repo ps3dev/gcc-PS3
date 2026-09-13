@@ -1,5 +1,5 @@
 /* Loop optimizations over tree-ssa.
-   Copyright (C) 2003-2017 Free Software Foundation, Inc.
+   Copyright (C) 2003-2019 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -38,6 +38,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-vectorizer.h"
 #include "omp-general.h"
 #include "diagnostic-core.h"
+#include "stringpool.h"
+#include "attribs.h"
 
 
 /* A pass making sure loops are fixed up.  */
@@ -152,10 +154,7 @@ gate_oacc_kernels (function *fn)
   if (!flag_openacc)
     return false;
 
-  tree oacc_function_attr = oacc_get_fn_attrib (fn->decl);
-  if (oacc_function_attr == NULL_TREE)
-    return false;
-  if (!oacc_fn_attrib_kernels_p (oacc_function_attr))
+  if (!lookup_attribute ("oacc kernels", DECL_ATTRIBUTES (fn->decl)))
     return false;
 
   struct loop *loop;
@@ -437,8 +436,7 @@ const pass_data pass_data_scev_cprop =
   0, /* properties_provided */
   0, /* properties_destroyed */
   0, /* todo_flags_start */
-  ( TODO_cleanup_cfg
-    | TODO_update_ssa_only_virtuals ), /* todo_flags_finish */
+  0, /* todo_flags_finish */
 };
 
 class pass_scev_cprop : public gimple_opt_pass
@@ -450,9 +448,23 @@ public:
 
   /* opt_pass methods: */
   virtual bool gate (function *) { return flag_tree_scev_cprop; }
-  virtual unsigned int execute (function *) { return scev_const_prop (); }
+  virtual unsigned int execute (function *);
 
 }; // class pass_scev_cprop
+
+unsigned
+pass_scev_cprop::execute (function *)
+{
+  struct loop *loop;
+  bool any = false;
+
+  /* Perform final value replacement in loops, in case the replacement
+     expressions are cheap.  */
+  FOR_EACH_LOOP (loop, LI_FROM_INNERMOST)
+    any |= final_value_replacement_loop (loop);
+
+  return any ? TODO_cleanup_cfg | TODO_update_ssa_only_virtuals : 0;
+}
 
 } // anon namespace
 
@@ -460,54 +472,6 @@ gimple_opt_pass *
 make_pass_scev_cprop (gcc::context *ctxt)
 {
   return new pass_scev_cprop (ctxt);
-}
-
-/* Record bounds on numbers of iterations of loops.  */
-
-namespace {
-
-const pass_data pass_data_record_bounds =
-{
-  GIMPLE_PASS, /* type */
-  "*record_bounds", /* name */
-  OPTGROUP_NONE, /* optinfo_flags */
-  TV_TREE_LOOP_BOUNDS, /* tv_id */
-  ( PROP_cfg | PROP_ssa ), /* properties_required */
-  0, /* properties_provided */
-  0, /* properties_destroyed */
-  0, /* todo_flags_start */
-  0, /* todo_flags_finish */
-};
-
-class pass_record_bounds : public gimple_opt_pass
-{
-public:
-  pass_record_bounds (gcc::context *ctxt)
-    : gimple_opt_pass (pass_data_record_bounds, ctxt)
-  {}
-
-  /* opt_pass methods: */
-  virtual unsigned int execute (function *);
-
-}; // class pass_record_bounds
-
-unsigned int
-pass_record_bounds::execute (function *fun)
-{
-  if (number_of_loops (fun) <= 1)
-    return 0;
-
-  estimate_numbers_of_iterations ();
-  scev_reset ();
-  return 0;
-}
-
-} // anon namespace
-
-gimple_opt_pass *
-make_pass_record_bounds (gcc::context *ctxt)
-{
-  return new pass_record_bounds (ctxt);
 }
 
 /* Induction variable optimizations.  */
@@ -659,16 +623,6 @@ for_each_index (tree *addr_p, bool (*cbck) (tree, tree *, void *), void *data)
 	    return false;
 	  break;
 
-	case VAR_DECL:
-	case PARM_DECL:
-	case CONST_DECL:
-	case STRING_CST:
-	case RESULT_DECL:
-	case VECTOR_CST:
-	case COMPLEX_CST:
-	case INTEGER_CST:
-	case REAL_CST:
-	case FIXED_CST:
 	case CONSTRUCTOR:
 	  return true;
 
@@ -692,6 +646,9 @@ for_each_index (tree *addr_p, bool (*cbck) (tree, tree *, void *), void *data)
 	  return true;
 
 	default:
+	  if (DECL_P (*addr_p)
+	      || CONSTANT_CLASS_P (*addr_p))
+	    return true;
     	  gcc_unreachable ();
 	}
     }

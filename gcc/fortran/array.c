@@ -1,5 +1,5 @@
 /* Array things
-   Copyright (C) 2000-2017 Free Software Foundation, Inc.
+   Copyright (C) 2000-2019 Free Software Foundation, Inc.
    Contributed by Andy Vaught
 
 This file is part of GCC.
@@ -158,6 +158,7 @@ gfc_match_array_ref (gfc_array_ref *ar, gfc_array_spec *as, int init,
   bool matched_bracket = false;
   gfc_expr *tmp;
   bool stat_just_seen = false;
+  bool team_just_seen = false;
 
   memset (ar, '\0', sizeof (*ar));
 
@@ -197,6 +198,11 @@ gfc_match_array_ref (gfc_array_ref *ar, gfc_array_spec *as, int init,
 	}
     }
 
+  if (ar->dimen >= 7
+      && !gfc_notify_std (GFC_STD_F2008,
+			  "Array reference at %C has more than 7 dimensions"))
+    return MATCH_ERROR;
+
   gfc_error ("Array reference at %C cannot have more than %d dimensions",
 	     GFC_MAX_DIMENSIONS);
   return MATCH_ERROR;
@@ -230,8 +236,21 @@ coarray:
       if (m == MATCH_ERROR)
 	return MATCH_ERROR;
 
+      team_just_seen = false;
       stat_just_seen = false;
-      if (gfc_match(" , stat = %e",&tmp) == MATCH_YES && ar->stat == NULL)
+      if (gfc_match (" , team = %e", &tmp) == MATCH_YES && ar->team == NULL)
+	{
+	  ar->team = tmp;
+	  team_just_seen = true;
+	}
+
+      if (ar->team && !team_just_seen)
+	{
+	  gfc_error ("TEAM= attribute in %C misplaced");
+	  return MATCH_ERROR;
+	}
+
+      if (gfc_match (" , stat = %e",&tmp) == MATCH_YES && ar->stat == NULL)
 	{
 	  ar->stat = tmp;
 	  stat_just_seen = true;
@@ -305,10 +324,22 @@ gfc_free_array_spec (gfc_array_spec *as)
   if (as == NULL)
     return;
 
-  for (i = 0; i < as->rank + as->corank; i++)
+  if (as->corank == 0)
     {
-      gfc_free_expr (as->lower[i]);
-      gfc_free_expr (as->upper[i]);
+      for (i = 0; i < as->rank; i++)
+	{
+	  gfc_free_expr (as->lower[i]);
+	  gfc_free_expr (as->upper[i]);
+	}
+    }
+  else
+    {
+      int n = as->rank + as->corank - (as->cotype == AS_EXPLICIT ? 1 : 0);
+      for (i = 0; i < n; i++)
+	{
+	  gfc_free_expr (as->lower[i]);
+	  gfc_free_expr (as->upper[i]);
+	}
     }
 
   free (as);
@@ -514,7 +545,7 @@ gfc_match_array_spec (gfc_array_spec **asp, bool match_dim, bool match_codim)
       as->type = AS_ASSUMED_RANK;
       as->rank = -1;
 
-      if (!gfc_notify_std (GFC_STD_F2008_TS, "Assumed-rank array at %C"))
+      if (!gfc_notify_std (GFC_STD_F2018, "Assumed-rank array at %C"))
 	goto cleanup;
 
       if (!match_codim)
@@ -804,14 +835,18 @@ gfc_set_array_spec (gfc_symbol *sym, gfc_array_spec *as, locus *error_loc)
       return false;
     }
 
+  /* Check F2018:C822.  */
+  if (sym->as->rank + sym->as->corank > GFC_MAX_DIMENSIONS)
+    goto too_many;
+
   if (as->corank)
     {
-      /* The "sym" has no corank (checked via gfc_add_codimension). Thus
-	 the codimension is simply added.  */
-      gcc_assert (as->rank == 0 && sym->as->corank == 0);
-
       sym->as->cotype = as->cotype;
       sym->as->corank = as->corank;
+      /* Check F2018:C822.  */
+      if (sym->as->rank + sym->as->corank > GFC_MAX_DIMENSIONS)
+	goto too_many;
+
       for (i = 0; i < as->corank; i++)
 	{
 	  sym->as->lower[sym->as->rank + i] = as->lower[i];
@@ -830,7 +865,11 @@ gfc_set_array_spec (gfc_symbol *sym, gfc_array_spec *as, locus *error_loc)
       sym->as->cray_pointee = as->cray_pointee;
       sym->as->cp_was_assumed = as->cp_was_assumed;
 
-      for (i = 0; i < sym->as->corank; i++)
+      /* Check F2018:C822.  */
+      if (sym->as->rank + sym->as->corank > GFC_MAX_DIMENSIONS)
+	goto too_many;
+
+      for (i = sym->as->corank - 1; i >= 0; i--)
 	{
 	  sym->as->lower[as->rank + i] = sym->as->lower[i];
 	  sym->as->upper[as->rank + i] = sym->as->upper[i];
@@ -844,6 +883,12 @@ gfc_set_array_spec (gfc_symbol *sym, gfc_array_spec *as, locus *error_loc)
 
   free (as);
   return true;
+
+too_many:
+
+  gfc_error ("rank + corank of %qs exceeds %d at %C", sym->name,
+	     GFC_MAX_DIMENSIONS);
+  return false;
 }
 
 
@@ -1079,10 +1124,44 @@ match_array_cons_element (gfc_constructor_base *result)
   if (m != MATCH_YES)
     return m;
 
+  if (expr->expr_type == EXPR_FUNCTION
+      && expr->ts.type == BT_UNKNOWN
+      && strcmp(expr->symtree->name, "null") == 0)
+   {
+      gfc_error ("NULL() at %C cannot appear in an array constructor");
+      gfc_free_expr (expr);
+      return MATCH_ERROR;
+   }
+
   gfc_constructor_append_expr (result, expr, &gfc_current_locus);
   return MATCH_YES;
 }
 
+
+/* Convert components of an array constructor to the type in ts.  */
+
+static match
+walk_array_constructor (gfc_typespec *ts, gfc_constructor_base head)
+{
+  gfc_constructor *c;
+  gfc_expr *e;
+  match m;
+
+  for (c = gfc_constructor_first (head); c; c = gfc_constructor_next (c))
+    {
+      e = c->expr;
+      if (e->expr_type == EXPR_ARRAY && e->ts.type == BT_UNKNOWN
+	  && !e->ref && e->value.constructor)
+	{
+	  m = walk_array_constructor (ts, e->value.constructor);
+	  if (m == MATCH_ERROR)
+	    return m;
+	}
+      else if (!gfc_convert_type (e, ts, 1) && e->ts.type != BT_UNKNOWN)
+	return MATCH_ERROR;
+  }
+  return MATCH_YES;
+}
 
 /* Match an array constructor.  */
 
@@ -1213,12 +1292,13 @@ done:
 	    }
 	}
 
-      /* Walk the constructor and ensure type conversion for numeric types.  */
+      /* Walk the constructor, and if possible, do type conversion for
+	 numeric types.  */
       if (gfc_numeric_ts (&ts))
 	{
-	  c = gfc_constructor_first (head);
-	  for (; c; c = gfc_constructor_next (c))
-	    gfc_convert_type (c->expr, &ts, 1);
+	  m = walk_array_constructor (&ts, head);
+	  if (m == MATCH_ERROR)
+	    return m;
 	}
     }
   else
@@ -1962,7 +2042,7 @@ bool
 gfc_resolve_character_array_constructor (gfc_expr *expr)
 {
   gfc_constructor *p;
-  int found_length;
+  HOST_WIDE_INT found_length;
 
   gcc_assert (expr->expr_type == EXPR_ARRAY);
   gcc_assert (expr->ts.type == BT_CHARACTER);
@@ -1984,6 +2064,20 @@ gfc_resolve_character_array_constructor (gfc_expr *expr)
 
 got_charlen:
 
+  /* Early exit for zero size arrays. */
+  if (expr->shape)
+    {
+      mpz_t size;
+      HOST_WIDE_INT arraysize;
+
+      gfc_array_size (expr, &size);
+      arraysize = mpz_get_ui (size);
+      mpz_clear (size);
+
+      if (arraysize == 0)
+	return true;
+    }
+
   found_length = -1;
 
   if (expr->ts.u.cl->length == NULL)
@@ -1994,42 +2088,37 @@ got_charlen:
       for (p = gfc_constructor_first (expr->value.constructor);
 	   p; p = gfc_constructor_next (p))
 	{
-	  int current_length = -1;
+	  HOST_WIDE_INT current_length = -1;
 	  gfc_ref *ref;
 	  for (ref = p->expr->ref; ref; ref = ref->next)
 	    if (ref->type == REF_SUBSTRING
+		&& ref->u.ss.start
 		&& ref->u.ss.start->expr_type == EXPR_CONSTANT
+		&& ref->u.ss.end
 		&& ref->u.ss.end->expr_type == EXPR_CONSTANT)
 	      break;
 
 	  if (p->expr->expr_type == EXPR_CONSTANT)
 	    current_length = p->expr->value.character.length;
 	  else if (ref)
-	    {
-	      long j;
-	      j = mpz_get_ui (ref->u.ss.end->value.integer)
-		- mpz_get_ui (ref->u.ss.start->value.integer) + 1;
-	      current_length = (int) j;
-	    }
+	    current_length = gfc_mpz_get_hwi (ref->u.ss.end->value.integer)
+	      - gfc_mpz_get_hwi (ref->u.ss.start->value.integer) + 1;
 	  else if (p->expr->ts.u.cl && p->expr->ts.u.cl->length
 		   && p->expr->ts.u.cl->length->expr_type == EXPR_CONSTANT)
-	    {
-	      long j;
-	      j = mpz_get_si (p->expr->ts.u.cl->length->value.integer);
-	      current_length = (int) j;
-	    }
+	    current_length = gfc_mpz_get_hwi (p->expr->ts.u.cl->length->value.integer);
 	  else
 	    return true;
 
-	  gcc_assert (current_length != -1);
+	  if (current_length < 0)
+	    current_length = 0;
 
 	  if (found_length == -1)
 	    found_length = current_length;
 	  else if (found_length != current_length)
 	    {
-	      gfc_error ("Different CHARACTER lengths (%d/%d) in array"
-			 " constructor at %L", found_length, current_length,
-			 &p->expr->where);
+	      gfc_error ("Different CHARACTER lengths (%ld/%ld) in array"
+			 " constructor at %L", (long) found_length,
+			 (long) current_length, &p->expr->where);
 	      return false;
 	    }
 
@@ -2039,7 +2128,7 @@ got_charlen:
       gcc_assert (found_length != -1);
 
       /* Update the character length of the array constructor.  */
-      expr->ts.u.cl->length = gfc_get_int_expr (gfc_default_integer_kind,
+      expr->ts.u.cl->length = gfc_get_int_expr (gfc_charlen_int_kind,
 						NULL, found_length);
     }
   else
@@ -2051,7 +2140,7 @@ got_charlen:
       /* If we've got a constant character length, pad according to this.
 	 gfc_extract_int does check for BT_INTEGER and EXPR_CONSTANT and sets
 	 max_length only if they pass.  */
-      gfc_extract_int (expr->ts.u.cl->length, &found_length);
+      gfc_extract_hwi (expr->ts.u.cl->length, &found_length);
 
       /* Now pad/truncate the elements accordingly to the specified character
 	 length.  This is ok inside this conditional, as in the case above
@@ -2063,13 +2152,13 @@ got_charlen:
 	  if (p->expr->expr_type == EXPR_CONSTANT)
 	    {
 	      gfc_expr *cl = NULL;
-	      int current_length = -1;
+	      HOST_WIDE_INT current_length = -1;
 	      bool has_ts;
 
 	      if (p->expr->ts.u.cl && p->expr->ts.u.cl->length)
 	      {
 		cl = p->expr->ts.u.cl->length;
-		gfc_extract_int (cl, &current_length);
+		gfc_extract_hwi (cl, &current_length);
 	      }
 
 	      /* If gfc_extract_int above set current_length, we implicitly
@@ -2123,6 +2212,10 @@ gfc_copy_iterator (gfc_iterator *src)
   dest->start = gfc_copy_expr (src->start);
   dest->end = gfc_copy_expr (src->end);
   dest->step = gfc_copy_expr (src->step);
+  dest->unroll = src->unroll;
+  dest->ivdep = src->ivdep;
+  dest->vector = src->vector;
+  dest->novector = src->novector;
 
   return dest;
 }
@@ -2131,8 +2224,7 @@ gfc_copy_iterator (gfc_iterator *src)
 /********* Subroutines for determining the size of an array *********/
 
 /* These are needed just to accommodate RESHAPE().  There are no
-   diagnostics here, we just return a negative number if something
-   goes wrong.  */
+   diagnostics here, we just return false if something goes wrong.  */
 
 
 /* Get the size of single dimension of an array specification.  The
@@ -2160,6 +2252,9 @@ spec_dimen_size (gfc_array_spec *as, int dimen, mpz_t *result)
 	   as->lower[dimen]->value.integer);
 
   mpz_add_ui (*result, *result, 1);
+
+  if (mpz_cmp_si (*result, 0) < 0)
+    mpz_set_si (*result, 0);
 
   return true;
 }
@@ -2201,9 +2296,16 @@ gfc_ref_dimen_size (gfc_array_ref *ar, int dimen, mpz_t *result, mpz_t *end)
   mpz_t upper, lower, stride;
   mpz_t diff;
   bool t;
+  gfc_expr *stride_expr = NULL;
 
-  if (dimen < 0 || ar == NULL || dimen > ar->dimen - 1)
+  if (dimen < 0 || ar == NULL)
     gfc_internal_error ("gfc_ref_dimen_size(): Bad dimension");
+
+  if (dimen > ar->dimen - 1)
+    {
+      gfc_error ("Bad array dimension at %L", &ar->c_where[dimen]);
+      return false;
+    }
 
   switch (ar->dimen_type[dimen])
     {
@@ -2225,12 +2327,18 @@ gfc_ref_dimen_size (gfc_array_ref *ar, int dimen, mpz_t *result, mpz_t *end)
 	mpz_set_ui (stride, 1);
       else
 	{
-	  if (ar->stride[dimen]->expr_type != EXPR_CONSTANT)
+	  stride_expr = gfc_copy_expr(ar->stride[dimen]); 
+
+	  if (!gfc_simplify_expr (stride_expr, 1)
+	     || stride_expr->expr_type != EXPR_CONSTANT
+	     || mpz_cmp_ui (stride_expr->value.integer, 0) == 0)
 	    {
+	      gfc_free_expr (stride_expr);
 	      mpz_clear (stride);
 	      return false;
 	    }
-	  mpz_set (stride, ar->stride[dimen]->value.integer);
+	  mpz_set (stride, stride_expr->value.integer);
+	  gfc_free_expr(stride_expr);
 	}
 
       /* Calculate the number of elements via gfc_dep_differce, but only if

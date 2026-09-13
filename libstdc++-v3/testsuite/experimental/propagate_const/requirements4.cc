@@ -1,6 +1,6 @@
 // { dg-do compile { target c++14 } }
 
-// Copyright (C) 2015-2017 Free Software Foundation, Inc.
+// Copyright (C) 2015-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -22,7 +22,7 @@
 using std::experimental::propagate_const;
 
 // { dg-error "requires a class or a pointer to an object type" "" { target *-*-* } 107 }
-// { dg-error "invalid type" "" { target *-*-* } 68 }
-// { dg-error "uninitialized reference member" "" { target *-*-* } 114 }
+// { dg-error "invalid type" "" { target *-*-* } 66 }
+// { dg-error "uninitialized reference member" "" { target *-*-* } 112 }
 
 propagate_const<int&> test1; // { dg-error "use of deleted function" }

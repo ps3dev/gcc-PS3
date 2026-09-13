@@ -1,5 +1,5 @@
 /* Generic implementation of the PACK intrinsic
-   Copyright (C) 2002-2017 Free Software Foundation, Inc.
+   Copyright (C) 2002-2019 Free Software Foundation, Inc.
    Contributed by Paul Brook <paul@nowt.org>
 
 This file is part of the GNU Fortran runtime library (libgfortran).
@@ -85,6 +85,7 @@ pack_internal (gfc_array_char *ret, const gfc_array_char *array,
 
   index_type count[GFC_MAX_DIMENSIONS];
   index_type extent[GFC_MAX_DIMENSIONS];
+  bool zero_sized;
   index_type n;
   index_type dim;
   index_type nelem;
@@ -114,10 +115,13 @@ pack_internal (gfc_array_char *ret, const gfc_array_char *array,
   else
     runtime_error ("Funny sized logical array");
 
+  zero_sized = false;
   for (n = 0; n < dim; n++)
     {
       count[n] = 0;
       extent[n] = GFC_DESCRIPTOR_EXTENT(array,n);
+      if (extent[n] <= 0)
+	zero_sized = true;
       sstride[n] = GFC_DESCRIPTOR_STRIDE_BYTES(array,n);
       mstride[n] = GFC_DESCRIPTOR_STRIDE_BYTES(mask,n);
     }
@@ -125,6 +129,11 @@ pack_internal (gfc_array_char *ret, const gfc_array_char *array,
     sstride[0] = size;
   if (mstride[0] == 0)
     mstride[0] = mask_kind;
+
+  if (zero_sized)
+    sptr = NULL;
+  else
+    sptr = array->base_addr;
 
   if (ret->base_addr == NULL || unlikely (compile_options.bounds_check))
     {
@@ -255,7 +264,6 @@ pack (gfc_array_char *ret, const gfc_array_char *array,
     {
     case GFC_DTYPE_LOGICAL_1:
     case GFC_DTYPE_INTEGER_1:
-    case GFC_DTYPE_DERIVED_1:
       pack_i1 ((gfc_array_i1 *) ret, (gfc_array_i1 *) array,
 	       (gfc_array_l1 *) mask, (gfc_array_i1 *) vector);
       return;
@@ -349,12 +357,19 @@ pack (gfc_array_char *ret, const gfc_array_char *array,
       return;
 # endif
 #endif
+    }
+  
+  /* For other types, let's check the actual alignment of the data pointers.
+     If they are aligned, we can safely call the unpack functions.  */
 
-      /* For derived types, let's check the actual alignment of the
-	 data pointers.  If they are aligned, we can safely call
-	 the unpack functions.  */
+  switch (GFC_DESCRIPTOR_SIZE (array))
+    {
+    case 1:
+      pack_i1 ((gfc_array_i1 *) ret, (gfc_array_i1 *) array,
+	       (gfc_array_l1 *) mask, (gfc_array_i1 *) vector);
+      return;
 
-    case GFC_DTYPE_DERIVED_2:
+    case 2:
       if (GFC_UNALIGNED_2(ret->base_addr) || GFC_UNALIGNED_2(array->base_addr)
 	  || (vector && GFC_UNALIGNED_2(vector->base_addr)))
 	break;
@@ -364,8 +379,8 @@ pack (gfc_array_char *ret, const gfc_array_char *array,
 		   (gfc_array_l1 *) mask, (gfc_array_i2 *) vector);
 	  return;
 	}
-
-    case GFC_DTYPE_DERIVED_4:
+	      
+    case 4:
       if (GFC_UNALIGNED_4(ret->base_addr) || GFC_UNALIGNED_4(array->base_addr)
 	  || (vector && GFC_UNALIGNED_4(vector->base_addr)))
 	break;
@@ -376,7 +391,7 @@ pack (gfc_array_char *ret, const gfc_array_char *array,
 	  return;
 	}
 
-    case GFC_DTYPE_DERIVED_8:
+    case 8:
       if (GFC_UNALIGNED_8(ret->base_addr) || GFC_UNALIGNED_8(array->base_addr)
 	  || (vector && GFC_UNALIGNED_8(vector->base_addr)))
 	break;
@@ -387,19 +402,20 @@ pack (gfc_array_char *ret, const gfc_array_char *array,
 	  return;
 	}
 
-#ifdef HAVE_GFC_INTEGER_16
-    case GFC_DTYPE_DERIVED_16:
+#ifdef HAVE_GFC_INTEGER_16	      
+    case 16:
       if (GFC_UNALIGNED_16(ret->base_addr) || GFC_UNALIGNED_16(array->base_addr)
 	  || (vector && GFC_UNALIGNED_16(vector->base_addr)))
 	break;
       else
 	{
 	  pack_i16 ((gfc_array_i16 *) ret, (gfc_array_i16 *) array,
-		   (gfc_array_l1 *) mask, (gfc_array_i16 *) vector);
+		    (gfc_array_l1 *) mask, (gfc_array_i16 *) vector);
 	  return;
 	}
 #endif
-
+    default:
+      break;
     }
 
   size = GFC_DESCRIPTOR_SIZE (array);

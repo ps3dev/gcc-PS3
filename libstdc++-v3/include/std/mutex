@@ -1,6 +1,6 @@
 // <mutex> -*- C++ -*-
 
-// Copyright (C) 2003-2017 Free Software Foundation, Inc.
+// Copyright (C) 2003-2019 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -41,6 +41,7 @@
 #include <type_traits>
 #include <system_error>
 #include <bits/std_mutex.h>
+#include <bits/unique_lock.h>
 #if ! _GTHREAD_USE_MUTEX_TIMEDLOCK
 # include <condition_variable>
 # include <thread>
@@ -48,8 +49,6 @@
 #ifndef _GLIBCXX_HAVE_TLS
 # include <bits/std_function.h>
 #endif
-
-#ifdef _GLIBCXX_USE_C99_STDINT_TR1
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
@@ -507,9 +506,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     };
 
   /** @brief Generic try_lock.
-   *  @param __l1 Meets Mutex requirements (try_lock() may throw).
-   *  @param __l2 Meets Mutex requirements (try_lock() may throw).
-   *  @param __l3 Meets Mutex requirements (try_lock() may throw).
+   *  @param __l1 Meets Lockable requirements (try_lock() may throw).
+   *  @param __l2 Meets Lockable requirements (try_lock() may throw).
+   *  @param __l3 Meets Lockable requirements (try_lock() may throw).
    *  @return Returns -1 if all try_lock() calls return true. Otherwise returns
    *          a 0-based index corresponding to the argument that returned false.
    *  @post Either all arguments are locked, or none will be.
@@ -527,9 +526,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     }
 
   /** @brief Generic lock.
-   *  @param __l1 Meets Mutex requirements (try_lock() may throw).
-   *  @param __l2 Meets Mutex requirements (try_lock() may throw).
-   *  @param __l3 Meets Mutex requirements (try_lock() may throw).
+   *  @param __l1 Meets Lockable requirements (try_lock() may throw).
+   *  @param __l2 Meets Lockable requirements (try_lock() may throw).
+   *  @param __l3 Meets Lockable requirements (try_lock() may throw).
    *  @throw An exception thrown by an argument's lock() or try_lock() member.
    *  @post All arguments are locked.
    *
@@ -556,8 +555,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
         }
     }
 
-#if __cplusplus > 201402L
-#define __cpp_lib_scoped_lock 201707
+#if __cplusplus >= 201703L
+#define __cpp_lib_scoped_lock 201703
   /** @brief A scoped lock type for multiple lockable objects.
    *
    * A scoped_lock controls mutex ownership within a scope, releasing
@@ -673,7 +672,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 			std::forward<_Args>(__args)...);
       };
 #ifdef _GLIBCXX_HAVE_TLS
-      __once_callable = std::__addressof(__callable);
+      __once_callable = std::__addressof(__callable); // NOLINT: PR 82481
       __once_call = []{ (*(decltype(__callable)*)__once_callable)(); };
 #else
       unique_lock<mutex> __functor_lock(__get_once_mutex());
@@ -693,10 +692,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     }
 #endif // _GLIBCXX_HAS_GTHREADS
 
-  // @} group mutexes
+  /// @} group mutexes
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace
-#endif // _GLIBCXX_USE_C99_STDINT_TR1
 
 #endif // C++11
 
